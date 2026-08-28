@@ -23,6 +23,7 @@ export const SHAPE = {
   circle: 5,
   mesh: 6,
   arc: 7,
+  fan: 8,
 } as const;
 
 export type ShapeKind = (typeof SHAPE)[keyof typeof SHAPE];
@@ -38,12 +39,15 @@ export type ShapeKind = (typeof SHAPE)[keyof typeof SHAPE];
  * | box        | halfX      | halfY   | halfZ |
  * | circle     | radius     | shell   |       |
  * | arc        | radius     | sweep   |       |
+ * | fan        | angle      | radius  | rise  | bearing |
  */
 export interface CompiledShape {
   readonly kind: ShapeKind;
   readonly a: number;
   readonly b: number;
   readonly c: number;
+  /** Only `fan` uses a fourth: which way the lobe points, in the local frame. */
+  readonly d?: number;
 }
 
 /**
@@ -167,6 +171,43 @@ export function sampleShape(
       return;
     }
 
+    case SHAPE.fan: {
+      // Thrown *along* the effect's own bearing (spec 158).
+      //
+      // Every other directional shape here is either about local +Y (`cone`) or
+      // radial in the ground plane (`circle`), so "away from the attacker,
+      // mostly, and a bit upward" could not be written down at all -- and that
+      // is exactly the directional bias a spatter needs. Centred on local +X,
+      // the axis `arc` already established as the one the effect's rotation
+      // turns, and lifted by `c` so a flick arcs rather than skidding.
+      //
+      // The yaw is drawn as the *square* of a signed unit draw, which is what
+      // makes the bias a bias: most marks land near the bearing and a few stray
+      // wide, where a flat draw across the same angle gives a fan with as many
+      // marks at its edges as down its middle.
+      //
+      // `bearing` (spec 159) turns the lobe within the effect's own frame, which
+      // is what lets an explosion be *composed* out of several fans pointing
+      // different ways with different counts and sizes -- clusters here, a gap
+      // there -- instead of one uniform cone, which is a radial star however
+      // much the individual marks differ.
+      const bias = rng.signed(1);
+      const yaw = (shape.d ?? 0) + bias * Math.abs(bias) * shape.a;
+      const pitch = shape.c + rng.signed(shape.a * 0.35);
+      const cosPitch = Math.cos(pitch);
+      out[dirAt] = Math.cos(yaw) * cosPitch;
+      out[dirAt + 1] = Math.sin(pitch);
+      out[dirAt + 2] = Math.sin(yaw) * cosPitch;
+      // Born on a disc across the bearing, so a burst has a mouth rather than a
+      // point: every mark leaving one pixel is the thing that reads as a nozzle.
+      const spawnPhi = rng.float() * Math.PI * 2;
+      const r = shape.b * Math.sqrt(rng.float());
+      out[at] = 0;
+      out[at + 1] = Math.sin(spawnPhi) * r;
+      out[at + 2] = Math.cos(spawnPhi) * r;
+      return;
+    }
+
     case SHAPE.mesh:
     case SHAPE.point:
     default: {
@@ -228,3 +269,72 @@ export function applySpread(rng: VfxRng, out: Float32Array, dirAt: number, sprea
   out[dirAt + 1] = dy * cosTheta + uy * cp + vy * sp;
   out[dirAt + 2] = dz * cosTheta + uz * cp + vz * sp;
 }
+
+/**
+ * A point on a capsule of unit radius, `heightRadii` radii tall, standing on
+ * `y = 0` (spec 215).
+ *
+ * What a `surface` hook owes `system.ts`, and the one place it is worked out.
+ * There are two callers -- the game's own bodies in `world/scene.ts` and the
+ * dummy in the judging rig (`brush-scene.ts`) -- and they must not be two
+ * answers: the rig exists to say what the game will look like, and a rig that
+ * distributes paint differently from the game is evidence about the rig. That is
+ * the failure `probe-chat.ts` records having shipped once, where a clearance
+ * check measured the wrong furniture and passed while the log sat on the button
+ * beside it. A check against the wrong thing is worse than no check, because it
+ * reads as evidence.
+ *
+ * ## The units are the whole of it
+ *
+ * The hook writes a **local offset from the instance origin, in the effect's own
+ * scale units**, which the emit path multiplies by the instance scale before
+ * adding it to the resolved attachment point. So this samples a capsule of
+ * radius **one** and the caller's `scale` -- the body's footprint radius -- turns
+ * it into a body. Write world units here instead and every mark lands a
+ * body-radius-squared away from the thing it is meant to be clinging to.
+ *
+ * Taking the height in radii rather than in world units is what preserves a
+ * body's actual proportions once that multiply happens: a tall thin body gets a
+ * tall thin capsule.
+ *
+ * ## Sampled by area, which is the part that is easy to get wrong
+ *
+ * Picking "cap or side" with an even coin is the mistake that looks right: split
+ * evenly, the two hemispherical caps take half the marks whatever the body's
+ * proportions, so a tall body wears a hat and boots of paint and nothing on its
+ * middle. The side of the cylinder is `2*pi*L` and the two caps together are one
+ * sphere, `4*pi`, so the side takes `L / (L + 2)` of the draws and the shape is
+ * evenly stained however tall it is.
+ *
+ * `VfxRng`, never `Math.random`: the promise this system makes is that the same
+ * seed draws the same effect, and a surface sample is as much a part of the
+ * painting as a velocity is. Two clients watching one poisoned body have to see
+ * the same marks, and a harness that cannot reproduce a frame cannot measure one.
+ */
+export function sampleCapsuleSurface(
+  rng: VfxRng,
+  out: Float32Array,
+  at: number,
+  heightRadii: number,
+): void {
+  // The straight part, between the two cap centres. Clamped at zero so a body
+  // shorter than it is wide degenerates to a sphere rather than to nonsense.
+  const straight = Math.max(0, heightRadii - 2);
+  const theta = rng.range(0, Math.PI * 2);
+  if (rng.float() < straight / (straight + 2)) {
+    out[at] = Math.cos(theta);
+    out[at + 1] = 1 + rng.float() * straight;
+    out[at + 2] = Math.sin(theta);
+    return;
+  }
+  // Archimedes: a uniform height on [-1, 1] with a uniform angle is a uniform
+  // point on the unit sphere. The top half is hung off the upper cap centre and
+  // the bottom half off the lower one, which is exactly what makes the two
+  // hemispheres meet the cylinder without a seam.
+  const y = rng.range(-1, 1);
+  const ring = Math.sqrt(Math.max(0, 1 - y * y));
+  out[at] = Math.cos(theta) * ring;
+  out[at + 1] = (y >= 0 ? 1 + straight : 1) + y;
+  out[at + 2] = Math.sin(theta) * ring;
+}
+

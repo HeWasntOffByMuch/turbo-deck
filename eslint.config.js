@@ -134,6 +134,9 @@ const PURE_RENDER = [
   'src/render/iso3d/detail-texture.test.ts',
   'src/render/iso3d/surface-detail.ts',
   'src/render/iso3d/surface-detail.test.ts',
+  // The grid the prop field batches by (spec 195), out of `props.ts` in spec 211
+  // so the editor's pure half can ask where a region is without importing three.
+  'src/render/iso3d/prop-regions.ts',
   'src/render/iso3d/world/appearance.ts',
   // What a monster's rig is built with (spec 152) -- the drawn half of an enemy,
   // beside the file that says which rig draws it. Pure for the reason the rest
@@ -142,7 +145,7 @@ const PURE_RENDER = [
   'src/render/iso3d/world/monster-look.ts',
   'src/render/iso3d/world/cast.ts',
   'src/render/iso3d/world/intent.ts',
-  'src/render/iso3d/world/key-actions.ts',
+  'src/render/iso3d/world/control-actions.ts',
   'src/render/iso3d/world/interpolate.ts',
   'src/render/iso3d/world/pixel-font.ts',
   'src/render/iso3d/world/spawner-overlay.ts',
@@ -151,6 +154,12 @@ const PURE_RENDER = [
   // is what lets "a burst is one chunk" be replayed in Node rather than counted
   // by eye in a fight nobody can repeat.
   'src/render/iso3d/world/health-bar.ts',
+  // A shape laid on the ground rather than over it (spec 153). Where the
+  // vertices of an indicator go is arithmetic over a heightfield, and the
+  // heightfield is an argument -- which is what lets "every vertex sits the
+  // lift above the ground under it" be asserted against a hillside in Node,
+  // rather than judged by walking a cursor up one in a browser.
+  'src/render/iso3d/world/ground-decal.ts',
   // Touch gesture recognition (spec 093). A tap is a fact about a sequence of
   // timed samples -- the timestamps are passed in on the sample rather than read
   // from a clock here, which is exactly what lets the rules be replayed in Node
@@ -182,6 +191,29 @@ const PURE_RENDER = [
   // slot twice.
   'src/render/iso3d/world/trade-model.ts',
   'src/render/iso3d/world/ui-routing.ts',
+  // The mini HUD's view-model (spec 190). The one file that reads a replicated
+  // body and the status table out to the plain rows `src/ui/` is allowed to
+  // hold -- and, more to the point, the file that makes the corner panel and
+  // the mark over the same body two readings of one list rather than two.
+  'src/render/iso3d/world/selection.ts',
+  // A conversation in progress (spec 246). The controller that owns both the
+  // text reveal and the vocal events it triggers -- so which letter appears
+  // when, which of them speak, and what skipping does to the ones that have not
+  // yet, are all answerable in Node against a recording sink. Every acceptance
+  // criterion the procedural-dialogue handoff states is a claim about this file
+  // and `render/audio/dialogue-voice.ts`, and the alternative to asserting them
+  // is somebody listening.
+  'src/render/iso3d/world/dialogue.ts',
+  // What joins a conversation to the server's answer, the audio, the bubble and
+  // the camera (spec 246). Pure of three.js and of the DOM -- it is handed the
+  // bodies and answers what to draw -- which is what lets "every way a
+  // conversation can end arrives as one event" be a test rather than a claim.
+  'src/render/iso3d/world/dialogue-driver.ts',
+  // The action bar's view-model (spec 190). The bar moved onto the interface
+  // canvas, so what a slot draws -- its wedge, its badge, why it is lit -- is a
+  // mapping from replicated facts to plain rows, and a mapping is checked in
+  // Node rather than photographed.
+  'src/render/iso3d/world/action-bar-model.ts',
   // The interface's tree, its windows and what they are handed (spec 131). The
   // whole mount except the canvas, kept pure for one specific reason: mounting
   // an interface over the sim gets the same assertion animation got -- the same
@@ -203,6 +235,15 @@ const PURE_RENDER = [
   'src/render/iso3d/world/unit-driver.ts',
   'src/render/iso3d/world/unit-lod.ts',
   'src/render/iso3d/world/vfx-wire.ts',
+  // The audio wire and its two drivers (spec 229), beside `vfx-wire.ts` and for
+  // the reason its header gives: it is handed plain facts and answers what to
+  // play, so it has nothing it *could* call. `audio-driver.ts` takes the engine
+  // as an interface, which is what lets the whole audio layer be driven in Node
+  // against a recorder -- the same argument `unit-driver.ts` makes about taking
+  // a snapshot rather than the `GameClient`.
+  'src/render/iso3d/world/audio-wire.ts',
+  'src/render/iso3d/world/audio-driver.ts',
+  'src/render/iso3d/world/footsteps.ts',
   'src/render/iso3d/world/auras.ts',
   'src/render/iso3d/studio/image-check.ts',
   'src/render/iso3d/studio/image-check.test.ts',
@@ -230,6 +271,39 @@ const PURE_RENDER = [
   'src/render/iso3d/studio/vfx-frame.ts',
   'src/render/iso3d/studio/vfx-panels.test.ts',
   'src/render/iso3d/studio/panels.test.ts',
+  // The audio framework's pure half (spec 229). Everything under
+  // `src/render/audio/` **except** `engine.ts`, which owns the one
+  // `AudioContext` in the game and would fail on `performance` and
+  // `Math.random` the moment it were listed here -- which is the split working
+  // rather than an exemption. `src/ui/render/canvas2d.ts` is the other side of
+  // the same line one layer up.
+  //
+  // What being here buys: a name, a level, a pitch spread and a world point are
+  // arithmetic, and arithmetic that decides what a fight sounds like should be
+  // checkable in Node. `variants.ts` in particular takes its randomness as an
+  // argument precisely so "a footstep never repeats immediately" is a property a
+  // test can pin rather than something true in the three cases somebody tried.
+  'src/render/audio/sink.ts',
+  'src/render/audio/events.ts',
+  'src/render/audio/events.test.ts',
+  'src/render/audio/catalog.ts',
+  'src/render/audio/catalog.test.ts',
+  'src/render/audio/variants.ts',
+  'src/render/audio/variants.test.ts',
+  'src/render/audio/mix.ts',
+  'src/render/audio/mix.test.ts',
+  // Where a source file ends up once it is baked (spec 229). Pure string
+  // arithmetic, and the one place that rule lives -- the bake writing the file,
+  // the dev server deciding where an import may land, and the SFX tab predicting
+  // the URL it will have all read it. Two answers there is an import that lands
+  // somewhere the tab cannot then find.
+  'src/render/audio/paths.ts',
+  'src/render/audio/paths.test.ts',
+  // The SFX tab's pure half (spec 229), beside `studio/vfx-fields.ts` and for
+  // its reason: what a row *is*, what an edit *means* and what the document
+  // *says* are answerable in Node, and the DOM over them is not.
+  'src/render/iso3d/sfx/model.ts',
+  'src/render/iso3d/sfx/model.test.ts',
   // The VFX core (spec 118). Every decision an effect makes is arithmetic --
   // emission, integration, collision, curves, the budget -- and the promise the
   // whole system rests on is that the same seed draws the same thing, which is
@@ -262,9 +336,25 @@ const PURE_RENDER = [
   'src/render/iso3d/vfx/*.test.ts',
   'src/render/iso3d/editor/brush.ts',
   'src/render/iso3d/editor/camera.ts',
+  // Which ground the editor meshes and which it lets go of (spec 212). The keep
+  // rule's claim is that no camera position lets one pass drop what the next
+  // asks for, which is a statement about every position rather than the one
+  // somebody dragged to -- so it is asserted in Node.
+  'src/render/iso3d/editor/ground-residency.ts',
+  // Which prop regions the editor still owes and in what order (spec 211). The
+  // field is built deferred and drained a few regions a frame, so this is the
+  // arithmetic that decides what a person sees next -- checkable in Node rather
+  // than by opening the tab and watching the trees arrive.
+  'src/render/iso3d/editor/prop-residency.ts',
   'src/render/iso3d/editor/history.ts',
   'src/render/iso3d/editor/markers.ts',
+  'src/render/iso3d/editor/paint.ts',
   'src/render/iso3d/editor/scatter.ts',
+  // Where a building goes and how big a drag makes it (specs 224/225). Pure for
+  // the reason the scatter beside it is, and one step further: the scatter is
+  // *seeded*, and this draws from nothing at all -- a press is a placement
+  // somebody decided, so the same press twice has to be the same prop twice.
+  'src/render/iso3d/editor/structure.ts',
   'src/render/iso3d/editor/*.test.ts',
 ];
 
@@ -277,6 +367,21 @@ const PURE_RENDER = [
  * covered the moment it exists, and the only way to opt out is to put it in
  * src/ui/render/, which is a visible decision rather than an omission.
  */
+/**
+ * The one editor test that has to draw (spec 225).
+ *
+ * `editor/*.test.ts` is in PURE_RENDER because every rule the editor's pure
+ * half states is meant to be assertable in Node, and that is worth keeping. The
+ * building preview's one load-bearing claim is the exception it cannot be: that
+ * a prefab built at the origin and moved by a group transform lands every
+ * vertex where `buildRegionInstances` would put it. That is a statement about
+ * three.js matrix composition and there is no way to make it without three.js.
+ *
+ * Named as one file rather than loosened to a glob, so the next editor test
+ * that wants a rendering library has to come here and say why.
+ */
+const EDITOR_DRAWING_TESTS = ['src/render/iso3d/editor/structure-ghost.test.ts'];
+
 const UI_PURE = ['src/ui/**/*.ts'];
 const UI_IMPURE = ['src/ui/render/canvas2d.ts'];
 /** The one bridge to the game's renderer: the 5x7 glyph table. See below. */
@@ -310,7 +415,18 @@ const NO_SIM = {
  * which would also match src/ui/render/, this framework's own backends.
  */
 const NO_GAME_RENDERER = {
-  group: ['**/render/iso3d/**', '**/render/cloth/**', '**/render/critters/**'],
+  group: [
+    '**/render/iso3d/**',
+    '**/render/cloth/**',
+    '**/render/critters/**',
+    // The audio framework (spec 229). `BusId` is a renderer type and `mix.ts`
+    // is the versioned store over it, deliberately *not* in `src/ui/input/`
+    // beside its three siblings for that reason -- so the fence has to name it,
+    // or the argument its header makes is honour-system. The options page takes
+    // the bus list as an argument instead, exactly as `DisplayScreen` takes the
+    // camera's zoom band.
+    '**/render/audio/**',
+  ],
   message:
     "src/ui/ is engine-independent. Only src/ui/text/font.ts may read the game's renderer, and only for the 5x7 glyph table.",
 };
@@ -360,7 +476,10 @@ export default tseslint.config(
   {
     // tools/ holds vendored third-party code (the pixeldudesmaker generator and
     // its libs), captured as-is — not ours to lint against the strict config.
-    ignores: ['dist/**', 'node_modules/**', 'tools/**'],
+    // `.claude/scratch/` is gitignored working files -- benches and one-off
+    // comparisons an agent wrote to answer a question. They are outside the
+    // tsconfig by design, so the type-aware rules cannot parse them at all.
+    ignores: ['dist/**', 'node_modules/**', 'tools/**', '.claude/scratch/**'],
   },
   js.configs.recommended,
   ...tseslint.configs.strict,
@@ -404,6 +523,43 @@ export default tseslint.config(
     },
   },
   {
+    // The client session (spec 202). Transport-agnostic and drawn by the
+    // renderer, never the reverse -- so it may not reach back into it.
+    //
+    // The rule it exists to hold is narrow and load-bearing:
+    // `MAP_CHUNK_REQUEST_RADIUS` bounds *where* a client may read, and it is
+    // checked server-side against the server's own position for that player
+    // precisely so a client cannot widen its own read window by lying (spec
+    // 072). A request window derived from something the camera knows -- the
+    // zoom above all, which since spec 202 is a player setting that can be
+    // pushed past the supported band -- would be that same hole reopened from
+    // the inside. There is nothing in `src/render/` this half needs, so the
+    // cheapest way to keep it that way is to make it impossible.
+    //
+    // Tests are exempt: `loot-wire.test.ts` and `status-wire.test.ts` compare a
+    // wire value against what the renderer makes of it, which is the one thing
+    // that genuinely wants both sides, and is the same licence
+    // `interest.test.ts` takes from the other direction.
+    files: ['src/server/client/**/*.ts'],
+    ignores: ['src/server/client/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              group: ['**/render', '**/render/**'],
+              message:
+                'The client session never imports the renderer. A request window derived from what the camera knows is the read-window guard reopened from the inside (spec 202).',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // src/shared/ is the bottom of the stack: PRNG, spatial hash, world extent.
     // It is imported by sim, cards and terrain, so it may not import them back.
     files: ['src/shared/**/*.ts'],
@@ -424,7 +580,45 @@ export default tseslint.config(
     },
   },
   {
+    // src/terrain/ decides things *about* files and never touches one: it splits
+    // and rejoins documents, names regions and computes identities, and
+    // `map-file.ts` on the server and `map-asset.ts` in the browser are what
+    // actually read bytes. That has been stated in `regions.ts` since spec 204
+    // and was honour-system until spec 220, where it cost a map.
+    //
+    // `writeSplit` decided which region files a save had made unreachable by
+    // comparing `path.join('r', name)` against `regionPath`'s `r/name`. A region
+    // path is a **key in a document** -- the manifest names it and both ends
+    // compare it as a string -- so joining one with the platform's separator
+    // agrees on POSIX, disagrees on Windows, and there put every region file in
+    // the map into the stale set: a manifest naming 224 regions over an empty
+    // directory, at the end of every editor save. CI is Linux, so nothing in the
+    // tree could see it.
+    //
+    // Tests are exempt: `partial-grow.test.ts` writes a real map to a temp
+    // directory, which is the one thing here that genuinely wants a filesystem.
+    files: ['src/terrain/**/*.ts'],
+    ignores: ['src/terrain/**/*.test.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          ...NO_RENDERING_LIBRARIES,
+          patterns: [
+            ...NO_RENDERING_LIBRARIES.patterns,
+            {
+              group: ['node:*'],
+              message:
+                'src/terrain/ reads no files and joins no paths. A region path is a key in a document, not a location on a disk — spelling one with path.join is the Windows bug spec 220 fixed.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     files: PURE_RENDER,
+    ignores: EDITOR_DRAWING_TESTS,
     rules: {
       'no-restricted-properties': ['error', ...NO_AMBIENT_RANDOMNESS],
       'no-restricted-globals': ['error', ...NO_WALL_CLOCK_OR_DOM],
@@ -432,12 +626,20 @@ export default tseslint.config(
     },
   },
   {
-    // Nothing in the Play tab branches on a raw key (spec 125).
+    // Nothing in the Play tab branches on a raw key or a raw button (specs 125,
+    // 189).
     //
     // `world/view.ts` is the one adapter: it asks the InputMap what actions a
-    // KeyboardEvent fires and acts on those, so every key there is rebindable.
-    // Anything else in this directory reading `.key` or comparing a `.code` is
-    // a decision the player cannot reach, which is the thing this phase removed.
+    // KeyboardEvent or a MouseEvent fires and acts on those, so every control
+    // there is rebindable. Anything else in this directory reading `.key` or
+    // `.button`, or comparing a `.code`, is a decision the player cannot reach,
+    // which is the thing these two phases removed.
+    //
+    // `button` is prophylactic exactly as `key` is -- view.ts is the only file
+    // here that ever read one, and it is in `ignores`. What the rule buys is that
+    // the next file to want the mouse has to go through the map, rather than
+    // rediscovering `if (event.button === 2)` and putting the primary verbs back
+    // out of the player's reach.
     //
     // The editor and the sandboxes are deliberately not covered: they are dev
     // surfaces, not player-facing input (docs/ui/00-architecture.md, decision 6).
@@ -451,6 +653,12 @@ export default tseslint.config(
           property: 'key',
           message:
             'Gameplay does not read raw keys. Ask the InputMap what actions fired (src/ui/input/), so the binding is one a player can change.',
+        },
+        {
+          object: 'event',
+          property: 'button',
+          message:
+            'Gameplay does not read raw mouse buttons. Ask the InputMap what actions fired (src/ui/input/), so the binding is one a player can change.',
         },
       ],
     },

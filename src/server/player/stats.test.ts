@@ -2,7 +2,22 @@ import { describe, expect, it } from 'vitest';
 import { MemoryDataStore } from '../state/memory-store.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES } from '../data/abilities.js';
-import { EMPTY_EQUIPMENT, emptyInventory, type PersistedPlayer } from '../state/types.js';
+import { ALL_ITEMS, itemById } from '../data/items.js';
+import {
+  attributeScalingBonus,
+  NO_GRADE_MODIFIERS,
+  NO_SCALING,
+  ScalingGrade,
+  UNARMED_DAMAGE,
+  UNARMED_SCALING,
+} from '../data/weapon-scaling.js';
+import {
+  EMPTY_EQUIPMENT,
+  emptyInventory,
+  type BaseStats,
+  type EffectiveStats,
+  type PersistedPlayer,
+} from '../state/types.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { CHARACTERS, type Character } from '../../sim/characters.js';
 import {
@@ -11,7 +26,14 @@ import {
   TURN_RATE_PER_AGILITY,
 } from '../../sim/constants.js';
 import { PlayerManager, STARTER_EQUIPMENT } from './player-manager.js';
-import { resolveAttackTiming, NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import {
+  MAX_ATTACK_SPEED_FACTOR,
+  MIN_ATTACK_SPEED_FACTOR,
+  NO_ATTACK_SPEED,
+  resolveAttackTiming,
+  type AttackTiming,
+} from '../sim/attack-timing.js';
+import { attackTimingFor } from '../sim/abilities.js';
 import {
   baseAttackTimeTicksFrom,
   BASE_ATTACK_TIME_TICKS,
@@ -45,17 +67,45 @@ function computeDelayWith(pct: number): number {
   ).intervalTicks;
 }
 
-/** The attack interval a set of effective stats resolves to, at base. */
-function intervalOf(stats: { readonly baseAttackTimeTicks: number }): number {
+/**
+ * The attack interval a set of effective stats resolves to.
+ *
+ * Takes the stats' own attack-speed inputs rather than `NO_ATTACK_SPEED`
+ * (spec 174). It used to hardcode the latter, which was harmless while nothing
+ * fed the three fields and would have quietly made every "this does not change
+ * the cadence" assertion below vacuous the moment something did.
+ */
+function intervalOf(stats: EffectiveStats): number {
   return resolveAttackTiming(
     {
       baseAttackTimeTicks: stats.baseAttackTimeTicks,
       baseAttackPointTicks: 1,
       baseAttackBackswingTicks: 0,
     },
-    NO_ATTACK_SPEED,
+    stats,
     SERVER_TICK_RATE,
   ).intervalTicks;
+}
+
+/**
+ * Every span of the basic attack these stats actually swing with (spec 174).
+ *
+ * Through `attackTimingFor` and the *equipped* weapon's ability, because the
+ * whole point of the feature is that one factor reaches the interval, the
+ * wind-up and the backswing together -- a helper that only returned the
+ * interval could not tell that apart from a cadence change.
+ */
+function timingOf(stats: EffectiveStats): AttackTiming {
+  const ability = abilityById(stats.basicAttackId);
+  if (!ability) throw new Error(`no such basic attack: ${stats.basicAttackId}`);
+  return attackTimingFor(ability, { stats });
+}
+
+/** The stats of a body holding `mainHand`, or of a bare one when absent. */
+function statsHolding(mainHand?: string): EffectiveStats {
+  return computeEffectiveStats(
+    player(mainHand ? { equipment: { ...EMPTY_EQUIPMENT, mainHand } } : {}),
+  );
 }
 
 function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
@@ -63,7 +113,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     id: 'p1',
     displayName: 'P1',
     baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-    skills: [],
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     coins: 0,
@@ -72,8 +122,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     currentZone: 'hearth',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 20,
     ...overrides,
@@ -115,14 +164,14 @@ describe('effective stats', () => {
 
   it('counts a skill once per level held', () => {
     // Deep Reserves is +25 health a level, and its gate is 10 Constitution --
-    // which the record has to actually meet, because `sanitizeSkills` drops a
+    // which the record has to actually meet, because `sanitizeSpecializations` drops a
     // skill whose attribute is not there and the levels would silently vanish.
     const held = { strength: 5, agility: 5, intelligence: 5, constitution: 10, perception: 5, wisdom: 5 };
     const one = computeEffectiveStats(
-      player({ baseStats: held, skills: [{ skillId: 'con.deepReserves', level: 1 }] }),
+      player({ baseStats: held, specializations: [{ specializationId: 'con.deepReserves', tier: 1 }] }),
     );
     const three = computeEffectiveStats(
-      player({ baseStats: held, skills: [{ skillId: 'con.deepReserves', level: 3 }] }),
+      player({ baseStats: held, specializations: [{ specializationId: 'con.deepReserves', tier: 3 }] }),
     );
     const bare = computeEffectiveStats(player({ baseStats: held }));
     expect(one.maxHealth - bare.maxHealth).toBeCloseTo(25, 6);
@@ -132,7 +181,7 @@ describe('effective stats', () => {
   it('ignores an item or skill that has left the tables rather than failing to log in', () => {
     const stats = computeEffectiveStats(
       player({
-        skills: [{ skillId: 'deleted.skill', level: 4 }],
+        specializations: [{ specializationId: 'deleted.skill', tier: 4 }],
         equipment: { ...EMPTY_EQUIPMENT, mainHand: 'deleted.item' },
       }),
     );
@@ -213,7 +262,13 @@ describe('effective stats', () => {
       player({ baseStats: { strength: 5, agility: 500, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 } }),
     );
     expect(quick.baseAttackTimeTicks).toBe(slow.baseAttackTimeTicks);
+    // All three inputs, not just the flat one (spec 174). Now that content can
+    // move them, "no attribute reaches the cadence" has to be checked against
+    // every field the factor is built from.
     expect(quick.attackSpeed).toBe(slow.attackSpeed);
+    expect(quick.attackSpeedMultiplier).toBe(slow.attackSpeedMultiplier);
+    expect(quick.attackSpeedSlowMultiplier).toBe(slow.attackSpeedSlowMultiplier);
+    expect(intervalOf(quick)).toBe(intervalOf(slow));
     // Unhooked from cadence rather than deleted: it still does everything else
     // it did, which is what makes this a change of meaning and not a nerf.
     expect(quick.armor).toBeGreaterThan(slow.armor);
@@ -234,18 +289,117 @@ describe('effective stats', () => {
     expect(quick.traits.backswingScale).toBeLessThan(slow.traits.backswingScale);
   });
 
-  it('does not let the weapon change the attack cadence (spec 091)', () => {
-    const bare = computeEffectiveStats(player());
-    const delayWith = (mainHand: string): number =>
-      intervalOf(computeEffectiveStats(player({ equipment: { ...EMPTY_EQUIPMENT, mainHand } })));
-
-    // The cadence is a property of attacking, not of what is held: a bow, a
-    // maul and a bare hand are all on the same clock. `attackSpeedPct` still
-    // exists and still means percent faster -- nothing reads it for *this*.
-    for (const weapon of ['sword.keen', 'stars.weighted', 'maul.iron', 'bow.hunting']) {
-      expect(delayWith(weapon), weapon).toBe(intervalOf(bare));
+  it('lets the weapon set the attack speed again (spec 174)', () => {
+    // Spec 091 took this off the weapon and spec 144 rebuilt the socket without
+    // plugging anything into it, which left four rows in `data/items.ts`
+    // authoring an `attackSpeedPct` that reached nothing at all. The factor is
+    // exactly what the row says, in the bucket its sign belongs to.
+    for (const [weapon, pct] of [
+      ['sword.keen', 0.15],
+      ['stars.weighted', 0.2],
+      ['maul.iron', -0.2],
+      ['bow.hunting', -0.1],
+    ] as const) {
+      const stats = statsHolding(weapon);
+      expect(timingOf(stats).factor, weapon).toBeCloseTo(1 + pct, 9);
+      expect(stats.attackSpeedMultiplier, weapon).toBeCloseTo(pct > 0 ? 1 + pct : 1, 9);
+      expect(stats.attackSpeedSlowMultiplier, weapon).toBeCloseTo(pct < 0 ? 1 + pct : 1, 9);
+      // The BAT itself never moves -- the factor divides it (spec 144).
+      expect(stats.baseAttackTimeTicks, weapon).toBe(BASE_ATTACK_TIME_TICKS);
     }
+
+    // And a weapon that says nothing about speed still says nothing.
+    const bare = computeEffectiveStats(player());
     expect(bare.baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
+    for (const quiet of ['sword.worn', 'staff.emberwood']) {
+      expect(timingOf(statsHolding(quiet)).factor, quiet).toBe(1);
+      expect(intervalOf(statsHolding(quiet)), quiet).toBe(intervalOf(bare));
+    }
+  });
+
+  it('scales the wind-up and the recovery with the interval, not just the wait (spec 174)', () => {
+    // The property the whole feature rests on. A faster weapon that only came
+    // round again sooner would make the *pause* the stat rather than the blow,
+    // which is the opposite of what spec 065 built the commitment around.
+    const bare = timingOf(computeEffectiveStats(player()));
+
+    const keen = timingOf(statsHolding('sword.keen'));
+    expect(keen.intervalTicks).toBeLessThan(bare.intervalTicks);
+    expect(keen.attackPointTicks).toBeLessThan(bare.attackPointTicks);
+    expect(keen.backswingTicks).toBeLessThan(bare.backswingTicks);
+    expect(keen.attacksPerSecond).toBeGreaterThan(bare.attacksPerSecond);
+
+    const maul = timingOf(statsHolding('maul.iron'));
+    expect(maul.intervalTicks).toBeGreaterThan(bare.intervalTicks);
+    expect(maul.attackPointTicks).toBeGreaterThan(bare.attackPointTicks);
+    expect(maul.backswingTicks).toBeGreaterThan(bare.backswingTicks);
+
+    // All three divided by the *same* factor, each landing on its own tick.
+    // Stated as the rounding rather than as a tolerance, because "within one
+    // tick" is also true of two spans scaled by two different numbers.
+    for (const timing of [keen, maul]) {
+      expect(timing.intervalTicks).toBe(Math.round(bare.intervalTicks / timing.factor));
+      expect(timing.attackPointTicks).toBe(Math.round(bare.attackPointTicks / timing.factor));
+      expect(timing.backswingTicks).toBe(Math.round(bare.backswingTicks / timing.factor));
+    }
+
+    // The numbers spec 174 quotes, so a retune of the four rows shows up here
+    // as a diff rather than as a table that silently stopped describing them.
+    expect(keen.intervalTicks).toBe(63);
+    expect(keen.attackPointTicks).toBe(26);
+    expect(keen.backswingTicks).toBe(21);
+    expect(maul.intervalTicks).toBe(90);
+    expect(maul.attackPointTicks).toBe(38);
+    expect(maul.backswingTicks).toBe(30);
+  });
+
+  it('leaves a non-basic ability alone however fast the weapon is (spec 174)', () => {
+    // `attackTimingFor` passes NO_ATTACK_SPEED for anything without
+    // `basicAttack`, so a quick weapon buys a quick swing and never a quick
+    // heavy blow: a heavy ability is slow because it is slow (spec 144).
+    const heavy = ALL_ABILITIES.find((ability) => !ability.basicAttack && ability.windupTicks > 0);
+    if (!heavy) throw new Error('the table needs a non-basic ability for this to mean anything');
+    const bare = attackTimingFor(heavy, { stats: computeEffectiveStats(player()) });
+    const quick = attackTimingFor(heavy, { stats: statsHolding('stars.weighted') });
+    expect(quick.factor).toBe(1);
+    expect(quick.attackPointTicks).toBe(bare.attackPointTicks);
+    expect(quick.intervalTicks).toBe(bare.intervalTicks);
+  });
+
+  it('keeps every row in the table on a sane factor (spec 174)', () => {
+    // Swept over the real table rather than over one weapon, because this is
+    // the check that a row added tomorrow cannot put a NaN on the wire or an
+    // absurd number past the clamp. The three inputs are replicated, so a
+    // non-finite one is a client dividing durations by it.
+    for (const item of ALL_ITEMS) {
+      if (!item.slot) continue;
+      const stats = computeEffectiveStats(
+        player({ equipment: { ...EMPTY_EQUIPMENT, [item.slot]: item.id } }),
+      );
+      for (const value of [
+        stats.attackSpeed,
+        stats.attackSpeedMultiplier,
+        stats.attackSpeedSlowMultiplier,
+      ]) {
+        expect(Number.isFinite(value), item.id).toBe(true);
+      }
+      const factor = timingOf(stats).factor;
+      expect(factor, item.id).toBeGreaterThanOrEqual(MIN_ATTACK_SPEED_FACTOR);
+      expect(factor, item.id).toBeLessThanOrEqual(MAX_ATTACK_SPEED_FACTOR);
+      // Only a row that says something about speed moves it.
+      expect(factor === 1, item.id).toBe((item.modifiers.attackSpeedPct ?? 0) === 0);
+    }
+  });
+
+  it('lets a flat cooldown modifier reach the base attack time (spec 174)', () => {
+    // `baseAttackTimeTicksFrom` exists to take this argument and every caller
+    // was passing a literal 0, which is what let the whole socket sit unread.
+    // Nothing authors the field yet, so the check is on the function.
+    expect(baseAttackTimeTicksFrom(30)).toBe(BASE_ATTACK_TIME_TICKS + 30);
+    expect(baseAttackTimeTicksFrom(-30)).toBe(BASE_ATTACK_TIME_TICKS - 30);
+    // And it changes the interval without touching the swing, which is the
+    // difference between it and `attackSpeedPct`.
+    expect(computeEffectiveStats(player()).baseAttackTimeTicks).toBe(BASE_ATTACK_TIME_TICKS);
   });
 
   it('does not let a skill change it either (specs 091, 147)', () => {
@@ -257,7 +411,7 @@ describe('effective stats', () => {
     const trained = computeEffectiveStats(
       player({
         baseStats: { strength: 5, agility: 10, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-        skills: [{ skillId: 'agi.quickRecovery', level: 3 }],
+        specializations: [{ specializationId: 'agi.quickRecovery', tier: 3 }],
       }),
     );
     expect(intervalOf(trained)).toBe(intervalOf(bare));
@@ -367,6 +521,31 @@ describe('the attack the main hand names', () => {
     );
   });
 
+  it("is the staff's ember shot for the staff (spec 218)", () => {
+    const stats = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood' } }),
+    );
+    expect(stats.basicAttackId).toBe('ranged.ember');
+    // And it out-reaches the swing it replaces by a long way, which is the
+    // whole of what picking the staff up now changes about attacking.
+    expect(abilityById('ranged.ember')?.range ?? 0).toBeGreaterThan(
+      abilityById('melee.slash')?.range ?? 0,
+    );
+  });
+
+  it('leaves no weapon carrying a melee reach it can never use (spec 218)', () => {
+    // `attackRange` describes what a *swing* would have reached, and a weapon
+    // that names a shot never swings: the reach `autoAttack` chases to and
+    // `startCast` gates on is `abilityById(basicAttackId).range`. The staff
+    // carried 20 of it for a hundred and forty specs with nothing reading it,
+    // which is exactly the shape of thing this codebase deletes rather than
+    // documents. The bow and the stars have never carried one.
+    for (const item of ALL_ITEMS) {
+      if (item.basicAttackId === undefined) continue;
+      expect(item.modifiers.attackRange, item.id).toBeUndefined();
+    }
+  });
+
   it('falls back rather than leaving a character unable to attack', () => {
     const stats = computeEffectiveStats(
       player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'deleted.item' } }),
@@ -387,6 +566,12 @@ describe('persistence never carries a derived stat', () => {
     expect(armed?.stats.maxHealth).toBeGreaterThan(session.stats.maxHealth);
     expect(armed?.stats.armor).toBeGreaterThan(session.stats.armor);
 
+    // Flushed explicitly, because an equip marks the player dirty rather than
+    // writing inline (spec 226). What this test is about is the *shape* of what
+    // reaches the store, and that is unchanged -- so the flush is a line of
+    // setup rather than a change to the property being asserted.
+    await manager.persistNow(['p1']);
+
     const saved = await store.loadPlayer('p1');
     expect(saved).not.toBeNull();
     // The record holds ids and levels only -- no maxHealth, no attackDamage.
@@ -400,6 +585,10 @@ describe('persistence never carries a derived stat', () => {
         'equipment',
         'experience',
         'facing',
+        // A live count like health, not a derived stat (spec 156): the flask is
+        // insurance a character is carrying, and a relog that handed it back
+        // full would make logging out the cheapest heal in the game.
+        'fallbackCharges',
         'health',
         'id',
         // Ids and counts, like `equipment` -- an item's numbers stay in the
@@ -408,11 +597,13 @@ describe('persistence never carries a derived stat', () => {
         'level',
         'position',
         'resource',
-        'skills',
-        // The attribute budget (spec 147). Still nothing derived, which is the
-        // property this test exists to hold rather than the length of the list.
-        'unspentAttributePoints',
-        'unspentSkillPoints',
+        // Ids and tiers, like `equipment` -- what a tier is *worth* stays in
+        // the table and is re-read on every recalculation (spec 244).
+        'specializations',
+        // The one progression budget (specs 147, 244). Still nothing derived,
+        // which is the property this test exists to hold rather than the length
+        // of the list.
+        'unspentProgressionPoints',
       ].sort(),
     );
     expect(saved?.equipment.head).toBe('helm.leather');
@@ -455,7 +646,162 @@ describe('persistence never carries a derived stat', () => {
     const before = await manager.login('p1', 'P1');
     const after = await manager.grantExperience('p1', 10000);
     expect(after?.record.level).toBeGreaterThan(before.record.level);
-    expect(after?.record.unspentSkillPoints).toBeGreaterThan(before.record.unspentSkillPoints);
+    expect(after?.record.unspentProgressionPoints).toBeGreaterThan(before.record.unspentProgressionPoints);
     expect(after?.stats.maxHealth).toBeGreaterThan(before.stats.maxHealth);
   });
 });
+
+/**
+ * Weapon scaling reaching the Damage row (spec 216).
+ *
+ * The end of the pipeline `data/weapon-scaling.test.ts` starts: real rows out of
+ * `data/items.ts`, through `computeEffectiveStats`, against the number a blow is
+ * actually multiplied by. The unit file owns the ladder's arithmetic; this owns
+ * the claim that a weapon's letters decide which attribute a *character* gets
+ * paid for.
+ */
+describe('what the weapon scales with', () => {
+  const holding = (mainHand: string, attributes: Partial<BaseStats> = {}): EffectiveStats =>
+    computeEffectiveStats(
+      player({
+        equipment: { ...EMPTY_EQUIPMENT, mainHand },
+        baseStats: {
+          strength: 5,
+          agility: 5,
+          intelligence: 5,
+          constitution: 5,
+          perception: 5,
+          wisdom: 5,
+          ...attributes,
+        },
+        // High enough that no row's level gate refuses, since an equip this test
+        // never performs is not what is being asked about.
+        level: 20,
+      }),
+    );
+
+  it('pays a Strength build for the maul and an Agility build for the stars', () => {
+    const brawn = { strength: 40 };
+    const speed = { agility: 40 };
+    expect(holding('maul.iron', brawn).attackDamage).toBeGreaterThan(holding('maul.iron', speed).attackDamage);
+    expect(holding('stars.weighted', speed).attackDamage).toBeGreaterThan(
+      holding('stars.weighted', brawn).attackDamage,
+    );
+  });
+
+  it('pays an Intelligence build for swinging the staff -- which it never did before', () => {
+    expect(holding('staff.emberwood', { intelligence: 40 }).attackDamage).toBeGreaterThan(
+      holding('staff.emberwood', { strength: 40 }).attackDamage,
+    );
+  });
+
+  it('gives a weapon that does not scale with Strength no Strength damage at all', () => {
+    // The stars are `- / S / -`, so Strength moves nothing about them.
+    const lean = holding('stars.weighted', { strength: 5 }).attackDamage;
+    const brawny = holding('stars.weighted', { strength: 55 }).attackDamage;
+    expect(brawny).toBeCloseTo(lean, 9);
+  });
+
+  it('takes a contribution from both letters of a two-attribute weapon', () => {
+    const flat = holding('sword.keen').attackDamage;
+    expect(holding('sword.keen', { strength: 30 }).attackDamage).toBeGreaterThan(flat);
+    expect(holding('sword.keen', { agility: 30 }).attackDamage).toBeGreaterThan(flat);
+  });
+
+  it('leaves Constitution, Wisdom and Perception out of it entirely', () => {
+    const plain = holding('sword.keen').attackDamage;
+    expect(holding('sword.keen', { constitution: 55 }).attackDamage).toBeCloseTo(plain, 9);
+    expect(holding('sword.keen', { wisdom: 55 }).attackDamage).toBeCloseTo(plain, 9);
+    expect(holding('sword.keen', { perception: 55 }).attackDamage).toBeCloseTo(plain, 9);
+  });
+
+  it('still deals its weapon\'s damage when the weapon scales with nothing', () => {
+    // No shipped row scales with nothing, so the rule is asked of the arithmetic
+    // directly: with every grade at None the attribute term is zero and what is
+    // left is the weapon's own range.
+    expect(
+      attributeScalingBonus({ strength: 60, agility: 60, intelligence: 60 }, NO_SCALING),
+    ).toBe(0);
+  });
+
+  it('scales an empty hand with the unarmed default rather than with nothing', () => {
+    const stats = computeEffectiveStats(player({ baseStats: { ...HIGH_STRENGTH } }));
+    expect(stats.weaponScaling).toEqual(UNARMED_SCALING);
+    // Above the bare range, because Strength was spent and the unarmed default
+    // scales with it. Fists are still worse than anything in the table.
+    expect(stats.weaponDamageMax).toBeGreaterThan(UNARMED_DAMAGE.max);
+    expect(stats.weaponDamageMax).toBeLessThan(holding('maul.iron', { strength: 40 }).weaponDamageMax);
+  });
+
+  it('resolves the held weapon\'s grades onto the stats, once', () => {
+    expect(holding('maul.iron').weaponScaling).toEqual(itemById('maul.iron')?.scaling);
+    expect(holding('bow.hunting').weaponScaling).toEqual(itemById('bow.hunting')?.scaling);
+  });
+
+  it('re-resolves when the weapon is swapped, against the same modifiers', () => {
+    const wearing = (mainHand: string): EffectiveStats =>
+      computeEffectiveStats(
+        player({
+          equipment: { ...EMPTY_EQUIPMENT, mainHand, trinket: 'trinket.precision' },
+          level: 20,
+        }),
+      );
+    // `+1 Agility Scaling` lands on whatever is held, and on nothing else.
+    expect(wearing('sword.worn').weaponScaling.agility).toBe(ScalingGrade.C);
+    expect(wearing('maul.iron').weaponScaling.agility).toBe(ScalingGrade.E);
+    expect(wearing('maul.iron').weaponScaling.strength).toBe(ScalingGrade.S);
+  });
+
+  // The property the tooltip depends on: an amulet may not write into the row.
+  it('leaves the weapon definition untouched by a modifier', () => {
+    const before = { ...(itemById('sword.worn')?.scaling ?? NO_SCALING) };
+    computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, mainHand: 'sword.worn', trinket: 'trinket.runic' }, level: 20 }),
+    );
+    expect(itemById('sword.worn')?.scaling).toEqual(before);
+  });
+
+  it('publishes the summed grade steps, so the bag can resolve what it is hovering', () => {
+    const wearing = computeEffectiveStats(
+      player({ equipment: { ...EMPTY_EQUIPMENT, trinket: 'trinket.runic' }, level: 20 }),
+    );
+    expect(wearing.scalingModifiers).toEqual({ strength: -1, agility: 0, intelligence: 2 });
+    expect(computeEffectiveStats(player()).scalingModifiers).toEqual(NO_GRADE_MODIFIERS);
+  });
+
+  it('raises the damage when a modifier raises the grade, and not otherwise', () => {
+    const magus = { strength: 5, agility: 5, intelligence: 40, constitution: 5, perception: 5, wisdom: 5 };
+    const plain = computeEffectiveStats(
+      player({ baseStats: magus, equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood' }, level: 20 }),
+    );
+    const pendant = computeEffectiveStats(
+      player({
+        baseStats: magus,
+        equipment: { ...EMPTY_EQUIPMENT, mainHand: 'staff.emberwood', trinket: 'trinket.runic' },
+        level: 20,
+      }),
+    );
+    // The staff's Intelligence is already `A`, so `+2` clamps at `S` -- one step
+    // of real movement, which is what the damage has to show.
+    expect(pendant.weaponScaling.intelligence).toBe(ScalingGrade.S);
+    expect(pendant.attackDamage).toBeGreaterThan(plain.attackDamage);
+  });
+
+  it('every weapon in the table says what it scales with', () => {
+    // The migration, as a gate: a weapon row added later without scaling is a
+    // weapon that quietly gets none, and this is where that is noticed.
+    for (const item of ALL_ITEMS) {
+      if (item.slot !== 'mainHand') continue;
+      expect(item.scaling, item.id).toBeDefined();
+    }
+  });
+});
+
+const HIGH_STRENGTH: BaseStats = {
+  strength: 40,
+  agility: 5,
+  intelligence: 5,
+  constitution: 5,
+  perception: 5,
+  wisdom: 5,
+};

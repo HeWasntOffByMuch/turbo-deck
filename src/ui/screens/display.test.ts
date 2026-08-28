@@ -11,12 +11,14 @@ import { describe, expect, it } from 'vitest';
 import { DisplayScreen } from './display.js';
 import { OptionsScreen } from './options.js';
 import { Column } from '../core/containers.js';
-import { SCALE_CHOICES, type ScaleChoice } from '../input/display-store.js';
+import { DEFAULT_SHOW_FPS, SCALE_CHOICES, type ScaleChoice } from '../input/display-store.js';
 import { THEME } from '../theme/theme.js';
 import { Checkbox } from '../widgets/checkbox.js';
 
+const ZOOM = { min: 200, max: 1400, supported: 420 };
+
 function screen(): DisplayScreen {
-  return new DisplayScreen({ theme: THEME });
+  return new DisplayScreen({ theme: THEME, zoom: ZOOM });
 }
 
 /** Every checkbox on the page, in the order it was built. */
@@ -40,7 +42,11 @@ function boxFor(display: DisplayScreen, choice: ScaleChoice): Checkbox {
 
 describe('the display page', () => {
   it('offers every choice the store knows about', () => {
-    expect(boxes(screen()).map((box) => box.name)).toEqual(
+    // The scale row only. The page has grown a second, unrelated checkbox since
+    // spec 165, and the thing being asserted here is that the exclusive group
+    // matches the store -- not how many checkboxes the page happens to have.
+    const scaleBoxes = boxes(screen()).filter((box) => box.name.startsWith('scale:'));
+    expect(scaleBoxes.map((box) => box.name)).toEqual(
       SCALE_CHOICES.map((choice) => `scale:${String(choice)}`),
     );
   });
@@ -70,10 +76,13 @@ describe('the display page', () => {
   });
 
   it('ticks exactly one box, whatever is chosen', () => {
+    // The scale row only: the page carries an unrelated checkbox now, and what
+    // is being asserted is that the exclusive group is exclusive.
     const display = screen();
     for (const choice of SCALE_CHOICES) {
       display.setChoice(choice);
-      expect(boxes(display).filter((box) => box.checked).length).toBe(1);
+      const scaleBoxes = boxes(display).filter((box) => box.name.startsWith('scale:'));
+      expect(scaleBoxes.filter((box) => box.checked).length).toBe(1);
     }
   });
 
@@ -111,6 +120,55 @@ describe('the options window', () => {
   });
 });
 
+describe('the frame-rate switch (spec 165)', () => {
+  it('opens on, because a readout nobody can find is a readout nobody uses', () => {
+    const display = screen();
+    expect(display.frameRateShown).toBe(DEFAULT_SHOW_FPS);
+    expect(display.frameRateShown).toBe(true);
+    expect(fpsBox(display).checked).toBe(true);
+  });
+
+  it('emits the wish and decides nothing itself', () => {
+    // The rule every screen since phase 4 follows, and the reason this page has
+    // no state that can disagree with what is drawn: the tick does not move
+    // until the mount calls back.
+    const display = screen();
+    const asked: boolean[] = [];
+    display.onShowFpsChosen = (show) => asked.push(show);
+
+    const box = fpsBox(display);
+    box.setChecked(false);
+    box.onToggle?.(false);
+    expect(asked).toEqual([false]);
+    // Neither the page's state nor its tick moved: the mount has not answered.
+    expect(display.frameRateShown).toBe(true);
+    expect(box.checked).toBe(true);
+
+    display.setShowFps(false);
+    expect(display.frameRateShown).toBe(false);
+    expect(fpsBox(display).checked).toBe(false);
+  });
+
+  it('asks to turn back on once it is off', () => {
+    const display = screen();
+    const asked: boolean[] = [];
+    display.onShowFpsChosen = (show) => asked.push(show);
+    display.setShowFps(false);
+
+    const box = fpsBox(display);
+    box.setChecked(true);
+    box.onToggle?.(true);
+    expect(asked).toEqual([true]);
+    expect(box.checked).toBe(false);
+  });
+});
+
+function fpsBox(display: DisplayScreen): Checkbox {
+  const box = boxes(display).find((candidate) => candidate.name === 'showFps');
+  if (!box) throw new Error('no frame-rate checkbox');
+  return box;
+}
+
 /** Every label's text, without importing the widget's private shape. */
 function labelTexts(display: DisplayScreen): string[] {
   const found: string[] = [];
@@ -124,3 +182,60 @@ function labelTexts(display: DisplayScreen): string[] {
   walk(display);
   return found;
 }
+
+describe('the widest-zoom row (spec 202)', () => {
+  /** Every label on the page, in the order it was built. */
+  function labels(display: DisplayScreen): { text: string; visible: boolean }[] {
+    const found: { text: string; visible: boolean }[] = [];
+    const walk = (widget: { children: readonly unknown[] }): void => {
+      for (const child of widget.children) {
+        const w = child as { text?: string; visible: boolean; children: readonly unknown[] };
+        if (typeof w.text === 'string') found.push({ text: w.text, visible: w.visible });
+        walk(w);
+      }
+    };
+    walk(display as unknown as { children: readonly unknown[] });
+    return found;
+  }
+
+  const shown = (display: DisplayScreen): string[] =>
+    labels(display)
+      .filter((l) => l.visible && l.text !== '')
+      .map((l) => l.text);
+
+  it('opens on the supported cap and says nothing about dev settings', () => {
+    const display = screen();
+    expect(display.maxZoomChoice).toBe('supported');
+    expect(shown(display)).toContain(`Widest zoom: ${String(ZOOM.supported)}`);
+    expect(shown(display).some((t) => t.includes('Dev setting'))).toBe(false);
+  });
+
+  it('warns, and says what degrades, once past the supported view', () => {
+    const display = screen();
+    display.setMaxZoom(900);
+    const text = shown(display).join(' ');
+    expect(text).toContain('Widest zoom: 900');
+    // The symptom by name. A warning that only says "unsupported" leaves the
+    // holes looking like a bug.
+    expect(text).toContain('Dev setting');
+    expect(text).toContain('terrain and units may not load');
+  });
+
+  it('takes the warning away again on the way back into the band', () => {
+    const display = screen();
+    display.setMaxZoom(900);
+    display.setMaxZoom('supported');
+    expect(shown(display).some((t) => t.includes('Dev setting'))).toBe(false);
+  });
+
+  it('does not decide anything: the row moves only when the mount answers', () => {
+    // The contract every screen since phase 4 holds, and the reason this page
+    // has no state that can disagree with the frame being drawn.
+    const display = screen();
+    const asked: unknown[] = [];
+    display.onMaxZoomChosen = (choice) => asked.push(choice);
+    display.setMaxZoom(700);
+    expect(display.maxZoomChoice).toBe(700);
+    expect(asked).toEqual([]);
+  });
+});

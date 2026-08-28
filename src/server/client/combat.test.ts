@@ -23,7 +23,9 @@ import type { EffectiveStats } from '../state/types.js';
 import { advanceCast, mayCast, modelledResource, steerFacing, type Mirror } from './combat.js';
 import { GameClient } from './game-client.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
+import { EntityActivity } from '../net/protocol.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -41,12 +43,20 @@ const STATS: EffectiveStats = {
   maxResource: 20,
   resourceRegen: 0.1,
   basicAttackId: 'melee.slash',
+  skillAbilityIds: [],
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
+
+/** Direction-targeted and costed, so no range gate stands between it and a test. */
+const SPELL = 'skill.arcLash';
 
 function mirror(overrides: Partial<Mirror> = {}): Mirror {
   return {
     position: { x: 0, y: 0 },
+    // A full flask, so a test that does not care about the health economy is
+    // never refused for the reason it was not testing (spec 156).
+    fallbackCharges: NEUTRAL_TRAITS.fallbackCharges,
     // Pointing east, which is where every aim below is, so a cast starts winding
     // up rather than turning unless a test asks for a turn.
     facing: 0,
@@ -57,6 +67,10 @@ function mirror(overrides: Partial<Mirror> = {}): Mirror {
     stats: STATS,
     poise: 0,
     shield: 0,
+    // Not staggered, which is what every test here that is not about the
+    // stagger assumes (spec 173).
+    activity: 0,
+    activityUntilTick: 0,
     ...overrides,
   };
 }
@@ -97,15 +111,21 @@ describe('the gate, asked of a mirror', () => {
   });
 
   it('will not predict an ability the mirror cannot afford, and will one it can', () => {
-    const bolt = abilityById('bolt.arcane');
-    expect(bolt?.cost).toBeGreaterThan(0);
-    const cost = bolt?.cost ?? 0;
+    // A *skill*, because since spec 237 nothing else costs resource: the rows
+    // that were castable by anybody and priced -- the bolts, the quake, the
+    // heavy blow -- were spec 062's demo set and went with it. So the mirror
+    // has to be carrying it, exactly as the server requires.
+    const spell = abilityById(SPELL);
+    expect(spell?.cost).toBeGreaterThan(0);
+    const cost = spell?.cost ?? 0;
+    const carrying = (resource: number): Mirror =>
+      mirror({ resource, stats: { ...STATS, skillAbilityIds: [SPELL] } });
 
-    expect(mayCast(mirror({ resource: cost - 0.5 }), 'bolt.arcane', EAST, 100, 100)).toEqual({
+    expect(mayCast(carrying(cost - 0.5), SPELL, EAST, 100, 100)).toEqual({
       ok: false,
       reason: 'notEnoughResource',
     });
-    const afforded = mayCast(mirror({ resource: cost }), 'bolt.arcane', EAST, 100, 100);
+    const afforded = mayCast(carrying(cost), SPELL, EAST, 100, 100);
     expect(afforded.ok).toBe(true);
     if (afforded.ok) expect(afforded.cost).toBe(cost);
   });
@@ -234,6 +254,28 @@ describe('the local facing', () => {
     const cast = { targetX: 0, targetY: -100 } as CastState;
     const committed = steerFacing(0, cast, { x: 0, y: 0 }, Math.PI / 2, 540, SERVER_TICK_RATE);
     expect(committed).toBeLessThan(0);
+  });
+
+  /**
+   * The same order `resolveFacing` reads them in on the server (spec 172), which
+   * is the whole requirement: this client never adopts the server's facing after
+   * the first seed, so a rule that differed here would leave the local player
+   * watching a body that turns at a different time from everybody else's copy of
+   * it.
+   */
+  it('turns toward a pending drop, under a cast and over the input', () => {
+    const aim = { x: 0, y: -100 };
+    const dropping = steerFacing(0, null, { x: 0, y: 0 }, Math.PI / 2, 540, SERVER_TICK_RATE, aim);
+    expect(dropping).toBeLessThan(0);
+
+    // A committed blow still owns the body.
+    const cast = { targetX: 0, targetY: 100 } as CastState;
+    const casting = steerFacing(0, cast, { x: 0, y: 0 }, 0, 540, SERVER_TICK_RATE, aim);
+    expect(casting).toBeGreaterThan(0);
+
+    // And an aim on top of the body is not a direction: the heading stands.
+    const here = steerFacing(1.25, null, { x: 4, y: 4 }, 1.25, 540, SERVER_TICK_RATE, { x: 4, y: 4 });
+    expect(here).toBeCloseTo(1.25, 9);
   });
 });
 
@@ -435,5 +477,43 @@ describe('what the player sees, the moment they press', () => {
     const entity = server.world.entities.get(client.view().selfEntityId);
     // And the server's own number is what it settles on.
     expect(client.view().resource).toBeCloseTo(entity?.resource ?? -1, 1);
+  });
+});
+
+describe('a staggered mirror refuses the same thing the server does (spec 173)', () => {
+  it('refuses a cast while the break holds', () => {
+    // The mirror used to hardcode `activity: 0`, which would light a button the
+    // server is about to refuse -- and a stagger is the one refusal the player
+    // did not cause, so it is the one they are least ready for.
+    const decision = mayCast(
+      mirror({ activity: EntityActivity.Stunned, activityUntilTick: 40 }),
+      'melee.slash',
+      EAST,
+      10,
+      10,
+    );
+    expect(decision.ok).toBe(false);
+    if (!decision.ok) expect(decision.reason).toBe('staggered');
+  });
+
+  it('takes it again on the tick the window ends', () => {
+    // The gate is `tick < activityUntilTick`, the same comparison the sim's own
+    // `expireActivity` uses, so the two cannot disagree about the last tick.
+    const staggered = mirror({ activity: EntityActivity.Stunned, activityUntilTick: 40 });
+    const inside = mayCast(staggered, 'melee.slash', EAST, 39, 39);
+    const outside = mayCast(staggered, 'melee.slash', EAST, 40, 40);
+    expect(inside.ok).toBe(false);
+    expect(outside.ok).toBe(true);
+  });
+
+  it('is not fooled by a stale window on an idle body', () => {
+    const decision = mayCast(
+      mirror({ activity: EntityActivity.Idle, activityUntilTick: 999 }),
+      'melee.slash',
+      EAST,
+      10,
+      10,
+    );
+    expect(decision.ok).toBe(true);
   });
 });

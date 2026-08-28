@@ -13,19 +13,18 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
 
-import { parseMap } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
-import { MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS } from '../config.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { GameClient } from './game-client.js';
 import { chunksToDocument } from './map-rebuild.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const text = readFileSync('maps/arena.json', 'utf8');
-const doc = parseMap(text);
+const shipped = loadMapFile();
+const doc = shipped.doc;
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -36,7 +35,7 @@ interface Harness {
 }
 
 function harness(): Harness {
-  const built = buildWorldFromMap(doc, text);
+  const built = buildWorldFromMap(doc, shipped.mapId);
   const transport = new LoopbackTransport();
   const server = new GameServer({ transport, built });
   server.liveConfig.set('spawnRateMultiplier', 0);
@@ -109,8 +108,11 @@ describe('the map arrives', () => {
     if (!ground) throw new Error('the map announced no layers');
 
     const extent = map.info.cellSize * map.info.chunkCells;
-    const atCx = Math.floor((self.x - ground.bounds.minX) / extent);
-    const atCz = Math.floor((self.y - ground.bounds.minZ) / extent);
+    // Chunk indices are measured from the layer's origin, not from
+    // `bounds.min` -- the two move independently once the map has grown west
+    // or north of where it was first baked (spec 083).
+    const atCx = Math.floor((self.x - ground.origin.x) / extent);
+    const atCz = Math.floor((self.y - ground.origin.z) / extent);
 
     const held = new Set(map.chunks.map((c) => `${c.cx},${c.cz}`));
     const announced = new Set(ground.coords.map((c) => `${c.cx},${c.cz}`));
@@ -137,12 +139,12 @@ describe('both ends agree on the ground', () => {
     // else -- no access to the server's document.
     const rebuilt = loadMap(chunksToDocument(map.info, map.chunks));
 
-    const bounds = ground.bounds;
     const extent = map.info.cellSize * map.info.chunkCells;
     let sampled = 0;
     for (const chunk of map.chunks) {
-      const originX = bounds.minX + chunk.cx * extent;
-      const originZ = bounds.minZ + chunk.cz * extent;
+      // Measured from origin, not `bounds.min` -- see the comment above.
+      const originX = ground.origin.x + chunk.cx * extent;
+      const originZ = ground.origin.z + chunk.cz * extent;
       for (let i = 1; i <= 7; i++) {
         const x = originX + (extent * i) / 8;
         const z = originZ + (extent * i) / 8;
@@ -169,8 +171,9 @@ describe('the range check on a live server', () => {
     const ground = test.built.index.layers[0];
     if (!self || !ground) throw new Error('no player or no layer');
     const extent = test.built.index.chunkExtent;
-    const atCx = Math.floor((self.x - ground.bounds.minX) / extent);
-    const atCz = Math.floor((self.y - ground.bounds.minZ) / extent);
+    // Measured from origin, not `bounds.min` -- see the comment above.
+    const atCx = Math.floor((self.x - ground.origin.x) / extent);
+    const atCz = Math.floor((self.y - ground.origin.z) / extent);
 
     // A chunk that exists but is outside the window from where the player is.
     const far = coords.find(
@@ -182,5 +185,45 @@ describe('the range check on a live server', () => {
     const after = client.view().map;
     if (!after) throw new Error('no map on the view');
     expect(after.chunks.some((c) => c.cx === far.cx && c.cz === far.cz)).toBe(false);
+  });
+});
+
+describe('a client that forgets behind it (spec 208)', () => {
+  it('drops the ground it walked away from, and picks it up again', async () => {
+    // The integration half of spec 208: `eviction.test.ts` drives the cache and
+    // the store directly, and this is the three lines in `GameClient` that make
+    // any of it happen. Without them a session holds every chunk it ever saw.
+    const test = harness();
+    const client = await connect(test);
+    await run(test, client, 120);
+
+    const home = client.view().self;
+    if (!home) throw new Error('no player');
+    const first = client.view().map;
+    if (!first) throw new Error('no map');
+    const startedWith = first.chunks.length;
+    expect(startedWith).toBeGreaterThan(0);
+    const homeKey = `${String(first.chunks[0]?.cx ?? 0)},${String(first.chunks[0]?.cz ?? 0)}`;
+
+    // Well past the keep radius, so everything here is out of range of there.
+    const extent = doc.grid.cellSize * doc.grid.chunkCells;
+    const far = MAP_CHUNK_KEEP_RADIUS + MAP_CHUNK_REQUEST_RADIUS + 2;
+    expect(test.server.teleport('p1', home.x + far * extent, home.y)).toBe(true);
+    await run(test, client, 120);
+
+    const after = client.view().map;
+    if (!after) throw new Error('no map');
+    // Bounded, and specifically no longer holding where it started.
+    expect(after.chunks.length).toBeLessThanOrEqual((2 * MAP_CHUNK_KEEP_RADIUS + 1) ** 2);
+    const keys = new Set(after.chunks.map((c) => `${String(c.cx)},${String(c.cz)}`));
+    expect(keys.has(homeKey)).toBe(false);
+
+    // And walking back brings it back, which is what makes eviction a cache
+    // rather than a loss.
+    expect(test.server.teleport('p1', home.x, home.y)).toBe(true);
+    await run(test, client, 120);
+    const back = client.view().map;
+    if (!back) throw new Error('no map');
+    expect(new Set(back.chunks.map((c) => `${String(c.cx)},${String(c.cz)}`)).has(homeKey)).toBe(true);
   });
 });

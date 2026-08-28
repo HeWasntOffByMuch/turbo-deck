@@ -20,17 +20,19 @@ import { ZoneManager, type ZoneDefinition } from '../world/zone-manager.js';
 import { EntityKind, EntityActivity, EntityField } from '../net/protocol.js';
 import { RESUME_GRACE_TICKS } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
+import { isFriendlyMonster } from '../data/monsters.js';
 import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { isHostile } from '../sim/world.js';
 import { PLAYER_BODY_RADIUS } from '../sim/world.js';
 import type { ServerEntity } from '../sim/types.js';
 import type { ReplicatedEntity } from './replica.js';
-import { buildWorldFromMap } from '../world/build.js';
-import { parseMap } from '../../terrain/map.js';
-import { readFileSync } from 'node:fs';
+import { buildWorldFromMap, type BuiltMapWorld } from '../world/build.js';
+import { findPath, navGridFor } from '../../sim/pathfinding.js';
+import { SERVER_PLAYER_RADIUS } from '../config.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
 /** The real arena, for the one test that needs the map's spawn points. */
-const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
+const shippedMap = loadMapFile();
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -46,6 +48,8 @@ interface Harness {
   readonly ana: GameClient;
   readonly ben: GameClient;
   readonly tick: (times?: number) => Promise<void>;
+  /** Present only with `monsters: true`; what the sim is routing against. */
+  readonly built?: BuiltMapWorld;
 }
 
 async function harness(
@@ -55,7 +59,7 @@ async function harness(
   const transport = new LoopbackTransport();
   // The real map only when monsters are wanted: it is what carries the spawn
   // points, and building it is a second of work no other test here needs.
-  const built = options.monsters === true ? buildWorldFromMap(parseMap(mapText), mapText) : undefined;
+  const built = options.monsters === true ? buildWorldFromMap(shippedMap.doc, shippedMap.mapId) : undefined;
   const server = new GameServer({
     seed: 5,
     transport,
@@ -83,7 +87,7 @@ async function harness(
     }
   };
   await tick(6);
-  return { server, ana, ben, tick };
+  return { server, ana, ben, tick, ...(built ? { built } : {}) };
 }
 
 function seen(client: GameClient, id: number): ReplicatedEntity | undefined {
@@ -134,17 +138,55 @@ describe('two players in one world', () => {
   it('fight the same monster, and both see it take the damage', async () => {
     // Monsters on, so there is something to fight. Wilderness everywhere, so
     // the spawn multiplier is not zeroed by a safe zone.
-    const { server, ana, ben, tick } = await harness(HOSTILE_ZONES, { monsters: true });
+    const { server, ana, ben, tick, built } = await harness(HOSTILE_ZONES, { monsters: true });
+    if (!built) throw new Error('monsters: true should have built the real world');
+
+    // The sim's own router, over the same colliders and the same ground the
+    // server is walking bodies through -- `GameServer` takes `built.sampler` as
+    // its terrain, so this is the grid the server itself would route on.
+    const grid = navGridFor(SERVER_PLAYER_RADIUS, built.colliders, built.sampler);
+    const from = (): { x: number; y: number } => {
+      const at = server.playerManager.get('ana')?.record.position;
+      if (!at) throw new Error('ana should exist');
+      return { x: at.x, y: at.y };
+    };
 
     // Find a monster both of them can see, and walk Ana onto it. Walked rather
     // than teleported for the reason trade-wire.test.ts gives: a tick mirrors
     // authoritative positions back, so a hand-written record does not stick.
+    //
+    // *Nearest reachable and fightable*, rather than whichever the replica lists
+    // first. Entity ids are handed out in the map's authored spawner order, so
+    // "first" is a fact about how somebody wrote a JSON file: on the shipped map
+    // it is a spider 1,421 units away across a wood, and the test spent its whole
+    // budget pressed against a tree. Both filters are load-bearing -- the map's
+    // nearest monsters are five sheep in a fenced pasture that is a disconnected
+    // nav component, so `findPath` refuses them, which is correct and is exactly
+    // what "reachable" is here to skip. This is about two replicas agreeing on
+    // one body's health; getting to that body is not the claim.
     let monsterId = -1;
     for (let i = 0; i < 600 && monsterId < 0; i++) {
       await tick();
-      const mine = ana.view().entities.filter((e) => e.kind === EntityKind.Monster);
       const theirs = new Set(ben.view().entities.filter((e) => e.kind === EntityKind.Monster).map((e) => e.id));
-      const shared = mine.find((e) => theirs.has(e.id) && e.health > 0);
+      const me = from();
+      const shared = ana
+        .view()
+        .entities.filter(
+          (e) =>
+            e.kind === EntityKind.Monster &&
+            e.health > 0 &&
+            theirs.has(e.id) &&
+            // Not a friendly body (spec 246). `Monster` is the kind an NPC has
+            // -- everything about a merchant except the fighting is a monster --
+            // so without this the nearest shared body is the one standing in the
+            // town square, and the whole budget goes on swinging at something
+            // `isHostile` refuses. Which is the feature working; this test is
+            // about two replicas agreeing on a body's health, and it needs one
+            // whose health can move.
+            !isFriendlyMonster(e.typeId),
+        )
+        .sort((a, b) => Math.hypot(a.x - me.x, a.y - me.y) - Math.hypot(b.x - me.x, b.y - me.y))
+        .find((e) => findPath(grid, me, { x: e.x, y: e.y }).length > 0);
       if (shared) monsterId = shared.id;
     }
     expect(monsterId).toBeGreaterThan(0);
@@ -173,6 +215,11 @@ describe('two players in one world', () => {
       }
     };
 
+    // Walked along a route rather than straight at it, for the reason
+    // `bench-walk.ts` states: a raw held direction walks into the first tree it
+    // meets and stops there. Re-planned on a cadence because the target moves.
+    let path: readonly { readonly x: number; readonly y: number }[] = [];
+    let leg = 0;
     let landed = false;
     for (let i = 0; i < 1800 && !landed; i++) {
       const me = server.playerManager.get('ana')?.record.position;
@@ -182,7 +229,21 @@ describe('two players in one world', () => {
       const dy = it.y - me.y;
       const away = Math.hypot(dx, dy);
       if (away > 40) {
-        ana.sendInput({ moveX: dx / away, moveY: dy / away, facing: Math.atan2(dy, dx), buttons: 0 });
+        if (i % 60 === 0) {
+          path = findPath(grid, { x: me.x, y: me.y }, { x: it.x, y: it.y });
+          leg = 0;
+        }
+        for (;;) {
+          const next = path[leg];
+          if (!next || Math.hypot(next.x - me.x, next.y - me.y) >= 30) break;
+          leg++;
+        }
+        // Past the last waypoint, or no route this tick: straight at the body.
+        const aim = path[leg] ?? { x: it.x, y: it.y };
+        const ax = aim.x - me.x;
+        const ay = aim.y - me.y;
+        const reach = Math.hypot(ax, ay) || 1;
+        ana.sendInput({ moveX: ax / reach, moveY: ay / reach, facing: Math.atan2(dy, dx), buttons: 0 });
       } else {
         ana.useAbility(BASIC_ATTACK_ID, it.x, it.y, monsterId, 22);
       }
@@ -271,7 +332,11 @@ describe('a death is readable from outside', () => {
     // Ana can see that Ben is down, not merely that he stopped moving.
     expect(seen(ana, benId)?.activity).toBe(EntityActivity.Dead);
 
-    // And back up again, as the same body.
+    // And back up again, as the same body -- once he asks. Nothing puts a dead
+    // player back on their feet on a timer since spec 164, which is what makes
+    // the respawn button a button; what this test is about is that the *other*
+    // player watches both halves happen to one entity id.
+    ben.respawn();
     let alive = false;
     for (let i = 0; i < 600 && !alive; i++) {
       await tick();

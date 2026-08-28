@@ -42,6 +42,38 @@ export interface StatusState {
    * give the exposure of whoever happens to be standing there.
    */
   readonly magnitude: number;
+  /**
+   * Who put it there. 0 for a status nobody is responsible for (spec 190).
+   *
+   * The same argument {@link magnitude} makes at the top of this file, carried
+   * one step further. A status can now *kill* -- an affliction pulses damage
+   * long after the body that applied it has walked away -- and `died.killerId`
+   * has nowhere else to come from. Without it a poison's kill pays nobody: no
+   * restoration, no assists, no loot roll, no metrics.
+   *
+   * It follows the **magnitude** rather than the clock. Whoever's application
+   * set the number that is actually doing the damage owns the kill, so the
+   * credit and the number always describe the same body -- where "the last one
+   * to touch it" would let a weak applier take a strong one's poison while
+   * leaving the strong one's damage on it.
+   */
+  readonly sourceId: number;
+  /**
+   * The tick it **first** landed, kept across a refresh (spec 190).
+   *
+   * What makes a periodic effect a comparison rather than a stored countdown,
+   * in exactly the shape this file already commits to for expiry: a pulse is
+   * `elapsed % interval === 0` and nothing has to be written per tick.
+   *
+   * Kept across a refresh, which is three properties at once. Refreshing a
+   * poison cannot **delay** its next pulse, so a body inside a spammed refresh
+   * still takes damage rather than being ticked forever into the future; it
+   * cannot **double-tick** it either; and an escalating affliction measures its
+   * ramp from when it got in, so "worse the longer it goes on" survives being
+   * topped up. A fresh application -- one landing on a body whose last one had
+   * already run out -- resets it, because that is a new affliction.
+   */
+  readonly appliedAtTick: number;
 }
 
 export type Statuses = Readonly<Record<string, StatusState>>;
@@ -76,9 +108,89 @@ export const StatusId = {
   PerfectExitSpent: 'perfectExit.spent',
   /** Agility: this body took a hit recently, which is what Perfect Exit reads. */
   RecentlyHit: 'recentlyHit',
+  /**
+   * Perception+Wisdom: what a Tactician's exposure leaves for everyone else.
+   *
+   * Declared here with the rest of the well-known ids rather than beside its one
+   * writer in `sim/blow.ts` (spec 240). It is a status id, this is where status
+   * ids are, and leaving it over there meant `data/status-semantics.ts` -- which
+   * has to classify every id that can exist -- could only reach it by importing
+   * `blow.ts`, which imports the classification. `blow.ts` re-exports the name
+   * it has always used.
+   */
+  ExposedBounty: 'exposed.bounty',
+  /**
+   * This body has traded a blow lately -- given or taken (spec 156).
+   *
+   * Longer than {@link RecentlyHit} and deliberately a different thing. That one
+   * is a *reaction window*, half a second wide, and Perfect Exit and the untouched
+   * -kill bonus both need it to be exactly that narrow. This one is "are you in a
+   * fight", and the only thing that reads it is resting: gating a refill on the
+   * reaction window would let a player refill between a ravager's swings, which is
+   * two and a quarter seconds apart.
+   */
+  InCombat: 'inCombat',
+  /**
+   * Movement taken away for a while (spec 188).
+   *
+   * The first status in this map that is **applied by a skill rather than
+   * earned by a build**, and it is in this map rather than in a debuff system
+   * of its own for exactly the reason the file's header gives: one map with one
+   * expiry rule is one place to get right. `magnitude` is the fraction of move
+   * speed removed, captured when it was applied -- so a slow is worth what the
+   * skill that landed it was worth, which is the same rule `Exposed` already
+   * follows and the reason `magnitude` exists at all.
+   *
+   * It does not stack: a second slow refreshes the clock and keeps the stronger
+   * magnitude, which is what {@link applyStatus} already does with a
+   * `maxStacks` of 1. Two slows that added would be a root, and a root is a
+   * different mechanic that should have to say so.
+   */
+  Slowed: 'slowed',
+
+  // --- the afflictions (spec 190) ---------------------------------------
+  //
+  // Seven ids and no seventh mechanic: each names a row in
+  // `data/damage-over-time.ts`, and what separates them is a rate, a cadence,
+  // a length and at most one rider that reaches into a system this game
+  // already has. They are in this map rather than in an affliction map of
+  // their own for the reason the file's header gives -- one map with one
+  // expiry rule is one place to get right -- and they are the first entries
+  // here whose `sourceId` is load-bearing, because they can kill.
+
+  /** Strong and short. Immediate pressure, and it spreads. */
+  Burn: 'burn',
+  /** Moderate, and worse while the body keeps moving or keeps swinging. */
+  Bleed: 'bleed',
+  /** Weak and long. Attrition: it stacks, and every dart refreshes the clock. */
+  Poison: 'poison',
+  /** Moderate, and it takes the guard and the armour with it. */
+  Corrosion: 'corrosion',
+  /** Bursts rather than a trickle, and it arcs to whoever is standing near. */
+  Shock: 'shock',
+  /** Escalating. Harmless at first and dangerous if it is left on. */
+  Frostbite: 'frostbite',
+  /** Slow, and nothing heals properly while it is running. */
+  Decay: 'decay',
+
+  // --- the aura fields (spec 223) ----------------------------------------
+  //
+  // The first status here that is about the ground around its carrier rather
+  // than about the body carrying it. It is a **boon** and it is in this map
+  // rather than in a field system of its own for the reason the header gives:
+  // what a field *is* is a timed state on a body, and one map with one expiry
+  // rule is one place to get right. What it does to everybody else is a row in
+  // `data/aura-fields.ts`, read by `sim/aura-field.ts` and by nothing else.
+  //
+  // It carries no magnitude. A field's reach and its affliction are the row's,
+  // whole -- the same rule spec 190 keeps for an affliction -- so there is no
+  // number here that could depend on who cast it.
+
+  /** Fire underfoot: whoever stands near the carrier catches, briefly. */
+  ScorchedEarth: 'scorchedEarth',
 } as const;
 
-/** Adaptation is per ability id: `adapt:bolt.arcane`. */
+/** Adaptation is per ability id: `adapt:skill.poisonDart`. */
 export const ADAPTED_PREFIX = 'adapt:';
 
 export function adaptedKey(abilityId: string): string {
@@ -117,16 +229,29 @@ export function applyStatus(
   id: string,
   tick: number,
   durationTicks: number,
-  options: { readonly maxStacks?: number; readonly magnitude?: number } = {},
+  options: {
+    readonly maxStacks?: number;
+    readonly magnitude?: number;
+    /** Who is responsible for this, for a status that can kill (spec 190). */
+    readonly sourceId?: number;
+  } = {},
 ): Statuses {
   if (!Number.isFinite(durationTicks) || durationTicks <= 0) return statuses;
   const maxStacks = Math.max(1, Math.floor(options.maxStacks ?? 1));
   const magnitude = options.magnitude ?? 0;
+  const sourceId = options.sourceId ?? 0;
   const held = statusOf(statuses, id, tick);
+  // The source follows the magnitude, not the clock (spec 190): whoever's
+  // application set the number doing the damage owns what that damage does.
+  // Ties go to whoever was already there, so the rule is total and stable.
+  const takesOver = !held || magnitude > held.magnitude;
   const next: StatusState = {
     expiresAtTick: tick + Math.round(durationTicks),
     stacks: Math.min(maxStacks, (held?.stacks ?? 0) + 1),
     magnitude: held ? Math.max(held.magnitude, magnitude) : magnitude,
+    sourceId: takesOver ? sourceId : held.sourceId,
+    // Kept, so a refresh moves the deadline and nothing else -- see the field.
+    appliedAtTick: held ? held.appliedAtTick : tick,
   };
   return { ...statuses, [id]: next };
 }
@@ -183,4 +308,25 @@ export function adaptationAgainst(
   const held = statusOf(statuses, adaptedKey(abilityId), tick);
   if (!held) return 0;
   return Math.min(cap, held.stacks * perStack);
+}
+
+/**
+ * What this body's move speed is multiplied by right now (spec 188).
+ *
+ * The one place a slow is *read*, so `resolveMovement` and the client's mirror
+ * of it cannot disagree about what "40% slower" means. Returns 1 for a body
+ * carrying nothing, which is the common case and the reason this is a lookup
+ * rather than a field on `EffectiveStats`: a slow is a timed state and
+ * `EffectiveStats` is derived on equip, so a slow living there would either be
+ * recomputed per tick or go stale.
+ *
+ * Floored rather than allowed to reach zero. A slow that stopped a body dead
+ * would be a root wearing a slow's name, and the two want different counters --
+ * so the floor is stated here, once, and a row that authors a magnitude past it
+ * gets a hard slow rather than a root.
+ */
+export function moveScaleOf(statuses: Statuses, tick: number, floor: number): number {
+  const slowed = statusOf(statuses, StatusId.Slowed, tick);
+  if (!slowed) return 1;
+  return Math.max(floor, 1 - Math.max(0, slowed.magnitude));
 }

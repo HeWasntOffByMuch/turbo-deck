@@ -17,16 +17,16 @@ import { PlayerManager } from './player-manager.js';
 import {
   allocateAttributePoint,
   ATTRIBUTE_HARD_CAP,
-  ATTRIBUTE_POINTS_PER_LEVEL,
+  PROGRESSION_POINTS_PER_LEVEL,
   normalizeBaseStats,
   pointsEarned,
   pointsSpent,
-  reconcileAttributePoints,
-  respecAttributes,
+  reconcileProgressionPoints,
+  respecProgression,
   RESPEC_COST,
   startingBaseStats,
   STARTING_ATTRIBUTE,
-  STARTING_ATTRIBUTE_POINTS,
+  STARTING_PROGRESSION_POINTS,
   validateAttributeSpend,
 } from './attributes.js';
 
@@ -35,7 +35,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     id: 'p1',
     displayName: 'P1',
     baseStats: startingBaseStats(),
-    skills: [],
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -43,8 +43,7 @@ function player(overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
     currentZone: 'wilds',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 5,
+    unspentProgressionPoints: 5,
     health: 100,
     resource: 20,
     coins: 100,
@@ -59,7 +58,7 @@ describe('allocating a point', () => {
     expect(after.ok).toBe(true);
     if (!after.ok) return;
     expect(after.player.baseStats.perception).toBe(STARTING_ATTRIBUTE + 1);
-    expect(after.player.unspentAttributePoints).toBe(before.unspentAttributePoints - 1);
+    expect(after.player.unspentProgressionPoints).toBe(before.unspentProgressionPoints - 1);
     // And nothing else moved.
     for (const key of ATTRIBUTE_KEYS) {
       if (key === 'perception') continue;
@@ -78,7 +77,7 @@ describe('allocating a point', () => {
   });
 
   it('refuses when the budget is empty', () => {
-    const result = allocateAttributePoint(player({ unspentAttributePoints: 0 }), 'strength');
+    const result = allocateAttributePoint(player({ unspentProgressionPoints: 0 }), 'strength');
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('noPointsAvailable');
   });
@@ -103,7 +102,7 @@ describe('allocating a point', () => {
       for (const budget of [0, 1, 3]) {
         for (const value of [STARTING_ATTRIBUTE, ATTRIBUTE_HARD_CAP - 1, ATTRIBUTE_HARD_CAP]) {
           const record = player({
-            unspentAttributePoints: budget,
+            unspentProgressionPoints: budget,
             baseStats: { ...startingBaseStats(), [key]: value },
           });
           expect(validateAttributeSpend(record, key).ok).toBe(
@@ -119,18 +118,18 @@ describe('respec', () => {
   it('returns every allocated point and charges the fee', () => {
     const built = player({
       coins: 100,
-      unspentAttributePoints: 0,
+      unspentProgressionPoints: 0,
       baseStats: { ...startingBaseStats(), strength: 30, perception: 20 },
     });
     const spent = pointsSpent(built.baseStats);
     expect(spent).toBe(25 + 15);
 
-    const result = respecAttributes(built);
+    const result = respecProgression(built);
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.refunded).toBe(spent);
     expect(result.player.baseStats).toEqual(startingBaseStats());
-    expect(result.player.unspentAttributePoints).toBe(spent);
+    expect(result.player.unspentProgressionPoints).toBe(spent);
     expect(result.player.coins).toBe(100 - RESPEC_COST);
   });
 
@@ -140,14 +139,14 @@ describe('respec', () => {
       baseStats: { ...startingBaseStats(), strength: 30 },
     });
     const snapshot = JSON.stringify(poor);
-    const result = respecAttributes(poor);
+    const result = respecProgression(poor);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('cannotAfford');
     expect(JSON.stringify(poor)).toBe(snapshot);
   });
 
   it('is refused when there is nothing to hand back', () => {
-    const result = respecAttributes(player({ coins: 1000 }));
+    const result = respecProgression(player({ coins: 1000 }));
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.reason).toBe('nothingToRespec');
   });
@@ -155,46 +154,46 @@ describe('respec', () => {
   it('conserves points: spend, respec, and the budget is what it was', () => {
     // The property that matters more than any of the above. A respec that
     // returned one point too many is a slow-motion duplication bug.
-    let record = player({ unspentAttributePoints: 12, coins: 500 });
-    const budget = record.unspentAttributePoints;
+    let record = player({ unspentProgressionPoints: 12, coins: 500 });
+    const budget = record.unspentProgressionPoints;
     for (const key of ['strength', 'agility', 'wisdom', 'wisdom'] as const) {
       const step = allocateAttributePoint(record, key);
       expect(step.ok).toBe(true);
       if (step.ok) record = step.player;
     }
-    expect(record.unspentAttributePoints + pointsSpent(record.baseStats)).toBe(budget);
+    expect(record.unspentProgressionPoints + pointsSpent(record.baseStats)).toBe(budget);
 
-    const back = respecAttributes(record);
+    const back = respecProgression(record);
     expect(back.ok).toBe(true);
-    if (back.ok) expect(back.player.unspentAttributePoints).toBe(budget);
+    if (back.ok) expect(back.player.unspentProgressionPoints).toBe(budget);
   });
 });
 
 describe('the budget', () => {
   it('grows by a fixed amount per level', () => {
-    expect(pointsEarned(1)).toBe(STARTING_ATTRIBUTE_POINTS);
-    expect(pointsEarned(2)).toBe(STARTING_ATTRIBUTE_POINTS + ATTRIBUTE_POINTS_PER_LEVEL);
-    expect(pointsEarned(11)).toBe(STARTING_ATTRIBUTE_POINTS + ATTRIBUTE_POINTS_PER_LEVEL * 10);
+    expect(pointsEarned(1)).toBe(STARTING_PROGRESSION_POINTS);
+    expect(pointsEarned(2)).toBe(STARTING_PROGRESSION_POINTS + PROGRESSION_POINTS_PER_LEVEL);
+    expect(pointsEarned(11)).toBe(STARTING_PROGRESSION_POINTS + PROGRESSION_POINTS_PER_LEVEL * 10);
   });
 
   it('never grants more than the level has earned, however the save reads', () => {
     const fresh = startingBaseStats();
     // A save claiming a thousand spare points gets what its level says.
-    expect(reconcileAttributePoints(fresh, 1, 1000)).toBe(STARTING_ATTRIBUTE_POINTS);
-    expect(reconcileAttributePoints(fresh, 1, Number.NaN)).toBe(STARTING_ATTRIBUTE_POINTS);
-    expect(reconcileAttributePoints(fresh, 1, -5)).toBe(0);
+    expect(reconcileProgressionPoints(fresh, [], 1, 1000)).toBe(STARTING_PROGRESSION_POINTS);
+    expect(reconcileProgressionPoints(fresh, [], 1, Number.NaN)).toBe(STARTING_PROGRESSION_POINTS);
+    expect(reconcileProgressionPoints(fresh, [], 1, -5)).toBe(0);
   });
 
   it('subtracts what is already placed', () => {
     const built = { ...startingBaseStats(), strength: STARTING_ATTRIBUTE + 4 };
-    expect(reconcileAttributePoints(built, 1, undefined)).toBe(STARTING_ATTRIBUTE_POINTS - 4);
+    expect(reconcileProgressionPoints(built, [], 1, undefined)).toBe(STARTING_PROGRESSION_POINTS - 4);
   });
 
   it('leaves an over-allocated save with its allocation and no budget', () => {
     // Taking points off a character to satisfy an invariant is a worse failure
     // than a character being briefly over budget.
     const overspent = { ...startingBaseStats(), strength: 40 };
-    expect(reconcileAttributePoints(overspent, 1, 3)).toBe(0);
+    expect(reconcileProgressionPoints(overspent, [], 1, 3)).toBe(0);
     expect(pointsSpent(overspent)).toBe(40 - STARTING_ATTRIBUTE);
   });
 });
@@ -240,40 +239,42 @@ describe('a save from before the six attributes', () => {
     const store = new MemoryDataStore();
     const zones = new ZoneManager();
     const legacy = {
-      ...player({ level: 12, unspentSkillPoints: 3 }),
+      ...player({ level: 12, unspentProgressionPoints: 3 }),
       baseStats: { strength: 5, dexterity: 5, intelligence: 5, vitality: 5 },
       // What a pre-147 save actually holds: rows from the branch-locked tree
       // that no longer exists.
-      skills: [
-        { skillId: 'might.toughness', level: 3 },
-        { skillId: 'arcane.focus', level: 1 },
+      specializations: [
+        { specializationId: 'might.toughness', tier: 3 },
+        { specializationId: 'arcane.focus', tier: 1 },
       ],
     } as unknown as PersistedPlayer;
-    delete (legacy as unknown as Record<string, unknown>).unspentAttributePoints;
+    delete (legacy as unknown as Record<string, unknown>).unspentProgressionPoints;
     await store.savePlayer(legacy);
 
     const session = await new PlayerManager(store, zones).login('p1', 'P1');
-    expect(session.record.unspentAttributePoints).toBe(pointsEarned(12));
+    expect(session.record.unspentProgressionPoints).toBe(pointsEarned(12));
     expect(session.record.baseStats).toEqual(startingBaseStats());
     // The branch skills are gone, because the table no longer has them. Nobody
     // is left holding a skill that reaches nothing.
-    expect(session.record.skills).toEqual([]);
+    expect(session.record.specializations).toEqual([]);
   });
 });
 
 describe('levelling', () => {
-  it('grants both budgets, and they are separate', async () => {
+  it('grants the one pool, at the one schedule', async () => {
+    // Two budgets until spec 244, and this asserted they moved separately. One
+    // pool means one number, and the number is the two summed -- so a level is
+    // worth exactly what it always was.
     const store = new MemoryDataStore();
     const manager = new PlayerManager(store, new ZoneManager());
     const before = await manager.login('p1', 'P1');
-    const skillsBefore = before.record.unspentSkillPoints;
-    const attributesBefore = before.record.unspentAttributePoints;
+    const pool = before.record.unspentProgressionPoints;
+    expect(pool).toBe(STARTING_PROGRESSION_POINTS);
 
     // Enough for exactly one level.
     const after = await manager.grantExperience('p1', 50);
     expect(after?.record.level).toBe(2);
-    expect(after?.record.unspentSkillPoints).toBe(skillsBefore + 1);
-    expect(after?.record.unspentAttributePoints).toBe(attributesBefore + ATTRIBUTE_POINTS_PER_LEVEL);
+    expect(after?.record.unspentProgressionPoints).toBe(pool + PROGRESSION_POINTS_PER_LEVEL);
   });
 });
 
@@ -285,6 +286,11 @@ describe('the manager', () => {
 
     const ok = await manager.allocateAttribute('p1', 'constitution');
     expect(ok.ok).toBe(true);
+    // An allocation marks the player dirty rather than writing inline
+    // (spec 226): it neither creates nor destroys anything, so it rides the
+    // autosave. That it *reaches* storage is still the point of this test.
+    expect(manager.isDirty('p1')).toBe(true);
+    await manager.persistNow(['p1']);
     const saved = await store.loadPlayer('p1');
     expect(saved?.baseStats.constitution).toBe(STARTING_ATTRIBUTE + 1);
 
@@ -295,6 +301,7 @@ describe('the manager', () => {
 
     const bad = await manager.allocateAttribute('p1', 'luck');
     expect(bad.ok).toBe(false);
+    await manager.persistNow(['p1']);
     expect((await store.loadPlayer('p1'))?.baseStats.constitution).toBe(STARTING_ATTRIBUTE + 1);
   });
 
@@ -305,17 +312,21 @@ describe('the manager', () => {
     const session = manager.get('p1');
     if (!session) throw new Error('no session');
 
-    // Enough Strength for a tier-1 stat skill, then take the skill, then respec.
+    // Enough Strength for a tier-1 specialization, then buy a tier, then respec.
     for (let i = 0; i < 6; i++) await manager.allocateAttribute('p1', 'strength');
     await manager.grantExperience('p1', 400);
-    const took = await manager.spendSkillPoint('p1', 'str.crushingBlows');
+    const took = await manager.buySpecializationTier('p1', 'str.crushingBlows');
     expect(took.ok).toBe(true);
-    expect(manager.get('p1')?.record.skills).toHaveLength(1);
+    expect(manager.get('p1')?.record.specializations).toHaveLength(1);
 
+    const before = manager.get('p1')?.record.unspentProgressionPoints ?? 0;
     const back = await manager.respec('p1');
     expect(back.ok).toBe(true);
-    // The requirement is no longer met, so the allocation goes -- in one place,
-    // the same place a table edit would be handled.
-    expect(manager.get('p1')?.record.skills).toHaveLength(0);
+    // Both halves come back, in one operation (spec 244). Before it the tier was
+    // *dropped* by `sanitizeSpecializations` on the next recalculation and the
+    // point it cost was refunded to nobody -- which under one pool is the pool
+    // leaking, not a rough edge.
+    expect(manager.get('p1')?.record.specializations).toHaveLength(0);
+    expect(manager.get('p1')?.record.unspentProgressionPoints).toBe(before + 6 + 1);
   });
 });

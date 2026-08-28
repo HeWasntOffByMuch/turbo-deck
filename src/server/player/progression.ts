@@ -1,5 +1,5 @@
 /**
- * What a character's allocation actually amounts to (spec 147).
+ * What a character's allocation actually amounts to (spec 147, 244).
  *
  * The resolution half of the pipeline, kept apart from the arithmetic half in
  * `derived.ts` so that "which milestones am I on" and "what is my poise regen"
@@ -9,23 +9,32 @@
  *
  * ```
  *   persisted BaseStats (allocated)
- *     + grants from branch skills, stat skills and items      <- hop 1
+ *     + grants from specialization tiers and items            <- hop 1
  *        = attribute totals
- *           -> milestones met, synergies met                  <- hop 2
+ *           -> milestones met                                 <- hop 2
  *              + their grants
  *                 = the modifier totals derived.ts reads
  * ```
  *
  * **The one-hop rule.** Attribute totals are settled at the end of hop 1 and are
  * never recomputed. A milestone therefore cannot push you over another
- * milestone, and a synergy cannot unlock a third. That makes the graph acyclic
- * *by construction* -- there is no fixpoint loop here to converge, and no
- * ordering between two milestones that could change the answer -- rather than by
- * nobody having yet written the grant that would close a cycle. It costs one
- * thing, which is that an item granting +5 Strength can open a Strength
- * milestone (hop 1, so it counts) while a synergy granting +5 Strength could
- * not (hop 2, so it would not). No synergy grants an attribute, and a test
- * asserts none ever does.
+ * milestone. That makes the graph acyclic *by construction* -- there is no
+ * fixpoint loop here to converge, and no ordering between two milestones that
+ * could change the answer -- rather than by nobody having yet written the grant
+ * that would close a cycle. It costs one thing, which is that an item granting
+ * +5 Strength can open a Strength milestone (hop 1, so it counts) while a
+ * milestone granting +5 Strength could not (hop 2, so it would not). No
+ * milestone grants an attribute, and a test asserts none ever does.
+ *
+ * **Hop 2 is milestones and nothing else** (spec 244). It used to carry the
+ * fifteen authored attribute-pair synergies as well, one bespoke bonus per pair,
+ * present because a test required all fifteen to exist. They are gone: whether
+ * two attributes compose is now a question about the mechanics they already own
+ * -- Strength pressures Guard, Perception reads openings, Wisdom stretches the
+ * pool -- rather than a question about whether somebody authored a row. That is
+ * a thing to find out by playing, and it could not be found out while the
+ * authored layer was in the way. `progression-interactions.test.ts` asserts the
+ * absence: no pair produces a modifier neither attribute produces alone.
  *
  * Pure. No clock, no randomness.
  */
@@ -34,8 +43,7 @@ import { ATTRIBUTE_KEYS, type AttributeKey } from '../data/attributes.js';
 import { itemById } from '../data/items.js';
 import { ALL_MILESTONES, metMilestones, type MilestoneDefinition } from '../data/milestones.js';
 import { scaleModifier, sumModifiers, type ModifierTotals, type StatModifier } from '../data/modifiers.js';
-import { skillById } from '../data/skills.js';
-import { metSynergies, type SynergyDefinition } from '../data/synergies.js';
+import { specializationById } from '../data/specializations.js';
 import { BASE_STAT_KEYS, EQUIP_SLOTS, type BaseStats, type PersistedPlayer } from '../state/types.js';
 
 export type AttributeTotals = Readonly<Record<AttributeKey, number>>;
@@ -46,30 +54,30 @@ export interface Progression {
   /** Attributes as *allocated*, before any grant. What a respec returns. */
   readonly allocated: AttributeTotals;
   readonly milestones: readonly MilestoneDefinition[];
-  readonly synergies: readonly SynergyDefinition[];
   /** Everything summed: hop 1 and hop 2 together. What `derived.ts` reads. */
   readonly totals: Readonly<ModifierTotals>;
 }
 
-function clampLevel(level: number, max: number): number {
+function clampTier(level: number, max: number): number {
   return Math.min(Math.max(0, Math.floor(level)), max);
 }
 
 /**
- * Every modifier from things the character *holds*: skills and equipment. Hop 1.
+ * Every modifier from things the character *holds*: specialization tiers and
+ * equipment. Hop 1.
  *
  * Unknown ids are skipped rather than throwing -- an item removed from the table
- * should orphan the slot, not brick the login. That was already true of skills
+ * should orphan the slot, not brick the login. That was already true of tiers
  * and items and stays true of the third source.
  */
 export function heldModifiers(player: PersistedPlayer): StatModifier[] {
   const modifiers: StatModifier[] = [];
-  for (const allocation of player.skills ?? []) {
-    const definition = skillById(allocation.skillId);
+  for (const allocation of player.specializations ?? []) {
+    const definition = specializationById(allocation.specializationId);
     if (!definition) continue;
-    const level = clampLevel(allocation.level, definition.maxLevel);
-    if (level <= 0) continue;
-    modifiers.push(scaleModifier(definition.perLevel, level));
+    const tier = clampTier(allocation.tier, definition.maxTier);
+    if (tier <= 0) continue;
+    modifiers.push(scaleModifier(definition.perTier, tier));
   }
   for (const slot of EQUIP_SLOTS) {
     const itemId = player.equipment[slot];
@@ -128,17 +136,12 @@ export function resolveProgression(player: PersistedPlayer): Progression {
   const attributes = attributesFrom(player.baseStats, hop1);
 
   const milestones = metMilestones(attributes);
-  const synergies = metSynergies(attributes);
-  const hop2: StatModifier[] = [
-    ...milestones.map((milestone) => milestone.grants),
-    ...synergies.map((synergy) => synergy.grants),
-  ];
+  const hop2: StatModifier[] = milestones.map((milestone) => milestone.grants);
 
   return {
     attributes,
     allocated: asTotals(player.baseStats),
     milestones,
-    synergies,
     totals: sumModifiers([...held, ...hop2]),
   };
 }

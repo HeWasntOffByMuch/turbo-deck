@@ -18,11 +18,18 @@
 
 import {
   type AdminConfigReply,
+  type AdminItemRow,
   type AdminPlayerRow,
   type AdminReply,
   type AdminRequest,
 } from '../net/admin-messages.js';
-import { AdminMessageType, AdminReplyType, messageTypeName } from '../net/protocol.js';
+import {
+  AdminMessageType,
+  AdminProgressMode,
+  AdminReplyType,
+  messageTypeName,
+  type AdminProgressModeValue,
+} from '../net/protocol.js';
 import type { AuditEntry } from '../state/types.js';
 import type { AuditLog } from './audit.js';
 
@@ -49,11 +56,27 @@ export const DENY_ALL_ADMIN: AdminTokenVerifier = () => ({
 });
 
 /**
+ * An action's result, with the reason it was refused (spec 154).
+ *
+ * The actions that came before this return `boolean`, or -- in `triggerEvent`'s
+ * case -- a description where `''` means refused. Rather than adding a third
+ * convention, the player actions added by spec 154 share one type, so "their bag
+ * is full" and "no such item: sord.worn" reach the operator instead of being
+ * flattened into "could not give item".
+ */
+export interface AdminOutcome {
+  readonly ok: boolean;
+  readonly detail: string;
+}
+
+/**
  * What the server must be able to do for an admin. Implemented by `GameServer`;
  * a fake implementation is all a test needs.
  */
 export interface AdminHost {
   listPlayers(): readonly AdminPlayerRow[];
+  /** The item table, so the console offers a list rather than remembered ids. */
+  listItems(): readonly AdminItemRow[];
   kick(playerId: string, reason: string): boolean;
   ban(playerId: string, seconds: number, reason: string, issuedBy: string): Promise<boolean>;
   mute(playerId: string, seconds: number, issuedBy: string): Promise<boolean>;
@@ -68,6 +91,17 @@ export interface AdminHost {
   /** Returns the stored (possibly clamped) value, or null if the key is unknown. */
   setConfig(key: string, value: number): number | null;
   getConfig(): readonly (readonly [string, number])[];
+
+  // --- spec 154: the character edits an operator actually reaches for --------
+
+  setProgress(
+    playerId: string,
+    mode: AdminProgressModeValue,
+    amount: number,
+  ): Promise<AdminOutcome>;
+  giveItem(playerId: string, defId: string, count: number): Promise<AdminOutcome>;
+  /** Zeroes a player's health and lets the world's own death path run. */
+  kill(playerId: string): AdminOutcome;
 }
 
 /** Per-connection admin state. Holds the token, never a bare "is admin" boolean. */
@@ -82,6 +116,20 @@ export function createAdminConnectionState(): AdminConnectionState {
 }
 
 export type Clock = () => number;
+
+/** The mode spelled out, so an audit entry reads without the protocol beside it. */
+function progressModeName(mode: AdminProgressModeValue): string {
+  switch (mode) {
+    case AdminProgressMode.AddLevels:
+      return 'addLevels';
+    case AdminProgressMode.SetLevel:
+      return 'setLevel';
+    case AdminProgressMode.AddExperience:
+      return 'addExperience';
+    case AdminProgressMode.SetExperience:
+      return 'setExperience';
+  }
+}
 
 export class AdminRouter {
   constructor(
@@ -144,11 +192,16 @@ export class AdminRouter {
         // Handled before dispatch; listed so the switch stays exhaustive.
         return this.ok(request.type, 'already authenticated');
 
-      case AdminMessageType.ListPlayers: {
-        const players = this.host.listPlayers();
-        await this.audit.record(actor, actionName, '-', `${players.length} online`, true);
-        return { type: AdminReplyType.PlayerList, players };
-      }
+      case AdminMessageType.ListPlayers:
+        // Not audited (spec 154). The log records what an admin *did*, and asking
+        // who is online is not something done to anybody -- its read siblings
+        // `getConfig` and `getAudit` never recorded one either. It is also what
+        // makes a live count possible: the console polls this once a second, and
+        // an entry per poll would bury every real decision under "3 online".
+        return { type: AdminReplyType.PlayerList, players: this.host.listPlayers() };
+
+      case AdminMessageType.GetItems:
+        return { type: AdminReplyType.ItemList, items: this.host.listItems() };
 
       case AdminMessageType.Kick: {
         const done = this.host.kick(request.playerId, request.reason);
@@ -268,6 +321,42 @@ export class AdminRouter {
       case AdminMessageType.GetAudit: {
         const entries: readonly AuditEntry[] = await this.audit.recent(request.limit);
         return { type: AdminReplyType.Audit, entries };
+      }
+
+      case AdminMessageType.SetProgress: {
+        const outcome = await this.host.setProgress(request.playerId, request.mode, request.amount);
+        await this.audit.record(
+          actor,
+          actionName,
+          request.playerId,
+          `${progressModeName(request.mode)} ${request.amount}: ${outcome.detail}`,
+          outcome.ok,
+        );
+        return outcome.ok
+          ? this.ok(request.type, `${request.playerId}: ${outcome.detail}`)
+          : this.error(request.type, outcome.detail);
+      }
+
+      case AdminMessageType.GiveItem: {
+        const outcome = await this.host.giveItem(request.playerId, request.defId, request.count);
+        await this.audit.record(
+          actor,
+          actionName,
+          request.playerId,
+          `${request.count} x ${request.defId}`,
+          outcome.ok,
+        );
+        return outcome.ok
+          ? this.ok(request.type, outcome.detail)
+          : this.error(request.type, outcome.detail);
+      }
+
+      case AdminMessageType.Kill: {
+        const outcome = this.host.kill(request.playerId);
+        await this.audit.record(actor, actionName, request.playerId, outcome.detail, outcome.ok);
+        return outcome.ok
+          ? this.ok(request.type, outcome.detail)
+          : this.error(request.type, outcome.detail);
       }
     }
   }

@@ -18,8 +18,10 @@ import {
 } from './messages.js';
 import {
   AdminMessageType,
+  AdminProgressMode,
   AdminReplyType,
   ClientMessageType,
+  ProgressionTarget,
   EntityField,
   isAdminRequest,
   ServerMessageType,
@@ -27,6 +29,7 @@ import {
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
 import { maxStackOf } from '../data/items.js';
 import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
+import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { startingBaseStats } from '../player/attributes.js';
 
@@ -45,6 +48,8 @@ const STATS: EffectiveStats = {
   // f32-exact, so the round-trip is testing the codec and not float precision.
   resourceRegen: 0.0625,
   basicAttackId: 'ranged.shot',
+  skillAbilityIds: [],
+  ...NO_WEAPON,
   traits: NEUTRAL_TRAITS,
 };
 
@@ -113,6 +118,7 @@ describe('game message round-trip', () => {
       token: '',
       assetManifest: '',
       resumeToken: 'resume-1',
+      authToken: 'sess-1',
     },
     {
       type: ClientMessageType.Input,
@@ -128,7 +134,7 @@ describe('game message round-trip', () => {
     { type: ClientMessageType.Ping, nonce: 123456 },
     { type: ClientMessageType.Equip, slot: 'mainHand', itemId: 'sword.keen' },
     { type: ClientMessageType.Unequip, slot: 'offHand' },
-    { type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' },
+    { type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.crushingBlows' },
     { type: ClientMessageType.Chat, text: 'hello world' },
     {
       type: ClientMessageType.UseAbility,
@@ -177,6 +183,30 @@ describe('game message round-trip', () => {
       to: { container: 'inventory', index: 5 },
       count: 4,
     },
+    {
+      type: ClientMessageType.DropItem,
+      requestId: 9,
+      at: { container: 'inventory', index: 3 },
+      count: 0,
+      aimX: 512,
+      aimY: -344,
+    },
+    {
+      // A worn item goes on the ground the same way a carried one does, and an
+      // out-of-range index is still a refusal with a reason rather than a
+      // corrupt frame (spec 172).
+      type: ClientMessageType.DropItem,
+      requestId: 10,
+      at: { container: 'equipment', index: -1 },
+      count: 2,
+      aimX: 0,
+      aimY: 0,
+    },
+    // Both halves of one message (spec 246): a body to talk to, and the 0 that
+    // ends it. The zero is the case worth carrying, since it is what a client
+    // leaving sends and what a varuint encodes in its shortest form.
+    { type: ClientMessageType.Talk, entityId: 4242 },
+    { type: ClientMessageType.Talk, entityId: 0 },
   ];
 
   it.each(clientMessages.map((m) => [m.type, m] as const))(
@@ -215,26 +245,42 @@ describe('game message round-trip', () => {
       reason: 1,
     },
     {
+      type: ServerMessageType.Effect,
+      effectId: 'skill.arcLash.impact',
+      x: 320.5,
+      y: -18.25,
+      z: 4,
+      radius: 300,
+      durationTicks: 24,
+      // Non-zero, and not a round number: a fixture that only ever carries the
+      // default cannot tell a field that survives from one the decoder fills in
+      // (spec 235). This message had no fixture at all until the bearing was
+      // added to it.
+      rotation: -2.5,
+    },
+    {
       type: ServerMessageType.CombatResult,
       attackerId: 1,
       targetId: 2,
       damage: 12.5,
       targetHealth: 27.5,
       flags: 3,
+      // Not 0: a round trip that only ever carries the default cannot tell a
+      // field that survives from one the decoder fills in (spec 232).
+      element: 6,
     },
     {
       type: ServerMessageType.Stats,
       entityId: 1,
       level: 7,
       experience: 340,
-      unspentSkillPoints: 2,
-      skills: [
-        { skillId: 'str.crushingBlows', level: 3 },
-        { skillId: 'agi.quickRecovery', level: 1 },
+      specializations: [
+        { specializationId: 'str.crushingBlows', tier: 3 },
+        { specializationId: 'agi.quickRecovery', tier: 1 },
       ],
       baseStats: startingBaseStats(),
       attributes: startingBaseStats(),
-      unspentAttributePoints: 2,
+      unspentProgressionPoints: 2,
       stats: STATS,
     },
     {
@@ -243,11 +289,10 @@ describe('game message round-trip', () => {
       entityId: 1,
       level: 1,
       experience: 0,
-      unspentSkillPoints: 1,
-      skills: [],
+      specializations: [],
       baseStats: startingBaseStats(),
       attributes: startingBaseStats(),
-      unspentAttributePoints: 2,
+      unspentProgressionPoints: 2,
       stats: STATS,
     },
     {
@@ -269,8 +314,8 @@ describe('game message round-trip', () => {
     {
       type: ServerMessageType.Cooldowns,
       entries: [
-        { abilityId: 'melee.heavy', readyAtTick: 1800 },
-        { abilityId: 'ground.quake', readyAtTick: 2400 },
+        { abilityId: 'skill.acidSpray', readyAtTick: 1800 },
+        { abilityId: 'skill.blight', readyAtTick: 2400 },
       ],
       resource: 12.5,
       atTick: 1750,
@@ -314,6 +359,10 @@ describe('game message round-trip', () => {
     // A shop with nothing in it, and the empty id that means "closed".
     { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
     { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000, inputQueueFloor: 4 },
+    // Both halves again (spec 246): the body being talked to, and the 0 that is
+    // both a refusal and the end of a conversation.
+    { type: ServerMessageType.Conversation, entityId: 4242 },
+    { type: ServerMessageType.Conversation, entityId: 0 },
     { type: ServerMessageType.Error, code: 7, message: 'rejected' },
     { type: ServerMessageType.Disconnect, reason: 'kicked' },
   ];
@@ -379,6 +428,14 @@ describe('admin message round-trip', () => {
     { type: AdminMessageType.SetConfig, key: 'spawnRateMultiplier', value: 2.5 },
     { type: AdminMessageType.GetConfig },
     { type: AdminMessageType.GetAudit, limit: 50 },
+    // Spec 153: all four modes, so none of them is the one nobody encoded.
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.AddLevels, amount: 5 },
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.SetLevel, amount: 1 },
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.AddExperience, amount: 4_000_000_000 },
+    { type: AdminMessageType.SetProgress, playerId: 'bob', mode: AdminProgressMode.SetExperience, amount: 0 },
+    { type: AdminMessageType.GiveItem, playerId: 'bob', defId: 'potion.minor', count: 5 },
+    { type: AdminMessageType.GetItems },
+    { type: AdminMessageType.Kill, playerId: 'bob' },
   ];
 
   it.each(requests.map((r) => [r.type, r] as const))(
@@ -416,6 +473,9 @@ describe('admin message round-trip', () => {
           attackDamage: 12.5,
           moveSpeed: 147.5,
           muted: false,
+          experience: 340,
+          experienceToNextLevel: 671,
+          unspentProgressionPoints: 14,
         },
       ],
     },
@@ -433,6 +493,13 @@ describe('admin message round-trip', () => {
         },
       ],
     },
+    {
+      type: AdminReplyType.ItemList,
+      items: [
+        { id: 'sword.worn', name: 'Worn Sword', slot: 'mainHand', levelRequirement: 1, maxStack: 1 },
+        { id: 'potion.minor', name: 'Minor Potion', slot: '-', levelRequirement: 1, maxStack: 10 },
+      ],
+    },
   ];
 
   it.each(replies.map((r) => [r.type, r] as const))(
@@ -441,4 +508,23 @@ describe('admin message round-trip', () => {
       expect(decodeAdminReply(encodeAdminReply(reply))).toEqual(reply);
     },
   );
+
+  it('refuses an item list that declares more items than the frame holds', () => {
+    // Spec 152's primitive, on the one admin reply that has a counted collection:
+    // a count of ~2^30 in a six-byte frame is a frame that cannot exist.
+    const frame = Uint8Array.from([AdminReplyType.ItemList, 0x80, 0x80, 0x80, 0x40]);
+    expect(() => decodeAdminReply(frame)).toThrow(CodecError);
+  });
+
+  it('refuses an unknown progress mode rather than defaulting to one', () => {
+    const frame = encodeAdminRequest({
+      type: AdminMessageType.SetProgress,
+      playerId: 'bob',
+      mode: AdminProgressMode.AddLevels,
+      amount: 1,
+    });
+    // Byte 0 is the type, 1 is the id's length, then 3 bytes of 'bob', then mode.
+    frame[5] = 99;
+    expect(() => decodeAdminRequest(frame)).toThrow(CodecError);
+  });
 });

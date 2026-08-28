@@ -12,7 +12,8 @@
  * for the monster that should be there.
  */
 
-import type { MapDocument } from '../../terrain/index.js';
+import type { MapDocument, MapMarker } from '../../terrain/index.js';
+import { SERVER_TICK_RATE } from '../config.js';
 import { monsterById } from '../data/monsters.js';
 
 export interface SpawnPoint {
@@ -22,6 +23,25 @@ export interface SpawnPoint {
   readonly x: number;
   /** The document's `z`. The sim's ground plane is (x, y). */
   readonly y: number;
+  /**
+   * Ticks between the kill and the replacement, or null for the config's own
+   * (spec 222).
+   *
+   * Null rather than a number resolved here, because the default is a *live*
+   * config value the admin console can change without a restart -- resolving it
+   * at load would freeze whatever it happened to be when the map was read.
+   */
+  readonly respawnTicks: number | null;
+  /**
+   * How far a body from this point may be dragged, or null for the sim's own.
+   *
+   * Null for the other half of the same reason: the default is `LEASH_RADIUS`,
+   * which lives in `sim/world.ts` beside the check that reads it and beside the
+   * nav padding derived from it. Copying it here would be a second statement of
+   * a number that has exactly one home, and this file's job is to say what the
+   * *document* asked for.
+   */
+  readonly leashRadius: number | null;
 }
 
 export class SpawnerError extends Error {}
@@ -42,9 +62,12 @@ export function spawnPointsFrom(doc: MapDocument): readonly SpawnPoint[] {
   for (const layer of doc.layers) {
     for (const chunk of layer.chunks) {
       // Chunk-local to world space, the same conversion `MapChunkStore` makes
-      // when it loads one: a marker's stored x is an offset inside its chunk.
-      const originX = layer.bounds.minX + chunk.cx * extent;
-      const originZ = layer.bounds.minZ + chunk.cz * extent;
+      // when it loads one: a marker's stored x is an offset inside its chunk,
+      // and chunk indices are counted from the layer's *origin* -- not from
+      // `bounds.min`, which moves independently once the map has grown west
+      // or north of where it was first baked (spec 083).
+      const originX = layer.origin.x + chunk.cx * extent;
+      const originZ = layer.origin.z + chunk.cz * extent;
       for (const marker of chunk.markers) {
         if (marker.kind !== 'spawner') continue;
         const monsterId = marker.label ?? '';
@@ -59,10 +82,50 @@ export function spawnPointsFrom(doc: MapDocument): readonly SpawnPoint[] {
           throw new SpawnerError(`two spawners share the id ${marker.id}`);
         }
         seen.add(marker.id);
-        points.push({ id: marker.id, monsterId, x: originX + marker.x, y: originZ + marker.z });
+        points.push({
+          id: marker.id,
+          monsterId,
+          x: originX + marker.x,
+          y: originZ + marker.z,
+          respawnTicks: respawnTicksOf(marker),
+          leashRadius: positiveOrNull(marker.spawner?.leashRadius, marker, 'leashRadius'),
+        });
       }
     }
   }
 
   return points.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
+/**
+ * A spawner's own respawn clock in ticks, or null for the config's (spec 222).
+ *
+ * The document authors seconds; the sim counts ticks. This is the one boundary
+ * that converts, so nothing above it has to know the tick rate and nothing below
+ * it has to know that a person wrote the number.
+ *
+ * Rounded to a whole tick and floored at one, because a sub-tick wait is a wait
+ * of zero and "0.001 seconds" is a request nobody could have meant literally --
+ * whereas an author who wrote a genuinely tiny number wanted "as fast as
+ * possible", which is what one tick is.
+ */
+function respawnTicksOf(marker: MapMarker): number | null {
+  const seconds = positiveOrNull(marker.spawner?.respawnSeconds, marker, 'respawnSeconds');
+  return seconds === null ? null : Math.max(1, Math.round(seconds * SERVER_TICK_RATE));
+}
+
+/**
+ * A finite, positive number, null when absent -- and a boot failure otherwise.
+ *
+ * The same stance this file already takes on a spawner naming a monster nobody
+ * has heard of, for the same reason: a zero respawn time and a negative leash
+ * are indistinguishable from inside the game (a patch of ground behaving oddly)
+ * and only one of the two possible reactions to that is worth anybody's hour.
+ */
+function positiveOrNull(value: number | undefined, marker: MapMarker, field: string): number | null {
+  if (value === undefined) return null;
+  if (!Number.isFinite(value) || value <= 0) {
+    throw new SpawnerError(`spawner ${marker.id} has a ${field} that is not a positive number: ${String(value)}`);
+  }
+  return value;
 }

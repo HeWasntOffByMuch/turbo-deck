@@ -1,8 +1,18 @@
 import * as THREE from 'three';
 import { PALETTE } from './palette.js';
 import { hashUnit2 } from '../../shared/hash.js';
-import { FENCE_KINDS, FENCE_TILE_LENGTH, type FenceKind, type Prop } from '../../terrain/vegetation.js';
-import { applySway, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
+import {
+  FENCE_KINDS,
+  FENCE_TILE_LENGTH,
+  HOUSE_PLAN,
+  STRUCTURE_KINDS,
+  WELL_RADIUS,
+  type FenceKind,
+  type Prop,
+  type StructureKind,
+} from '../../terrain/vegetation.js';
+import { propRegionKey, propRegionKeysIn } from './prop-regions.js';
+import { applySwayBuffers, bakeBend, disposeSway, tiltReach, type SwayInstance } from './sway.js';
 import { DEFAULT_CREASE_ANGLE, weldedNormals } from './shading.js';
 import { stiffness } from './wind.js';
 import { frondGap, frondHem, frondRim, type FrondPoint } from './frond.js';
@@ -39,24 +49,21 @@ import {
  */
 
 /**
- * Edge of one batching region, in world units. Big enough that the view holds
- * only a few (so the draw-call count stays low), small enough that a region is
- * a meaningful fraction of what is on screen (so culling actually bites).
- */
-const REGION_SIZE = 1100;
-
-/**
- * The square the prop field batches by, in world units.
+ * The batching grid (spec 195), which lives in `prop-regions.ts` since spec 211
+ * so the editor's pure half can ask where a region is without importing three.
  *
- * Exported since spec 086: the editor rebuilds the regions an edit touched
- * rather than the whole field, so it has to be able to name them.
+ * Re-exported rather than merely imported: every existing caller asks this
+ * module for a region key, and moving the file it happens to be declared in is
+ * not a reason to touch them.
  */
-export const PROP_REGION_SIZE = REGION_SIZE;
-
-/** Which batching region a world point falls in. */
-export function propRegionKey(x: number, z: number): string {
-  return `${Math.floor(x / REGION_SIZE)},${Math.floor(z / REGION_SIZE)}`;
-}
+export {
+  PROP_REGION_SIZE,
+  propRegionBounds,
+  propRegionKey,
+  propRegionKeysIn,
+  propRegionSize,
+  setPropRegionSize,
+} from './prop-regions.js';
 
 /** Seeds for the per-instance variation hashes, so the draws stay independent. */
 const HASH_SPECIES = 0x5eed01;
@@ -811,7 +818,31 @@ function lobedParts(shape: LobedShape): PropPart[] {
   return parts;
 }
 
+/**
+ * The part tables, built once each (spec 181).
+ *
+ * `buildRegion` called these *per region* -- three species, the bushes and every
+ * fence kind, ninety times over -- and each call built `THREE.BufferGeometry`
+ * from scratch and welded it again afterwards. Measured at 6.7ms of a 32.7ms
+ * region rebuild, with the weld another 5.9ms beside it.
+ *
+ * What made that look necessary is `applySway`, which writes instanced
+ * attributes onto `mesh.geometry`: a geometry object shared between regions is
+ * ninety regions swaying around whichever was built last. The answer is a
+ * per-batch *shell* over these shared attributes rather than a per-region
+ * rebuild of them -- see {@link shellOf}.
+ */
+const TREE_PARTS = new Map<TreeSpecies, PropPart[]>();
 function treeParts(species: TreeSpecies): PropPart[] {
+  let held = TREE_PARTS.get(species);
+  if (!held) {
+    held = buildTreeParts(species);
+    TREE_PARTS.set(species, held);
+  }
+  return held;
+}
+
+function buildTreeParts(species: TreeSpecies): PropPart[] {
   const shape = SPECIES[species];
   if (shape.kind === 'lobed') return lobedParts(shape);
   // The bend weight is measured against the tallest the species reaches, not
@@ -880,7 +911,13 @@ const SPECIES_STIFFNESS: Record<TreeSpecies, number> = {
  */
 const PHASE_SPREAD = 0.25;
 
+let BUSH_PARTS: PropPart[] | null = null;
 function bushParts(): PropPart[] {
+  BUSH_PARTS ??= buildBushParts();
+  return BUSH_PARTS;
+}
+
+function buildBushParts(): PropPart[] {
   return [
     { geometry: new THREE.IcosahedronGeometry(20, 0), offsetY: 14, scaleY: 0.7, color: PALETTE.bush, foliage: true },
     {
@@ -1013,8 +1050,14 @@ interface Box {
   readonly d: number;
 }
 
-/** Boxes merged into one buffer, wound so every face points out of its box. */
-function brickGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
+/**
+ * Boxes merged into one buffer, wound so every face points out of its box.
+ *
+ * Named for the shape rather than for the brick it was written for: a hut's four
+ * corner posts and a well's two uprights want the same thing a course of bricks
+ * does, which is to be one batch instead of one each (spec 224).
+ */
+function boxesGeometry(boxes: readonly Box[]): THREE.BufferGeometry {
   const positions: number[] = [];
   for (const b of boxes) {
     const x0 = b.x - b.w / 2;
@@ -1119,7 +1162,7 @@ function brickFenceParts(): PropPart[] {
   bands.forEach((boxes, i) => {
     if (boxes.length === 0) return;
     parts.push({
-      geometry: brickGeometry(boxes),
+      geometry: boxesGeometry(boxes),
       offsetY: 0,
       color: BRICK_TONES[i] ?? PALETTE.brick,
       uniformColor: PALETTE.brick,
@@ -1365,7 +1408,17 @@ function rubbleFenceParts(): PropPart[] {
   return parts;
 }
 
+const FENCE_PARTS = new Map<FenceKind, PropPart[]>();
 function fenceParts(kind: FenceKind): PropPart[] {
+  let held = FENCE_PARTS.get(kind);
+  if (!held) {
+    held = buildFenceParts(kind);
+    FENCE_PARTS.set(kind, held);
+  }
+  return held;
+}
+
+function buildFenceParts(kind: FenceKind): PropPart[] {
   switch (kind) {
     case 'fence-boards':
       return boardFenceParts();
@@ -1376,6 +1429,325 @@ function fenceParts(kind: FenceKind): PropPart[] {
     default:
       return woodFenceParts();
   }
+}
+
+/**
+ * The buildings (spec 224): a timber hut under a straw roof, and a well.
+ *
+ * Everything else in this file grows or fences something off. These two are the
+ * first props somebody *lives* in, and what they are for is a playtest village
+ * -- a handful of huts round a square with a well in the middle -- so they are
+ * built to read at the game's isometric bearing from a hundred units up, and
+ * not to be looked at closely.
+ *
+ * They are ordinary `PropPart` lists and nothing about them is special-cased
+ * anywhere: same batching, same per-instance tint, same region grid. The one
+ * thing they deliberately do *not* set is `sway`. A tree leans in the wind
+ * because it is alive; a house that did would be a house falling down.
+ */
+
+/** How far a building's walls are buried, so a slope shows no daylight under
+ *  them. The fence's `FENCE_SINK` for the same reason, a little deeper because
+ *  a building's footprint is wider and so spans more fall. */
+const BUILDING_SINK = 9;
+
+/**
+ * Eaves height, and how far the ridge stands above them.
+ *
+ * Measured against the body, not chosen: a unit is about 56 tall, so eaves at
+ * 58 put the roofline at head height and the doorway under it -- a hut somebody
+ * would have to duck into, which reads as a toy rather than as a house. 64
+ * clears a standing figure with the door under it, and the ridge takes the
+ * silhouette to a little over two bodies, which is what a one-room cottage is.
+ */
+const HOUSE_WALL_HEIGHT = 64;
+const HOUSE_RIDGE_RISE = 62;
+/**
+ * How far the thatch reaches past the walls on every side.
+ *
+ * The number that does most of the work in the silhouette: from above -- which
+ * is most of what this camera sees -- a hut is very nearly all roof, and an
+ * overhang is what stops the roof reading as a lid sitting exactly on a box.
+ */
+const HOUSE_EAVE = 16;
+/** How thick the straw is at the eaves. A thatch edge is a slab, not a line. */
+const THATCH_LIP = 11;
+
+/**
+ * A gabled straw roof, as two geometries.
+ *
+ * The slopes and the gable ends are separate parts because they want separate
+ * tones: the slopes face the sky and the ends face along the ridge, so on a
+ * single-colour roof the ends go the same value as the slope beside them and
+ * the whole thing flattens into one lump. Two tones and it reads as a roof.
+ *
+ * Both are closed against the eaves plate below them, so the underside is never
+ * seen and is drawn anyway -- two triangles against a hole in a silhouette if
+ * anybody ever looks up a hillside at one.
+ */
+function gableRoof(halfLength: number, halfDepth: number, rise: number): {
+  slopes: THREE.BufferGeometry;
+  gables: THREE.BufferGeometry;
+} {
+  const l = halfLength;
+  const d = halfDepth;
+  const slopeMesh = meshBuilder();
+  // Wound counter-clockwise seen from outside, so `computeVertexNormals` reads
+  // the winding and gives each face a normal pointing out of the roof.
+  slopeMesh.quad([-l, 0, d], [l, 0, d], [l, rise, 0], [-l, rise, 0]);
+  slopeMesh.quad([l, 0, -d], [-l, 0, -d], [-l, rise, 0], [l, rise, 0]);
+  slopeMesh.quad([-l, 0, -d], [l, 0, -d], [l, 0, d], [-l, 0, d]);
+
+  const gableMesh = meshBuilder();
+  gableMesh.tri([l, 0, d], [l, 0, -d], [l, rise, 0]);
+  gableMesh.tri([-l, 0, -d], [-l, 0, d], [-l, rise, 0]);
+
+  return { slopes: slopeMesh.build(), gables: gableMesh.build() };
+}
+
+/** The straw parts of a roof, at `eaves` above the prop's ground point. */
+function thatchParts(
+  halfLength: number,
+  halfDepth: number,
+  rise: number,
+  eaves: number,
+  lip: number,
+): PropPart[] {
+  const { slopes, gables } = gableRoof(halfLength, halfDepth, rise);
+  return [
+    {
+      // The eaves plate: the thickness of the straw where it is cut off, and
+      // what the prism above stands on. Dark, because it is the one face of a
+      // roof that is always in its own shadow.
+      geometry: new THREE.BoxGeometry(halfLength * 2, lip, halfDepth * 2),
+      offsetY: eaves + lip / 2,
+      color: PALETTE.thatchDeep,
+      foliage: false,
+      tintAmount: 0.08,
+    },
+    { geometry: slopes, offsetY: eaves + lip, color: PALETTE.thatch, foliage: false, tintAmount: 0.1 },
+    { geometry: gables, offsetY: eaves + lip, color: PALETTE.thatchDeep, foliage: false, tintAmount: 0.1 },
+    {
+      // The ridge roll. Pale, and the only part of a hut that says which way it
+      // is turned once the camera is high enough that the walls are a sliver.
+      geometry: new THREE.BoxGeometry(halfLength * 2, 9, 13),
+      offsetY: eaves + lip + rise - 3,
+      color: PALETTE.thatchPale,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+  ];
+}
+
+let HOUSE_PARTS: PropPart[] | null = null;
+function houseParts(): PropPart[] {
+  HOUSE_PARTS ??= buildHouseParts();
+  return HOUSE_PARTS;
+}
+
+/**
+ * One hut: a timber box with a door in its front wall and a straw roof over it.
+ *
+ * The plan comes from {@link HOUSE_PLAN} rather than from numbers typed here,
+ * because the collider is derived from the same constant -- a wall drawn
+ * somewhere its footprint does not reach is a building you can stand inside.
+ * The ridge runs down the plan's `width` and the door faces its `depth`, which
+ * is what the editor's yaw turns.
+ */
+function buildHouseParts(): PropPart[] {
+  const hw = HOUSE_PLAN.width / 2;
+  const hd = HOUSE_PLAN.depth / 2;
+  const wallSpan = HOUSE_WALL_HEIGHT + BUILDING_SINK;
+  // Tall enough for the body that walks through it. See HOUSE_WALL_HEIGHT.
+  const doorHeight = 50;
+  const doorWidth = 34;
+  const parts: PropPart[] = [
+    {
+      geometry: new THREE.BoxGeometry(HOUSE_PLAN.width, wallSpan, HOUSE_PLAN.depth),
+      offsetY: wallSpan / 2 - BUILDING_SINK,
+      color: PALETTE.hutWall,
+      foliage: false,
+      // A little more drift than a fence rail gets: a row of huts wants to look
+      // like separate houses somebody built, and this is the whole of what
+      // separates one from the next.
+      tintAmount: 0.14,
+    },
+    {
+      // Four corner posts, merged: one batch rather than four, for the reason a
+      // course of bricks is one. Centred *on* the corner, so half of each post
+      // stands proud of both walls it meets and the box reads as framed.
+      geometry: boxesGeometry(
+        [-1, 1].flatMap((sx) =>
+          [-1, 1].map((sz) => ({
+            x: sx * hw,
+            y: (wallSpan + 4) / 2 - BUILDING_SINK,
+            z: sz * hd,
+            w: 12,
+            h: wallSpan + 4,
+            d: 12,
+          })),
+        ),
+      ),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      // The doorway. Near-black and standing a little proud of the wall, which
+      // is a cheat and the right one: a recess would need a hole in the wall
+      // box, and at this size what says "door" is the dark rectangle rather
+      // than the depth of it.
+      geometry: new THREE.BoxGeometry(doorWidth, doorHeight, 5),
+      offsetY: doorHeight / 2,
+      offsetZ: hd + 1,
+      color: PALETTE.hollow,
+      foliage: false,
+    },
+    {
+      // Lintel and jambs, as one merged geometry: the frame is what stops the
+      // dark rectangle reading as a stain on the wall.
+      geometry: boxesGeometry([
+        { x: 0, y: doorHeight + 3, z: hd + 2, w: doorWidth + 14, h: 7, d: 7 },
+        { x: -(doorWidth / 2 + 3.5), y: doorHeight / 2, z: hd + 2, w: 7, h: doorHeight, d: 7 },
+        { x: doorWidth / 2 + 3.5, y: doorHeight / 2, z: hd + 2, w: 7, h: doorHeight, d: 7 },
+      ]),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+  ];
+  parts.push(
+    ...thatchParts(hw + HOUSE_EAVE, hd + HOUSE_EAVE, HOUSE_RIDGE_RISE, HOUSE_WALL_HEIGHT, THATCH_LIP),
+  );
+  return parts;
+}
+
+/** The well's stonework, and how high its uprights carry the roof. */
+const WELL_KERB_HEIGHT = 40;
+/**
+ * How high the uprights carry the roof.
+ *
+ * A little over a body, and no more. The first cut was 96 -- more than two
+ * kerbs -- and photographed in the editor as a stone ring with a hat floating
+ * above it, because at that separation nothing connects the two: the posts are
+ * a few pixels wide at the zoom the game plays at, and the mass at the bottom
+ * and the mass at the top read as two props.
+ */
+const WELL_POST_HEIGHT = 84;
+/**
+ * How far the roof reaches across the well, as a fraction of the kerb.
+ *
+ * **Under one, and that is the whole of what makes a well readable.** A roof
+ * wide enough to actually keep rain off is a roof that, seen from a camera
+ * looking down at the ground, covers the drum, the uprights, the winch and the
+ * bucket completely -- and a well whose stonework you cannot see is a tan slab
+ * floating over a village square. The first cut was 1.05 and photographed as
+ * exactly that. Under one, the kerb stands out in front of the eaves at every
+ * bearing this camera has.
+ */
+const WELL_ROOF_REACH = 0.86;
+/** Radial segments in the kerb. Ten reads as laid stone at the zoom the game
+ *  plays at; smooth would read as a pipe. */
+const WELL_SIDES = 10;
+
+let WELL_PARTS: PropPart[] | null = null;
+function wellParts(): PropPart[] {
+  WELL_PARTS ??= buildWellParts();
+  return WELL_PARTS;
+}
+
+/**
+ * The well: a stone drum, two uprights carrying a small straw roof, a winch
+ * across them and a bucket on the rope.
+ *
+ * The bucket is not decoration. A stone ring with a roof over it is a shrine or
+ * a planter; what makes it a well is the thing on the end of the rope, and it
+ * costs one part.
+ *
+ * What the shaft is *not* is a hole. The kerb is a solid drum with a dark disc
+ * standing a little proud of its rim, because the roof is directly over the
+ * opening and no camera in this game can see down it -- an open annulus would
+ * be three more parts and two more inner walls to draw, all of them for a view
+ * nobody has.
+ */
+function buildWellParts(): PropPart[] {
+  const kerbSpan = WELL_KERB_HEIGHT + BUILDING_SINK;
+  const postSpan = WELL_POST_HEIGHT + BUILDING_SINK;
+  // On the rim rather than inside it, and thick enough to be seen: a 10-unit
+  // post is six pixels at the zoom this is looked at, and a roof held up by
+  // something invisible is a roof floating in the air.
+  const postAt = WELL_RADIUS - 4;
+  const postWidth = 14;
+  // Just under the eaves, so the rope has the whole drop to hang down.
+  const winchAt = WELL_POST_HEIGHT - 12;
+  const bucketHeight = 15;
+  const bucketAt = WELL_KERB_HEIGHT + 10;
+  const ropeTop = winchAt;
+  const ropeFoot = bucketAt + bucketHeight / 2;
+  // Lying along the prop's own X, between the two uprights: a cylinder is built
+  // standing up, and a part has no fixed rotation of its own, so the turn is
+  // baked into the buffer.
+  const drum = new THREE.CylinderGeometry(7, 7, postAt * 2, 8);
+  drum.rotateZ(Math.PI / 2);
+  return [
+    {
+      // Battered slightly -- wider at the foot than at the rim -- which is how
+      // drystone is laid and what stops the drum reading as a barrel.
+      geometry: new THREE.CylinderGeometry(WELL_RADIUS, WELL_RADIUS + 3, kerbSpan, WELL_SIDES),
+      offsetY: kerbSpan / 2 - BUILDING_SINK,
+      color: PALETTE.drystone,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      geometry: new THREE.CylinderGeometry(WELL_RADIUS - 9, WELL_RADIUS - 9, 4, WELL_SIDES),
+      offsetY: WELL_KERB_HEIGHT,
+      color: PALETTE.hollow,
+      foliage: false,
+    },
+    {
+      geometry: boxesGeometry(
+        [-1, 1].map((sx) => ({
+          x: sx * postAt,
+          y: postSpan / 2 - BUILDING_SINK,
+          z: 0,
+          w: postWidth,
+          h: postSpan,
+          d: postWidth,
+        })),
+      ),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    { geometry: drum, offsetY: winchAt, color: PALETTE.plank, foliage: false, tintAmount: 0.12 },
+    {
+      // Rope and bucket, hung in the gap between the winch and the rim -- which
+      // is the only place either of them is visible, and why the winch sits
+      // just under the eaves rather than halfway down the posts.
+      geometry: new THREE.BoxGeometry(2.6, ropeTop - ropeFoot, 2.6),
+      offsetY: (ropeTop + ropeFoot) / 2,
+      color: PALETTE.post,
+      foliage: false,
+    },
+    {
+      geometry: new THREE.CylinderGeometry(9, 7.5, bucketHeight, 8),
+      offsetY: bucketAt,
+      color: PALETTE.plank,
+      foliage: false,
+      tintAmount: 0.12,
+    },
+    ...thatchParts(
+      WELL_RADIUS + 8,
+      WELL_RADIUS * WELL_ROOF_REACH,
+      30,
+      WELL_POST_HEIGHT,
+      7,
+    ),
+  ];
 }
 
 /** Warm autumn foliage, for the fraction of trees that turn. */
@@ -1482,6 +1854,14 @@ export function crownRadius(species: TreeSpecies): number {
   return shape.tiers.reduce((wide, [radius]) => Math.max(wide, radius), 0);
 }
 
+/** A world-space rectangle, as {@link PropFieldHandle.rebuildWithin} reads one. */
+export interface PropRect {
+  readonly minX: number;
+  readonly minZ: number;
+  readonly maxX: number;
+  readonly maxZ: number;
+}
+
 export interface PropFieldHandle {
   readonly group: THREE.Group;
   /**
@@ -1506,13 +1886,48 @@ export interface PropFieldHandle {
    *
    * `props` is the full, current list: the region is re-bucketed from it, so a
    * caller never has to work out which props belong where.
+   *
+   * Several rectangles may be given at once (spec 165). That is not a
+   * convenience: re-bucketing is a pass over every prop in the world, so a
+   * streaming client with eight scattered regions to redraw would pay for eight
+   * of them -- and merging them into one bounding box instead would redraw every
+   * region in between, which on a cold start is the whole map. One pass, the
+   * union of the regions the rectangles touch.
    */
-  rebuildWithin(props: readonly Prop[], rect: { minX: number; minZ: number; maxX: number; maxZ: number }): void;
+  rebuildWithin(props: readonly Prop[], rect: PropRect | readonly PropRect[]): void;
+  /**
+   * Hang one region's batches on the scene graph, from instances composed
+   * elsewhere (spec 181).
+   *
+   * The seam the map worker enters through. `rebuildWithin` is this with
+   * {@link buildRegionInstances} in front of it, so a field built on this thread
+   * and one built on the worker are the same field by construction rather than
+   * by two implementations agreeing.
+   */
+  adoptRegion(key: string, instances: RegionInstances): void;
+  /**
+   * Stop drawing one region, and free everything only it owned (spec 211).
+   *
+   * The counterpart to {@link adoptRegion}, and the takedown that function has
+   * always performed on the way past: it frees the held region before hanging
+   * up the new one, so an empty reply was already a clean removal. What this
+   * adds is a way to reach it without composing an empty region on another
+   * thread first -- which matters because the reason to take a region down is
+   * that its ground has gone, and there is nothing left over there to compose
+   * it from.
+   *
+   * Answers whether anything was there, since disposal is a call rather than a
+   * value and a caller reconciling against held ground has no other way to
+   * count what it dropped.
+   */
+  dropRegion(key: string): boolean;
+  /** Region keys with batches on the scene graph. For the drop pass. */
+  heldRegions(): readonly string[];
   dispose(): void;
 }
 
 /** The kinds `buildPropField` knows how to draw. */
-const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FENCE_KINDS]);
+const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FENCE_KINDS, ...STRUCTURE_KINDS]);
 
 /** The unit surface normal of the ground, for props that lie along it. */
 export type NormalAt = (x: number, z: number) => readonly [number, number, number];
@@ -1569,6 +1984,84 @@ export const FLAT_SHADING: PropShading = {
  * disposes it with the batch. Marked as done so a geometry handed out twice is
  * welded once.
  */
+const WELDED = new Map<THREE.BufferGeometry, Map<number, THREE.BufferGeometry>>();
+
+/**
+ * The vertex data a batch draws, built once per `(part, crease angle)`
+ * (spec 181).
+ *
+ * Memoized rather than re-welded per region, which is 5.9ms of a 32.7ms region
+ * rebuild. Under flat shading this is the part's own geometry, which was already
+ * shared -- the sharing is not new, only the welded case is.
+ *
+ * Nothing disposes what this holds: it is one geometry per part per angle for
+ * the life of the page, the same lifetime the part tables have. A crease angle
+ * the panel visits and leaves keeps its entry, which is a handful of small
+ * geometries against re-welding on every region for the rest of the session.
+ */
+function sharedGeometry(
+  geometry: THREE.BufferGeometry,
+  creaseCos: number,
+  smooth: boolean,
+): THREE.BufferGeometry {
+  if (!smooth) return geometry;
+  let byAngle = WELDED.get(geometry);
+  if (!byAngle) {
+    byAngle = new Map();
+    WELDED.set(geometry, byAngle);
+  }
+  let held = byAngle.get(creaseCos);
+  if (!held) {
+    held = smoothGeometry(geometry, creaseCos);
+    byAngle.set(creaseCos, held);
+  }
+  return held;
+}
+
+/**
+ * A geometry of this batch's own, over vertex data it shares with every other
+ * batch of the same part (spec 181).
+ *
+ * An `InstancedMesh`'s per-instance attributes live on its *geometry*, and
+ * `applySway` writes two of them -- so batches cannot share a geometry object
+ * however identical their vertices are. They can share the `BufferAttribute`
+ * objects underneath, which is where all the cost was: a shell is an object and
+ * a handful of assignments and does no vertex work at all.
+ *
+ * The bounding sphere is cloned rather than shared. Nothing mutates it today --
+ * `InstancedMesh.computeBoundingSphere` reads the geometry's and writes the
+ * mesh's -- and one `Sphere` per batch is not worth being right about later.
+ */
+function shellOf(shared: THREE.BufferGeometry): THREE.BufferGeometry {
+  const shell = new THREE.BufferGeometry();
+  for (const [name, attribute] of Object.entries(shared.attributes)) {
+    shell.setAttribute(name, attribute);
+  }
+  if (shared.index) shell.setIndex(shared.index);
+  if (shared.boundingSphere) shell.boundingSphere = shared.boundingSphere.clone();
+  if (shared.groups.length > 0) {
+    for (const g of shared.groups) shell.addGroup(g.start, g.count, g.materialIndex);
+  }
+  return shell;
+}
+
+/**
+ * Free what a batch owns, and nothing it borrows (spec 181).
+ *
+ * three's `onGeometryDispose` walks `geometry.attributes` and removes the GPU
+ * buffer of every one it finds, so disposing a shell as-is would free the
+ * *shared* attributes and force every other region holding that part to
+ * re-upload -- a hitch caused by the very rebuild this is meant to make cheap,
+ * and one that no headless test could see. So the borrowed attributes are taken
+ * off the shell first, and what is disposed is what this batch added:
+ * `aWindBase` and `aWindTune`.
+ */
+function disposeShell(shell: THREE.BufferGeometry, shared: THREE.BufferGeometry): void {
+  for (const name of Object.keys(shared.attributes)) shell.deleteAttribute(name);
+  if (shared.index) shell.setIndex(null);
+  shell.dispose();
+}
+
 function smoothGeometry(geometry: THREE.BufferGeometry, creaseCos: number): THREE.BufferGeometry {
   if (geometry.userData['weldedNormals'] === creaseCos) return geometry;
   if (!geometry.getAttribute('position')) return geometry;
@@ -1587,41 +2080,122 @@ function smoothGeometry(geometry: THREE.BufferGeometry, creaseCos: number): THRE
   return target;
 }
 
+
 /**
- * Build the instanced meshes for a list of scattered props, standing each one on
- * the terrain via `heightAt`. Static: instance matrices are written once, since
- * scenery never moves.
+ * Which batch is which, on both sides of a thread boundary (spec 181).
  *
- * `normalAt` is optional and only consulted for props that ask to be aligned to
- * the ground (spec 051). Without it every prop stands upright, whatever it asked
- * for -- so a caller that has no terrain normals to offer degrades to the
- * behaviour that existed before the flag did.
+ * The order `buildRegion` has always walked -- one batch per tree species, then
+ * the bushes, then each fence kind -- named once so an index into it means the
+ * same thing wherever it is read. Both the worker composing instances and the
+ * renderer hanging them on a mesh enumerate this same list from this same
+ * module, so a `(group, part)` pair cannot mean two things.
  */
-export function buildPropField(
-  props: readonly Prop[],
+const PROP_GROUPS: readonly (
+  | { readonly kind: 'tree'; readonly species: TreeSpecies }
+  | { readonly kind: 'bush' }
+  | { readonly kind: 'fence'; readonly fence: FenceKind }
+  | { readonly kind: 'structure'; readonly structure: StructureKind }
+)[] = [
+  ...TREE_SPECIES.map((species) => ({ kind: 'tree' as const, species })),
+  { kind: 'bush' as const },
+  ...FENCE_KINDS.map((fence) => ({ kind: 'fence' as const, fence })),
+  // Appended, never inserted: an index into this list crosses a thread, so a
+  // group that moved would hand the worker's matrices to the wrong geometry.
+  ...STRUCTURE_KINDS.map((structure) => ({ kind: 'structure' as const, structure })),
+];
+
+/** How many batches a region can have, before its props are looked at. */
+export const PROP_GROUP_COUNT = PROP_GROUPS.length;
+
+/** The parts a batch group draws with. Memoized; see {@link treeParts}. */
+export function propGroupParts(group: number): readonly PropPart[] {
+  const of = PROP_GROUPS[group];
+  if (!of) return [];
+  if (of.kind === 'tree') return treeParts(of.species);
+  if (of.kind === 'bush') return bushParts();
+  if (of.kind === 'structure') return of.structure === 'well' ? wellParts() : houseParts();
+  return fenceParts(of.fence);
+}
+
+/** The props in this bucket that a batch group draws. */
+function propGroupMembers(
+  group: number,
+  bucket: readonly Prop[],
+  variants: ReadonlyMap<Prop, TreeVariant>,
+): readonly Prop[] {
+  const of = PROP_GROUPS[group];
+  if (!of) return [];
+  if (of.kind === 'tree') {
+    return bucket.filter((p) => p.kind === 'tree' && variants.get(p)?.species === of.species);
+  }
+  if (of.kind === 'bush') return bucket.filter((p) => p.kind === 'bush');
+  if (of.kind === 'structure') return bucket.filter((p) => p.kind === of.structure);
+  return bucket.filter((p) => p.kind === of.fence);
+}
+
+/** One batch's per-instance data, as arrays that can cross a thread. */
+export interface PropBatchInstances {
+  /** Index into the batch enumeration. See {@link propGroupParts}. */
+  readonly group: number;
+  /** Index into that group's part list. */
+  readonly part: number;
+  readonly count: number;
+  /** 16 floats per instance, in `Matrix4` order. */
+  readonly matrices: Float32Array;
+  /** 3 per instance, linear RGB. */
+  readonly colors: Float32Array;
+  /** Present only where every instance in the batch sways. */
+  readonly sway: {
+    readonly base: Float32Array;
+    readonly tune: Float32Array;
+    readonly height: number;
+    readonly reach: number;
+  } | null;
+}
+
+/** Instances as the two flat arrays `applySwayBuffers` wants. */
+function packSway(instances: readonly SwayInstance[]): { base: Float32Array; tune: Float32Array } {
+  const base = new Float32Array(instances.length * 3);
+  const tune = new Float32Array(instances.length * 2);
+  instances.forEach((instance, i) => {
+    base[i * 3] = instance.baseX;
+    base[i * 3 + 1] = instance.baseY;
+    base[i * 3 + 2] = instance.baseZ;
+    tune[i * 2] = instance.stiffness;
+    tune[i * 2 + 1] = instance.phase;
+  });
+  return { base, tune };
+}
+
+/**
+ * Where every prop in one region stands, as arrays (spec 181).
+ *
+ * This is the 16.2ms half of a 32.7ms region rebuild: a position, a quaternion
+ * chain, a scale and a colour per instance, and nothing that needs a scene
+ * graph. It uses three's maths classes and none of its objects, which is what
+ * lets it run on the map worker and hand back the result.
+ *
+ * The shading settings are deliberately not an argument. Nothing in here reads
+ * them -- `smooth` picks a geometry and `swayNormals` patches a material, and
+ * both of those happen where the mesh is made.
+ */
+export interface RegionInstances {
+  readonly batches: readonly PropBatchInstances[];
+  /**
+   * Prop kinds in this region with no geometry to draw them with.
+   *
+   * Carried rather than warned about here, because this runs on the worker and
+   * a warning is for a person. The renderer says it once when it adopts -- the
+   * alternative is silence, which is nothing on screen and no error (spec 086).
+   */
+  readonly undrawnKinds: readonly string[];
+}
+
+export function buildRegionInstances(
+  bucket: readonly Prop[],
   heightAt: (x: number, z: number) => number,
   normalAt?: NormalAt,
-  shading?: PropShading,
-): PropFieldHandle {
-  const group = new THREE.Group();
-  const shade = shading ?? FLAT_SHADING;
-  const creaseCos = Math.cos(shade.creaseAngle);
-
-  /**
-   * One batching region's meshes and the resources only it owns.
-   *
-   * Kept per region rather than in one flat list, so a region can be freed and
-   * rebuilt on its own (spec 086). The geometries and materials are built per
-   * batch, so each belongs to exactly one region and freeing it frees them.
-   */
-  interface Region {
-    readonly group: THREE.Group;
-    readonly geometries: THREE.BufferGeometry[];
-    readonly materials: THREE.Material[];
-  }
-  const regions = new Map<string, Region>();
-  let current: Region = { group, geometries: [], materials: [] };
-
+): RegionInstances {
   // Reused across every instance of every part.
   const matrix = new THREE.Matrix4();
   const position = new THREE.Vector3();
@@ -1637,19 +2211,21 @@ export function buildPropField(
   const scale = new THREE.Vector3();
   const color = new THREE.Color();
 
-  /**
-   * One `InstancedMesh` per part, over the props that actually grow it. A tier
-   * above a tree's count is left out of that batch rather than written at zero
-   * scale, so a stand of saplings costs a small batch instead of a full-size one
-   * padded with degenerate triangles.
-   */
-  const build = (
-    parts: readonly PropPart[],
-    of: readonly Prop[],
-    variants?: ReadonlyMap<Prop, TreeVariant>,
-  ): void => {
-    if (of.length === 0) return;
-    parts.forEach((part, partIndex) => {
+  // Hashed once per tree rather than once per part per tree.
+  const variants = new Map<Prop, TreeVariant>();
+  for (const prop of bucket) {
+    if (prop.kind === 'tree') variants.set(prop, treeVariant(prop));
+  }
+
+  const out: PropBatchInstances[] = [];
+  const undrawnKinds = new Set<string>();
+  for (const prop of bucket) {
+    if (!DRAWN_KINDS.has(prop.kind)) undrawnKinds.add(prop.kind);
+  }
+  for (let group = 0; group < PROP_GROUPS.length; group++) {
+    const of = propGroupMembers(group, bucket, variants);
+    if (of.length === 0) continue;
+    propGroupParts(group).forEach((part, partIndex) => {
       const tier = part.tier;
       // `tier + 1` is the rule the conifers have always used; `grownAt` is what
       // lets the lobed canopy keep its topmost slab at every count (spec 077),
@@ -1671,14 +2247,8 @@ export function buildPropField(
       const jitterSize =
         part.jitterScaleX !== undefined || part.jitterScaleY !== undefined || part.jitterTint !== undefined;
 
-      const geometry = shade.smooth ? smoothGeometry(part.geometry, creaseCos) : part.geometry;
-      const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
-      const mesh = new THREE.InstancedMesh(geometry, material, grown.length);
-      mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
-      // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
-      // dappled shade onto the ground is what stops props reading as decals.
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
+      const matrices = new Float32Array(grown.length * 16);
+      const colors = new Float32Array(grown.length * 3);
       // What the wind is sampled with, once per tree (spec 074). Gathered
       // alongside the matrices rather than in a second pass, because it is the
       // same three numbers the matrix is being composed from.
@@ -1765,7 +2335,7 @@ export function buildPropField(
           s * (part.scaleY ?? 1) * (1 + (part.jitterScaleY ?? 0) * wobbleSize),
           s,
         );
-        mesh.setMatrixAt(i, matrix.compose(position, quaternion, scale));
+        matrix.compose(position, quaternion, scale).toArray(matrices, i * 16);
         // A uniform prop takes the part's flat tone and neither drift, so two
         // tiles of a run come out identical however far apart they stand.
         color.setHex(
@@ -1775,7 +2345,7 @@ export function buildPropField(
               ? part.uniformColor ?? part.color
               : shadedColor(part.color, prop.tint, part.tintAmount ?? 0, (part.jitterTint ?? 0) * wobbleSize),
         );
-        mesh.setColorAt(i, color);
+        color.toArray(colors, i * 3);
 
         if (part.sway && variant) {
           // The tree's *ground point*, not this part's origin. Every batch a
@@ -1794,25 +2364,124 @@ export function buildPropField(
         }
       });
 
-      mesh.instanceMatrix.needsUpdate = true;
-      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-      if (swaying.length === grown.length && swaying.length > 0) {
-        applySway(
-          mesh,
-          swaying,
-          swayHeight,
-          {
-            lag: part.swayLag ?? 0,
-            tilt: part.swayTilt ?? 0,
-            reach: swayReach,
-          },
-          shade.swayNormals,
-        );
-      }
-      current.group.add(mesh);
-      current.geometries.push(geometry);
-      current.materials.push(material);
+      // A batch sways only when *every* instance in it does. A partial set would
+      // put the attributes out of step with the instances they belong to.
+      const sway =
+        swaying.length === grown.length && swaying.length > 0
+          ? { ...packSway(swaying), height: swayHeight, reach: swayReach }
+          : null;
+      out.push({ group, part: partIndex, count: grown.length, matrices, colors, sway });
     });
+  }
+  return { batches: out, undrawnKinds: [...undrawnKinds] };
+}
+
+/** How a field is built, as opposed to what it is built from. */
+export interface PropFieldOptions {
+  /**
+   * Compose nothing now. The handle comes back with its group attached and no
+   * batches in it, and regions arrive later through `adoptRegion` (spec 211).
+   *
+   * For the editor, which pays this whole function in its constructor before it
+   * can draw a frame: 4.5s on the map we ship and about half of everything
+   * opening the editor costs, at every world size `bench-editor.ts` measures.
+   * Deferred, the same regions are composed a few per frame, nearest what the
+   * camera is pointed at first.
+   *
+   * It changes *when* and never *what*: a deferred field drained of everything
+   * it owes is the field this would have returned, batch for batch, and there
+   * is a test that says so.
+   *
+   * `undrawn` is deliberately still counted up front. It answers "does this map
+   * hold props this build cannot draw", which is a fact about the list rather
+   * than about what has been composed so far -- and answering it late would
+   * mean a tool looked broken for as long as the region holding the undrawn
+   * props had not arrived yet, which is the failure the count exists to prevent.
+   */
+  readonly deferred?: boolean;
+}
+
+/**
+ * Build the instanced meshes for a list of scattered props, standing each one on
+ * the terrain via `heightAt`. Static: instance matrices are written once, since
+ * scenery never moves.
+ *
+ * `normalAt` is optional and only consulted for props that ask to be aligned to
+ * the ground (spec 051). Without it every prop stands upright, whatever it asked
+ * for -- so a caller that has no terrain normals to offer degrades to the
+ * behaviour that existed before the flag did.
+ */
+export function buildPropField(
+  props: readonly Prop[],
+  heightAt: (x: number, z: number) => number,
+  normalAt?: NormalAt,
+  shading?: PropShading,
+  options?: PropFieldOptions,
+): PropFieldHandle {
+  const group = new THREE.Group();
+  const shade = shading ?? FLAT_SHADING;
+  const creaseCos = Math.cos(shade.creaseAngle);
+
+  /**
+   * One batching region's meshes and the resources only it owns.
+   *
+   * Kept per region rather than in one flat list, so a region can be freed and
+   * rebuilt on its own (spec 086). The geometries and materials are built per
+   * batch, so each belongs to exactly one region and freeing it frees them.
+   */
+  interface Region {
+    readonly group: THREE.Group;
+    /**
+     * This region's geometries, paired with the shared vertex data each borrows
+     * (spec 181). The pair is what `disposeShell` needs: free the instanced
+     * attributes this batch added, leave the ones every other region is using.
+     */
+    readonly shells: { shell: THREE.BufferGeometry; shared: THREE.BufferGeometry }[];
+    readonly materials: THREE.Material[];
+  }
+  const regions = new Map<string, Region>();
+  let current: Region = { group, shells: [], materials: [] };
+
+  /**
+   * One `InstancedMesh` per batch, from arrays somebody else composed.
+   *
+   * What is left here after spec 181 is the half that needs the scene graph:
+   * the shell, the material, the mesh, and the sway patch. The 16.2ms of matrix
+   * and colour arithmetic that used to sit in the middle of this is
+   * {@link buildRegionInstances}, and on the shipped client it runs on the map
+   * worker.
+   */
+  const build = (batch: PropBatchInstances): void => {
+    const part = propGroupParts(batch.group)[batch.part];
+    if (!part || batch.count === 0) return;
+
+    const shared = sharedGeometry(part.geometry, creaseCos, shade.smooth);
+    const geometry = shellOf(shared);
+    const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
+    const mesh = new THREE.InstancedMesh(geometry, material, batch.count);
+    // Assigned rather than filled, so the arrays the worker transferred are the
+    // arrays the attribute holds -- `set` would copy 16 floats per instance back
+    // over the boundary the transfer just avoided.
+    mesh.instanceMatrix = new THREE.InstancedBufferAttribute(batch.matrices, 16);
+    mesh.instanceMatrix.setUsage(THREE.StaticDrawUsage);
+    mesh.instanceColor = new THREE.InstancedBufferAttribute(batch.colors, 3);
+    // Scenery is the bulk of the shadow pass (spec 045): a canopy that throws
+    // dappled shade onto the ground is what stops props reading as decals.
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    if (batch.sway) {
+      applySwayBuffers(
+        mesh,
+        batch.sway.base,
+        batch.sway.tune,
+        batch.sway.height,
+        { lag: part.swayLag ?? 0, tilt: part.swayTilt ?? 0, reach: batch.sway.reach },
+        shade.swayNormals,
+      );
+    }
+    current.group.add(mesh);
+    current.shells.push({ shell: geometry, shared });
+    current.materials.push(material);
   };
 
   // Group props into square regions, then batch each region's trees (split by
@@ -1833,22 +2502,33 @@ export function buildPropField(
 
   /** Build one region's batches into a group of its own. */
   const buildRegion = (key: string, bucket: readonly Prop[]): void => {
-    const region: Region = { group: new THREE.Group(), geometries: [], materials: [] };
+    adoptRegion(key, buildRegionInstances(bucket, heightAt, normalAt));
+  };
+
+  /**
+   * Hang one region's batches on the scene graph (spec 181).
+   *
+   * The seam the map worker enters through: `buildRegion` above composes the
+   * instances here and then calls this, and the shipped client has the worker
+   * compose them and calls this with what came back. One path either way, so a
+   * field built on this thread and one built on the other are the same field by
+   * construction rather than by two implementations agreeing.
+   */
+  const adoptRegion = (key: string, instances: RegionInstances): void => {
+    const held = regions.get(key);
+    if (held) {
+      disposeRegion(held);
+      regions.delete(key);
+    }
+    if (instances.undrawnKinds.length > 0) {
+      // Loud, because the alternative is silence: nothing on screen and no error.
+      console.warn(`buildPropField: no geometry for ${instances.undrawnKinds.join(', ')}`);
+    }
+    const batches = instances.batches;
+    if (batches.length === 0) return;
+    const region: Region = { group: new THREE.Group(), shells: [], materials: [] };
     current = region;
-    // Hashed once per tree rather than once per part per tree.
-    const variants = new Map<Prop, TreeVariant>();
-    const trees = bucket.filter((p) => p.kind === 'tree');
-    for (const tree of trees) variants.set(tree, treeVariant(tree));
-    for (const species of TREE_SPECIES) {
-      build(treeParts(species), trees.filter((p) => variants.get(p)?.species === species), variants);
-    }
-    build(bushParts(), bucket.filter((p) => p.kind === 'bush'));
-    // Fences batch per region and per style like everything else. A tile carries
-    // no variant: what makes one differ from the next is its own tint and the
-    // per-part jitter hashed from where it stands.
-    for (const kind of FENCE_KINDS) {
-      build(fenceParts(kind), bucket.filter((p) => p.kind === kind));
-    }
+    for (const batch of batches) build(batch);
     regions.set(key, region);
     group.add(region.group);
   };
@@ -1860,7 +2540,7 @@ export function buildPropField(
     for (const child of region.group.children) {
       if (child instanceof THREE.InstancedMesh) disposeSway(child);
     }
-    for (const geo of region.geometries) geo.dispose();
+    for (const { shell, shared } of region.shells) disposeShell(shell, shared);
     for (const mat of region.materials) mat.dispose();
     region.group.clear();
     group.remove(region.group);
@@ -1876,34 +2556,57 @@ export function buildPropField(
     return missing.length;
   };
 
-  const buckets = bucketize(props);
-  // Sorted, so the scene graph is built in the same order for the same input.
-  for (const key of [...buckets.keys()].sort()) buildRegion(key, buckets.get(key) ?? []);
+  if (!options?.deferred) {
+    const buckets = bucketize(props);
+    // Sorted, so the scene graph is built in the same order for the same input.
+    for (const key of [...buckets.keys()].sort()) buildRegion(key, buckets.get(key) ?? []);
+  }
 
   const handle: PropFieldHandle = {
     group,
     undrawn: countUndrawn(props),
+    adoptRegion,
+    dropRegion(key): boolean {
+      const held = regions.get(key);
+      if (!held) return false;
+      disposeRegion(held);
+      regions.delete(key);
+      return true;
+    },
+    heldRegions(): readonly string[] {
+      return [...regions.keys()];
+    },
     rebuildWithin(next, rect): void {
-      const lo = propRegionKey(rect.minX, rect.minZ).split(',').map(Number) as [number, number];
-      const hi = propRegionKey(rect.maxX, rect.maxZ).split(',').map(Number) as [number, number];
+      const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];
       const wanted = new Set<string>();
-      for (let rz = lo[1]; rz <= hi[1]; rz++) {
-        for (let rx = lo[0]; rx <= hi[0]; rx++) wanted.add(`${rx},${rz}`);
+      for (const one of rects) {
+        for (const key of propRegionKeysIn(one)) wanted.add(key);
+      }
+      if (wanted.size === 0) return;
+
+      // Bucketed over the *wanted* regions only (spec 165 follow-up). A full
+      // `bucketize` builds a list for all 66 regions of the grown map to read
+      // the handful being rebuilt, and pays it again for `countUndrawn` -- which
+      // is the fixed cost that made rebuilding one region nearly as expensive as
+      // rebuilding four.
+      const fresh = new Map<string, Prop[]>();
+      let undrawn = 0;
+      for (const prop of next) {
+        if (!DRAWN_KINDS.has(prop.kind)) undrawn++;
+        const key = propRegionKey(prop.x, prop.y);
+        if (!wanted.has(key)) continue;
+        const bucket = fresh.get(key);
+        if (bucket) bucket.push(prop);
+        else fresh.set(key, [prop]);
       }
 
-      const fresh = bucketize(next);
       for (const key of [...wanted].sort()) {
-        const region = regions.get(key);
-        if (region) {
-          disposeRegion(region);
-          regions.delete(key);
-        }
-        const bucket = fresh.get(key);
         // A region emptied by an erase or a removed part is dropped rather than
-        // rebuilt as nothing, so the scene graph does not fill with empty groups.
-        if (bucket && bucket.length > 0) buildRegion(key, bucket);
+        // rebuilt as nothing, so the scene graph does not fill with empty
+        // groups: `adoptRegion` frees whatever was there and returns.
+        buildRegion(key, fresh.get(key) ?? []);
       }
-      handle.undrawn = countUndrawn(next);
+      handle.undrawn = undrawn;
     },
     dispose(): void {
       for (const region of regions.values()) disposeRegion(region);

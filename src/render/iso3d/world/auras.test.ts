@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { AURA_ORDER, AuraTracker, aurasFor, pixelsForWorld, ringsSeparated, type AuraFacts } from './auras.js';
 import { EFFECTS } from '../vfx/registry.js';
+import { ALL_AURA_FIELDS, SCORCHED_EARTH } from '../../../server/data/aura-fields.js';
+import { StatusId } from '../../../server/sim/statuses.js';
 import { RENDER_H, MAX_RENDER_W } from '../view-frame.js';
 
 function facts(overrides: Partial<AuraFacts> = {}): AuraFacts {
@@ -61,6 +63,42 @@ describe('aurasFor', () => {
     // The stub-table failure: a name that looks right and silently plays nothing.
     const known = new Set(EFFECTS.map((effect) => effect.id));
     for (const id of AURA_ORDER) expect(known.has(id)).toBe(true);
+  });
+});
+
+describe('the field branch (spec 223)', () => {
+  it('shows a field’s own ring for a body carrying it', () => {
+    expect(aurasFor(facts({ fields: [StatusId.ScorchedEarth] }))).toEqual([
+      SCORCHED_EARTH.auraEffectId,
+    ]);
+  });
+
+  it('shows nothing for a status that is not a field', () => {
+    // A client reading a newer server sees a status id it has a visual for and
+    // no field row: the honest answer is no ring, never a stand-in one, because
+    // this ring's radius is a claim about where a hazard is.
+    expect(aurasFor(facts({ fields: [StatusId.Burn, 'not.a.field'] }))).toEqual([]);
+  });
+
+  it('keeps a field’s ring in AURA_ORDER beside the rest', () => {
+    const shown = aurasFor(facts({ selected: true, fields: [StatusId.ScorchedEarth] }));
+    expect(shown).toEqual(['aura_selected', SCORCHED_EARTH.auraEffectId]);
+  });
+
+  it('draws every field’s ring at the field’s own reach', () => {
+    // The whole reason `library.ts` imports the table: the ring is not
+    // decoration around the mechanic, it is where the fire is. Read back off the
+    // compiled effect rather than off the call, so a future edit to either end
+    // fails here.
+    for (const field of ALL_AURA_FIELDS) {
+      const effect = EFFECTS.find((row) => row.id === field.auraEffectId);
+      expect(effect, field.auraEffectId).toBeDefined();
+      const ring = effect?.emitters.find((emitter) => emitter.id === 'ring');
+      expect(ring, `${field.auraEffectId} has no ring emitter`).toBeDefined();
+      expect(ring?.size.keys[0]?.[1], field.auraEffectId).toBe(field.radius);
+      // And it is in the order table, or it is authored and never asked for.
+      expect(AURA_ORDER, field.auraEffectId).toContain(field.auraEffectId);
+    }
   });
 });
 

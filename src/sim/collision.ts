@@ -1,4 +1,5 @@
-import { ARENA_OBSTACLES, SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
+import { SEPARATION_ITERATIONS, WORLD_BOUNDS } from './constants.js';
+import { MAX_NEAR_COLLIDERS, buildColliderIndex, circlesInRect, circlesNear } from './collider-index.js';
 import type { Circle, Rect, Vec2, WorldColliders } from './types.js';
 
 /**
@@ -22,21 +23,43 @@ export interface Collider {
 }
 
 /**
- * The world a caller gets when it does not name one: the arena's walls inside
- * the world's bounds, with no vegetation. Headless callers (tests, the balance
- * harness) fight in an empty world; the iso views build the real one from the
- * terrain and hand it to `initCombat`.
+ * The world a caller gets when it does not name one: the world's bounds and
+ * nothing in them. Headless callers (tests, the balance harness) fight in an
+ * empty world; the iso views build the real one from the terrain and hand it to
+ * `initCombat`.
+ *
+ * Empty of rects as well as circles since spec 221 -- it used to carry the
+ * hand-authored arena walls, which is why a headless caller that named no world
+ * still got six barricades it never asked for.
  */
-export const DEFAULT_WORLD: WorldColliders = { bounds: WORLD_BOUNDS, rects: ARENA_OBSTACLES, circles: [] };
+export const DEFAULT_WORLD: WorldColliders = createWorldColliders([], [], WORLD_BOUNDS);
 
-/** A world of walls and vegetation; bounds default to the whole world. */
+/**
+ * A world of walls and vegetation; bounds default to the whole world.
+ *
+ * Both collider lists default to empty: a caller that names none gets none.
+ * Walls come from the map document like everything else (spec 221).
+ */
 export function createWorldColliders(
-  rects: readonly Rect[] = ARENA_OBSTACLES,
+  rects: readonly Rect[] = [],
   circles: readonly Circle[] = [],
   bounds: Rect = WORLD_BOUNDS,
 ): WorldColliders {
-  return { bounds, rects, circles };
+  // The index is built here and only here (spec 192), so it cannot be out of
+  // step with the array it indexes: there is one factory, every construction
+  // goes through it, and the field is not optional.
+  return { bounds, rects, circles, index: buildColliderIndex(circles) };
 }
+
+/**
+ * The scratch buffer both queries below gather into.
+ *
+ * Module-level and reused, because these are called several times per body per
+ * tick and a fresh array each time is the allocation this spec exists to avoid.
+ * Safe to share only because neither query is re-entrant and neither yields --
+ * the gathered indices are consumed before the next call can start.
+ */
+const NEAR: Int32Array = new Int32Array(MAX_NEAR_COLLIDERS);
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -72,7 +95,23 @@ export function circleHitsCircle(centre: Vec2, radius: number, circle: Circle): 
 /** True when a body of `radius` cannot stand at `centre`. */
 export function circleBlocked(centre: Vec2, radius: number, world: WorldColliders = DEFAULT_WORLD): boolean {
   for (const rect of world.rects) if (circleHitsRect(centre, radius, rect)) return true;
-  for (const circle of world.circles) if (circleHitsCircle(centre, radius, circle)) return true;
+  // The same test on the same circles, on the handful that could possibly answer
+  // yes rather than on all of them (spec 192). Rects stay linear: there are six,
+  // from a compiled-in constant, and a lookup would cost more than the walk.
+  //
+  // Correct by construction here, unlike in `pushOutOfObstacles`: the point does
+  // not move, and a circle can only touch a body of `radius` at `centre` if its
+  // centre is within `radius + circle.r`, which `circlesNear`'s reach covers for
+  // every circle in the world.
+  const near = circlesNear(world.index, centre, radius, NEAR);
+  if (near < 0) {
+    for (const circle of world.circles) if (circleHitsCircle(centre, radius, circle)) return true;
+    return false;
+  }
+  for (let at = 0; at < near; at += 1) {
+    const circle = world.circles[NEAR[at] ?? 0];
+    if (circle && circleHitsCircle(centre, radius, circle)) return true;
+  }
   return false;
 }
 
@@ -144,13 +183,57 @@ export function pushOutOfObstacles(centre: Vec2, radius: number, world: WorldCol
         moved = true;
       }
     }
-    for (const circle of world.circles) {
+
+    // The circle half, narrowed by the index (spec 192) -- and this is the one
+    // place in that change where "narrower" is not obviously "the same".
+    //
+    // The walk this replaces tested every circle against the point *as it stood
+    // when that circle was reached*, and a push moves the point. A set gathered
+    // once, at the point the pass started from, is therefore only the set the
+    // walk would have used while the point stays inside the margin the gather
+    // allowed for: `circlesNear` is asked to reach `radius + maxRadius` and adds
+    // `maxRadius` of its own, so the margin is `maxRadius`.
+    //
+    // One push can move the point by as much as `radius + circle.r`, which is
+    // more than that margin, so the wander is *measured* -- after every push,
+    // not once at the end, because the point can excurse and come back and a
+    // final reading would call that still. A pass that leaves the margin is
+    // redone over every circle. The first cut checked only the end of the pass
+    // and the exactness test failed on two of its three densities, which is the
+    // whole reason that test compares against a copy of the old code rather than
+    // asserting something about the new.
+    //
+    // On the shipped map neither fallback fires: the sampled worst is two
+    // circles within reach of a body and one push lands clear of both. But
+    // "cannot arise on today's map" is a fact about `maps/arena.json`, and this
+    // is the deterministic core.
+    const before = at;
+    const margin = world.index.maxRadius;
+    const near = circlesNear(world.index, at, radius + margin, NEAR);
+    let exact = near >= 0;
+    for (let index = 0; exact && index < near; index += 1) {
+      const circle = world.circles[NEAR[index] ?? 0];
+      if (!circle) continue;
       const next = pushOutOfCircle(at, radius, circle);
-      if (next !== at) {
-        at = next;
-        moved = true;
+      if (next === at) continue;
+      at = next;
+      moved = true;
+      if (Math.hypot(at.x - before.x, at.y - before.y) > margin) exact = false;
+    }
+    if (!exact) {
+      // Both ways the narrowed set can fail to be the walk's set, answered the
+      // one way: the index refused a query with more candidates than the buffer
+      // holds, or the point wandered past what the gather covered.
+      at = before;
+      for (const circle of world.circles) {
+        const next = pushOutOfCircle(at, radius, circle);
+        if (next !== at) {
+          at = next;
+          moved = true;
+        }
       }
     }
+
     at = clampCircleToBounds(at.x, at.y, radius, world.bounds);
     if (!moved) break;
   }
@@ -233,11 +316,49 @@ export function segmentClear(a: Vec2, b: Vec2, radius: number, world: WorldColli
       return false;
     }
   }
-  for (const circle of world.circles) {
-    if (segmentHitsCircle(a, b, radius, circle)) return false;
+
+  // Narrowed through the index rather than walked (spec 206). Spec 192 built
+  // `ColliderIndex` because "`pushOutOfObstacles` and `circleBlocked` used to
+  // test every circle in the world", indexed those two, and left this one on the
+  // walk -- and this one is what `pathClear` is and what aggro's line of sight
+  // is, so every routing monster paid for every tree on the map every tick. On
+  // `maps/arena` that is 28,919 circles and 84us a call, against 1.27us here;
+  // at the 4x target the walk becomes ~1,300us, which is one sight check for a
+  // twelfth of a tick.
+  //
+  // The **bounding box** of the segment rather than a walk down the cells it
+  // crosses. A long diagonal over-fetches, and a few dozen circles against
+  // 28,919 is not a difference worth a second query shape for.
+  //
+  // Order-independent, which is what makes this safe in the deterministic core:
+  // the answer is "did anything hit", so the bucket order `circlesInRect`
+  // returns gives the same boolean as the authored order the walk used. That is
+  // exactly the property `pushOutOfObstacles` does *not* have -- it applies
+  // corrections in sequence -- which is why `circlesNear` promises ascending
+  // original order and this does not.
+  const minX = (a.x < b.x ? a.x : b.x) - radius;
+  const maxX = (a.x > b.x ? a.x : b.x) + radius;
+  const minY = (a.y < b.y ? a.y : b.y) - radius;
+  const maxY = (a.y > b.y ? a.y : b.y) + radius;
+  const near = segmentScratch;
+  near.length = 0;
+  circlesInRect(world.index, minX, minY, maxX, maxY, near);
+  for (const at of near) {
+    const circle = world.circles[at];
+    if (circle !== undefined && segmentHitsCircle(a, b, radius, circle)) return false;
   }
   return true;
 }
+
+/**
+ * One scratch array for every `segmentClear` call.
+ *
+ * Reused rather than allocated because this is called several times per routing
+ * body per tick and the gathered set is a few dozen numbers. Safe for the same
+ * reason `NavScratch` is: the function never yields, so no second call can be in
+ * flight, and nothing outside it ever sees the array.
+ */
+const segmentScratch: number[] = [];
 
 /**
  * Separate overlapping units, then push everyone back out of the walls.

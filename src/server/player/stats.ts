@@ -14,25 +14,37 @@
 import {
   MOVE_SPEED_HARD_MAX,
   MOVE_SPEED_HARD_MIN,
-  PLAYER_ATTACK_DAMAGE,
   PLAYER_ATTACK_RANGE,
   PLAYER_MAX_HEALTH,
   TICK_RATE as SIM_TICK_RATE,
 } from '../../sim/constants.js';
 import { CHARACTERS } from '../../sim/characters.js';
 import {
+  attackSpeedFromHaste,
   MAX_ATTACK_INTERVAL_SECONDS,
   MIN_ATTACK_INTERVAL_SECONDS,
-  NO_ATTACK_SPEED,
 } from '../sim/attack-timing.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
 import { above, SCALING } from '../data/scaling.js';
+import {
+  attributeScalingBonus,
+  damageOf,
+  effectiveScaling,
+  gradeModifiersFrom,
+  scalingOf,
+} from '../data/weapon-scaling.js';
 import type { StatModifier } from '../data/modifiers.js';
 import { armorFromAttributes, deriveTraits } from './derived.js';
+import { skillAbilityIdsOf } from './skill-slots.js';
 import { heldModifiers, resolveProgression } from './progression.js';
-import { type BaseStats, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
+import {
+  type BaseStats,
+  type EffectiveStats,
+  type PersistedPlayer,
+  type ScalingAttributes,
+} from '../state/types.js';
 
 /**
  * The single-player sim's durations are written in 60Hz ticks; this server runs
@@ -55,9 +67,7 @@ export const HP_PER_CONSTITUTION = SCALING.constitution.healthPer;
 /** Health per point of strength. Small: Constitution owns the pool. */
 export const HP_PER_STRENGTH = SCALING.strength.healthPer;
 /** Health granted by each character level beyond the first. */
-export const HP_PER_LEVEL = 8;
-/** Attack damage per point of strength. */
-export const DAMAGE_PER_STRENGTH = SCALING.strength.damagePer;
+export const HP_PER_LEVEL = 2;
 /**
  * What a body with nothing on it waits between basic attacks (spec 088).
  *
@@ -188,41 +198,93 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const turnRate = Math.max(30, BASE_TURN_RATE + SCALING.agility.turnPer * agility + bonus.turnRate);
 
-  const attackDamage = Math.max(
-    0,
-    (PLAYER_ATTACK_DAMAGE +
-      DAMAGE_PER_STRENGTH * strength +
-      SCALING.agility.damagePer * agility +
-      bonus.attackDamage) *
-      (1 + bonus.attackDamagePct),
-  );
+  // The Damage row (spec 216).
+  //
+  // What replaced two hard-coded attribute terms is one call through the
+  // resolver: the weapon says which attributes it scales with as a letter each,
+  // the player's equipment and passives shift those letters, and
+  // `attributeScalingBonus` turns the resolved grades into a number. Before
+  // this, `SCALING.strength.damagePer * strength + agility.damagePer * agility`
+  // was added for *every* weapon in the game, so the maul, the bow and the
+  // Emberwood Staff all bought their damage from the same stat and nothing a
+  // designer could write in `data/items.ts` changed it.
+  //
+  // Resolved once, here, and handed to the client on `EffectiveStats` -- the
+  // tooltip reads the same grades rather than working them out again.
+  const mainHand = player.equipment.mainHand;
+  const weapon = mainHand ? itemById(mainHand) : null;
+  const held = weapon !== null;
+  const scalingModifiers = gradeModifiersFrom(bonus);
+  const weaponScaling = effectiveScaling(scalingOf(weapon?.scaling, held), scalingModifiers);
+  // The three values every grade in the game is resolved against, named once
+  // (spec 238). The weapon folds its own term into the range below; an ability
+  // cannot, because which grades apply depends on which ability -- so the sim
+  // carries these and resolves per blow, through the same `contributionOf`.
+  const scalingAttributes: ScalingAttributes = { strength, agility, intelligence };
+
+  // The weapon's own range, with everything that acts on it folded in (spec
+  // 217). Both ends take the same additions, so a wide weapon stays wide and a
+  // narrow one stays narrow -- an attribute term that multiplied the spread
+  // would make every high-Strength maul a lottery.
+  const weaponDamage = damageOf(weapon?.damage, held);
+  const scalingBonus = attributeScalingBonus(scalingAttributes, weaponScaling);
+  const resolve = (end: number): number =>
+    Math.max(0, (end + scalingBonus + bonus.attackDamage) * (1 + bonus.attackDamagePct));
+  const weaponDamageMin = resolve(weaponDamage.min);
+  const weaponDamageMax = resolve(weaponDamage.max);
+
+  // The **midpoint**, which is what the character sheet's Damage row shows and
+  // what a stagger's power is sized off. One number, because both of those want
+  // one; the range is what a blow actually rolls between.
+  const attackDamage = (weaponDamageMin + weaponDamageMax) / 2;
 
   const attackRange = Math.max(1, PLAYER_ATTACK_RANGE + bonus.attackRange);
 
-  // Base Attack Time, and the three attack-speed inputs beside it (spec 144).
+  // Base Attack Time, and the three attack-speed inputs beside it (specs 144, 174).
   //
-  // All four are deliberately unmodified. Spec 091 took the attack cadence off
-  // the weapon on purpose -- a bow and a sword put you on the same clock, and
-  // picking one up cannot buy a faster one -- and spec 144 builds the HoN model
-  // over that decision rather than reversing it. `attackSpeedPct` and the flat
-  // `attackCooldownTicks` still exist as modifiers and still mean what they say;
-  // nothing reads them here, which is why the two Finesse skills still do not
-  // shorten the cadence and `stats.test.ts` still asserts that they do not.
+  // Spec 144 built this socket and deliberately left it unplugged; spec 174
+  // plugs it in, because four weapon rows had been authoring `attackSpeedPct`
+  // into it since spec 070 and every one of them was inert. Spec 091's rule
+  // that the cadence is a property of attacking rather than of what is held is
+  // reversed **for the weapon half only** -- that is the half a player picks
+  // up and can therefore make a decision about.
   //
-  // What changed is that there is now somewhere for an attack-speed source to
-  // plug in when a spec decides there should be one: `attackSpeed` is additive
-  // flat in the HoN convention, and the two multipliers stack apart from it.
-  // Converting the existing modifiers onto those three is one call to
-  // `attackSpeedFromHaste` and a sign test, and it is a content decision rather
-  // than a refactor, so it is left undone rather than done quietly.
-  const baseAttackTimeTicks = baseAttackTimeTicksFrom(0);
+  // What is NOT reversed is spec 147's structural commitment: every Agility
+  // scale is on the attack point and the backswing, and nothing an attribute
+  // writes reaches `baseAttackTimeTicks` or any of these three. The fast stat
+  // still cannot become the damage stat by shortening the cadence, and
+  // `stats.test.ts` still asserts it.
+  //
+  // The two multipliers are the same summed fraction split by sign rather than
+  // one number in one bucket. Arithmetically that is identical today -- the
+  // factor is their product and the other is 1 -- and it is written this way so
+  // that a slow arriving later as a status lands in the slow bucket beside the
+  // slows rather than being cancelled against an item's haste.
+  const baseAttackTimeTicks = baseAttackTimeTicksFrom(bonus.attackCooldownTicks);
+  const attackSpeed = attackSpeedFromHaste(bonus.attackSpeed);
+  const attackSpeedPct = Number.isFinite(bonus.attackSpeedPct) ? bonus.attackSpeedPct : 0;
+  const attackSpeedMultiplier = 1 + Math.max(0, attackSpeedPct);
+  const attackSpeedSlowMultiplier = 1 + Math.min(0, attackSpeedPct);
 
   const armor = armorFromAttributes(attributes, bonus.armor);
 
-  const spellPower = Math.max(
-    0,
-    1 + SCALING.intelligence.spellPowerPer * intelligence + bonus.spellPower,
-  );
+  // Spell Power (spec 238).
+  //
+  // **Intelligence is deliberately no longer a term in it.** Before spec 238
+  // this was `1 + per * Intelligence + bonus` and it multiplied the damage of
+  // every non-basic ability in the game, which is how Whirlwind came to be an
+  // Intelligence skill. Intelligence now reaches an ability exactly once, as
+  // the attribute its declared `intelligence` grade is resolved against, and
+  // leaving the per-point term here as well would make an Intelligence ability
+  // quadratic in Intelligence -- the double-count spec 238 exists to prevent.
+  //
+  // What is left is what items and passives grant, and what it now multiplies
+  // is the **Intelligence contribution of an ability's scaling** and nothing
+  // else (`abilityContributionOf`). So "Spell Power" means what it says: it
+  // amplifies your magic, it cannot reach a Strength ability, and the two
+  // rows that author it -- the Emberwood Staff and `int.potency` -- keep
+  // meaning what they meant.
+  const spellPower = Math.max(0, 1 + bonus.spellPower);
 
   const critChance = clamp(CRIT_PER_PERCEPTION * perception + bonus.critChance, 0, MAX_CRIT_CHANCE);
 
@@ -245,13 +307,21 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     attackDamage,
     attackRange,
     baseAttackTimeTicks,
-    ...NO_ATTACK_SPEED,
+    attackSpeed,
+    attackSpeedMultiplier,
+    attackSpeedSlowMultiplier,
     armor,
     spellPower,
     critChance,
     maxResource,
     resourceRegen,
     basicAttackId: basicAttackFor(player),
+    skillAbilityIds: skillAbilityIdsOf(player.equipment),
+    weaponScaling,
+    weaponDamageMin,
+    weaponDamageMax,
+    scalingModifiers,
+    scalingAttributes,
     // Derived last, because two of its fields are fractions of maxHealth and
     // one is a duration in ticks -- it needs the pool it is a fraction of, and
     // the tick rate the sim actually runs at.
@@ -328,6 +398,21 @@ export function projectileLifetimeTicks(spec: {
     return Math.max(1, Math.round(spec.lifetimeTicks) || 1);
   }
   return Math.max(1, Math.round((spec.lifetimeTicks * spec.speed) / speed));
+}
+
+/**
+ * Fallback flask charges after a recalculation (spec 156).
+ *
+ * The one place `undefined` is turned into a number, and it becomes a *full*
+ * flask: a record written before the field existed cannot tell "drank them all"
+ * from "never had any", and the generous reading is the only one that cannot
+ * strand an existing character with no way to recover. Clamped like health and
+ * the pool, because Constitution owns the ceiling and a respec can lower it.
+ */
+export function clampCharges(charges: number | undefined, stats: EffectiveStats): number {
+  const max = Math.max(0, Math.floor(stats.traits.fallbackCharges));
+  if (charges === undefined || !Number.isFinite(charges)) return max;
+  return Math.min(max, Math.max(0, Math.floor(charges)));
 }
 
 /** Ability resource after a recalculation, held under the fresh ceiling. */

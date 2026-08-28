@@ -114,63 +114,107 @@ export const STRIKE_KEY_MS = {
  * linkage and an unpenalised solve holds the foot perfectly still by snapping the
  * knee straight.
  *
+ * ## What spec 245 changed, and why every number here moved
+ *
+ * A foot that does not slide is not the same claim as a foot standing on
+ * something, and until spec 245 only the first was made. Every target was
+ * measured *from the guard key's own feet*, so wherever the hand-authored guard
+ * put them was correct by construction -- and it put them behind the pig and in
+ * the air. Measured: the pelvis at **157%** of its own support span, past the
+ * leading toe, at the guard and outside it at every key up to contact; both feet
+ * 0.03 above the ground the idle stands on, with the right climbing to 0.077
+ * above it at the beat this file calls a brace; and the rear knee at **10.4
+ * degrees**, locked nearly straight while bracing and then snapping 44 degrees
+ * in 100ms.
+ *
+ * All three came from one mechanism. `leftLeg: { lateral: 30 }` turns the shin
+ * about the knee, and positive `lateral` carries a hanging limb *backwards* --
+ * so the bend was bought by taking the ankle back and up, rather than by the
+ * knee travelling forward over a foot that stays put. The knee bend and the
+ * balance were the same number, and it was spent on the bend.
+ *
+ * The brief is stated on the floor now: where each ankle is against the pelvis,
+ * and how far the heel rides off the ground. The bend is what is left once both
+ * are paid for -- 21.5 to 24.7 degrees on the support leg and 22.7 to 28.6 on
+ * the wielding one, against a rig whose legs are exactly as long as it stands
+ * tall, so that every degree of knee costs altitude and a deep stance is not
+ * available at any price. It is less bend than the old numbers claimed and it is
+ * bend the body is standing on.
+ *
  * The right leg is the same solve with the opposite brief -- it is the wielding
- * side, so it steps back to brace and drives through as the blow lands. Its
- * travel used to be *measured* against a left foot that was itself sliding,
- * which flattered it by roughly two thirds; the honest step is smaller than the
- * old numbers said, and it is also the whole step rather than half of one.
+ * side, so it steps back to brace and drives through as the blow lands. Its step
+ * is smaller than spec 143's, and the two reasons are worth keeping. That step
+ * was measured with the foot in the air, and a foot in the air can reach as far
+ * back as anybody likes: on the floor this leg cannot put its ankle more than
+ * 0.079 from under its own hip at all. And it stops short of the pelvis rather
+ * than driving past the left foot, because past the pelvis is a body with both
+ * feet in front of its own weight, which is the fault at the top of this comment
+ * arriving from the other side.
  *
  * Left foot: 0.19 of drift down to 0.013. `pig-strike.test.ts` bounds what is
  * left rather than trusting it.
  */
+/**
+ * The guard's legs on their own, because a second clip stands on them too.
+ *
+ * `pig-shot.ts` holds this pose in every one of its keys -- an archer sets
+ * their feet and shoots with everything above the waist -- and `pig-cast.ts`
+ * does the same; all three are entered from the idle across a short cross-fade,
+ * so the legs they start from have to be the same legs or one of them snaps the
+ * knees on the way in. Exported rather than copied so the three cannot drift
+ * apart, which also means the balance and the ground contact fixed in spec 245
+ * are fixed in all three at once.
+ */
+export const STRIKE_GUARD_LEGS = {
+  leftUpLeg: { lateral: -6.9, forward: 0, up: -1.1 },
+  leftLeg: { lateral: 21 },
+  leftFoot: { lateral: -5.7, up: 7.3 },
+  rightUpLeg: { lateral: -12, forward: 0, up: 2.9 },
+  rightLeg: { lateral: 29.6 },
+  rightFoot: { lateral: -6.3, up: 4.7 },
+} as const satisfies PoseTable;
+
 const STANCE = {
-  guard: {
-    leftUpLeg: { lateral: 6, forward: 4, up: 0 },
-    leftLeg: { lateral: 30 },
-    leftFoot: { lateral: -22, up: 0 },
-    rightUpLeg: { lateral: 12, forward: -4, up: 0 },
-    rightLeg: { lateral: 30 },
-    rightFoot: { lateral: -18, up: 0 },
-  },
+  guard: STRIKE_GUARD_LEGS,
   rise: {
-    leftUpLeg: { lateral: 5.1, forward: 4.5, up: -0.2 },
-    leftLeg: { lateral: 30.2 },
-    leftFoot: { lateral: -22.1, up: 0 },
-    rightUpLeg: { lateral: 27.3, forward: -3.7, up: -0.9 },
-    rightLeg: { lateral: 15.3 },
-    rightFoot: { lateral: -8, up: -0.3 },
+    leftUpLeg: { lateral: -7.7, forward: 0, up: -1.3 },
+    leftLeg: { lateral: 21.3 },
+    leftFoot: { lateral: -5.5, up: 7.1 },
+    rightUpLeg: { lateral: -2.4, forward: -0.9, up: 2.5 },
+    rightLeg: { lateral: 27.5 },
+    rightFoot: { lateral: -4.6, up: 4.6 },
   },
   coil: {
-    leftUpLeg: { lateral: 9.5, forward: 1.7, up: 0.7 },
-    leftLeg: { lateral: 28.8 },
-    leftFoot: { lateral: -21.4, up: 0.1 },
-    rightUpLeg: { lateral: 33.5, forward: -10.9, up: 0.3 },
-    rightLeg: { lateral: 10.6 },
-    rightFoot: { lateral: 2.3, up: -1.2 },
+    leftUpLeg: { lateral: -4.5, forward: 0, up: -0.1 },
+    leftLeg: { lateral: 22.6 },
+    leftFoot: { lateral: -5.4, up: 8.1 },
+    rightUpLeg: { lateral: -0.1, forward: -4, up: 3.7 },
+    rightLeg: { lateral: 25.9 },
+    rightFoot: { lateral: -3.4, up: 5 },
   },
   load: {
-    leftUpLeg: { lateral: 10.7, forward: 0.8, up: 1 },
-    leftLeg: { lateral: 28.3 },
-    leftFoot: { lateral: -21.2, up: 0.2 },
-    rightUpLeg: { lateral: 33.4, forward: -13.2, up: 0.7 },
-    rightLeg: { lateral: 10.3 },
-    rightFoot: { lateral: 3.2, up: -1.3 },
+    leftUpLeg: { lateral: -3.2, forward: -0.1, up: 0.3 },
+    leftLeg: { lateral: 21.8 },
+    leftFoot: { lateral: -5.5, up: 8.4 },
+    rightUpLeg: { lateral: -0.7, forward: -4.8, up: 4 },
+    rightLeg: { lateral: 25.9 },
+    rightFoot: { lateral: -3.3, up: 5.2 },
   },
   contact: {
-    leftUpLeg: { lateral: -6.6, forward: 8, up: -2 },
-    leftLeg: { lateral: 30.8 },
-    leftFoot: { lateral: -23, up: -0.5 },
-    rightUpLeg: { lateral: -15.5, forward: 0.7, up: -2.6 },
-    rightLeg: { lateral: 54.2 },
-    rightFoot: { lateral: -22, up: -1 },
+    leftUpLeg: { lateral: -17.8, forward: 0, up: -4.1 },
+    leftLeg: { lateral: 24.3 },
+    leftFoot: { lateral: -3.5, up: 4.9 },
+    rightUpLeg: { lateral: -6.4, forward: 4.5, up: 0.3 },
+    rightLeg: { lateral: 25.7 },
+    rightFoot: { lateral: -4.5, up: 3.5 },
   },
   follow: {
-    leftUpLeg: { lateral: -10.4, forward: 8, up: -2.4 },
-    leftLeg: { lateral: 29.9 },
-    leftFoot: { lateral: -23, up: -0.6 },
-    rightUpLeg: { lateral: -23.3, forward: -2.1, up: -0.4 },
-    rightLeg: { lateral: 55.9 },
-    rightFoot: { lateral: -21.9, up: -1.3 },
+    leftUpLeg: { lateral: -20.3, forward: -1, up: -6.1 },
+    leftLeg: { lateral: 22.3 },
+    leftFoot: { lateral: -2.5, up: 4.4 },
+    rightUpLeg: { lateral: -4.9, forward: 5.9, up: -0.2 },
+    rightLeg: { lateral: 23.6 },
+    rightFoot: { lateral: -4, up: 3 },
   },
 } as const satisfies Record<string, PoseTable>;
 
@@ -311,7 +355,7 @@ const KEYS: readonly PoseKey[] = [
     atMs: STRIKE_KEY_MS.contact,
     ease: 'in',
     turns: {
-      hips: { up: 18 },
+      hips: { up: 18, forward: -3 },
       spine: { lateral: 8, up: 12 },
       chest: { up: 30, lateral: 9 },
       neck: { up: -16, lateral: 12 },
@@ -335,7 +379,7 @@ const KEYS: readonly PoseKey[] = [
     atMs: STRIKE_KEY_MS.follow,
     ease: 'out',
     turns: {
-      hips: { up: 26 },
+      hips: { up: 26, forward: -4 },
       spine: { lateral: 12, up: 16 },
       chest: { up: 40, lateral: 12 },
       neck: { up: -26, lateral: 16 },

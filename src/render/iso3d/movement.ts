@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import GUI from 'lil-gui';
 import { characterAt } from '../../sim/characters.js';
-import { ARENA_HEIGHT, ARENA_OBSTACLES, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
+import { ARENA_HEIGHT, ARENA_WIDTH, TICK_RATE } from '../../sim/constants.js';
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import { createWorldColliders } from '../../sim/collision.js';
 import { defaultRobeTuning, type RobeTuning } from '../cloth/params.js';
@@ -9,7 +9,7 @@ import { SandboxInput } from './sandbox-input.js';
 import { initMover, stepMover, type MoverInput, type MoverState } from './sandbox-mover.js';
 import type { ViewHandle } from './view-handle.js';
 import { PALETTE } from './palette.js';
-import { makeHeadingArrow, makeMoveMarker, makeUnwalkableField, makeWall } from './meshes.js';
+import { makeHeadingArrow, makeMoveMarker, makeUnwalkableField } from './meshes.js';
 import {
   createArenaWorld,
   vegetationColliders,
@@ -249,7 +249,6 @@ class MovementScene {
     this.terrainPick = terrainMesh.pickTargets;
     this.scene.add(terrainMesh.group);
     this.addScenery();
-    this.addWalls();
     this.scene.add(this.unwalkable);
 
     // A scene-managed heading arrow shows the facing for either unit (the walker
@@ -272,9 +271,9 @@ class MovementScene {
     this.controls.attachWheelZoom(canvas);
   }
 
-  /** The static world the sim collides against here: walls plus vegetation (spec 044). */
+  /** The static world the sim collides against here: the vegetation (spec 044). */
   worldColliders(): WorldColliders {
-    return createWorldColliders(ARENA_OBSTACLES, vegetationColliders(this.vegetation));
+    return createWorldColliders([], vegetationColliders(this.vegetation));
   }
 
   /** The shared live-editable tuning every mech uses (the panel binds to it). */
@@ -425,25 +424,6 @@ class MovementScene {
       this.critterRigs.set(id, rig);
     }
     return rig;
-  }
-
-  /**
-   * The arena's static walls (spec 037), sunk to the lowest terrain under each
-   * footprint so a wall on a slope still meets the ground (spec 043).
-   */
-  private addWalls(): void {
-    for (const rect of ARENA_OBSTACLES) {
-      const wall = makeWall(rect.w, rect.h);
-      const low = Math.min(
-        this.terrain.heightAt(rect.x, rect.y),
-        this.terrain.heightAt(rect.x + rect.w, rect.y),
-        this.terrain.heightAt(rect.x, rect.y + rect.h),
-        this.terrain.heightAt(rect.x + rect.w, rect.y + rect.h),
-        this.terrain.heightAt(rect.x + rect.w / 2, rect.y + rect.h / 2),
-      );
-      wall.position.set(rect.x, low, rect.y);
-      this.scene.add(wall);
-    }
   }
 
   /** The same vegetation the game view draws -- and the same the sim blocks on (spec 044). */
@@ -1047,7 +1027,7 @@ export function buildPanel(opts: SandboxPanelOptions): SandboxPanel {
     .name('Held')
     .onChange((id: string) => opts.onWeapon?.(id === '' ? null : id))
     .domElement.title =
-    'Which held object goes in the weapon.main socket. Read from assets/items/, so a new weapon appears here on its own.';
+    'Which held object to hold. Which hand it goes in is the weapon document\'s own `socket` -- the swords take weapon.main and the bow takes weapon.off. Read from assets/items/, so a new weapon appears here on its own.';
   held
     .add(heldState, 'sheathed')
     .name('Sheathed (weapon.stow)')

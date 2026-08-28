@@ -3,6 +3,7 @@ import { KeybindingsScreen } from './keybindings.js';
 import { ContextStack, NO_MODIFIERS, type UiEvent } from '../core/events.js';
 import { UiRoot } from '../core/root.js';
 import { chordLabel } from '../input/actions.js';
+import { fontById, measureText } from '../text/font.js';
 import { InputMap, type Modifiers } from '../input/input-map.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
@@ -26,10 +27,56 @@ function key(code: string, mods: Modifiers = NONE): UiEvent {
   return { kind: 'key', phase: 'down', code, mods: { ...NO_MODIFIERS, ...mods }, time: 0 };
 }
 
+/**
+ * A category taller than the window scrolls rather than squashing (spec 198).
+ *
+ * This window is registered unscrolled and the screen had no scroller in it, so
+ * `Linear.shareSpace`'s overflow branch was what a long category met: every row
+ * shrunk toward nothing, no bar, and the rows at the bottom unreachable rather
+ * than merely off screen. The rows are all one height by construction, so
+ * "nobody was squashed" is exactly "they are all the same height as the first".
+ */
+describe('a category too long for its window', () => {
+  it('keeps every row its own height and scrolls instead', () => {
+    const map = new InputMap();
+    const built = new KeybindingsScreen({ theme: THEME, map, contexts: new ContextStack() });
+    built.buildAllTabs();
+    const root = new UiRoot(built, { theme: THEME, atlas: ATLAS, viewport: { width: 260, height: 96 } });
+    root.update(0);
+
+    // The longest category there is, since a short one would fit and prove
+    // nothing.
+    const longest = [...built.tabs.tabIds].sort(
+      (a, b) =>
+        map.definitions.filter((action) => action.category === b).length -
+        map.definitions.filter((action) => action.category === a).length,
+    )[0];
+    expect(longest).toBeDefined();
+    if (!longest) return;
+    built.tabs.select(longest);
+    root.update(16);
+
+    const rows = built.builtRows().filter((row) => row.action.category === longest);
+    expect(rows.length).toBeGreaterThan(1);
+    const first = rows[0]?.rect.height ?? 0;
+    expect(first).toBeGreaterThan(0);
+    for (const row of rows) expect(row.rect.height).toBe(first);
+    expect(built.tabs.bodyScroller?.scrollable).toBe(true);
+  });
+});
+
 describe('the keybinding screen', () => {
   it('has a tab per category and a row per action', () => {
     const { screen: built, map } = screen();
-    expect(built.tabs.tabIds).toEqual(['movement', 'combat', 'skillbar', 'ui', 'debug']);
+    expect(built.tabs.tabIds).toEqual([
+      'movement',
+      'combat',
+      'world',
+      'skillbar',
+      'camera',
+      'ui',
+      'debug',
+    ]);
     expect(built.builtRows()).toHaveLength(map.definitions.length);
   });
 
@@ -236,5 +283,139 @@ describe('filtering', () => {
     built.filter.setText('ui.');
     built.refresh();
     expect(built.visibleRows().every((row) => row.action.id.startsWith('ui.'))).toBe(true);
+  });
+});
+
+/**
+ * Capturing a pointer chord (spec 189).
+ *
+ * The screen barely changed for this and the tests say why: a button goes
+ * through the same `applyBinding`, produces the same conflict notice and writes
+ * the same override as a key, because by the time any of that runs there is only
+ * a chord and it does not remember what pressed it.
+ */
+describe('capturing a mouse button', () => {
+  it('binds the button that was pressed', () => {
+    const { screen: built, map } = screen();
+    built.beginCapture('world.order', 'primary');
+    expect(built.capturePointer(1, NONE)).toBe(true);
+    expect(map.bindingsFor('world.order').primary).toEqual({ code: 'MouseMiddle' });
+    expect(built.capturing).toBe(null);
+  });
+
+  it('keeps a modifier held during the press', () => {
+    const { screen: built, map } = screen();
+    built.beginCapture('world.order', 'secondary');
+    built.capturePointer(2, { ...NONE, shift: true, ctrl: true });
+    expect(map.bindingsFor('world.order').secondary).toEqual({
+      code: 'MouseRight',
+      shift: true,
+      ctrl: true,
+    });
+  });
+
+  it('binds a wheel notch, in the direction it turned', () => {
+    const { screen: built, map } = screen();
+    built.beginCapture('camera.zoomIn', 'primary');
+    built.captureWheel(-1, NONE);
+    expect(map.bindingsFor('camera.zoomIn').primary).toEqual({ code: 'WheelDown' });
+  });
+
+  it('swallows a button it cannot name and stays open', () => {
+    // The same thing a bare modifier does. Binding an invented `Mouse7` would be
+    // a row the window has no way to read back to the player.
+    const { screen: built, map } = screen();
+    built.beginCapture('world.order', 'primary');
+    expect(built.capturePointer(9, NONE)).toBe(true);
+    expect(built.capturing).toEqual({ actionId: 'world.order', slot: 'primary' });
+    expect(map.bindingsFor('world.order').primary).toEqual({ code: 'MouseRight' });
+  });
+
+  it('consumes a press only while a capture is armed', () => {
+    // What keeps an ordinary click on an ordinary button working.
+    const { screen: built } = screen();
+    expect(built.capturePointer(0, NONE)).toBe(false);
+    expect(built.captureWheel(1, NONE)).toBe(false);
+  });
+
+  it('reports a clash with a key exactly as it reports one with a button', () => {
+    const { screen: built } = screen();
+    built.beginCapture('combat.stop', 'primary');
+    built.capturePointer(2, NONE);
+    expect(built.conflict).toBe('RMB is also Move / attack');
+  });
+
+  it('lets Escape out of a capture a button opened', () => {
+    const { screen: built, map, contexts } = screen();
+    built.beginCapture('world.confirmAim', 'primary');
+    built.captureKey('Escape', NONE);
+    expect(built.capturing).toBe(null);
+    expect(contexts.top).not.toBe('textEntry');
+    expect(map.bindingsFor('world.confirmAim').primary).toEqual({ code: 'MouseLeft' });
+  });
+
+  /**
+   * Every shipped label fits the box it is drawn in.
+   *
+   * A `Label` is drawn rather than typeset, so a string wider than its button is
+   * clipped in silence -- which is how `Shift+Right Click` shipped as
+   * `hift+Right Clic` in the first cut of spec 189, with every other test green.
+   * A sum rather than a picture, because a golden only covers the tab it is of.
+   */
+  it('fits every shipped chord and every action name in its own column', () => {
+    // `drawTextClipped` clips to the widget's own rect with no inset, so the
+    // condition is exactly this comparison.
+    //
+    // At the gallery's viewport rather than this file's, and the difference is
+    // the whole point of stating one: the harness above builds at 260x180, which
+    // is under the theme's smallest supported frame, and `Move north` does not
+    // fit its own column even today. 400x300 is where the goldens are judged.
+    //
+    // One screen per tab, and not for tidiness: a tab switched away is hidden
+    // rather than destroyed, and a tab that has never been the active one when a
+    // root arranged it has rows with no rect at all -- so a loop that selected
+    // its way down the list would measure zeroes and pass.
+    const map = new InputMap();
+    const font = fontById('body');
+
+    let checked = 0;
+    for (const tab of new KeybindingsScreen({ theme: THEME, map }).tabs.tabIds) {
+      const built = new KeybindingsScreen({ theme: THEME, map });
+      built.tabs.select(tab);
+      built.refresh();
+      const root = new UiRoot(built, {
+        theme: THEME,
+        atlas: ATLAS,
+        viewport: { width: 400, height: 300 },
+      });
+      root.update(0);
+      for (const row of built.builtRows()) {
+        if (row.action.category !== tab) continue;
+        const binding = map.bindingsFor(row.action.id);
+        for (const [button, chord] of [
+          [row.primaryButton, binding.primary],
+          [row.secondaryButton, binding.secondary],
+        ] as const) {
+          const text = chordLabel(chord);
+          expect(measureText(font, text), `${row.action.id}: ${text}`).toBeLessThanOrEqual(
+            button.rect.width,
+          );
+        }
+        expect(measureText(font, row.action.label), row.action.id).toBeLessThanOrEqual(
+          row.nameLabel.rect.width,
+        );
+        checked += 1;
+      }
+    }
+    // Or the loop above measured nothing and said so in green.
+    expect(checked).toBe(map.definitions.length);
+  });
+
+  it('says what it is waiting for without naming a keyboard', () => {
+    const { screen: built } = screen();
+    built.beginCapture('world.order', 'primary');
+    built.refresh();
+    const row = built.builtRows().find((candidate) => candidate.action.id === 'world.order');
+    expect(row?.primaryButton.label).toBe('Press...');
   });
 });

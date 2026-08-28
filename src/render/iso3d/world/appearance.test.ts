@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { appearanceOf, displayName, PLAYER_CRITTER, PLAYER_FIGURE } from './appearance.js';
-import { ALL_MONSTERS } from '../../../server/data/monsters.js';
+import { appearanceOf, bleedsFor, BLOODLESS_IDS, displayName, PLAYER_CRITTER, PLAYER_FIGURE } from './appearance.js';
+import { ALL_MONSTERS, monsterById } from '../../../server/data/monsters.js';
 import { ALL_ABILITIES } from '../../../server/data/abilities.js';
 import { EntityKind } from '../../../server/net/protocol.js';
 import { CRITTER_IDS, CRITTERS } from '../../critters/index.js';
@@ -11,8 +11,31 @@ describe('appearanceOf', () => {
       const look = appearanceOf({ kind: EntityKind.Monster, typeId: monster.id });
       expect(look.rig).toBe('monster');
       expect(look.radius).toBe(monster.radius);
-      expect(look.showsHealth).toBe(true);
     }
+  });
+
+  it('draws a bar over everything that can be fought, and nothing over what cannot', () => {
+    // Spec 246. A friendly body's health can never move, so a bar over it would
+    // be a full one forever -- and a health bar is the clearest thing this game
+    // draws to say "you may fight this".
+    //
+    // Both directions, because either alone is passed by a broken rule: an
+    // `appearanceOf` that withheld every bar satisfies the first half, and one
+    // that drew them all satisfies the second.
+    let fightable = 0;
+    let friendly = 0;
+    for (const monster of ALL_MONSTERS) {
+      const look = appearanceOf({ kind: EntityKind.Monster, typeId: monster.id });
+      if (monster.temperament.kind === 'friendly') {
+        friendly += 1;
+        expect(look.showsHealth, monster.id).toBe(false);
+      } else {
+        fightable += 1;
+        expect(look.showsHealth, monster.id).toBe(true);
+      }
+    }
+    expect(fightable).toBeGreaterThan(0);
+    expect(friendly).toBeGreaterThan(0);
   });
 
   it('sizes a projectile from the ability that threw it', () => {
@@ -30,9 +53,14 @@ describe('appearanceOf', () => {
     expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'ranged.star' }).look).toBe(
       'shuriken',
     );
-    for (const id of ['bolt.arcane', 'bolt.lob', 'bolt.seek']) {
-      expect(appearanceOf({ kind: EntityKind.Projectile, typeId: id }).look, id).toBe('orb');
-    }
+    // The three rows this used to walk -- the arcane bolt, the lob and the
+    // seeking bolt -- were spec 062's demo set and went with it (spec 237), and
+    // every shot the table still grows names its own look. So the orb is now
+    // only reachable as the *default*, which is what the last case here asserts.
+    // The staff's shot is the fourth look (spec 218), and the one that is mostly
+    // paint: `shot.ts` draws half a collision radius of core and `shot_ember`
+    // draws the rest of the silhouette.
+    expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'ranged.ember' }).look).toBe('ember');
     // A row that says nothing draws as what every shot drew before spec 087.
     expect(appearanceOf({ kind: EntityKind.Projectile, typeId: 'nothing.like.this' }).look).toBe(
       'orb',
@@ -92,7 +120,53 @@ describe('appearanceOf', () => {
 describe('displayName', () => {
   it('names what the tables know and falls back to the id', () => {
     expect(displayName({ kind: EntityKind.Monster, typeId: 'grazer' })).toBe('Grazer');
-    expect(displayName({ kind: EntityKind.Projectile, typeId: 'bolt.arcane' })).toBe('Arcane Bolt');
+    expect(displayName({ kind: EntityKind.Projectile, typeId: 'skill.poisonDart' })).toBe('Poison Dart');
     expect(displayName({ kind: EntityKind.Monster, typeId: 'wyrm' })).toBe('wyrm');
+  });
+});
+
+describe('what a body is made of', () => {
+  /**
+   * The bug this exists to make impossible.
+   *
+   * `view.ts` hardcoded `bleeds: true` at both fact sites, so every blow in the
+   * game routed to `combat.hit.flesh` and `combat.hit.armored` was unreachable
+   * -- a training dummy threw blood, and the only thing separating a sheep from
+   * a shield was which files somebody happened to assign.
+   */
+  it('cuts an animal and strikes a construct', () => {
+    expect(bleedsFor({ kind: EntityKind.Monster, typeId: 'sheep' })).toBe(true);
+    expect(bleedsFor({ kind: EntityKind.Monster, typeId: 'grazer' })).toBe(true);
+    expect(bleedsFor({ kind: EntityKind.Monster, typeId: 'dummy' })).toBe(false);
+  });
+
+  it('bleeds a player, whoever they are', () => {
+    expect(bleedsFor({ kind: EntityKind.Player, typeId: 'player' })).toBe(true);
+    expect(bleedsFor({ kind: EntityKind.Player, typeId: '', name: 'Ada' })).toBe(true);
+  });
+
+  /**
+   * A deny list, so the default is flesh.
+   *
+   * That is the right way round for a bestiary of animals: a monster added
+   * tomorrow is flesh unless somebody says otherwise, and forgetting a row
+   * costs a sheep that sounds like a sheep rather than one that clangs.
+   */
+  it('bleeds a monster nobody has written a row for', () => {
+    expect(bleedsFor({ kind: EntityKind.Monster, typeId: 'wyvern' })).toBe(true);
+  });
+
+  it('says no for everything a blow never lands on', () => {
+    for (const kind of [EntityKind.Projectile, EntityKind.Prop, EntityKind.Mote, EntityKind.Drop]) {
+      expect(bleedsFor({ kind, typeId: 'whatever' })).toBe(false);
+    }
+  });
+
+  it('never claims a monster the game does not have', () => {
+    // The deny list is by type id, and a typo in it is a construct that bleeds
+    // with every test green. Every id named has to be a real row.
+    for (const typeId of BLOODLESS_IDS) {
+      expect(monsterById(typeId), typeId).toBeDefined();
+    }
   });
 });

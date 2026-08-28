@@ -18,7 +18,7 @@ import { BROADCAST_EVERY_N_TICKS } from '../config.js';
 import { ATTRIBUTE_KEYS } from '../data/attributes.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
 import { GameServer } from '../server.js';
-import { RESPEC_COST, STARTING_ATTRIBUTE, STARTING_ATTRIBUTE_POINTS } from '../player/attributes.js';
+import { RESPEC_COST, STARTING_ATTRIBUTE, STARTING_PROGRESSION_POINTS } from '../player/attributes.js';
 import { GameClient } from './game-client.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -57,16 +57,16 @@ describe('allocating over the wire', () => {
 
     const before = client.view();
     expect(before.baseStats.constitution).toBe(STARTING_ATTRIBUTE);
-    expect(before.unspentAttributePoints).toBe(STARTING_ATTRIBUTE_POINTS);
+    expect(before.unspentProgressionPoints).toBe(STARTING_PROGRESSION_POINTS);
     const healthBefore = before.stats?.maxHealth ?? 0;
 
-    client.allocateAttribute('constitution');
+    client.spendOnAttribute('constitution');
     await settle();
     await advance(test);
 
     const after = client.view();
     expect(after.baseStats.constitution).toBe(STARTING_ATTRIBUTE + 1);
-    expect(after.unspentAttributePoints).toBe(STARTING_ATTRIBUTE_POINTS - 1);
+    expect(after.unspentProgressionPoints).toBe(STARTING_PROGRESSION_POINTS - 1);
     // The *derived* consequence arrives with it. The client asked for a point
     // and was told what the point did.
     expect(after.stats?.maxHealth ?? 0).toBeGreaterThan(healthBefore);
@@ -85,21 +85,21 @@ describe('allocating over the wire', () => {
     await advance(test);
 
     // Spend the whole budget, then ask for one more.
-    for (let i = 0; i < STARTING_ATTRIBUTE_POINTS; i++) client.allocateAttribute('strength');
+    for (let i = 0; i < STARTING_PROGRESSION_POINTS; i++) client.spendOnAttribute('strength');
     await settle();
     await advance(test);
-    expect(client.view().unspentAttributePoints).toBe(0);
+    expect(client.view().unspentProgressionPoints).toBe(0);
 
     const errors: string[] = [];
     client.onError((_code, message) => errors.push(message));
     const snapshot = JSON.stringify(client.view().baseStats);
 
-    client.allocateAttribute('strength');
+    client.spendOnAttribute('strength');
     await settle();
     await advance(test);
 
     expect(errors.length).toBeGreaterThan(0);
-    expect(errors.join(' | ')).toContain('no unspent attribute points');
+    expect(errors.join(' | ')).toContain('no unspent progression points');
     expect(JSON.stringify(client.view().baseStats)).toBe(snapshot);
   });
 
@@ -107,26 +107,26 @@ describe('allocating over the wire', () => {
     const test = harness();
     const client = await connect(test, 'alice');
     await advance(test);
-    for (let i = 0; i < STARTING_ATTRIBUTE_POINTS; i++) client.allocateAttribute('perception');
+    for (let i = 0; i < STARTING_PROGRESSION_POINTS; i++) client.spendOnAttribute('perception');
     await settle();
     await advance(test);
-    expect(client.view().baseStats.perception).toBe(STARTING_ATTRIBUTE + STARTING_ATTRIBUTE_POINTS);
+    expect(client.view().baseStats.perception).toBe(STARTING_ATTRIBUTE + STARTING_PROGRESSION_POINTS);
 
     const session = test.server.playerManager.get('alice');
     if (!session) throw new Error('no session');
     const coins = session.record.coins;
 
-    client.respecAttributes();
+    client.respecProgression();
     await settle();
     await advance(test);
 
     const after = client.view();
     if (coins >= RESPEC_COST) {
       expect(after.baseStats.perception).toBe(STARTING_ATTRIBUTE);
-      expect(after.unspentAttributePoints).toBe(STARTING_ATTRIBUTE_POINTS);
+      expect(after.unspentProgressionPoints).toBe(STARTING_PROGRESSION_POINTS);
       expect(test.server.playerManager.get('alice')?.record.coins).toBe(coins - RESPEC_COST);
     } else {
-      expect(after.baseStats.perception).toBe(STARTING_ATTRIBUTE + STARTING_ATTRIBUTE_POINTS);
+      expect(after.baseStats.perception).toBe(STARTING_ATTRIBUTE + STARTING_PROGRESSION_POINTS);
     }
   });
 

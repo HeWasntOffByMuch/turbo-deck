@@ -20,7 +20,16 @@ export const ClientMessageType = {
   Ping: 0x03,
   Equip: 0x04,
   Unequip: 0x05,
-  SpendSkillPoint: 0x06,
+  /**
+   * Spend one progression point (spec 244).
+   *
+   * One message for one economy. It replaced `SpendSkillPoint` at this opcode and
+   * `AllocateAttribute` at 0x17, which were two requests for two currencies; with
+   * one pool, two requests would be the split surviving in the one place a client
+   * can see it. The payload names a *target*, never a result -- see
+   * `SpendProgressionPointMessage`.
+   */
+  SpendProgressionPoint: 0x06,
   Chat: 0x07,
   /** Commit to an ability this tick (spec 062). */
   UseAbility: 0x08,
@@ -84,10 +93,72 @@ export const ClientMessageType = {
    * range is a rejection with nothing to parse. There is deliberately no "how
    * many" -- one message is one point, so a client cannot ask for a hundred and
    * hope the budget check has an off-by-one in it.
+   *
+   * 0x17 is retired rather than reused (spec 244): it carried `AllocateAttribute`,
+   * and an old client sending one would otherwise be answered by whatever took its
+   * number.
    */
-  AllocateAttribute: 0x17,
-  /** Hand every allocated point back, for coins. Priced and checked server-side. */
-  RespecAttributes: 0x18,
+  /** Hand the whole build back, for coins. Priced and checked server-side. */
+  RespecProgression: 0x18,
+  /**
+   * Take a drop off the ground (spec 158).
+   *
+   * Names the drop's *entity id*, which is the only address it has -- a drop is
+   * not in a container until it is in the bag. Answered with an `Inventory` at
+   * the request id, exactly as `MoveItem` is, so the client's optimistic guess
+   * is rolled back by the same path whether the server took the request or
+   * refused it.
+   *
+   * **Legal before the drop's reveal has finished**, and served immediately when
+   * it is. Anticipation is presentation; it is never a lock on the player's
+   * hands.
+   */
+  PickUpItem: 0x19,
+  /**
+   * "Put me back on my feet" (spec 164). No payload.
+   *
+   * Honoured only from a connection whose body is at zero health, and honoured
+   * at once when it is. Before this the server put a dead player back on a
+   * timer, which meant death was a three-second pause rather than a state
+   * somebody leaves on purpose -- and left the respawn button with nothing to be
+   * the button *for*, since the wait would have ended either way.
+   *
+   * Nothing rides on it: a respawn is a fixed destination and a full heal, so a
+   * payload would only be a client asking to arrive somewhere it chose.
+   */
+  Respawn: 0x1a,
+  /**
+   * Put a stack down in the world (spec 172).
+   *
+   * Names a slot address and a count, exactly as `MoveItem` does -- a drop is a
+   * move whose target is the ground, and the ground has no slot to name. `0`
+   * means the whole stack, the same convention and for the same reason: the wire
+   * has no way to say "absent" and the rules have no use for a zero.
+   *
+   * Answered with an `Inventory` at the request id whether it was taken or
+   * refused, which is what rolls a client's optimistic guess back.
+   *
+   * It also carries the point the cursor was over, and that is an *aim* rather
+   * than a landing (spec 172): the body turns to face it first, at its own turn
+   * rate, and the item is thrown a constant reach along that line whether the
+   * point clicked was two paces away or on the horizon. A client naming where an
+   * item lands is a client throwing one across the map.
+   */
+  DropItem: 0x1b,
+  /**
+   * Start or end a conversation with a friendly NPC (spec 246).
+   *
+   * An entity id of 0 ends whatever is in progress, the same convention
+   * `OpenVendor`'s empty id already uses -- so there is one message rather than
+   * two, and a client leaving cannot be a client that forgot to say it was
+   * leaving.
+   *
+   * Refused, silently and with a `Conversation` naming 0, for a body that is
+   * not an NPC, is out of its own `talkRadius`, is dead, or is already talking
+   * to somebody else. The claim is what stops the body wandering; what it
+   * *says* is a table both ends already have, so none of that is on the wire.
+   */
+  Talk: 0x1c,
 } as const;
 
 export const ServerMessageType = {
@@ -162,6 +233,48 @@ export const ServerMessageType = {
    * disappear.
    */
   TradeState: 0x54,
+  /**
+   * A drop in the world, and how much of it this client is allowed to know
+   * (spec 158).
+   *
+   * Sent when a drop first enters a connection's interest set -- which the delta
+   * already computes, so there is no second visibility system -- and again on
+   * the tick it reveals.
+   *
+   * **The item's identity is not on it until the reveal**: `defId` is empty and
+   * `count` is zero, so a client that has not been told what the drop is does
+   * not have it to leak. What *is* sent up front is the tier, because the
+   * anticipation cue is tier-shaped and playing it needs the tier. That is the
+   * "notice" step; the payoff is what is being withheld.
+   */
+  LootDrop: 0x56,
+  /**
+   * Which NPC this client is talking to, or 0 for none (spec 246).
+   *
+   * The answer to a `Talk`, and also what arrives unasked when the server ends
+   * one: walking out of range, either body dying, the NPC despawning. So a
+   * client never has to infer that a conversation is over from the absence of
+   * something, which is the same reason `VendorState` answers a refusal rather
+   * than staying quiet.
+   *
+   * Sent only to the player in the conversation. Everybody else sees a body
+   * that has stopped walking and turned, which is already replicated.
+   */
+  Conversation: 0x57,
+  /**
+   * The health economy's own two numbers (spec 156): how full the restoration
+   * meter is, and how many flask charges are left.
+   *
+   * Owner-only and change-driven, exactly like `Cooldowns` and for the same
+   * reasons. What another player has left to drink changes nothing this client
+   * draws, and the entity delta is the one message that is paid for per entity.
+   *
+   * The meter rides as a *fraction*, never as the absolute number the sim keeps.
+   * A bar only asks how full, the threshold is a tuning value that may move
+   * between builds, and a client that knew its absolute progress would be a
+   * client that could be asked to compute the next mote.
+   */
+  Restoration: 0x55,
 } as const;
 
 /** A trade's stage, as a byte (spec 132). Mirrors `TradeStage` in `trade.ts`. */
@@ -217,7 +330,55 @@ export const AdminMessageType = {
   SetConfig: 0x8a,
   GetConfig: 0x8b,
   GetAudit: 0x8c,
+  /** Edit a character's level or experience (spec 154). */
+  SetProgress: 0x8d,
+  GiveItem: 0x8e,
+  /** The item table, so the console has a list rather than remembered ids. */
+  GetItems: 0x8f,
+  Kill: 0x90,
 } as const;
+
+/**
+ * Which field of a character's progression an `admin:setProgress` edits, and
+ * whether it adds to it or replaces it (spec 154).
+ *
+ * Four operator asks -- give levels, give experience, reset levels, reset
+ * experience -- are two verbs over two fields, so they are a mode on one message
+ * rather than four type bytes. A reset is `SetLevel 1` or `SetExperience 0`,
+ * which is what keeps it from being a third code path with its own idea of what
+ * a consistent record looks like.
+ */
+/**
+ * What a progression point is being spent on (spec 244).
+ *
+ * The two things one pool buys, and the distinction the whole model rests on:
+ * `Attribute` raises the attribute and advances the track, `Specialization`
+ * deepens a mechanic a milestone unlocked and leaves the attribute where it is.
+ */
+export const ProgressionTarget = {
+  Attribute: 0,
+  Specialization: 1,
+} as const;
+
+export type ProgressionTargetValue = (typeof ProgressionTarget)[keyof typeof ProgressionTarget];
+
+export function isProgressionTarget(value: number): value is ProgressionTargetValue {
+  return (Object.values(ProgressionTarget) as readonly number[]).includes(value);
+}
+
+export const AdminProgressMode = {
+  AddLevels: 0,
+  SetLevel: 1,
+  AddExperience: 2,
+  SetExperience: 3,
+} as const;
+
+export type AdminProgressModeValue =
+  (typeof AdminProgressMode)[keyof typeof AdminProgressMode];
+
+export function isAdminProgressMode(value: number): value is AdminProgressModeValue {
+  return (Object.values(AdminProgressMode) as readonly number[]).includes(value);
+}
 
 export const AdminReplyType = {
   Ok: 0xa0,
@@ -225,6 +386,8 @@ export const AdminReplyType = {
   PlayerList: 0xa2,
   Config: 0xa3,
   Audit: 0xa4,
+  /** The item table (spec 154). */
+  ItemList: 0xa5,
 } as const;
 
 export const ADMIN_REQUEST_MIN = 0x80;
@@ -304,6 +467,41 @@ export const EntityField = {
   Poise: 1 << 7,
   /** Absorb left, in health units, and the tick it falls off whole. */
   Shield: 1 << 8,
+  /**
+   * The timed states this body is carrying, as far as anybody may see them
+   * (spec 186).
+   *
+   * `u8 count`, then per status `u8 wire`, `u8 stacks`, `u32 expiresAtTick`.
+   * The index is `StatusVisual.wire` rather than the string id -- a content id
+   * per status per body per delta is what "an entity only ever stores an id"
+   * exists to prevent, and the table is shared code.
+   *
+   * An **absolute** expiry, like `activityUntilTick` and `shieldUntilTick` above
+   * it, and for the same reason: it is what lets a client draw the mark as a
+   * pure function of what it was told and the tick it is drawing, with nothing
+   * observed and nothing kept. A late delta cannot leave a mark up, because the
+   * drawing refuses a passed window the way `statusOf` refuses a stale entry.
+   *
+   * Bounded by `MAX_VISIBLE_STATUSES`, and set only in the deltas where the set
+   * actually changed -- which for most bodies is never.
+   */
+  Statuses: 1 << 9,
+  /**
+   * How fast this body may move right now, as a fraction of its own speed
+   * (spec 188).
+   *
+   * On the wire because a slow the owner's client does not know about is a
+   * client predicting full speed against a server walking at 60% -- which the
+   * correction machinery would dutifully fix, once a tick, for the whole
+   * duration. Spec 173 accepted one round trip of that for a stagger *because*
+   * `Activity` is replicated and the client stops the moment it sees it; a slow
+   * has no such tell, so it gets one.
+   *
+   * A byte fraction, exactly like {@link Poise}, and sent to everyone rather
+   * than only to the owner: a remote body being slowed changes how far the
+   * interpolator should expect it to have travelled, and it is one byte.
+   */
+  MoveScale: 1 << 10,
 } as const;
 
 export const EntityKind = {
@@ -311,6 +509,21 @@ export const EntityKind = {
   Monster: 1,
   Prop: 2,
   Projectile: 3,
+  /**
+   * A restorative mote (spec 156). Mirrors `EntityKindValue.Mote`.
+   *
+   * Replicated to exactly one client -- its owner -- which is filtered in
+   * `server.ts` rather than expressed on the wire: a mote nobody else is told
+   * about cannot be stolen, cannot be raced for, and needs no ownership field
+   * for a client to check.
+   */
+  Mote: 4,
+  /**
+   * An item on the ground (spec 158). Its `typeId` is **empty** and stays empty:
+   * what the item is travels on `LootDrop`, not on the entity record every
+   * client in range is handed.
+   */
+  Drop: 5,
 } as const;
 
 export const EntityActivity = {
@@ -319,6 +532,8 @@ export const EntityActivity = {
   Casting: 2,
   Stunned: 3,
   Dead: 4,
+  /** Changing an active skill (spec 188). Mirrors `ActivityValue.Swapping`. */
+  Swapping: 5,
 } as const;
 
 /** Mirrors `sim/types.ts`; the client animates from this. */

@@ -57,20 +57,20 @@ function stateOf(view: ClientView): string {
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([slot, id]) => `${slot}=${id ?? '-'}`)
     .join(',');
-  const skills = [...view.skills]
-    .sort((a, b) => (a.skillId < b.skillId ? -1 : 1))
-    .map((entry) => `${entry.skillId}:${entry.level}`)
+  const specializations = [...view.specializations]
+    .sort((a, b) => (a.specializationId < b.specializationId ? -1 : 1))
+    .map((entry) => `${entry.specializationId}:${entry.tier}`)
     .join(',');
   return [
     `t${view.tick}`,
     bodies.join(','),
     bag,
     worn,
-    skills,
+    specializations,
     `coins${view.coins}`,
     `lvl${view.level}`,
     `xp${view.experience}`,
-    `pts${view.unspentSkillPoints}`,
+    `pts${view.unspentProgressionPoints}`,
   ].join('|');
 }
 
@@ -78,6 +78,13 @@ interface RunResult {
   readonly states: readonly string[];
   /** Requests the screens emitted. Must be empty: nothing below clicks a button. */
   readonly requests: readonly string[];
+  /**
+   * Hovers the bar reported (spec 235). **Not** a request: a hover draws a ring
+   * on the ground and asks the server nothing, so it is kept apart from
+   * `requests` -- and asserted non-empty, so the emptiness of that one is
+   * evidence about a driven interface rather than about an untouched one.
+   */
+  readonly hovers: readonly (string | null)[];
   /** Draw commands on the last frame, so "it was actually drawing" is checkable. */
   readonly drawn: number;
   /** Layout writes over the whole run. One, however much hovering happened. */
@@ -118,13 +125,15 @@ async function play(drive: boolean): Promise<RunResult> {
   await settle();
 
   const requests: string[] = [];
+  const hovers: (string | null)[] = [];
   let layoutWrites = 0;
   const screens = new UiScreens(
     {
       map: new InputMap(),
       onMove: (from, to, count) => requests.push(`move:${from.container}${from.index}->${to.container}${to.index}x${count}`),
+      onDropItem: (at, count) => requests.push(`drop:${at.container}${at.index}x${count}`),
       onSpend: (skillId) => requests.push(`spend:${skillId}`),
-      onAllocate: (key) => requests.push(`allocate:${key}`),
+      onAdvance: (key) => requests.push(`allocate:${key}`),
       onRespec: () => requests.push('respec'),
       onBuy: (vendorId, defId) => requests.push(`buy:${vendorId}:${defId}`),
       onSell: (vendorId, index) => requests.push(`sell:${vendorId}:${index}`),
@@ -134,8 +143,18 @@ async function play(drive: boolean): Promise<RunResult> {
       onTradeAccept: (revision) => requests.push(`tradeAccept:${revision}`),
       onTradeRespond: (accept) => requests.push(`tradeRespond:${accept}`),
       onTradeCancel: () => requests.push('tradeCancel'),
+      onTradeDismiss: () => requests.push('tradeDismiss'),
+      onCastSlot: (abilityId: string) => requests.push(`cast:${abilityId}`),
+      // Deliberately **not** in `requests`: a hover is presentation. The whole
+      // claim of this file is that mounting the interface sends the server
+      // nothing, and resting the cursor on a slot draws a ring on the ground
+      // rather than asking anybody anything (spec 235).
+      onHoverSlot: (abilityId) => hovers.push(abilityId),
+      onSay: (text: string) => requests.push(`say:${text}`),
       onBindingsChanged: () => requests.push('bindings'),
       onScaleChosen: (choice) => requests.push(`scale:${String(choice)}`),
+      onShowFpsChosen: (show) => requests.push(`showFps:${String(show)}`),
+      onMaxZoomChosen: (choice) => requests.push(`maxZoom:${String(choice)}`),
       // Counted apart from `requests`, deliberately. Everything in that array is
       // something asked of the *server*; a layout write is a local preference,
       // and the three windows this test opens legitimately cause one. What is
@@ -143,7 +162,13 @@ async function play(drive: boolean): Promise<RunResult> {
       onLayoutChanged: () => {
         layoutWrites += 1;
       },
-      nearestVendor: () => null,
+      // Spec 246. In `requests` with everything else that reaches the server:
+      // a reply can open a shop and can end a conversation, and both are things
+      // this test's claim -- that mounting the interface asks for nothing -- is
+      // about.
+      onDialogueChoice: (index) => requests.push(`dialogueChoice:${index}`),
+      onDialogueAdvance: () => requests.push('dialogueAdvance'),
+      onDialogueLeave: () => requests.push('dialogueLeave'),
     },
     VIEWPORT,
   );
@@ -188,7 +213,7 @@ async function play(drive: boolean): Promise<RunResult> {
     drawn = screens.paint().length;
   }
 
-  return { states, requests, drawn, layoutWrites };
+  return { states, requests, hovers, drawn, layoutWrites };
 }
 
 describe('mounting the interface is presentation only', () => {
@@ -228,5 +253,8 @@ describe('mounting the interface is presentation only', () => {
     const mounted = await play(true);
     expect(mounted.requests).toEqual([]);
     expect(mounted.layoutWrites).toBe(1);
+    // And the hover really did happen, so the emptiness above is evidence about
+    // a driven interface rather than about one nothing touched.
+    expect(mounted.hovers.length).toBeGreaterThan(0);
   }, 30_000);
 });

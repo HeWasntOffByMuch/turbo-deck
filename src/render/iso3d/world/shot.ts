@@ -17,6 +17,7 @@ import type { ProjectileLook } from '../../../server/data/abilities.js';
 import { PALETTE } from '../palette.js';
 import {
   arrowProfile,
+  emberCoreRadius,
   SHURIKEN_POINTS,
   SHURIKEN_SPIN_TURNS_PER_SECOND,
   shurikenDrawRadius,
@@ -41,6 +42,41 @@ const TRACE_SAMPLES = 16;
 const TRACE_SPACING = 0.55;
 const TRACE_WIDTH = 0.42;
 const TRACE_LIFT = 2.5;
+/**
+ * How much larger the outline shell is than the orb it rims (spec 156).
+ *
+ * A ratio rather than a width in world units, so the rim is the same fraction
+ * of the ball whatever size the ball is -- a mote is 7 units across and the
+ * outline has to survive being drawn a few pixels wide.
+ */
+const OUTLINE_SCALE = 1.4;
+
+/**
+ * How round the ember's core is drawn (spec 218).
+ *
+ * One subdivision, the mote's rather than the bolt's. A faceted die is right for
+ * a conjured shot that is on screen for a moment and *supposed* to look cut from
+ * glass; a ball of fire is a ball, and at four and a half units across the
+ * twenty flat faces of detail 0 read as an orange lump rather than as a core.
+ */
+const EMBER_DETAIL = 1;
+
+/**
+ * How to draw an orb: its colour, how round it is, and what rims it.
+ *
+ * Every field optional, and all three absent is the arcane bolt exactly as it
+ * has always been -- so the one caller that wants none of this passes nothing.
+ */
+export interface OrbLook {
+  readonly tint?: number | undefined;
+  /**
+   * Icosahedron subdivisions. A mote wants a sphere; a conjured bolt is
+   * supposed to look cut from glass and is on screen for a moment.
+   */
+  readonly detail?: number | undefined;
+  /** A brighter shell behind the core, or absent for no rim. */
+  readonly outline?: number | undefined;
+}
 
 export class ShotRig {
   readonly group = new THREE.Group();
@@ -71,6 +107,27 @@ export class ShotRig {
   constructor(
     readonly look: ProjectileLook,
     radius: number,
+    /**
+     * An override colour for the orb, or absent for the arcane core it has
+     * always been (spec 156).
+     *
+     * Orb only, and deliberately: an arrow and a star are *objects* whose
+     * materials say what they are made of, where an orb is a bead of light and
+     * its colour is the whole of its identity. A mote reuses this rig rather
+     * than growing a second one, and this is the one thing it has to change.
+     */
+    /**
+     * How to draw the orb, or absent for the arcane core it has always been
+     * (spec 156).
+     *
+     * Orb only, and deliberately: an arrow and a star are *objects* whose
+     * materials say what they are made of, where an orb is a bead of light and
+     * how it is coloured is the whole of its identity. A mote reuses this rig
+     * rather than growing a second one, and this bag is everything it needs to
+     * change. One object rather than three positional arguments, because
+     * `new ShotRig('orb', 7, 0xa32a26, 1, 0xff6a58)` says nothing to a reader.
+     */
+    orb?: OrbLook,
   ) {
     this.group.add(this.pivot);
 
@@ -82,14 +139,33 @@ export class ShotRig {
       case 'shuriken':
         this.spinner = this.buildShuriken(radius);
         break;
+      case 'ember':
+        this.spinner = null;
+        // The orb geometry, at half the size and in fire (spec 218). Reusing it
+        // is not a shortcut: a core behind a brighter rim is exactly the pair
+        // `buildOrb` already draws, and a second sphere builder would be a
+        // second thing to keep looking right. What is authored here is the two
+        // decisions that are this look's own -- how big the mesh is against the
+        // shot (`emberCoreRadius`, and it is deliberately *smaller*), and that
+        // it is lit from inside rather than made of anything.
+        this.buildOrb(emberCoreRadius(radius), {
+          tint: PALETTE.emberCore,
+          detail: EMBER_DETAIL,
+          outline: PALETTE.emberRim,
+        });
+        break;
       default:
         this.spinner = null;
-        this.buildOrb(radius);
+        this.buildOrb(radius, orb);
         break;
     }
 
     // Only the star traces. An arrow is long enough to show its own direction,
-    // and a conjured orb streaking would read as a second spell.
+    // and a conjured orb streaking would read as a second spell. The ember
+    // leaves a trail and deliberately not this one (spec 218): a `Trail` is a
+    // flat strip of geometry laid across the ground plane, and smoke is not a
+    // ribbon -- what is behind an ember is `shot_ember`'s own world-space marks,
+    // laid down by the paint and left where they fall.
     if (look === 'shuriken') {
       const plate = shurikenDrawRadius(radius);
       this.trail = new Trail(TRACE_SAMPLES, plate * TRACE_SPACING);
@@ -219,10 +295,27 @@ export class ShotRig {
   }
 
   /** The look every shot had before this spec, and what an unknown one gets. */
-  private buildOrb(radius: number): void {
+  private buildOrb(radius: number, orb?: OrbLook): void {
+    const size = Math.max(3, radius);
+    // The outline goes on *first* so it is behind the core in draw order, which
+    // costs nothing and means the pair still reads correctly if a caller ever
+    // turns depth testing off.
+    if (orb?.outline !== undefined) {
+      // A back-faced shell: the classic cheap outline, and the right one here
+      // because everything in this scene is already flat-shaded and back-face
+      // culled. Only the far side of the shell survives the cull, so what is
+      // drawn is a rim peeking out around the core rather than a second ball in
+      // front of it -- no shader, no second pass, one extra draw of eighty
+      // triangles.
+      const shell = new THREE.Mesh(
+        this.track(new THREE.IcosahedronGeometry(size * OUTLINE_SCALE, orb.detail ?? 0)),
+        this.track(new THREE.MeshBasicMaterial({ color: orb.outline, side: THREE.BackSide })),
+      );
+      this.pivot.add(shell);
+    }
     const mesh = new THREE.Mesh(
-      this.track(new THREE.IcosahedronGeometry(Math.max(3, radius), 0)),
-      this.track(new THREE.MeshBasicMaterial({ color: PALETTE.magicCore })),
+      this.track(new THREE.IcosahedronGeometry(size, orb?.detail ?? 0)),
+      this.track(new THREE.MeshBasicMaterial({ color: orb?.tint ?? PALETTE.magicCore })),
     );
     this.pivot.add(mesh);
   }

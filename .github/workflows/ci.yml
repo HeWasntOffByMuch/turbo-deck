@@ -11,7 +11,17 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # 22, because `src/server/persistence/` is built on `node:sqlite`
+          # (spec 226) and that module landed in 22.5 -- on 20 it is not a
+          # slower path or a missing feature, it is `No such built-in module`,
+          # so the ten persistence and auth suites fail to *load* while every
+          # test that does run passes. `package.json`'s `engines` states the
+          # same floor; this is the half that is enforced.
+          #
+          # 22 rather than the newest available, so CI runs what a developer
+          # runs: the floor is 22.5 and there is nothing in the tree that wants
+          # a later runtime.
+          node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run typecheck
@@ -31,3 +41,11 @@ jobs:
       # (`npm test` already compares against them; this catches a stale *commit*.)
       - run: npm run bake:ui-goldens
       - run: git diff --exit-code src/ui/gallery/goldens
+      # The build has never run here (spec 203), which is how `index-*.js`
+      # reached 14 MB without anybody noticing: the map was `?raw`-imported, so
+      # 11.5 MB of world was compiled in as a string literal. It is a fetched
+      # asset now and the bundle is 2 MB, and this is what keeps it that way --
+      # a ceiling on emitted JavaScript catches a large asset walking back in by
+      # any route, because every route has the same symptom.
+      - run: npm run build
+      - run: npm run check:bundle

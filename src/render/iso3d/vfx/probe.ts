@@ -112,12 +112,37 @@ export interface BloodReport extends ProbeReport {
   readonly stains: readonly StainBox[];
 }
 
+/**
+ * One painted effect, from one camera, with one seed (spec 158).
+ *
+ * Everything the brief asks to be able to vary is a field, because the checks it
+ * asks for are comparisons *between* frames -- the same effect from four
+ * azimuths, the same azimuth with six seeds, the same seed at three intensities
+ * -- and a probe that could only shoot the default would let a script draw six
+ * identical tiles and call it variation.
+ */
+export interface BrushShot {
+  readonly id: string;
+  readonly ticks: number;
+  /** Radians about Y. The camera's bearing on the effect. */
+  readonly azimuth?: number;
+  /** Radians above the ground plane. The isometric camera sits near 0.48. */
+  readonly elevation?: number;
+  readonly seed?: number;
+  readonly scale?: number;
+  /** Radians about Y the effect itself is turned. The direction a blow came from. */
+  readonly rotation?: number;
+  /** Half the orthographic box, world units. Omit to frame from the effect. */
+  readonly halfHeight?: number;
+}
+
 declare global {
   interface Window {
     vfxProbe?: {
       run: (mode: GlowMode) => ProbeReport;
       shot: (id: string, ticks: number, halfHeight?: number) => ProbeReport;
       blood: (ticks: number, effect?: string) => BloodReport;
+      brush: (input: BrushShot) => ProbeReport;
       readonly reports: ProbeReport[];
     };
   }
@@ -324,6 +349,87 @@ class Probe {
     return report;
   }
 
+  /**
+   * A painted effect, from wherever the caller wants to stand (spec 158).
+   *
+   * Separate from {@link shot} rather than another pile of optional arguments on
+   * it, because the two are answering different questions. `shot` is the
+   * library's contact sheet and deliberately fixes the camera so forty tiles are
+   * comparable; this one exists precisely to *move* the camera, since "a flat
+   * mark held in the view plane reads from every angle" is a claim that only
+   * means anything across several of them.
+   *
+   * The camera is rebuilt per shot and the effect is played once, so a frame is
+   * a pure function of `(id, ticks, azimuth, elevation, seed, scale, rotation)`
+   * -- which is what lets the script measure two tiles against each other and
+   * blame the difference on the thing it changed.
+   */
+  brush(input: BrushShot): ProbeReport {
+    this.retro.setPalette(null);
+    const azimuth = input.azimuth ?? 0.9;
+    const elevation = input.elevation ?? 0.48;
+    const seed = input.seed ?? 20260810;
+
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(PROBE_BACKGROUND);
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(4000, 4000),
+      new THREE.MeshBasicMaterial({ color: PROBE_GROUND }),
+    );
+    ground.rotation.x = -Math.PI / 2;
+    scene.add(ground);
+
+    const layer = new VfxLayer({
+      hooks: { ground: () => 0 },
+      limits: { maxParticles: 3000, maxInstances: 16, pressureFloor: 0.25 },
+      lights: false,
+    });
+    scene.add(layer.root);
+
+    // Framed off the effect unless the caller insists, so a hit and a large
+    // explosion are each drawn at a size somebody can judge rather than one of
+    // them being four pixels.
+    const halfHeight = input.halfHeight ?? 90;
+    const restore = this.frame(halfHeight);
+    // Orbit at a fixed distance: orthographic, so the distance decides nothing
+    // but the near/far clipping, and the box above decides the size.
+    const distance = 900;
+    const y = Math.sin(elevation) * distance;
+    const flat = Math.cos(elevation) * distance;
+    const at = halfHeight * 0.28;
+    this.camera.position.set(Math.cos(azimuth) * flat, y, Math.sin(azimuth) * flat);
+    this.camera.lookAt(0, at, 0);
+    this.camera.updateMatrixWorld();
+    // The camera's own forward axis, so the transparency sort orders the marks
+    // for *this* view. Getting this wrong is invisible from one angle and is the
+    // whole reason to shoot four.
+    layer.setViewDirection(-this.camera.position.x, at - this.camera.position.y, -this.camera.position.z);
+
+    layer.play(input.id, {
+      x: 0,
+      y: at,
+      z: 0,
+      seed,
+      ...(input.scale === undefined ? {} : { scale: input.scale }),
+      ...(input.rotation === undefined ? {} : { rotation: input.rotation }),
+    });
+    layer.update(input.ticks);
+
+    this.retro.render(this.renderer, scene, this.camera);
+    const readout = layer.readout();
+    const report: ProbeReport = { mode: 'dither', particles: readout.particles, drawCalls: readout.drawCalls };
+
+    scene.remove(layer.root);
+    layer.dispose();
+    ground.geometry.dispose();
+    (ground.material as THREE.Material).dispose();
+    restore();
+    // Back where the other two modes expect to find it.
+    this.camera.position.set(0, 300, 600);
+    this.camera.lookAt(0, 30, 0);
+    return report;
+  }
+
   /** A world point as a canvas pixel, with a radius to sample inside. */
   private project(x: number, y: number, z: number, size: number): { x: number; y: number; radius: number } {
     this.camera.updateMatrixWorld();
@@ -429,6 +535,11 @@ function main(): void {
     },
     blood: (ticks: number, effect?: string) => {
       const report = probe.blood(ticks, effect);
+      reports.push(report);
+      return report;
+    },
+    brush: (input: BrushShot) => {
+      const report = probe.brush(input);
       reports.push(report);
       return report;
     },

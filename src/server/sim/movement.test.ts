@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import { CHARACTERS, type Character } from '../../sim/characters.js';
 import { TURN_RATE_PER_AGILITY } from '../../sim/constants.js';
-import { turnToward } from './movement.js';
+import { headingToward, turnToward } from './movement.js';
 
 const DEG = Math.PI / 180;
 const RATE = 60;
@@ -96,5 +96,24 @@ describe('turnToward', () => {
     // What it used to be: 690 deg/s came round in 16, which is 261ms.
     expect(turned(0, 180 * DEG, 690, 16)).toBeCloseTo(180 * DEG, 9);
     expect(turned(0, 180 * DEG, effective, 16)).toBeLessThan(180 * DEG);
+  });
+});
+
+describe('headingToward', () => {
+  it('points from one place to another', () => {
+    expect(headingToward({ x: 0, y: 0 }, { x: 10, y: 0 }, 9)).toBeCloseTo(0, 9);
+    expect(headingToward({ x: 0, y: 0 }, { x: 0, y: -10 }, 9)).toBeCloseTo(-Math.PI / 2, 9);
+    expect(headingToward({ x: 5, y: 5 }, { x: -5, y: 5 }, 9)).toBeCloseTo(Math.PI, 9);
+  });
+
+  /**
+   * The reason this is a function and not an `atan2` at each call site. A click
+   * at your own feet has no direction in it, and `atan2(0, 0)` is zero -- which
+   * is a heading, and the wrong one: it would spin a body due east to put a
+   * potion down at its own toes.
+   */
+  it('keeps the heading it was given when there is no direction', () => {
+    expect(headingToward({ x: 3, y: 4 }, { x: 3, y: 4 }, 1.25)).toBe(1.25);
+    expect(headingToward({ x: 3, y: 4 }, { x: 3 + 1e-9, y: 4 }, 1.25)).toBe(1.25);
   });
 });

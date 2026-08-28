@@ -24,6 +24,21 @@
  * drawn yaw. It is the same claim -- the sim owns the heading, the ease owns only
  * how a body is drawn getting to it -- so it is driven here beside the machines
  * and held to the same assertion.
+ *
+ * Spec 158 added a third: a drop's reveal. That one is worth having here more
+ * than either of the others, because the failure it guards against is not
+ * abstract -- a reveal implemented as client-side state would be a client
+ * deciding when an item becomes real, and the state compared below includes the
+ * drop's authoritative identity on every tick of the run.
+ *
+ * Spec 197 added a fourth: the paint on an afflicted body. It belongs here for
+ * the same reason the reveal does, and one more. An affliction is the first
+ * thing in this game a client works out the *schedule* of for itself -- the beat
+ * is derived from the replicated expiry rather than sent -- so the obvious way
+ * to get it wrong is to let that derivation reach back into anything. The
+ * driver is handed only replicated facts and a recording player; if it ever
+ * touched the sim's Rng, or the prediction, or a shared scratch buffer, this run
+ * would diverge from the one with it switched off.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -39,10 +54,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadUnitBundle } from '../../../units/bundle.js';
 import { UnitMachine, type FiredEvent } from '../../../units/machine.js';
-import { driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { BASIC_ATTACK_ID } from '../../../server/data/abilities.js';
+import { cancelledCast, driveUnit, speedBetween, type UnitFacts } from './unit-driver.js';
+import { StaggerFlinches } from './stagger-flinch.js';
 import { TurnEase, lagBound, shortestTurn, type TurnLimits } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { ClientView } from '../../../server/client/game-client.js';
+import { DropPresenter, type DropPresentation } from './loot-drop.js';
+import { AfflictionVfx, type VfxPlayer } from './affliction-vfx.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 const TICKS = 240;
@@ -83,7 +102,15 @@ function stateOf(view: ClientView): string {
   const casts = [...view.casts]
     .sort((a, b) => a.entityId - b.entityId)
     .map((cast) => `${cast.entityId}:${cast.abilityId}:${cast.phase}`);
-  return `t${view.tick}|${bodies.join(',')}|${casts.join(',')}`;
+  // What the drop actually is, on every tick (spec 158). The identity is the
+  // field the whole feature withholds, so it is the field a presentation layer
+  // must be shown to be unable to move.
+  const drops = [...view.drops]
+    .sort((a, b) => a.entityId - b.entityId)
+    .map((drop) =>
+      [drop.entityId, drop.rarity, drop.defId ?? '', drop.count, drop.spawnTick, drop.revealTick].join(':'),
+    );
+  return `t${view.tick}|${bodies.join(',')}|${casts.join(',')}|${drops.join(',')}`;
 }
 
 interface RunResult {
@@ -94,6 +121,26 @@ interface RunResult {
    * run that silently stopped easing cannot pass the assertion above.
    */
   readonly yaws: readonly { drawn: number; heading: number; limits: TurnLimits }[];
+  /** Every drop presentation produced, so a run that presented nothing fails. */
+  readonly drops: readonly DropPresentation[];
+  /**
+   * Every effect the affliction layer asked for (spec 215), so a run whose paint
+   * silently did nothing cannot claim to have covered it. Ids rather than
+   * handles: what is worth asserting is that a cling was started and a beat was
+   * played, not which slot they landed in.
+   */
+  readonly painted: readonly string[];
+  /** Handles the affliction layer stopped, so a leak is visible as an absence. */
+  readonly stoppedPaint: readonly number[];
+  /** How many attacks were called off (spec 166), so a run that left every
+   * one-shot to finish on its own cannot claim to have covered the cancel. */
+  readonly cancels: number;
+  /**
+   * How many bodies the stagger flinch was actually consulted about (spec 173),
+   * so a run in which the reader was never driven cannot pass for one in which
+   * it was.
+   */
+  readonly flinchesTracked: number;
 }
 
 /**
@@ -136,16 +183,62 @@ async function play(animate: boolean): Promise<RunResult> {
   const states: string[] = [];
   const turnEase = new TurnEase();
   const yaws: { drawn: number; heading: number; limits: TurnLimits }[] = [];
+  const dropPresenter = new DropPresenter();
+  const drops: DropPresentation[] = [];
+  // A recorder rather than a `VfxLayer`, which is the whole reason `VfxPlayer`
+  // is an interface: the driver has no three.js in it and is driven here in
+  // Node exactly as `scene.ts` drives it.
+  const painted: string[] = [];
+  const stopped: number[] = [];
+  let nextHandle = 1;
+  const recorder: VfxPlayer = {
+    has: () => true,
+    // Nothing here fills an instance pool, so no handle is ever evicted. The
+    // eviction path is `affliction-vfx.test.ts`'s to cover; what this run is
+    // for is that the layer changes no authoritative state.
+    isLive: (handle) => handle !== 0 && !stopped.includes(handle),
+    play: (id) => {
+      painted.push(id);
+      return nextHandle++;
+    },
+    // Recorded rather than ignored: a cling is `durationTicks: 0` and stops only
+    // when it is told to, so "was anything ever stopped" is a real question
+    // about this run and a discarded handle is how a persistent effect leaks.
+    stop: (handle) => {
+      stopped.push(handle);
+    },
+  };
+  const afflictions = new AfflictionVfx(recorder);
+  let cancels = 0;
+  const flinches = new StaggerFlinches();
 
   for (let tick = 0; tick < TICKS; tick += 1) {
     server.tick();
+    // A rare drop, at a fixed point rather than one read off the view, so both
+    // runs put it in the same place for the same reason the inputs are scripted
+    // (spec 158). Rare, because a common one reveals on the tick it lands and
+    // would never exercise the withheld half at all.
+    if (tick === 20) server.triggerEvent('drop', 620, 450, 1);
+    // Every visible status, which is every affliction, on whatever is standing
+    // near the spawn (spec 186's developer path). At a fixed tick and a fixed
+    // point for the reason the drop is: both runs have to see the same world.
+    // It is applied in *both* runs -- it is a server action, not a presentation
+    // one -- so the comparison is between two identical fights, one of which is
+    // being painted.
+    if (tick === 30) server.triggerEvent('status', 700, 500, 400);
     client.advanceTick();
-    // A fixed script: walk a circle, and swing on a fixed cadence. Nothing here
-    // reads the view, so both runs send byte-identical input.
+    // A fixed script: walk a circle, and every fortieth tick stop, swing, and
+    // then walk out of it again -- which withdraws (spec 166), because asking
+    // to move calls off a cast. The comment here used to claim the swing and
+    // the script never made one; the counter below is what noticed.
+    //
+    // Nothing here reads the view, so both runs send byte-identical input.
     const angle = (tick / 40) * Math.PI * 2;
+    const standing = tick % 40 < 6;
+    if (tick % 40 === 0) client.useAbility(BASIC_ATTACK_ID, 700, 500);
     client.sendInput({
-      moveX: Math.cos(angle),
-      moveY: Math.sin(angle),
+      moveX: standing ? 0 : Math.cos(angle),
+      moveY: standing ? 0 : Math.sin(angle),
       facing: angle,
       buttons: 0,
     });
@@ -154,6 +247,32 @@ async function play(animate: boolean): Promise<RunResult> {
     const view = client.view();
     states.push(stateOf(view));
     if (!animate) continue;
+
+    // The reveal presentation, driven exactly as the scene drives it: pure, and
+    // handed the drawn tick.
+    for (const drop of view.drops) {
+      const entity = view.entities.find((body) => body.id === drop.entityId);
+      const landing = { x: entity?.x ?? 0, y: entity?.y ?? 0, z: entity?.z ?? 0 };
+      drops.push(dropPresenter.read(drop, landing, view.estimatedTick));
+    }
+    dropPresenter.retain(new Set(view.drops.map((drop) => drop.entityId)));
+
+    // The paint (spec 215), driven exactly as `syncBodies` drives it: the
+    // replicated status list, the drawn tick, and the body's own radius as the
+    // scale. Nothing is read back.
+    for (const entity of view.entities) {
+      afflictions.step(
+        {
+          entityId: entity.id,
+          x: entity.x,
+          y: entity.z,
+          z: entity.y,
+          radius: SERVER_PLAYER_RADIUS,
+        },
+        entity.statuses ?? [],
+        view.estimatedTick,
+      );
+    }
 
     // The animation layer, driven exactly as the scene drives it.
     for (const entity of view.entities) {
@@ -184,15 +303,39 @@ async function play(animate: boolean): Promise<RunResult> {
         activity: entity.activity,
         castPhase: view.casts.find((cast) => cast.entityId === entity.id)?.phase ?? null,
         attackRate: 1,
+        abilityId: view.casts.find((cast) => cast.entityId === entity.id)?.abilityId ?? null,
+        castTicksLeft: (() => {
+          const cast = view.casts.find((entry) => entry.entityId === entity.id);
+          return cast === undefined ? null : cast.endTick - tick;
+        })(),
         dead: entity.maxHealth > 0 && entity.health <= 0,
       };
+      // Counted so the assertion below can say this fight really exercised the
+      // cancel path (spec 166) rather than only the trigger. It does, and for a
+      // reason that is easy to miss: the script walks a circle, and asking to
+      // move withdraws from a cast.
+      if (cancelledCast(facts, previous.get(entity.id) ?? null)) cancels += 1;
+      // The stagger flinch, driven from the same replicated facts and on the
+      // same tick (spec 173). It reads `activity` and `activityUntilTick`, both
+      // of which are authoritative, and returns two angles nothing here writes
+      // back -- which is the whole claim this file exists to make.
+      flinches.read(entity.id, entity.activity, entity.activityUntilTick ?? 0, tick);
       events.push(...driveUnit(machine, facts, previous.get(entity.id) ?? null, 1));
       previous.set(entity.id, facts);
       if (was === null || moved) positions.set(entity.id, at);
     }
   }
 
-  return { states, events, yaws };
+  return {
+    states,
+    events,
+    yaws,
+    drops,
+    painted,
+    stoppedPaint: stopped,
+    cancels,
+    flinchesTracked: flinches.tracked,
+  };
 }
 
 describe('animation is presentation only', () => {
@@ -207,6 +350,11 @@ describe('animation is presentation only', () => {
     const animated = await play(true);
     expect(animated.events.length).toBeGreaterThan(0);
     expect(animated.states.length).toBe(TICKS);
+    // And it withdrew from attacks along the way, so the comparison covers the
+    // path that *leaves* a state early (spec 166) and not only the one that
+    // enters it. Walking is what does it -- asking to move withdraws from a
+    // cast -- and this script never stops walking.
+    expect(animated.cancels).toBeGreaterThan(0);
   }, 30_000);
 
   it('was actually easing a yaw, and easing it away from the heading', async () => {
@@ -239,6 +387,67 @@ describe('animation is presentation only', () => {
     expect(worst).toBeGreaterThan(0);
   }, 30_000);
 
+  it('was actually revealing a drop, and withheld it first (spec 158)', async () => {
+    // The same guard the yaw gets: a run whose drop presentation did nothing
+    // would satisfy the byte-for-byte assertion above and prove nothing.
+    const animated = await play(true);
+    expect(animated.drops.length).toBeGreaterThan(0);
+    // It was withheld...
+    expect(animated.drops.some((shown) => shown.label === null)).toBe(true);
+    // ...and then it was not.
+    expect(animated.drops.some((shown) => shown.label !== null)).toBe(true);
+    // ...and it announced itself on the way, by name rather than by asset.
+    expect(animated.drops.flatMap((shown) => shown.cues)).toContain('loot.reveal.rare');
+  }, 30_000);
+
+  it('was actually painting an affliction, and beating it (spec 215)', async () => {
+    // The same guard the yaw and the drop get. A driver that started nothing
+    // would satisfy the byte-for-byte assertion above and prove nothing -- and
+    // that is not a hypothetical here, because every id it can play is looked up
+    // through `has()` first and a table with a typo in it plays silence.
+    const animated = await play(true);
+    // The cling: started, and started once per body per affliction rather than
+    // once per frame. Two hundred and forty ticks of holding it would be
+    // thousands of plays if the idempotence were broken.
+    const clings = animated.painted.filter((id) => !id.endsWith('_pulse'));
+    expect(clings.length).toBeGreaterThan(0);
+    expect(clings.length).toBeLessThan(60);
+    // And the beat, which is the half that is derived rather than replicated.
+    const beats = animated.painted.filter((id) => id.endsWith('_pulse'));
+    expect(beats.length).toBeGreaterThan(0);
+    // All seven afflictions land together under the developer trigger, so all
+    // seven should have been painted. This is what catches a table that names
+    // an effect the registry does not hold -- for six of the seven.
+    const kinds = new Set(clings.map((id) => id.replace(/_heavy$/, '')));
+    expect(kinds.size).toBe(7);
+    // And they were let go of again. The developer trigger's afflictions run
+    // out inside this window, so a driver that started seven clings and stopped
+    // none of them would be the leak this whole handle-holding design exists to
+    // make impossible.
+    expect(animated.stoppedPaint.length).toBeGreaterThan(0);
+  }, 30_000);
+
+  it('drives the stagger flinch, and it changes no state (spec 173)', async () => {
+    // What this covers is the *wiring*: the flinch reader is consulted for every
+    // body on every tick, from the same replicated facts the machines get, and
+    // the authoritative state still compares equal. Both `activity` and
+    // `activityUntilTick` are carried in the compared state, so a flinch that
+    // wrote back would surface as a divergence here rather than as a silent
+    // pass.
+    //
+    // What it deliberately does NOT claim is that a break happened. This script
+    // is a fixed input sequence chosen for the turn ease and the drop reveal,
+    // and nothing in it empties anybody's poise pool -- so an assertion that a
+    // flinch fired would either be a lie or force the scenario to be rebuilt
+    // around a mechanic it was not written for. The amplitude, the decay and
+    // the edge are pinned in `stagger-flinch.test.ts`, against ticks rather
+    // than against a fight, and the gate that produces the break at all is
+    // pinned in `server/sim/stagger-gate.test.ts` through the real `step`.
+    const [withAnimation, without] = await Promise.all([play(true), play(false)]);
+    expect(withAnimation.flinchesTracked).toBeGreaterThan(0);
+    expect(withAnimation.states).toEqual(without.states);
+  }, 30_000);
+
   it('drives a machine that has nothing it could call', () => {
     // The structural half, stated as a test so it is not only a comment: what
     // `driveUnit` is handed is a plain record of replicated facts. There is no
@@ -248,12 +457,16 @@ describe('animation is presentation only', () => {
       activity: 0,
       castPhase: null,
       attackRate: 1,
+      abilityId: null,
+      castTicksLeft: null,
       dead: false,
     };
     expect(Object.keys(facts).sort()).toEqual([
+      'abilityId',
       'activity',
       'attackRate',
       'castPhase',
+      'castTicksLeft',
       'dead',
       'speed',
     ]);

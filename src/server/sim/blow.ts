@@ -10,8 +10,9 @@
  *
  * ```
  *   1. eligibility   is this blow allowed to find a weak point at all
- *   2. rolls         crit, then weak point -- crit FIRST, always
- *   3. amplify       weak point, exploit, catalysis, exposure, execute
+ *   2. rolls         the weapon's range, then crit, then weak point
+ *   3. base          the row's flat damage + its own letters + the weapon's
+ *   3b. amplify      weak point, exploit, catalysis, exposure, execute
  *   4. mitigate      armour (less sundering), adaptation, resolve, reads, flow
  *   5. absorb        shield before health
  *   6. poise         guard damage, and the break if it empties
@@ -29,27 +30,46 @@
  * here adds a percentage to another percentage, which is the arithmetic that
  * makes a system stop being predictable once it has more than three sources.
  *
+ * **Offensive sources add; everything else multiplies** (spec 238). There are
+ * exactly three ways damage can enter a blow -- the ability's flat number, its
+ * declared attribute letters, and a fraction of the weapon -- they are summed
+ * once in step 3, and nothing below step 3 is a source. That is what makes
+ * double-counting a structural impossibility rather than something to be
+ * careful about: a reviewer checking "does Intelligence reach this twice" has
+ * three addends to read and not a chain of multiplications spread over two
+ * files. See `data/ability-scaling.ts` for what each addend is.
+ *
  * Pure. The tick and the Rng are arguments.
  */
 
 import type { Rng } from '../../shared/prng.js';
 import { SERVER_TICK_RATE } from '../config.js';
+import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
-import type { AbilityDefinition } from '../data/abilities.js';
+import { elementOfAbility, type AbilityDefinition } from '../data/abilities.js';
+import { abilityAttributeBonus, abilityGradesOf, abilityWeaponFactor } from '../data/ability-scaling.js';
+import { hasAffliction } from '../data/status-semantics.js';
 import { applyArmor } from '../player/stats.js';
-import { applyPoiseDamage, isResolute, poiseDamageOf } from './poise.js';
+import { provoke } from './aggro.js';
+import { healingScaleOf } from './damage-over-time.js';
+import { applyPoiseDamage, isResolute, poiseDamageOf, stagger } from './poise.js';
+import { markAssist } from './restoration.js';
 import {
   adaptationAgainst,
   adaptedKey,
   applyStatus,
-  clearStatus,
   hasStatus,
   stacksOf,
   statusOf,
   StatusId,
-  type Statuses,
 } from './statuses.js';
-import { ActivityValue, CastEndReason, type ServerEntity, type ServerSimEvent } from './types.js';
+import {
+  ActivityValue,
+  CastEndReason,
+  EntityKindValue,
+  type ServerEntity,
+  type ServerSimEvent,
+} from './types.js';
 
 /** How much armour Sundered removes, and for how long. */
 export const SUNDER_ARMOR = 0.1;
@@ -58,10 +78,19 @@ export const SUNDER_TICKS = Math.round(SERVER_TICK_RATE * 4);
 export const RECENTLY_HIT_TICKS = Math.round(SERVER_TICK_RATE * 0.5);
 /** Perfect Exit's own cooldown, so a hit-trade loop cannot fund itself. */
 export const PERFECT_EXIT_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 4);
-/** Second Wind's, for the same reason. */
-export const SECOND_WIND_COOLDOWN_TICKS = Math.round(SERVER_TICK_RATE * 20);
-/** The bounty a Tactician's exposure leaves for everyone else. */
-export const EXPOSED_BOUNTY = 'exposed.bounty';
+// Second Wind used to have a cooldown here beside Perfect Exit's, and it is
+// gone (spec 239). It never once expired: the rule that read it re-armed the
+// mechanic the moment health climbed back above its threshold, and the comeback
+// itself does that on the tick it fires. What replaced it is not a longer
+// number but a **lifecycle** -- consumed until a rest or a death, the two
+// boundaries the flask already resets at. See `advanceProgression`.
+/**
+ * The bounty a Tactician's exposure leaves for everyone else.
+ *
+ * The id itself moved to {@link StatusId} in spec 240, where the rest of the
+ * well-known ids are; this is the name every caller here already uses.
+ */
+export const EXPOSED_BOUNTY: string = StatusId.ExposedBounty;
 
 export interface BlowResult {
   /** The attacker, with whatever the blow returned to it. */
@@ -71,16 +100,27 @@ export interface BlowResult {
   readonly rng: Rng;
 }
 
-function healthFraction(entity: ServerEntity): number {
-  return entity.stats.maxHealth > 0 ? entity.health / entity.stats.maxHealth : 1;
+/**
+ * An integer in `[min, max]`, and the Rng that has spent the draw.
+ *
+ * Integral on purpose: at spec 217's magnitudes a fractional roll is a number
+ * nobody can read off a damage popup, and what the attribute term adds on top
+ * is fractional anyway. The ends are rounded rather than truncated so that a
+ * range widened by a modifier keeps both of its ends reachable.
+ *
+ * Degenerate ranges are the common case rather than an edge one -- every
+ * monster's is `min === max` -- so the draw is still taken and still spends the
+ * same one value, which is what keeps a blow's draw count uniform.
+ */
+export function rollBetween(rng: Rng, min: number, max: number): [number, Rng] {
+  const lo = Number.isFinite(min) ? Math.max(0, Math.round(min)) : 0;
+  const hi = Number.isFinite(max) ? Math.max(lo, Math.round(max)) : lo;
+  const [roll, next] = rng.nextInt(0, hi - lo);
+  return [lo + roll, next];
 }
 
-/** Whether anything at all is on this body -- what Catalysis keys off. */
-function afflicted(statuses: Statuses, tick: number): boolean {
-  for (const [, value] of Object.entries(statuses)) {
-    if (tick < value.expiresAtTick) return true;
-  }
-  return false;
+function healthFraction(entity: ServerEntity): number {
+  return entity.stats.maxHealth > 0 ? entity.health / entity.stats.maxHealth : 1;
 }
 
 /**
@@ -106,9 +146,36 @@ export function resolveBlow(
   const D = target.stats.traits;
   const isBasicAttack = ability.basicAttack === true;
 
-  // --- 1 + 2: eligibility, then the two rolls, crit first ------------------
-  const [critRoll, afterCrit] = rngIn.nextInt(0, 9999);
-  let rng = afterCrit;
+  // --- 1 + 2: eligibility, then the rolls, the weapon's own first ----------
+  //
+  // The damage roll leads (spec 217), and it is drawn for a blow that carries
+  // some of the weapon: a basic attack, or an ability declaring a `weapon`
+  // fraction (spec 238). Conditioning on the ability's own row is safe where
+  // conditioning on a *chance* would not be -- both are fixed for a given
+  // ability id, so two replays of the same inputs always draw the same count.
+  // `weakPointChance > 0` below is the shape to be careful of, and it is
+  // already there.
+  //
+  // The Rng draw count is protocol, so adding this moved every seeded combat
+  // sequence in the tree once. That is the cost of a weapon having damage of
+  // its own, and it is paid here rather than smeared over a special case. No
+  // production ability declares a `weapon` fraction today, so spec 238 moved
+  // none of them a second time.
+  let rng = rngIn;
+  let weaponRoll = 0;
+  // A weapon roll is drawn for a basic attack, and for an ability that declares
+  // a `weapon` fraction (spec 238). Both conditions are properties of the *row*
+  // -- fixed for an ability id -- so two replays of the same inputs draw the
+  // same count in the same order, which is the rule this block is written under.
+  const weaponFactor = isBasicAttack ? 1 : abilityWeaponFactor(ability.scaling);
+  if (weaponFactor > 0) {
+    const [roll, afterRoll] = rollBetween(rng, attacker.stats.weaponDamageMin, attacker.stats.weaponDamageMax);
+    weaponRoll = roll;
+    rng = afterRoll;
+  }
+
+  const [critRoll, afterCrit] = rng.nextInt(0, 9999);
+  rng = afterCrit;
   const critical = critRoll / 10000 < attacker.stats.critChance;
 
   const mayWeakPoint = isBasicAttack || A.abilityWeakPoints > 0;
@@ -129,14 +196,52 @@ export function resolveBlow(
   }
 
   // --- 3: amplify ---------------------------------------------------------
-  // Two multipliers, and which one applies is the ability's own `basicAttack`
-  // flag (spec 147). A swing scales with what you are swinging -- Strength, and
-  // whatever the weapon adds -- and a spell scales with Intelligence. Before
-  // this, every blow in the game scaled with `spellPower` and nothing scaled
-  // with `attackDamage` at all, so a Strength build's damage stat was a number
-  // on a sheet that reached nothing.
-  const power = isBasicAttack ? A.weaponPower : attacker.stats.spellPower;
-  let damage = ability.damage * power * (critical ? 1.75 : 1);
+  //
+  // **Where a blow's base number comes from** (specs 147, 217, 231). This is
+  // the answer to "why did this hit for that", and it is three addends and
+  // nothing else:
+  //
+  // ```
+  //   base = ability.damage                 the row's own flat number
+  //        + abilityAttributeBonus(...)     its declared STR/AGI/INT letters
+  //        + weaponRoll * weaponFactor      the fraction of the weapon it is
+  // ```
+  //
+  // A **basic attack** is the third addend alone: `weaponFactor` is 1, the row
+  // authors `damage: 0` and declares no letters of its own, so `base` is the
+  // weapon's rolled range -- which already carries spec 216's attribute term,
+  // the flat bonuses and the percentage. That is bit-for-bit what this line did
+  // before spec 238, and `ability-scaling.test.ts` asserts it rather than
+  // leaving it as a claim.
+  //
+  // **Nothing enters twice, and each addend is why:**
+  //
+  //  - `ability.damage` is a constant on the row and is multiplied by nothing.
+  //    It used to be multiplied by `spellPower`, which is how every active
+  //    ability in the game became an Intelligence ability.
+  //  - the attribute term reads each of the three attributes exactly once, at
+  //    the one grade the row declares for it. `spellPower` is inside it and
+  //    only on Intelligence, and its own Intelligence term was removed when
+  //    this landed, so Intelligence is linear rather than quadratic.
+  //  - the weapon term is the weapon's *whole* resolved damage, so a weapon's
+  //    own letters live in it and are not re-applied by the ability. An
+  //    ability's letters and its weapon's are separate addends for exactly this
+  //    reason: nested, a hybrid would multiply one by the other.
+  //
+  // Everything after this point is a multiplier on the running number -- crit,
+  // weak point, exposure, armour, adaptation -- and none of them is an
+  // offensive *source*, so none of them can double-count one.
+  const base =
+    ability.damage +
+    (isBasicAttack
+      ? 0
+      : abilityAttributeBonus(
+          attacker.stats.scalingAttributes,
+          abilityGradesOf(ability.scaling),
+          attacker.stats.spellPower,
+        )) +
+    weaponRoll * weaponFactor;
+  let damage = base * (critical ? 1.75 : 1);
 
   if (weakPoint) {
     const still = tick - attacker.stillSinceTick >= A.steadyAimTicks ? A.steadyAimPct : 0;
@@ -152,13 +257,28 @@ export function resolveBlow(
 
   const exposed = statusOf(target.statuses, StatusId.Exposed, tick);
   if (exposed) damage *= 1 + exposed.magnitude;
-  if (A.vsAfflictedPct > 0 && afflicted(target.statuses, tick)) damage *= 1 + A.vsAfflictedPct;
+  // **Catalysis, against a body that is actually suffering from something**
+  // (spec 240). `hasAffliction` reads `data/status-semantics.ts`, which is the
+  // one place a status says what kind of thing it is.
+  //
+  // This used to be a local `afflicted` that returned true if *any* entry on
+  // the body was live -- and every blow stamps `recentlyHit` and `inCombat` on
+  // what it lands on, so the Intelligence skill whose whole identity is
+  // rewarding a set-up was "8% more damage to anything you have hit once", on
+  // every target in the game.
+  if (A.vsAfflictedPct > 0 && hasAffliction(target.statuses, tick)) damage *= 1 + A.vsAfflictedPct;
 
   const staggered = target.activity === ActivityValue.Stunned;
   if (A.executeBonus > 0 && staggered && healthFraction(target) <= A.executeBelow) {
     damage *= 1 + A.executeBonus;
   }
 
+  // Captured before the mitigation below, because the execution bonus in the
+  // health economy asks whether the body was staggered *when it was hit*, and
+  // the poise pass a few lines down is free to stagger it afterwards. Reading
+  // `activity` at the end would count a blow that caused the stagger as one that
+  // exploited it.
+  const wasStaggered = staggered;
   const raw = damage;
 
   // --- 4: mitigate --------------------------------------------------------
@@ -187,15 +307,24 @@ export function resolveBlow(
   const toHealth = damage - absorbed;
   const health = Math.max(0, target.health - toHealth);
   const killed = health <= 0;
+  const overkill = killed && toHealth >= targetIn.health * (1 + SCALING.combat.overkillFraction);
 
-  target = {
-    ...target,
-    health,
-    shield: shieldLive - absorbed,
-    activity: killed ? ActivityValue.Dead : target.activity,
-    targetId: target.targetId ?? attacker.id,
-    stillSinceTick: tick,
-  };
+  // What being hit does to the victim's *mind* is `provoke`'s to say (spec 163)
+  // and not this function's. Until then it was one line here -- `targetId ??
+  // attacker.id` -- which was the entire aggro system, and which could only ever
+  // express "fights back". A grazer that bolts and a spider that calls its nest
+  // are the same event arriving at a different temperament.
+  target = provoke(
+    {
+      ...target,
+      health,
+      shield: shieldLive - absorbed,
+      activity: killed ? ActivityValue.Dead : target.activity,
+      stillSinceTick: tick,
+    },
+    attacker,
+    tick,
+  );
 
   events.push({
     kind: 'hit',
@@ -207,6 +336,11 @@ export function resolveBlow(
     critical,
     blocked: armor > 0 && damage < raw,
     weakPoint,
+    // What it was made of, for the picture (spec 232). Derived from the row --
+    // an affliction-carrying ability is its affliction's element -- so nothing
+    // in this function decides it and no blow can disagree with the skill that
+    // threw it.
+    element: elementOfAbility(ability),
   });
 
   // --- 6: poise -----------------------------------------------------------
@@ -222,24 +356,25 @@ export function resolveBlow(
     );
     target = poised.entity;
     if (poised.broke) {
-      target = {
-        ...target,
-        activity: ActivityValue.Stunned,
-        activityUntilTick: tick + D.staggerTicks,
-        // A break costs the broken body its Flow. Agility's momentum is
-        // explicitly a thing that can be taken away, which is what stops the
-        // stack from being a passive.
-        statuses: clearStatus(target.statuses, StatusId.Flow),
-      };
-      events.push({ kind: 'poiseBroken', entityId: target.id, breakerId: attacker.id, ticks: D.staggerTicks });
-      if (poised.interrupted) {
-        events.push({
-          kind: 'castEnded',
-          entityId: target.id,
-          abilityId: poised.interrupted.abilityId,
-          reason: CastEndReason.Interrupted,
-        });
-      }
+      // What a stagger *is* lives in `sim/poise.ts` since spec 188, because a
+      // skill can now apply one directly and two copies of these lines would be
+      // two answers to the same question. `applyPoiseDamage` has already
+      // checked the immunity and taken the cast off, so the cast it dropped is
+      // passed in rather than read back off a body that no longer has it.
+      // **`A`, not `D`** (spec 243). `staggerTicks` is Strength's, it sits in
+      // `SCALING.strength` beside the poise damage a blow carries, and it means
+      // *how long the break you caused lasts* -- so it is the attacker's, the
+      // way `staggerPower` two lines of arithmetic above it already is.
+      //
+      // Read off the defender it was Strength scaling the holder's **own**
+      // stagger: 31 ticks at 5 Strength and 42 at 60, so investing in the
+      // overpower attribute bought a longer time on the floor and bought the
+      // body that broke you nothing at all. Backwards progression in exactly
+      // the sense `player/progression-audit.ts` exists to catch, and it caught
+      // it -- it was allowlisted for four specs while the semantic was decided.
+      const struck = stagger(target, attacker.id, A.staggerTicks, tick, poised.interrupted);
+      target = struck.entity;
+      events.push(...struck.events);
       attacker = rewardBreak(attacker, tick);
     }
   } else if (target.cast) {
@@ -255,7 +390,30 @@ export function resolveBlow(
     target = { ...target, cast: null };
   }
 
-  if (killed) events.push({ kind: 'died', entityId: target.id, killerId: attacker.id });
+  if (killed) {
+    // What was good about this kill, for the health economy to price (spec 156).
+    // Nothing here is measured for this purpose: all five are facts the blow
+    // above already had to establish. `untouched` is the one that reads off the
+    // *attacker*, and it is the mark `markTarget` leaves on everyone it hits --
+    // so "I did not get hit doing that" is answered by the same status Perfect
+    // Exit reads, rather than by a second window that could drift from it.
+    events.push({
+      kind: 'died',
+      entityId: target.id,
+      killerId: attacker.id,
+      // What died, because in a moment there will be nothing left to ask
+      // (spec 164). Read off the body in hand rather than from its id.
+      victimKind: target.kind,
+      victimTypeId: target.typeId,
+      qualities: {
+        weakPoint,
+        overkill,
+        execution: wasStaggered,
+        untouched: !hasStatus(attacker.statuses, StatusId.RecentlyHit, tick),
+        abilityKill: !isBasicAttack,
+      },
+    });
+  }
 
   // --- 7: aftermath -------------------------------------------------------
   target = markTarget(target, attacker, ability, tick, weakPoint);
@@ -263,7 +421,7 @@ export function resolveBlow(
     weakPoint,
     killed,
     damage,
-    overkill: killed && toHealth >= targetIn.health * (1 + SCALING.combat.overkillFraction),
+    overkill,
   });
 
   return { attacker, target, events, rng };
@@ -322,6 +480,22 @@ function markTarget(
     });
   }
   statuses = applyStatus(statuses, StatusId.RecentlyHit, tick, RECENTLY_HIT_TICKS);
+  // And the wider "you are in a fight" window, which only resting reads
+  // (spec 156). Both, because they answer different questions at different
+  // widths -- see `StatusId.InCombat`.
+  statuses = applyStatus(statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
+
+  // "This player hit me", left on the victim for its death to read (spec 156).
+  // The whole assist system is this line plus a lookup: no threat table, no
+  // damage ledger, nothing to keep in step with the damage that actually
+  // happened -- the mark a blow was always going to leave is the mark the kill
+  // reads, and it expires on its own like every other status here.
+  //
+  // Players only. A monster that helped kill another monster has no meter to
+  // credit, and marking it would be an entry nothing ever looks up.
+  if (attacker.kind === EntityKindValue.Player) {
+    statuses = markAssist(statuses, attacker.id, tick);
+  }
 
   if (weakPoint && A.exposeTicks > 0 && A.exposedDamagePct > 0) {
     statuses = applyStatus(statuses, StatusId.Exposed, tick, A.exposeTicks, {
@@ -357,12 +531,20 @@ function rewardAttacker(
   let next = attacker;
   let resource = next.resource;
   let health = next.health;
-  let statuses = next.statuses;
+  // Landing a blow puts *you* in a fight too (spec 156), and it is stamped here
+  // rather than in `markTarget` because that one skips a body it just killed --
+  // and a player standing over a corpse in the safe zone has very much been
+  // fighting.
+  let statuses = applyStatus(next.statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
 
   if (outcome.weakPoint) {
     resource += A.weakPointResource;
     if (outcome.killed && A.weakPointKillHeal > 0) {
-      health = Math.min(next.stats.maxHealth, health + next.stats.maxHealth * A.weakPointKillHeal);
+      // Third of the three restorations that never touch `applyHealing`, and so
+      // the third that has to consult the suppression itself (spec 190).
+      const mend =
+        next.stats.maxHealth * A.weakPointKillHeal * healingScaleOf(next.statuses, tick);
+      health = Math.min(next.stats.maxHealth, health + mend);
     }
     if (A.attunedFromWeakPoints > 0 && A.attunedTicks > 0) {
       statuses = applyStatus(statuses, StatusId.Attuned, tick, A.attunedTicks, {

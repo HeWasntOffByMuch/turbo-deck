@@ -104,6 +104,13 @@ interface StoredChunk {
   readonly tones: Uint8Array;
   readonly props: Prop[];
   readonly markers: MapMarker[];
+  /**
+   * Baked walkability, for the editor's overlay and for nothing else (spec 204).
+   *
+   * In memory only. It left the document and the wire because its one reader is
+   * a dev visualisation that is off by default, and because it is the wrong
+   * quantity at the wrong resolution to ever feed a nav grid.
+   */
   nav: Uint8Array | null;
 }
 
@@ -225,6 +232,27 @@ export class MapChunkStore {
    */
   private partList: readonly MapPart[];
 
+  /**
+   * Bumped by every mutation, so anything derived from the store can tell that
+   * what it cached is stale (spec 165 follow-up 5).
+   *
+   * Deliberately one counter for the whole store rather than one per layer or
+   * per chunk. The only consumer is `bakedLayer`'s corner memo, edits are rare
+   * against the millions of samples the memo exists for, and a coarse counter
+   * cannot be wrong in the direction that matters -- it can only throw away a
+   * cache that was still good, never keep one that was not.
+   */
+  private mutations = 0;
+
+  /** See {@link mutations}. */
+  get revision(): number {
+    return this.mutations;
+  }
+
+  private touched(): void {
+    this.mutations++;
+  }
+
   constructor(private readonly doc: MapDocument) {
     this.cellSize = doc.grid.cellSize;
     this.chunkCells = doc.grid.chunkCells;
@@ -264,6 +292,10 @@ export class MapChunkStore {
       solid: decodeRuns(chunk.solid, cells),
       materials: decodeRuns(chunk.materials, cells),
       tones: decodeRuns(chunk.tones, cells),
+      // Baked walkability is runtime state now, not stored state (spec 204): a
+      // loaded chunk starts with none, and the editor bakes its overlay the
+      // first time the overlay is actually switched on.
+      nav: null,
       // Chunk-local back to world space: the one place the conversion happens.
       props: chunk.props.map((p) => ({
         kind: (p.species as PropKind),
@@ -279,7 +311,9 @@ export class MapChunkStore {
       // convention props use. Holding the two differently is how a world
       // coordinate ends up written into a local field and lands a chunk away.
       markers: chunk.markers.map((m) => ({ ...m, x: originX + m.x, z: originZ + m.z })),
-      nav: chunk.nav === null ? null : Uint8Array.from(chunk.nav),
+      // Baked walkability is runtime state now, not stored state (spec 204): a
+      // loaded chunk starts with none and the editor bakes its overlay when the
+      // overlay is asked for.
     };
   }
 
@@ -296,6 +330,7 @@ export class MapChunkStore {
    * layer would drop every chunk it held, and no caller wants that by accident.
    */
   addLayer(layer: MapLayer): boolean {
+    this.touched();
     if (this.layers.has(layer.id)) return false;
     const chunks = new Map<string, StoredChunk>();
     for (const chunk of layer.chunks) chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
@@ -320,6 +355,7 @@ export class MapChunkStore {
    * in the file. Returns false if there was no such layer.
    */
   removeLayer(layerId: string): boolean {
+    this.touched();
     return this.layers.delete(layerId);
   }
 
@@ -342,6 +378,7 @@ export class MapChunkStore {
    * the document this was constructed from; `toDocument()` is the live view.
    */
   insertChunk(layerId: string, chunk: MapChunk): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return false;
     layer.chunks.set(key(chunk.cx, chunk.cz), this.storeChunk(chunk, layer.origin));
@@ -361,6 +398,7 @@ export class MapChunkStore {
    * from its edge.
    */
   removeChunk(layerId: string, cx: number, cz: number): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer?.chunks.delete(key(cx, cz))) return false;
     layer.grid = grid(layer.chunks.values(), layer.origin, layer.bounds, this.cellSize);
@@ -389,6 +427,7 @@ export class MapChunkStore {
    * rectangle they want rather than a rectangle to union in.
    */
   setBounds(layerId: string, bounds: MapRect): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return false;
     layer.bounds = bounds;
@@ -435,6 +474,7 @@ export class MapChunkStore {
   }
 
   setParts(parts: readonly MapPart[]): void {
+    this.touched();
     this.partList = [...parts];
   }
 
@@ -520,6 +560,7 @@ export class MapChunkStore {
    * inside ground that exists.
    */
   declareBounds(layerId: string, bounds: MapRect): boolean {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return false;
     layer.bounds = {
@@ -556,6 +597,7 @@ export class MapChunkStore {
    * of `heights`, so the seam duplication cannot drift apart.
    */
   setCornerHeight(layerId: string, col: number, row: number, y: number): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     // No range test: `chunksAtCorner` finds nothing for a corner no chunk holds,
@@ -592,6 +634,45 @@ export class MapChunkStore {
     };
   }
 
+  /**
+   * What the ground is made of at a world point, on the topmost layer that has
+   * any (spec 229 follow-up).
+   *
+   * The **baked** material, which is the whole reason this exists rather than
+   * `classify.ts`'s `worldMaterialAt`. That one re-derives from height and slope
+   * with `region: 'default'`, so it reports a hand-painted dirt path as grass
+   * and painted snow as rock -- fine for scattering vegetation over a generated
+   * world, and wrong for anything asking what a body is standing on in a map
+   * somebody edited. Since spec 179 a material is a *choice* a designer made,
+   * and this is the reader for it.
+   *
+   * `null` means "no chunk here holds that cell", not "no material". On a
+   * streaming client that is the ordinary state for ground that has not arrived
+   * yet, and a caller has to treat it as "I do not know" -- never as an answer.
+   *
+   * Topmost-solid, the rule `worldMaterialAt` already uses and `heightAt` is the
+   * other half of: a rock tier over ground is a layer above it, and a body
+   * standing on the tier is standing on the tier's material.
+   */
+  materialAtWorld(x: number, z: number): TerrainMaterial | null {
+    let best: { height: number; material: TerrainMaterial } | null = null;
+    for (const [layerId, layer] of this.layers) {
+      const b = layer.bounds;
+      if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) continue;
+      // `Math.round` and not `floor`: a cell is centred on its corner sample,
+      // which is what `chunk.ts` assumes when it maps a column back to a world
+      // x. Flooring shifts every lookup half a cell south-west, which is
+      // invisible in the middle of a field and wrong on every boundary.
+      const col = Math.round((x - layer.origin.x) / this.cellSize);
+      const row = Math.round((z - layer.origin.z) / this.cellSize);
+      const cell = this.cellAt(layerId, col, row);
+      if (!cell || !cell.solid) continue;
+      const height = this.cornerHeight(layerId, col, row);
+      if (!best || height > best.height) best = { height, material: cell.material };
+    }
+    return best ? best.material : null;
+  }
+
   /** Is the layer's global cell solid? What the mesher asks to find real coastlines. */
   cellSolid(layerId: string, col: number, row: number): boolean {
     return this.cellAt(layerId, col, row)?.solid === true;
@@ -617,6 +698,7 @@ export class MapChunkStore {
 
   /** Store a chunk's baked walkability. Rejects an array of the wrong size. */
   setChunkNav(layerId: string, cx: number, cz: number, nav: Uint8Array | null): boolean {
+    this.touched();
     const chunk = this.layers.get(layerId)?.chunks.get(key(cx, cz));
     if (!chunk) return false;
     if (nav !== null && nav.length !== chunk.cols * chunk.rows) return false;
@@ -626,6 +708,7 @@ export class MapChunkStore {
 
   /** Set a global cell's material index. Leaves solidity and tone alone. */
   setCellMaterial(layerId: string, col: number, row: number, material: number): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     const slot = this.cellSlot(layer, col, row);
@@ -642,6 +725,7 @@ export class MapChunkStore {
    * shape and wants the other writer.
    */
   setCellSolid(layerId: string, col: number, row: number, solid: boolean): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     const slot = this.cellSlot(layer, col, row);
@@ -651,6 +735,7 @@ export class MapChunkStore {
 
   /** Set one cell's tone variant, the second half of its colour (spec 125). */
   setCellTone(layerId: string, col: number, row: number, tone: number): void {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer) return;
     const slot = this.cellSlot(layer, col, row);
@@ -697,6 +782,7 @@ export class MapChunkStore {
 
   /** Put a snapshot back. Silently does nothing if the chunk has gone. */
   restoreChunk(snapshot: ChunkSnapshot): void {
+    this.touched();
     const chunk = this.layers.get(snapshot.layerId)?.chunks.get(key(snapshot.cx, snapshot.cz));
     if (!chunk) return;
     chunk.heights.set(snapshot.heights);
@@ -729,6 +815,7 @@ export class MapChunkStore {
    * point lies outside every layer.
    */
   addProp(layerId: string, prop: Prop): ChunkCoord | null {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer || !Number.isFinite(prop.x) || !Number.isFinite(prop.y)) return null;
     const chunk = this.chunkAtPoint(layer, prop.x, prop.y);
@@ -891,6 +978,7 @@ export class MapChunkStore {
    * chunk's coordinate, or null if the point lies outside the layer.
    */
   addMarker(layerId: string, marker: MapMarker): ChunkCoord | null {
+    this.touched();
     const layer = this.layers.get(layerId);
     if (!layer || !Number.isFinite(marker.x) || !Number.isFinite(marker.z)) return null;
     const inside =
@@ -903,6 +991,52 @@ export class MapChunkStore {
     if (!chunk) return null;
     chunk.markers.push(marker);
     return { cx: chunk.cx, cz: chunk.cz };
+  }
+
+  /**
+   * Replace one marker by id, re-filing it if the change moved it (spec 222).
+   *
+   * One primitive rather than three, because "edit it" and "move it" are the
+   * same write: a marker lives in the chunk that contains it, so changing its
+   * point can change which chunk owns it, and an update that wrote in place
+   * would leave it filed under ground it is no longer standing on. Returns
+   * every chunk that changed -- one for an edit, two for a move across a seam --
+   * or null if no marker holds that id, or if the new point is off the layer.
+   *
+   * The removal happens **before** the insert is attempted, and the marker goes
+   * back if the insert is refused: an update that ate the marker on the way to
+   * a point outside the map would be the worst bug this could have, which is
+   * the same rule `pickUpDrop` follows for a full bag.
+   */
+  updateMarker(layerId: string, id: string, next: MapMarker): ChunkCoord[] | null {
+    const layer = this.layers.get(layerId);
+    if (!layer) return null;
+    let from: StoredChunk | null = null;
+    let at = -1;
+    for (const chunk of layer.chunks.values()) {
+      const found = chunk.markers.findIndex((m) => m.id === id);
+      if (found >= 0) {
+        from = chunk;
+        at = found;
+        break;
+      }
+    }
+    if (!from) return null;
+
+    const previous = from.markers[at];
+    if (!previous) return null;
+    this.touched();
+    from.markers.splice(at, 1);
+    const landed = this.addMarker(layerId, next);
+    if (!landed) {
+      // Refused: off the layer, or over a hole in it. Put it back exactly where
+      // it was rather than leaving the map one marker lighter.
+      from.markers.splice(at, 0, previous);
+      return null;
+    }
+    return landed.cx === from.cx && landed.cz === from.cz
+      ? [landed]
+      : [landed, { cx: from.cx, cz: from.cz }];
   }
 
   /** Markers whose centre lies within `radius` of (x, z), in world space. */
@@ -1097,7 +1231,6 @@ export class MapChunkStore {
         x: quantize(m.x - chunk.originX),
         z: quantize(m.z - chunk.originZ),
       })),
-      nav: chunk.nav === null ? null : Array.from(chunk.nav),
     };
   }
 
@@ -1231,13 +1364,49 @@ function bakedLayer(store: MapChunkStore, layerId: string): TerrainLayer | null 
   // (spec 083).
   const g = (): LayerGrid => info.grid;
 
+  /**
+   * Corners, memoized (spec 165 follow-up 5).
+   *
+   * `sample` costs 8.4 `corner` calls on average -- four for the nominal cell,
+   * and the rest from the ring search that 24% of points need because jittered
+   * corners put them in a neighbour's quad. Each one is a hash and a chunk
+   * lookup. Sampling the nav lattice over the arena is 1.6M samples and 13.5M
+   * corners, which is where the five seconds went.
+   *
+   * The saving is that a lattice re-asks for the *same* corners: nav cells are
+   * 10 units and terrain cells 22, so each corner serves about five samples,
+   * and the ring search re-asks for corners the nominal cell already built.
+   * Memoized, the 13.5M collapse to the ~165k corners the map actually has.
+   *
+   * Keyed on the store's revision, so any edit throws the memo away. It is a
+   * pure function of `(col, row, seed, cell, origin)` and the stored heights --
+   * every one of which is either fixed for the layer's life or covered by that
+   * revision, so a hit is the same value the miss would have computed.
+   */
+  const corners = new Map<number, CornerPoint>();
+  let cachedAt = -1;
+
   const corner = (col: number, row: number): CornerPoint => {
+    if (cachedAt !== store.revision) {
+      corners.clear();
+      cachedAt = store.revision;
+    }
+    // Packed rather than a template string: this is the hottest line in the
+    // sampler and a string key would put allocation back into it. The offset
+    // covers the negative coordinates a grown map has (spec 083); the arena's
+    // grid is ~420 by ~390, so nothing comes near the bound.
+    const memoKey = (col + 0x8000) * 0x10000 + (row + 0x8000);
+    const hit = corners.get(memoKey);
+    if (hit) return hit;
+
     const [jx, jz] = cornerJitter(col, row, info.seed, cell);
-    return [
+    const made: CornerPoint = [
       origin.x + col * cell + jx,
       store.cornerHeight(layerId, col, row),
       origin.z + row * cell + jz,
     ];
+    corners.set(memoKey, made);
+    return made;
   };
 
   const minArea = cell * cell * MIN_TRIANGLE_AREA;
@@ -1359,7 +1528,12 @@ export interface LoadedMap {
   readonly store: MapChunkStore;
   /** Implements `TerrainWorld`, so existing consumers work unchanged. */
   readonly world: TerrainWorld;
-  /** Ready-to-mesh chunks, identical in shape to `sampleChunk`'s output. */
+  /**
+   * Ready-to-mesh chunks, identical in shape to `sampleChunk`'s output.
+   *
+   * **Built on first read.** It is the most expensive thing a map can produce
+   * and the server never wants it -- see `loadMap`.
+   */
   readonly chunks: readonly TerrainChunk[];
   readonly meshLayers: readonly MeshLayer[];
   /** Props back in world space, in document order. */
@@ -1442,11 +1616,28 @@ export function meshLayerFor(store: MapChunkStore, layerId: string): MeshLayer |
  */
 export function loadMap(doc: MapDocument): LoadedMap {
   const store = new MapChunkStore(doc);
+  // Built on first read rather than at load (spec 207).
+  //
+  // `chunks` is *mesh* data -- a jittered world position and a normal per corner
+  // -- and building it is the whole of a server boot: 32.6s of the 34s it takes
+  // to stand up a 12,960-chunk world, against 202ms to construct the store. The
+  // server then never looks at it. `buildWorldFromDocument` reads `world` and
+  // `props` and nothing else, so every one of those seconds went into arrays
+  // discarded on the next line.
+  //
+  // Memoized, so the semantics are exactly what they were: a snapshot, taken
+  // once. The only difference is *when* -- at first read instead of at load --
+  // and the only caller that reads it is the editor, which reads it immediately
+  // after loading in order to mesh the world it is about to draw.
+  let chunks: readonly TerrainChunk[] | null = null;
   return {
     doc,
     store,
     world: worldFor(store),
-    chunks: store.buildChunks(),
+    get chunks(): readonly TerrainChunk[] {
+      chunks ??= store.buildChunks();
+      return chunks;
+    },
     meshLayers: doc.layers.map((l) => meshLayerFor(store, l.id)).filter((l): l is MeshLayer => l !== null),
     props: doc.layers.flatMap((l) => store.props(l.id)),
     markers: doc.layers.flatMap((l) => store.markers(l.id)),

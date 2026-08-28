@@ -10,6 +10,13 @@
  * dropped, its Flow gone, for `staggerTicks`. The pool then refills whole and
  * cannot be broken again for {@link SCALING.combat.staggerImmuneTicks}.
  *
+ * "Rooted" was aspirational until spec 173 and is now true: {@link staggered}
+ * is read by the movement pass and by `startCast`, so a broken body neither
+ * walks, turns nor swings for the window. Before that the flag was set and read
+ * twice in the whole server -- once for Strength's execute bonus, once to slow
+ * a regen that the break had already refilled -- so a staggered body kept
+ * walking at full speed and ended its own stagger early by casting through it.
+ *
  * That immunity window is the single most important number here. Without it two
  * Strength characters between them hold anything permanently, which is not a
  * build, it is a removal -- and a mechanic whose best use is to delete a player
@@ -28,7 +35,15 @@
 
 import { SCALING } from '../data/scaling.js';
 import type { EffectiveStats } from '../state/types.js';
-import { CastPhase, type CastState, type ServerEntity } from './types.js';
+import { clearStatus, StatusId } from './statuses.js';
+import {
+  ActivityValue,
+  CastEndReason,
+  CastPhase,
+  type CastState,
+  type ServerEntity,
+  type ServerSimEvent,
+} from './types.js';
 
 export const STAGGER_IMMUNE_TICKS = SCALING.combat.staggerImmuneTicks;
 
@@ -77,19 +92,62 @@ export function poiseArmorOf(
   return traits.windupPoiseArmor;
 }
 
+/**
+ * Whether this body is inside a poise break's window, and so not its own
+ * (spec 173).
+ *
+ * The one place "staggered" is defined, because it is asked in three: the
+ * movement pass roots the legs on it, `startCast` refuses the hands on it, and
+ * `blow.ts` reads the same state for Strength's execute bonus. Two gates that
+ * each spelled the comparison out would be two gates free to disagree about
+ * whether the last tick of the window counts.
+ *
+ * It is the same pair `expireActivity` uses to decide when the stagger is over,
+ * in the same direction, so the tick a body is let go is the tick it stops
+ * being refused rather than one either side of it.
+ */
+export function staggered(
+  entity: Pick<ServerEntity, 'activity' | 'activityUntilTick'>,
+  tick: number,
+): boolean {
+  return entity.activity === ActivityValue.Stunned && tick < entity.activityUntilTick;
+}
+
 /** Whether this body is currently immune to being broken again. */
 export function staggerImmune(entity: Pick<ServerEntity, 'staggerImmuneUntilTick'>, tick: number): boolean {
   return tick < entity.staggerImmuneUntilTick;
 }
 
 /**
- * Whether the resolute state -- Constitution's low-health behaviour change --
- * is on. Stagger immunity *and* damage reduction, both gated on being hurt.
+ * Whether Constitution's low-health **damage reduction** is on (spec 239).
+ *
+ * One of two, and it used to be both. This answered "take less damage" *and*
+ * "cannot be broken", from one threshold that `deriveTraits` inferred from the
+ * reduction -- so the Hard to Kill **skill**, three ranks whose entire grant is
+ * a damage reduction and whose description says the execute range is where you
+ * get harder, silently handed out complete immunity to guard breaks as well.
+ * That is a qualitative mechanic, it belongs to the milestone that names it,
+ * and a skill should grant what its tooltip says.
  */
 export function isResolute(entity: Pick<ServerEntity, 'health' | 'stats'>): boolean {
   const traits = entity.stats.traits;
   if (traits.resoluteBelow <= 0 || entity.stats.maxHealth <= 0) return false;
   return entity.health / entity.stats.maxHealth <= traits.resoluteBelow;
+}
+
+/**
+ * Whether this body is hurt enough that its guard cannot be broken at all
+ * (spec 239).
+ *
+ * The other half of what {@link isResolute} used to answer, on its own granted
+ * trait. Read in the two places a break can happen -- {@link applyPoiseDamage}
+ * and a skill's `stun` -- so the two cannot come to different answers about who
+ * is unbreakable.
+ */
+export function isUnstaggerable(entity: Pick<ServerEntity, 'health' | 'stats'>): boolean {
+  const traits = entity.stats.traits;
+  if (traits.staggerImmuneBelow <= 0 || entity.stats.maxHealth <= 0) return false;
+  return entity.health / entity.stats.maxHealth <= traits.staggerImmuneBelow;
 }
 
 export interface PoiseResult {
@@ -107,7 +165,7 @@ export interface PoiseResult {
  * function owns the three consequences and nothing else owns any of them --
  * emptying the pool, rooting the body, and dropping whatever it was doing.
  *
- * A body already staggered, already immune, or {@link isResolute} takes the
+ * A body already staggered, already immune, or {@link isUnstaggerable} takes the
  * damage against a pool it cannot break, which is a deliberate no-op rather than
  * an early return: poise still drains, so the moment the immunity lifts the
  * next blow is landing on a pool that has been worn down.
@@ -126,7 +184,10 @@ export function applyPoiseDamage(
   const armored = amount * (1 - poiseArmorOf(target, isBasicAttack));
   const poise = Math.max(0, Math.min(traits.maxPoise, target.poise) - armored);
 
-  const protectedFromBreak = staggerImmune(target, tick) || isResolute(target);
+  // The immunity is `isUnstaggerable` rather than `isResolute` since spec 239:
+  // taking less damage and being unbreakable are two promises, and they were
+  // one predicate.
+  const protectedFromBreak = staggerImmune(target, tick) || isUnstaggerable(target);
   if (poise > 0 || protectedFromBreak) {
     return { entity: { ...target, poise }, broke: false, interrupted: null };
   }
@@ -143,6 +204,80 @@ export function applyPoiseDamage(
       poise: traits.maxPoise,
       staggerImmuneUntilTick: tick + STAGGER_IMMUNE_TICKS,
       cast: null,
+    },
+  };
+}
+
+/**
+ * Everything that happens to a body that has just been staggered (spec 188).
+ *
+ * Lifted out of `blow.ts`, where it was written inline, because there are now
+ * two ways to be staggered -- a guard broken by a blow, and a skill that says
+ * `{ kind: 'stun' }` -- and a second copy of these five lines is a second
+ * answer to what a stagger *is*. The rooted legs, the refused hands, the lost
+ * Flow, the dropped cast, the immunity window and the `poiseBroken` the client
+ * flinches and draws its swirl from all come from here, so a skill's stun is
+ * the same state the game already has rather than one that looks like it.
+ *
+ * **Stuns do not stack: a second one replaces the first.** `activityUntilTick`
+ * is `tick + ticks` and never a sum or a maximum, so a stun landing on a body
+ * already stunned runs for its own length from now and whatever was left of the
+ * previous one is dropped -- in both directions, so a short stun on top of a
+ * long one *shortens* it. Replace rather than "whichever ends later" because
+ * the alternative makes a weak stun do nothing at all to a body already held,
+ * which is a special case nobody could predict from the rule.
+ *
+ * Two things it deliberately does **not** do, and both are the caller's:
+ *
+ *  - It does not check {@link staggerImmune} or {@link isResolute}. On the
+ *    break path {@link applyPoiseDamage} has already checked them *and* stamped
+ *    the immunity, so a check here would see the guard it just set and refuse
+ *    the very stagger it was called to apply. The `stun` effect checks
+ *    `isResolute` and deliberately does *not* check `staggerImmune` -- see the
+ *    note there: the window rate-limits guard *breaks*, and a skill's stun is
+ *    rate-limited by its own cooldown.
+ *  - It does not touch the poise pool. A break refills it as part of emptying
+ *    it; a stun applied directly never spent it, and refilling would *hand* the
+ *    victim guard for being stunned.
+ *
+ * `interrupted` is the cast that was dropped, if any, and is a parameter rather
+ * than read off `entity.cast` because on the break path `applyPoiseDamage` has
+ * already cleared it and only it still knows what was there.
+ */
+export function stagger(
+  entity: ServerEntity,
+  breakerId: number,
+  ticks: number,
+  tick: number,
+  interrupted: CastState | null = entity.cast,
+): { readonly entity: ServerEntity; readonly events: readonly ServerSimEvent[] } {
+  const events: ServerSimEvent[] = [
+    { kind: 'poiseBroken', entityId: entity.id, breakerId, ticks },
+  ];
+  // A client roots itself while it believes it is casting, so a cast dropped in
+  // silence leaves a player standing still for good (spec 062).
+  if (interrupted) {
+    events.push({
+      kind: 'castEnded',
+      entityId: entity.id,
+      abilityId: interrupted.abilityId,
+      reason: CastEndReason.Interrupted,
+    });
+  }
+  return {
+    events,
+    entity: {
+      ...entity,
+      cast: null,
+      activity: ActivityValue.Stunned,
+      activityUntilTick: tick + ticks,
+      // The window that stops two attackers holding a third permanently, and
+      // the reason a stun effect is a mechanic rather than a removal.
+      staggerImmuneUntilTick: tick + STAGGER_IMMUNE_TICKS,
+      // A break costs the broken body its Flow. Agility's momentum is
+      // explicitly a thing that can be taken away, which is what stops the
+      // stack from being a passive.
+      statuses: clearStatus(entity.statuses, StatusId.Flow),
     },
   };
 }

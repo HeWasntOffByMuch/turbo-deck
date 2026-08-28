@@ -1,0 +1,7 @@
+{
+  "features": [
+    { "kind": "rolling", "amplitude": 14 }
+  ],
+  "elevation": -150,
+  "vegetation": { "density": 0 }
+}

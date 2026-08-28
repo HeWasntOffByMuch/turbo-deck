@@ -1,0 +1,19 @@
+{
+  "$comment": "Measured off the mesh rather than assumed (spec 165), and re-measured when the mesh was replaced: every number here is a fact about `bow_recurve.glb` and none of them survives a new one on its own. The limbs run along Z from -1.013 to 1.013 and the riser's depth is X, so `point` is +Z -- either limb would do, since a bow is symmetric about its grip, and +Z is the one that makes the basis right-handed with the flat below. The six Handle cylinders are the handle: they sit at x -0.018..0.077 about the riser at z 0, so the palm is at x 0.0295 and `at` is the middle of them. `flat` is +Y because Y is the axis the bow is thin in (the limbs are +/-0.033 against 0.303 of X, and the string is +/-0.0035) -- the plane of the bow is XZ and Y is its normal, which is what stops it rolling to edge-on in the hand. The String mesh sits at x -0.136, 0.165 behind the grip and level with the nocks the limbs recurve back to, and that is the fact that decides which way round the bow goes in the palm: the string faces the archer. `lengthWorld` is unchanged at 40 because it is a length rather than a scale -- the mesh grew from 1.92 to 2.03 along Z and the bow is still drawn exactly as big as the one before it. No `stowSocket`: `weapon.stow` is calibrated for a sword across the back and a bow hung at that angle would be visibly wrong, so this weapon has nowhere to hang until somebody measures one.",
+  "formatVersion": 1,
+  "id": "bow_recurve",
+  "name": "Recurve Bow",
+  "meshRef": "bow_recurve.glb",
+  "socket": "weapon.off",
+  "grip": {
+    "at": [0.0295, 0, 0],
+    "point": "+Z",
+    "flat": "+Y"
+  },
+  "lengthWorld": 40,
+  "provenance": {
+    "source": "supplied by hand, 2026-08-18",
+    "generator": "trimesh",
+    "note": "784 triangles, three materials (Wood, String, Handle), eight mesh nodes and every node transform identity -- no skin and no animation, which is the whole reason this is a weapondef and not a unitdef."
+  }
+}

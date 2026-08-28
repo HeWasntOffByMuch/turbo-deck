@@ -50,34 +50,29 @@ export const CHUNK_SIZE = 400;
 /**
  * How many chunks out from their own a player is told about.
  *
- * This has to cover **what the camera can frame**, and the old 3-at-100-units
- * did not come close. Measured against the real camera at a 1280x800 window: the
- * default zoom frames +-320 by +-441 world units and the widest frames +-1400 by
- * +-1927, against an interest window that reached 300 to 400. Monsters vanished
- * on screen at every zoom, which is exactly what was reported.
+ * This has to cover **what the camera can frame** at the widest zoom the game is
+ * *sized for* -- `SUPPORTED_MAX_VIEW_HALF_WIDTH`, 420 since spec 202, rather
+ * than the 1400 the slider still reaches. Measured through the real
+ * `cameraFrustum` across every window shape a real monitor comes in, 420 reaches
+ * 932 world units; 3 chunks of 400 guarantees 1200, which covers it.
  *
- * 8 at 400 units guarantees 3200, which covers the widest zoom on a 32:9
- * monitor (~3110). It has to be sized off the *window shape*, not just the zoom:
+ * It has to be sized off the *window shape*, not just the zoom:
  * `internalRenderSize` trades height rather than capping the aspect past 2.53,
- * so the horizontal ground reach keeps growing with the window and there is no
- * ceiling to aim at. 32:9 is where real monitors stop; a pathological aspect at
- * maximum zoom could still outrun this, and the answer there would be a cap on
- * the zoom rather than an ever-wider window.
+ * so horizontal ground reach keeps growing with the window and 32:9 is simply
+ * where monitors stop. A pathological aspect at maximum zoom could still outrun
+ * this, and the answer there would be a cap on the zoom rather than an
+ * ever-wider window.
  *
- * The window is 17x17 chunks -- 289 rather than the 49 it was. That is 289 map
- * lookups per connection per broadcast, twenty times a second, which is nothing.
- *
- * Worth being straight about the consequence: the generated world is ~4400 by
- * ~4100, so a window this wide contains most of it and culling currently culls
- * almost nothing. That is the right trade -- a player seeing bodies wink out
- * inside the frame is a bug, and an optimisation with nothing to optimise is
- * not -- but interest management only starts earning its keep again when the
- * map outgrows the camera.
+ * Was 8, which guaranteed 3200 against the 3107 the *slider's* maximum frames.
+ * That is a 17x17 window of 289 chunks against the 7x7 and 49 this is -- nearly
+ * six times the interest set, permanently, for a zoom the game is not played at.
+ * Past the supported band a body outside the window winks out, which is the
+ * degradation the Display page's dev-setting warning names.
  *
  * `src/render/iso3d/world/interest.test.ts` asserts the relationship rather than
  * the numbers, so the next person to touch the camera finds out here.
  */
-export const INTEREST_CHUNK_RADIUS = 8;
+export const INTEREST_CHUNK_RADIUS = 3;
 
 /**
  * Bumped whenever the wire format changes incompatibly; checked on connect.
@@ -113,8 +108,30 @@ export const INTEREST_CHUNK_RADIUS = 8;
  * 15: the welcome issues a session token and a hello may present one, so a
  * dropped socket can come back to the same body instead of spawning a new one;
  * and a goodbye says a disconnection was meant (spec 150).
+ * 16, 17: items drop (spec 158). A *sixth* entity kind -- spec 156's mote took
+ * the fifth -- plus a `LootDrop` describing one, with its identity withheld
+ * until an authoritative reveal tick and carrying the point it was thrown from
+ * so every client draws the same arc, and a `PickUpItem` to take it. The bump
+ * also covers spec 156's `Restoration` and its mote kind, which landed without
+ * one.
+ * 18: a tenth entity field carrying the statuses a body is visibly holding
+ * (spec 186). Spec 147 built a progression that is almost entirely
+ * status-driven and replicated none of it; this is the wire half of showing it.
+ * Only the ids `data/status-visuals.ts` names ride, as a table index rather
+ * than a string, and each carries an absolute expiry so the mark drawn from it
+ * needs no client state.
+ * 19: a map chunk no longer carries baked walkability (spec 204). It was a run
+ * list per chunk sent to every client, and its only reader was the editor's nav
+ * overlay -- which loads the map off disk and has never streamed. Removed from
+ * the document in the same change, so there is nothing left to send.
+ * 20: `Hello` carries an `authToken` (spec 226). A trailing string, so an older
+ * client's frame decodes as far as `resumeToken` and then runs out -- which is
+ * a decode error rather than a silent misread, and is why this is a version
+ * bump rather than an append somebody could get away with. What it is *for* is
+ * that the server can now decide which player a connection is from a credential
+ * it issued, instead of from a name the client chose for itself.
  */
-export const PROTOCOL_VERSION = 15;
+export const PROTOCOL_VERSION = 20;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
@@ -123,21 +140,90 @@ export const PROTOCOL_VERSION = 15;
  * 400-unit interest chunks of {@link CHUNK_SIZE}. Three independent grids now
  * exist and merging them would couple a draw-call decision to a bandwidth one.
  *
- * Sized off what the camera can frame, exactly as {@link INTEREST_CHUNK_RADIUS}
- * is, and for a worse failure: a monster outside the interest window winks out,
- * but terrain outside this one is a hole with the sky showing through.
+ * Sized off what the camera can frame at `SUPPORTED_MAX_VIEW_HALF_WIDTH`,
+ * exactly as {@link INTEREST_CHUNK_RADIUS} is, and for a worse failure: a
+ * monster outside the interest window winks out, but terrain outside this one is
+ * a hole with the sky showing through. 420 reaches 932 units and 2 chunks of 616
+ * guarantees 1232.
  *
  * It has to be sized off the *window shape*, not just the zoom -- the same trap
- * `INTEREST_CHUNK_RADIUS` documents. 4 looked right against the widest zoom's
- * +-1400 by +-1927 on a 16:9 window and was wrong: `internalRenderSize` trades
- * height rather than capping the aspect, so a 32:9 monitor at maximum zoom
- * reaches ~3107 units and radius 4 guarantees only 4 * 616 = 2464. 6 guarantees
- * 3696, which covers it with room to spare.
+ * `INTEREST_CHUNK_RADIUS` documents.
+ *
+ * Was 6, sized against the 3107 units the slider's own maximum frames: a 13x13
+ * window of 169 chunks against the 5x5 and 25 this is. At the ~10ms a cold chunk
+ * costs to bring resident (spec 201) that is a quarter-second of prefetch rather
+ * than two and a half seconds, which is what makes bounded residency affordable
+ * at all.
+ *
+ * **Nothing may make this a function of a client's zoom.** It is the guard that
+ * bounds *where* a client may read, checked against the server's own position
+ * for that player, and a radius derived from a value the client reported would
+ * be the client widening its own read window. `map-radius.test.ts` asserts that
+ * `MapChunkCache.wanted` does not read the zoom.
  *
  * `src/render/iso3d/world/map-radius.test.ts` asserts that relationship rather
- * than the literal 6 -- it is the test that caught the 4.
+ * than the literal 2.
  */
-export const MAP_CHUNK_REQUEST_RADIUS = 6;
+export const MAP_CHUNK_REQUEST_RADIUS = 2;
+
+/**
+ * How far a client keeps a chunk it has stopped asking for (spec 208).
+ *
+ * Derived from the request radius rather than chosen, because the one thing
+ * eviction must not do is fight the streamer. A chunk is requested inside
+ * `MAP_CHUNK_REQUEST_RADIUS` and dropped outside this, so the two chunks between
+ * them are held and not asked for: a player crosses 1,232 units past the edge of
+ * what they are streaming before anything goes, and the same distance back
+ * before it is asked for again. There is no position at which one pass drops
+ * what the next pass asks for, and `map-cache.test.ts` asserts that over every
+ * position in a chunk rather than over one.
+ *
+ * The cost is what is held: 9x9 rather than 5x5, 81 chunks against 25 -- against
+ * the 392 a circuit of the shipped map used to leave behind, and against a whole
+ * 12,960-chunk world at the size this is heading for.
+ *
+ * Two rather than one because one is not "comfortably wider": at +1 the band is
+ * a single chunk, and a player walking a diagonal crosses a corner in and out of
+ * it within a few hundred units.
+ */
+export const MAP_CHUNK_KEEP_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 2;
+
+/**
+ * How far a chunk may be from the *server's* own position and still be served
+ * (spec 214).
+ *
+ * The pair of guards in `map-request.ts` have always been described as bounding
+ * different things -- range bounds *where* a client may read, the bucket bounds
+ * how fast -- and this is the third thing neither of them was bounding: the two
+ * positions the range is measured between are not the same position.
+ * `requestChunks` asks from `prediction.drawn` and `handleChunkRequest`
+ * measures from the entity, correctly refusing to trust the client's claim. A
+ * predicting client leads the server by its own latency, so whenever the two
+ * straddle a chunk boundary the entire leading-edge column comes back
+ * `OutOfRange` -- a whole 5-wide column on a measured fourteen-second run at
+ * `MOVE_SPEED_HARD_MAX`, every one on the edge the body was running toward, and
+ * every one legal a tick later. Spec 208 made that cost more rather than less:
+ * at radius 2 a refused column is a fifth of everything the client holds, where
+ * at 6 it was a thirteenth.
+ *
+ * One chunk of slack, and it is **derived rather than judged**. The sim already
+ * keeps a client's claim within `correctionThreshold` of the server's position,
+ * and `drawn` adds at most `MAX_EASED_OFFSET` of visual offset that has not
+ * decayed yet -- under a hundred units of honest disagreement, on a grid whose
+ * chunks are 616 units wide. A disagreement smaller than a chunk cannot move a
+ * chunk index by more than one, so this is exactly the slack a correct client
+ * needs and no more. `map-request.test.ts` asserts that relationship rather than
+ * the number 3.
+ *
+ * It sits between the two radii spec 208 derived and disturbs neither:
+ * {@link MAP_CHUNK_KEEP_RADIUS} is `R + 2`, so the band a client holds without
+ * asking is still two chunks wide, and {@link MAP_CHUNK_BURST} still prices a
+ * cold start off the *request* radius, which is what a client actually asks for.
+ *
+ * What it does not widen: a client claiming to stand across the map is still
+ * refused, because the claim never enters this arithmetic at all.
+ */
+export const MAP_CHUNK_SERVE_RADIUS = MAP_CHUNK_REQUEST_RADIUS + 1;
 
 /**
  * How long a chunk request goes unanswered before the client asks again
@@ -192,6 +278,21 @@ export const RESUME_GRACE_TICKS = 1800;
 export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
+ * Ms between the server's protocol-level pings (spec 197).
+ *
+ * The application heartbeat rides the client's timers, and Chrome throttles a
+ * page hidden for five minutes down to one timer firing a minute -- so the
+ * heartbeat that has to be relied on is the one the page is not holding. A
+ * WebSocket pong is answered in the peer's network stack; the tab's JavaScript
+ * never sees it and cannot be throttled out of it.
+ *
+ * Three chances inside {@link CONNECTION_TIMEOUT_TICKS}, so a single dropped
+ * pong is not a disconnection. `transport-ws.test.ts` asserts that relationship
+ * rather than trusting the two numbers to be edited together.
+ */
+export const SERVER_PING_MS = 3000;
+
+/**
  * Token bucket on chunk sends, per connection (spec 072).
  *
  * The radius check bounds *where* a client may read; this bounds how fast. They
@@ -206,19 +307,46 @@ export const CONNECTION_TIMEOUT_TICKS = 600;
  * the trees appeared last. That is the throttle shaping normal play, which is
  * exactly what it is not for.
  *
- * 64 covers the shipped map outright, so a cold start is paced by the link and
- * by `CHUNK_REQUESTS_PER_PASS`, never by this. What the bucket still bounds is
- * the case it was written for: a client re-asking for one permanently-in-range
- * chunk forever. At 16/s sustained that costs ~190 KB/s of serialization, and a
- * player would have to cross a whole 616-unit chunk sixteen times a second to
- * need it legitimately.
+ * 64 covered the 56-chunk map outright, and then the map grew to 210 and the
+ * symptom this comment predicted -- "the far half of the world arrives late" --
+ * is exactly what happened: the radius can ask for 169 chunks, 105 of them came
+ * out of the refill at 16/s, and the cold start trickled for six seconds
+ * (spec 165).
  *
- * A map much larger than this one would want the burst raised with it, or the
- * cold start starts trickling again -- which is why the first symptom to look
- * for is "the far half of the world arrives late".
+ * So the burst is now **derived** rather than typed in. The quantity it has to
+ * cover is not "the map" -- a map may be arbitrarily larger than what one
+ * player can see -- it is every chunk {@link MAP_CHUNK_REQUEST_RADIUS} is
+ * allowed to ask for, which is the (2R+1)^2 square around them. Growing the map
+ * again cannot re-open this; only widening the radius can, and that moves this
+ * with it.
+ *
+ * What the bucket still bounds is the case it was written for: a client
+ * re-asking for one permanently-in-range chunk forever. The refill is what
+ * prices that, and it is the only half of this pair that is a judgement --
+ * 32/s is ~380 KB/s of serialization sustained, against a player who would have
+ * to cross a whole 616-unit chunk thirty-two times a second to need it.
  */
-export const MAP_CHUNK_BURST = 64;
-export const MAP_CHUNK_REFILL_PER_SECOND = 16;
+export const MAP_CHUNK_BURST = (2 * MAP_CHUNK_REQUEST_RADIUS + 1) ** 2;
+/**
+ * The sustained rate, and since spec 202 it is derived rather than typed in.
+ *
+ * It was 32, chosen against a burst of 169. Narrowing the request radius took
+ * the burst to 25 and left the refill **above** it -- a bucket that refills more
+ * than a whole burst every second is not a throttle at all, which is what
+ * `map-radius.test.ts` caught the moment the radius moved.
+ *
+ * So it is derived from the same quantity the burst is. Crossing one chunk
+ * boundary brings a whole edge row of the window into range -- `2R+1` chunks --
+ * and twice that per second is the rate. At the shipped radius that is 10/s
+ * against the ~1.25/s a player walking at 155 units/s actually needs (a
+ * 616-unit chunk takes four seconds to cross), so it is eight times what
+ * ordinary play asks for and still a third of a burst.
+ *
+ * Reassuringly it also reproduces roughly the old constant at the old radius:
+ * `2 * 13` is 26 against the 32 that was there. The number was about right and
+ * only its *relationship* to the burst was missing.
+ */
+export const MAP_CHUNK_REFILL_PER_SECOND = 2 * (2 * MAP_CHUNK_REQUEST_RADIUS + 1);
 
 /**
  * How far the client's modelled resource may be from the server's before it is
@@ -230,8 +358,45 @@ export const MAP_CHUNK_REFILL_PER_SECOND = 16;
  */
 export const RESOURCE_EPSILON = 0.05;
 
-/** How long a dead player lies there before the server puts them back (spec 057). */
-export const RESPAWN_DELAY_TICKS = SERVER_TICK_RATE * 3;
+/**
+ * Ceiling on {@link LiveConfig.lootRevealScale} (spec 158).
+ *
+ * Picking a drop up is legal throughout its reveal, so a long delay costs
+ * nobody their loot -- but a reveal that outlived `DROP_LIFETIME_TICKS` would
+ * leave an item that expired without ever having said what it was, which is a
+ * bug with a config value in front of it. Ten is far past any tuning pass and
+ * far short of the lifetime.
+ */
+export const MAX_REVEAL_SCALE = 10;
+
+/**
+ * How many drops one connection may have waiting for a turn (spec 172).
+ *
+ * A drop waits for the body to come round to it, so a player emptying a bag
+ * fast can genuinely have several in flight -- and they should all happen, in
+ * the order they were asked for. What this bounds is the absurd case: a client
+ * queueing a thousand aims is a client making the server turn for a minute.
+ * Well past four clicks inside one turn, which is the most a hand can do.
+ */
+export const MAX_PENDING_DROPS = 8;
+
+/**
+ * How long a drop waits for the heading it asked for, in ticks (spec 172).
+ *
+ * Two seconds, which is several times the longest turn a body in this game can
+ * be asked for -- half a revolution at the slowest authored `turnRate`. It is
+ * not a pacing knob: it is the answer to "what if the heading never arrives",
+ * which a body that cannot turn at all (a `turnRate` of zero) and a body held
+ * facing elsewhere by something longer than itself can both produce. The item
+ * is still in the bag when it fires, so the cost of it being wrong is a refusal
+ * rather than a loss.
+ */
+export const DROP_TURN_TIMEOUT_TICKS = 120;
+
+// There is deliberately no respawn delay here any more (spec 164). A dead player
+// lies there until they ask to get up -- `ClientMessageType.Respawn` -- so the
+// three-second timer this used to hold has no reader, and a constant nothing
+// reads is a claim that something does.
 
 /** Body radius used for server-side movement collision, matching the sim's player. */
 export const SERVER_PLAYER_RADIUS = 16;
@@ -254,6 +419,20 @@ export interface LiveConfig {
   readonly spawnRateMultiplier: number;
   /** Scales drop chance on entity death. Read by the loot roll, not by the sim's shape. */
   readonly dropRateMultiplier: number;
+  /**
+   * Scales how long a drop's rarity takes to resolve (spec 158).
+   *
+   * A presentation knob and only that -- it moves the reveal clock stamped on a
+   * drop at the instant it lands and reaches nothing about what dropped. `0`
+   * reveals everything at once, which is what a load test and the balance
+   * harness want; `1` is the authored timing.
+   *
+   * Snapshotted per drop, so turning it affects the next one rather than the one
+   * already lying in the grass -- the rule spec 144 established for attack
+   * timing, and it matters here for the same reason: a reveal whose finish line
+   * moved while it ran could be put in the past.
+   */
+  readonly lootRevealScale: number;
   /**
    * Ceiling on simulated entities in one chunk, so a raid can't wedge a chunk.
    * A safety valve rather than a density knob -- it moved with `CHUNK_SIZE`,
@@ -284,6 +463,7 @@ export interface LiveConfig {
 export const DEFAULT_LIVE_CONFIG: LiveConfig = {
   spawnRateMultiplier: 1,
   dropRateMultiplier: 1,
+  lootRevealScale: 1,
   maxEntitiesPerChunk: 40,
   correctionThreshold: 48,
   speedTolerance: 1.15,
@@ -296,6 +476,7 @@ export type LiveConfigKey = keyof LiveConfig;
 export const LIVE_CONFIG_KEYS: readonly LiveConfigKey[] = [
   'spawnRateMultiplier',
   'dropRateMultiplier',
+  'lootRevealScale',
   'maxEntitiesPerChunk',
   'correctionThreshold',
   'speedTolerance',
@@ -346,6 +527,11 @@ function clampConfigValue(key: LiveConfigKey, value: number): number {
     case 'spawnRateMultiplier':
     case 'dropRateMultiplier':
       return Math.max(0, Math.min(100, value));
+    // Bounded by `MAX_REVEAL_SCALE` rather than by the 100 above: a reveal that
+    // outlived its drop would leave an item that expired without ever having
+    // said what it was, which is a bug with a config value in front of it.
+    case 'lootRevealScale':
+      return Math.max(0, Math.min(MAX_REVEAL_SCALE, value));
     case 'maxEntitiesPerChunk':
       return Math.max(0, Math.min(1000, Math.floor(value)));
     case 'correctionThreshold':
@@ -356,3 +542,44 @@ function clampConfigValue(key: LiveConfigKey, value: number): number {
       return Math.max(1, Math.min(100000, Math.floor(value)));
   }
 }
+
+/**
+ * Where the database lives, relative to the repository root (spec 226).
+ *
+ * `data/game.db` because it is the obvious place and there was no existing
+ * convention to follow -- the only sibling is `.studio/`, which is hidden
+ * because nobody is meant to look in it, and the opposite is true here. The
+ * whole directory is gitignored: a live database is a developer's save file,
+ * not source.
+ *
+ * `TURBO_DECK_DB` overrides it, which is what a second playtest world or a
+ * throwaway database is.
+ */
+export const DEFAULT_DB_FILE = 'data/game.db';
+
+/**
+ * How long the graceful shutdown gets before the process is killed anyway
+ * (spec 226).
+ *
+ * A bound rather than a hope: the flush and the close are awaited, and a
+ * database that has wedged -- a lock nobody releases, a disk that stopped
+ * answering -- would otherwise leave `npm run server` unkillable by Ctrl-C and
+ * force the kill -9 the flush exists to avoid.
+ *
+ * Ten seconds is far past what flushing a playtest's worth of players costs
+ * (measured in milliseconds) and short enough that nobody waits on it wondering
+ * whether it has hung. What is lost when it fires is the same thing a kill -9
+ * loses: up to one autosave interval per player, and never a trade or a
+ * purchase, which are committed when they happen.
+ */
+export const SHUTDOWN_TIMEOUT_MS = 10_000;
+
+/**
+ * How often the server sweeps expired sessions out of the database
+ * (spec 226).
+ *
+ * Hourly, because the table only grows with connections and nothing reads an
+ * expired row. Deliberately not on the tick loop's clock: it is housekeeping
+ * about wall time, not about the world.
+ */
+export const SESSION_SWEEP_MS = 60 * 60 * 1000;

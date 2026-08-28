@@ -39,7 +39,29 @@ export type EmitterShape =
    * covered, centred on the emitter's rotation, and particles are laid along it
    * in emission order rather than at random, so a swing reads as a swing.
    */
-  | { readonly kind: 'arc'; readonly radius: number; readonly sweep: number };
+  | { readonly kind: 'arc'; readonly radius: number; readonly sweep: number }
+  /**
+   * Thrown along the emitter's own bearing (spec 158) -- local +X, the axis the
+   * effect's `rotation` turns, biased toward the middle of the spread and lifted
+   * out of the ground plane by `rise`.
+   *
+   * The shape a spatter needs and the one the format could not express: `cone`
+   * is about local +Y and `circle` is radial in the ground plane, so between
+   * them there was no way to say "away from the attacker, and a bit upward".
+   */
+  | {
+      readonly kind: 'fan';
+      readonly angle: number;
+      readonly radius: number;
+      readonly rise: number;
+      /**
+       * Which way this lobe points within the effect's own frame, radians about
+       * Y (spec 159). Several fans at different bearings, with different counts
+       * and sizes, are how an explosion gets a *composition* -- clusters and
+       * gaps -- rather than the even spray a single cone produces.
+       */
+      readonly bearing?: number;
+    };
 
 export type Emission =
   /** All at once, optionally after a delay. The one-shot. */
@@ -71,6 +93,9 @@ export type RenderMode =
  * quantizer then bands.
  */
 export type Blend = 'alpha' | 'additive' | 'dither-cutout';
+
+/** The two ways a brush mark can end (spec 161). See `Emitter.strokeDecay`. */
+export type StrokeDecay = 'retract' | 'fizzle';
 
 /** A runtime-generated sprite sheet. Nothing is ever fetched. */
 export interface SpriteSpec {
@@ -179,6 +204,21 @@ export interface Emitter {
    * where geometry that narrows simply narrows.
    */
   readonly ribbonTaper?: number;
+
+  /**
+   * How a brush mark leaves, when the shape is one (spec 161).
+   *
+   * `retract` pulls it back toward its own root, so the flecks past the tip are
+   * the last thing left. Right for a hit -- fast, and it reads as having been
+   * flicked.
+   *
+   * `fizzle` opens gaps *through* it instead, and the mark comes apart into
+   * shrinking islands where it lies. The distinction only shows up when a mark
+   * is held long enough to be watched: retract played slowly is the brush
+   * retracing its own path backwards, which reads as the stroke being
+   * un-painted rather than as anything dissipating.
+   */
+  readonly strokeDecay?: StrokeDecay;
 
   readonly render: RenderMode;
   readonly blend: Blend;

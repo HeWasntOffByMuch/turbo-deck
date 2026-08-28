@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v15
+# turbo-deck wire protocol v17
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -179,6 +179,93 @@ this message with different addresses, which is what keeps the conservation rule
 in one place. Answered with an `Inventory` at the same `requestId` whether it was
 taken or refused, plus an `Error(RejectedAction)` when it was refused.
 
+### `0x19 PickUpItem`
+`varuint requestId` · `varuint entityId`
+
+Take a drop off the ground (spec 158). The drop's **entity id** is the only
+address it has — it is not in a container until it is in the bag.
+
+The server checks all five: the entity is a drop, the asker is alive, the drop
+is theirs, they are within `PICKUP_RANGE` of it, and the bag has room. Answered
+with an `Inventory` at this `requestId` whether it was taken or refused, plus
+`Error(RejectedAction)` when it was refused — the same shape `MoveItem` uses,
+and for the same reason: the refusal is what a client's optimistic guess is
+rolled back by.
+
+**A drop may be taken before its reveal has finished**, and is served
+immediately when it is. The pending presentation simply never happens.
+Anticipation is never a lock on the player's hands.
+
+### `0x1c Talk`
+`varuint entityId`
+
+Start or end a conversation with a friendly NPC (spec 246). `entityId` of `0`
+ends whatever is in progress rather than naming a body — one message rather
+than two, the same convention `OpenVendor`'s empty id already uses, so a client
+leaving cannot be a client that forgot to say it was leaving.
+
+No request id, because nothing about a conversation is predicted: the answer
+decides whether a body stops walking, and a client that opened a bubble on the
+press would draw a conversation with something still ambling away.
+
+Answered with a `Conversation` **either way**, so a refusal is distinguishable
+from a dropped message. The server refuses a body that is not an NPC, is dead,
+is outside its own `talkRadius`, or is already claimed by another player —
+silently, with a `Conversation 0`, because every one of those is something the
+player can see and a refusal line for standing slightly too far away is noise.
+
+What the NPC *says* is not on this wire at any point. The script, the name and
+the voice are a content table both ends were built from, so sending them would
+be replicating a file the client already has.
+
+### `0x1b DropItem`
+`varuint requestId` · `u8 container` · `varint index` · `varint count` ·
+`f32 aimX` · `f32 aimY`
+
+Put a stack down in the world (spec 172). The address and the count read exactly
+as `MoveItem`'s do — `0` is the whole stack — because a drop *is* a move whose
+target is the ground, and the ground has no slot to name.
+
+`aim` is the world point the cursor was over, and it is an **aim rather than a
+landing**. The body turns to face it first, at its own `turnRate` and under the
+server's own `resolveFacing`, and the item is then thrown a constant reach along
+that line — so a point on the horizon and a point two paces away are the same
+request in every respect but direction. A client naming where an item lands is a
+client throwing one across the map.
+
+The turn is not a cast: no cost, no cooldown, no wind-up, no backswing, nothing
+rooted and no `CastState` on the wire. What the other clients see is the body's
+replicated `facing` coming round, which they already draw.
+
+The server checks the asker is alive and that the slot holds that many, at the
+moment the drop actually happens rather than when it was asked for. Answered with
+an `Inventory` at this `requestId` either way, plus `Error(RejectedAction)` on a
+refusal — the same channel `MoveItem` uses, since this edit is predicted and a
+refusal is what takes the guess back. A drop that never gets its turn — the body
+died, the queue overflowed, or the heading did not arrive inside the timeout —
+is one of those refusals, and the item never left the bag.
+
+What appears is an ordinary drop entity with two differences from a kill's: it is
+**unowned**, so anybody who reaches it may take it, and it is **revealed on its
+spawn tick** at every tier, because the reveal withholds an identity from
+somebody who does not know it and the person who emptied their own bag does.
+
+### `0x1a Respawn`
+*(no payload)*
+
+"Put me back on my feet" (spec 164). Honoured only from a connection whose body
+is at zero health, and honoured at once when it is: full health, the flask
+restored and the restoration meter cleared (spec 156's reset), placed at
+`DEFAULT_SPAWN` through the same `clearSpawnNear` the login path uses, and
+answered with a `Correction(Teleport)` that pardons the jump.
+
+From a living body it is ignored silently — a respawn is a free full heal and a
+free trip home, so "only when dead" is the whole of its validation, and a client
+that pressed the button twice inside one round trip has not done anything worth
+a refusal for.
+
+There is no respawn timer. A dead player lies there until they ask.
+
 ### `0x0b WatchSpawners`
 `bool on`
 
@@ -241,7 +328,22 @@ with no upserts and no removals is not sent.
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
 
-`kind`: `0` player, `1` monster, `2` prop, `3` projectile.
+`kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` mote, `5` drop.
+
+A **mote** (spec 156) is a restorative pickup and is replicated to exactly one
+client: the player it belongs to. The filter is server-side, in
+`broadcastDeltas`, so there is no ownership field on the wire and nothing for
+another client to reason about — a mote a teammate cannot see is a mote they
+cannot take. Its `typeId` says what it restores: `mote.vitality` or
+`mote.focus`.
+
+A **drop**'s `typeId` is **empty and stays empty** (spec 158). What the item is
+travels on `LootDrop`, never here: this record goes to every client in interest
+range on first sight, and what an unrevealed drop is must not. Unlike a mote it
+*is* replicated to everyone in range — two players watching the same kill watch
+the same throw — and ownership is a server-side check on `PickUpItem` rather
+than anything on the wire — and is absent entirely on a drop a player put down
+(spec 172), which belongs to whoever gets there.
 `activity`: `0` idle, `1` moving, `2` casting, `3` stunned, `4` dead, `5` recovering.
 
 A projectile in flight is an ordinary entity (spec 062), so it replicates
@@ -322,6 +424,26 @@ Entries already expired when the frame is built are omitted. One that expires
 later, with no cast in between, is simply left with the client: `readyAtTick` is
 in the past, so the client's own `readyAtTick - tick` is negative and it draws
 nothing.
+
+### `0x55 Restoration`
+`u8 meter` · `u8 charges` · `u8 maxCharges` · `u32 atTick`
+
+The health economy's two live numbers (spec 156), owner-only and sent when
+either changes — the same reasoning as `Cooldowns`, with one difference: there
+is nothing here for a client to model forward. The meter moves on kills and the
+flask on casts and rests, so "has it changed" is a comparison against what was
+last sent rather than against what the client would have believed.
+
+`meter` is a **fraction** of the restoration threshold, quantised to a byte —
+not the absolute progress the sim keeps. A bar only asks how full it is; the
+threshold is tuning that may move between builds; and a client told its raw
+progress could work out exactly which kill produces the next mote, which is a
+thing to farm rather than a thing to feel. The dirty check is made on the
+quantised value, so a meter drifting by a thousandth does not turn this into a
+per-tick broadcast.
+
+`maxCharges` rides along because Constitution decides it, so the client can draw
+the empty pips as well as the full ones.
 
 ### `0x45 Chat` — `u8 channel` · `str from` · `str text`
 `channel`: `0` say, `1` system, `2` admin broadcast.
@@ -564,12 +686,75 @@ guess needs taking away.
 Equipment slot order is the wire contract: a new slot is appended to
 `EQUIP_SLOTS` and never reordered, because there are no names on the wire.
 
+### `0x57 Conversation`
+`varuint entityId`
+
+Which NPC this client is talking to, or `0` for none (spec 246). The answer to a
+`Talk`, and also what arrives **unasked** when the server ends one: the player
+walked past `talkRadius`, either body died, the NPC despawned, or the connection
+dropped and came back. So a client never has to infer the end of a conversation
+from the absence of something.
+
+Sent to the player in the conversation and to nobody else. What every other
+client sees is a body that has stopped walking and turned to face somebody, and
+both of those already replicate on the delta — there is no "is talking" bit,
+because standing still and facing you *is* the tell.
+
+The claim itself lives on the NPC's entity in the sim (`conversationWith`),
+which is what stops it wandering off mid-sentence and what a replay reproduces.
+This message is the client's copy of that fact, reconciled once per broadcast:
+the server asks whether the conversation is still holdable rather than raising
+an event when it is not, so a release path added later cannot forget to fire one.
+
+### `0x56 LootDrop`
+`varuint entityId` · `u8 rarity` · `u32 spawnTick` · `u32 revealTick` ·
+`f32 originX` · `f32 originY` · `f32 originZ` · `str defId` · `varuint count`
+
+An item lying in the world, and how much of it this client is allowed to know
+yet (spec 158). Sent when the drop first enters this connection's interest set —
+the same first-sight the delta's `Spawn` bit computes, so there is no second
+visibility system — and again on the tick it reveals.
+
+**`defId` is `''` and `count` is `0` until the reveal.** The identity is absent
+from the wire rather than flagged on it, so there is no path by which a client
+could draw it early. A client whose first sight is *after* the reveal gets the
+filled version straight away, which makes the late observer and the reconnecting
+one the same case with no code of their own.
+
+`rarity` is the tier's index in `RARITY_IDS` (`0` common, `1` rare, `2`
+exceptional) and *is* sent up front, deliberately: the anticipation cue is
+tier-shaped, so playing it needs the tier. That is the "notice" step. What is
+withheld is the payoff.
+
+`origin` is where the body fell — the point the item was thrown *from*. The
+entity's own replicated position is where it **landed**, scattered server-side
+from a seeded draw, so the two are the ends of an arc the client draws over
+`TOSS_TICKS` and nothing simulates. It is authoritative for one reason: every
+player has to see the same throw, and a scatter picked client-side would put the
+same sword in a different place on every screen. A client whose first sight is
+after the toss computes "already landed" from the same two numbers, with no case
+of its own.
+
+`spawnTick` and `revealTick` are both sent because the client draws the run-up
+against the whole span. Its own "when did I first see this" is not the answer —
+it would restart the anticipation for somebody who walked up halfway through.
+`revealTick === spawnTick` means there was never anything to wait for, which is
+every `common` drop.
+
+The server sends this to everyone whose interest set contains the drop, not only
+to its owner: the flare is in the world, so two players watching it resolve see
+the same thing at the same instant. **Ownership is not on the wire** — it is a
+server-side check on `PickUpItem` and nothing a client is told.
+
 ## `admin:*` — client → server
 
 Every one of these is refused unless the connection's stored token verifies **on
 that message**, with a `role: admin` claim. Authentication is not a flag set once
 at connect: the token is re-verified per request, so expiry takes effect
-immediately. Every decision, accepted or refused, appends an audit entry.
+immediately. Every **decision**, accepted or refused, appends an audit entry;
+the reads — `listPlayers`, `getConfig`, `getItems`, `getAudit` — do not, because
+asking who is online is not something done to anybody and the console polls the
+list once a second for its live count (spec 154).
 
 | Byte | Message | Payload |
 |---|---|---|
@@ -586,13 +771,33 @@ immediately. Every decision, accepted or refused, appends an audit entry.
 | `0x8A` | `admin:setConfig` | `str key` · `f64 value` |
 | `0x8B` | `admin:getConfig` | — |
 | `0x8C` | `admin:getAudit` | `u16 limit` |
+| `0x8D` | `admin:setProgress` | `str playerId` · `u8 mode` · `u32 amount` |
+| `0x8E` | `admin:giveItem` | `str playerId` · `str defId` · `u16 count` |
+| `0x8F` | `admin:getItems` | — |
+| `0x90` | `admin:kill` | `str playerId` |
 
 Events currently understood by `triggerEvent`: `raid` (magnitude = how many),
-`clear` (magnitude = radius), `heal`.
+`clear` (magnitude = radius), `heal`, `drop` (magnitude = the rarity ordinal —
+an unowned drop of that tier) and `reveal` (magnitude = radius — pulls every
+unrevealed drop in range to its reveal now).
+
+Those two plus `lootRevealScale` are the whole developer path for spec 158:
+spawn a chosen tier, stretch or collapse its run-up, and force one that is
+already lying there. **None of them can change what the item is** — there is
+nothing in any of them that could, which is the design rather than a promise.
+
+`setProgress` modes (spec 154): `0` addLevels, `1` setLevel, `2` addExperience,
+`3` setExperience. An unknown mode is a `CodecError` rather than a no-op, because
+the mode selects arithmetic. `amount` is a `u32`, so an `Add` cannot be negative
+by construction — a decrease is a `Set`, and so is a reset (`setLevel 1`,
+`setExperience 0`). Levels are clamped to `MAX_PLAYER_LEVEL`, experience is
+clamped into its own level's band, and skill points are re-derived from the
+resulting level rather than adjusted; a level too low to pay for the tree it
+inherits clears the tree and refunds every earned point.
 
 Live config keys: `spawnRateMultiplier`, `dropRateMultiplier`,
-`maxEntitiesPerChunk`, `correctionThreshold`, `speedTolerance`,
-`spawnIntervalTicks`. Values are clamped to per-key bounds; an unknown key or a
+`lootRevealScale`, `maxEntitiesPerChunk`, `correctionThreshold`,
+`speedTolerance`, `spawnIntervalTicks`. Values are clamped to per-key bounds; an unknown key or a
 non-finite value is refused rather than silently ignored.
 
 ## `admin:*` — server → client
@@ -601,9 +806,14 @@ non-finite value is refused rather than silently ignored.
 |---|---|---|
 | `0xA0` | Ok | `u8 requestType` · `str message` |
 | `0xA1` | Error | `u8 requestType` · `str message` |
-| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` |
+| `0xA2` | PlayerList | `varuint count`, then per row: `str playerId` · `str displayName` · `varuint entityId` · `f32 x` · `f32 y` · `f32 z` · `str zone` · `str chunk` · `f32 health` · `f32 maxHealth` · `varuint level` · `f32 attackDamage` · `f32 moveSpeed` · `bool muted` · `varuint experience` · `varuint experienceToNextLevel` · `varuint unspentSkillPoints` · `varuint unspentAttributePoints` |
 | `0xA3` | Config | `varuint count`, then per entry: `str key` · `f64 value` |
 | `0xA4` | Audit | `varuint count`, then per entry: `f64 at` (epoch ms) · `str actor` · `str action` · `str target` · `str detail` · `bool accepted` |
+| `0xA5` | ItemList | `varuint count`, then per row: `str id` · `str name` · `str slot` (`-` when it is not worn) · `varuint levelRequirement` · `varuint maxStack` |
+
+`ItemList`'s count is decoded through `BufferReader.count()` (spec 152), so a
+declared length larger than the frame can hold is a `CodecError` rather than an
+allocation. The three replies above it predate that primitive.
 
 ## Client-side prediction contract
 

@@ -177,6 +177,16 @@ export const REFUSAL_PHRASES: Readonly<Record<string, string>> = {
   unknownAbility: 'unknown ability',
   dead: 'you are dead',
   withdrawn: 'withdrawn',
+  // Spec 173's, worded here because "staggered" alone reads as a state rather
+  // than as the reason the button did nothing.
+  staggered: 'staggered',
+  noCharges: 'no charges left',
+  // Spec 184's three. `notEquipped` is the one worth wording carefully: an
+  // honest client should never see it, so when it does appear the useful thing
+  // to say is which of the four slots it is talking about.
+  notEquipped: 'not in a skill slot',
+  notEnoughHealth: 'not enough health',
+  notEnoughPoise: 'not enough guard',
 };
 
 /** A phrase for a code, or the code itself split into readable words. */

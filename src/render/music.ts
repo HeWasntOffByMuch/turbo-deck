@@ -1,6 +1,14 @@
 // The background themes, described as data. This module is pure: it contains no
 // Web Audio, no DOM, and no game rules — it only produces a timed list of notes
-// that the audio engine (audio.ts) schedules onto oscillators. Keeping the songs
+// that an audio engine schedules onto oscillators.
+//
+// NOTE (spec 229): the engine this was written for is gone, and `src/render/audio/`
+// is **not** it. That framework plays authored sound *files* through buffers and
+// panners; this is oscillator note data for an arena game that no longer exists,
+// and nothing but its own test has imported it for two hundred specs. Reviving
+// it is a decision about what this game sounds like rather than about how it
+// makes a sound, so spec 229 left it alone and said so rather than deleting it
+// or quietly re-pointing it at a module that cannot play it. Keeping the songs
 // as data means the musical decisions are unit-testable in Node, exactly like
 // the card VFX recipes in effects.ts.
 //

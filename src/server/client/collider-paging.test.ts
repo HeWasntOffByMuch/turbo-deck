@@ -15,19 +15,19 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { readFileSync } from 'node:fs';
-import { parseMap } from '../../terrain/map.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { StreamedMap } from './streamed-map.js';
 import { createFlatPredictor, createWorldPredictor, type PredictStep } from './prediction.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
 import { ServerMessageType } from '../net/protocol.js';
 import type { MapInfoMessage } from '../net/map-messages.js';
-import { navGridFor, NAV_BLOCKED } from '../../sim/pathfinding.js';
+import { FLAT_GROUND, navGridFor, NAV_BLOCKED } from '../../sim/pathfinding.js';
+import { createWorldColliders } from '../../sim/collision.js';
 import type { HeldChunk } from './map-cache.js';
+import { loadMapFile } from '../../server/world/map-file.js';
 
-const mapText = readFileSync(new URL('../../../maps/arena.json', import.meta.url), 'utf8');
-const doc = parseMap(mapText);
+const shippedMap = loadMapFile();
+const doc = shippedMap.doc;
 const SPEED = 220;
 const CHUNK_EXTENT = doc.grid.cellSize * doc.grid.chunkCells;
 
@@ -121,7 +121,12 @@ describe('a map that has not all arrived', () => {
 
   it('predicts flat across ground it has not got, rather than a cliff', () => {
     const chunks = allChunks();
-    const partial = streamed(chunks.slice(0, 4));
+    // Sixteen rather than four, because the control at the bottom needs the held
+    // ground to have relief in it. The shipped map was trimmed back to a coast
+    // and its first chunks are flat sea, where a predictor with no coverage has
+    // no cliff to refuse -- so the control stops proving the bug is real while
+    // still passing, which is the one way a control can be worse than none.
+    const partial = streamed(chunks.slice(0, 16));
     const step = predictorFor(partial);
 
     // Walk out of the held region in every direction. Every one of these steps
@@ -185,7 +190,7 @@ describe('a map that has not all arrived', () => {
 describe('a map that has all arrived', () => {
   it('predicts exactly what a world built from the document predicts', () => {
     const full = streamed(allChunks());
-    const built = buildWorldFromMap(doc, mapText);
+    const built = buildWorldFromMap(doc, shippedMap.mapId);
     const mineStep = predictorFor(full);
     const theirsStep = createWorldPredictor({
       world: built.colliders,
@@ -210,7 +215,7 @@ describe('a map that has all arrived', () => {
 
   it('holds the same colliders the document does', () => {
     const full = streamed(allChunks());
-    const built = buildWorldFromMap(doc, mapText);
+    const built = buildWorldFromMap(doc, shippedMap.mapId);
     expect(full.snapshotColliders().circles.length).toBe(built.colliders.circles.length);
     expect(full.snapshotColliders().bounds).toEqual(built.colliders.bounds);
   });
@@ -241,17 +246,50 @@ describe('the collider snapshot', () => {
     const second = map.snapshotColliders();
     expect(first).not.toBe(second);
     expect(first.circles.length).toBe(second.circles.length);
-    expect(navGridFor(SERVER_PLAYER_RADIUS, first, map.sampler())).not.toBe(
-      navGridFor(SERVER_PLAYER_RADIUS, second, map.sampler()),
+  });
+
+  /**
+   * The consequence of the assertion above, proved over a world small enough to
+   * build a grid for.
+   *
+   * It used to be proved by putting the *real* snapshots through `navGridFor`,
+   * which meant two real grids over the real arena -- and a grid is built over
+   * the map's declared extent rather than over the chunks that arrived, so spec
+   * 165 growing the map grew this to sixty-eight seconds. That is past a test
+   * budget, and worse than that it is past **birpc's**: a worker blocked in one
+   * synchronous call for a minute cannot answer `onTaskUpdate`, so the run ended
+   * with an unhandled `[vitest-worker]: Timeout calling "onTaskUpdate"` and a
+   * non-zero exit with 5832 tests passing and none failing. A test that fails
+   * the suite without failing is worse than a slow one.
+   *
+   * Nothing is given up by shrinking it. What the property is *about* is which
+   * key the cache uses, and a cache does not know how big its values are: two
+   * distinct-but-equal collider objects miss, and one object hits. Split in two
+   * this way each half is also checked at its own address -- that a snapshot is
+   * fresh belongs to `StreamedMap`, and that identity is the cache key belongs
+   * to `navGridFor`.
+   *
+   * The hit half is new, and it is the stronger of the two: without it a
+   * `navGridFor` that had no cache at all would pass.
+   */
+  it('is the key navGridFor caches on: two equal snapshots miss, one object hits', () => {
+    const bounds = { x: 0, y: 0, w: 400, h: 400 };
+    const first = createWorldColliders([], [], bounds);
+    const second = createWorldColliders([], [], bounds);
+    expect(first).not.toBe(second);
+    expect(first).toEqual(second);
+
+    expect(navGridFor(SERVER_PLAYER_RADIUS, first, FLAT_GROUND)).not.toBe(
+      navGridFor(SERVER_PLAYER_RADIUS, second, FLAT_GROUND),
     );
-    // Two real grids over the real arena, which is the cost this whole design
-    // is arranged around -- and the reason `view.ts` publishes a snapshot on a
-    // settle rather than on an arrival.
-  }, 60_000);
+    expect(navGridFor(SERVER_PLAYER_RADIUS, first, FLAT_GROUND)).toBe(
+      navGridFor(SERVER_PLAYER_RADIUS, first, FLAT_GROUND),
+    );
+  });
 
   it('declares the whole map from the first frame, before any chunk', () => {
     const empty = new StreamedMap(mapInfo());
-    const built = buildWorldFromMap(doc, mapText);
+    const built = buildWorldFromMap(doc, shippedMap.mapId);
     // The wall belongs to the world, not to what has loaded -- otherwise it
     // moves under the player as the map streams in.
     expect(empty.snapshotColliders().bounds).toEqual(built.colliders.bounds);
@@ -283,5 +321,12 @@ describe('the nav grid over a partial world', () => {
     // reason that has nothing to do with streaming -- so this is "most are
     // open", not "none are blocked".
     expect(blockedUnknown).toBeLessThan(unknownCells / 2);
-  });
+    // Deliberately generous, and not because the assertion got slower. This
+    // builds a nav grid over the *whole* map -- 924x863 cells, one `heightAt`
+    // each, and over ground that has mostly not arrived every one of them falls
+    // into the neighbour-ring search and costs several times its settled price.
+    // It measured 4.8s against vitest's 5s default, which is a test passing by
+    // luck rather than a test with a budget. The number below is a bound on the
+    // machine, not on the code (spec 165).
+  }, 30_000);
 });

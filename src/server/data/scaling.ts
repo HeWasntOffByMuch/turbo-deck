@@ -101,15 +101,24 @@ export const SCALING = {
   /** What every character starts each attribute at, and the ceiling on one. */
   startingAttribute: 5,
   attributeHardCap: 60,
-  /** Points granted per level, and what a fresh character has to place. */
-  pointsPerLevel: 3,
-  startingPoints: 5,
+  /**
+   * The whole progression award schedule (spec 244): points per level, and what
+   * a fresh character has to place.
+   *
+   * One pool, so one schedule, and it is the two it replaced **summed** rather
+   * than either of them kept: attributes granted 5 + 3/level and the skill tree
+   * 1 + 1/level, so a level-20 character earned 82 points of purchasing power
+   * across two currencies and earns exactly 82 across one. That is deliberately
+   * a conversion and not a rebalance -- whether 4 a level is right for a pool
+   * that now buys two things is a pacing question, and this is the one place to
+   * answer it.
+   */
+  pointsPerLevel: 4,
+  startingPoints: 6,
   /** Coins a full respec costs. Cheap enough to experiment, not free. */
   respecCost: 40,
 
   strength: {
-    /** Attack damage per point. The existing coefficient, unchanged. */
-    damagePer: 0.6,
     /**
      * Health per point.
      *
@@ -119,15 +128,18 @@ export const SCALING = {
      * durability to close the distance and none of the tools to survive being
      * there.
      */
-    healthPer: 6,
+    healthPer: 1.5,
     /** Poise damage a blow carries: a base, plus a soft-capped rate. */
-    staggerBase: 8,
-    staggerPer: 0.9,
+    staggerBase: 2,
+    staggerPer: 0.225,
     staggerKnee: 40,
     staggerFalloff: 0.5,
     /** Poise contributed to one's own pool. */
-    poisePer: 0.8,
-    /** How long a break roots the broken body: a floor plus a rate, capped. */
+    poisePer: 0.2,
+    /**
+     * How long a break **you cause** roots the body you broke: a floor plus a
+     * rate, capped. Offence, like `staggerBase`/`staggerPer` above it.
+     */
     staggerTicksBase: seconds(0.5),
     staggerTicksPer: 0.2,
     staggerTicksCap: seconds(0.8),
@@ -154,7 +166,6 @@ export const SCALING = {
     turnPer: 30,
     /** Armour per point -- half Constitution's, and the reason is footwork. */
     armorPer: 0.004,
-    damagePer: 0.15,
     /** How long one `flow` stack lives, and how many may be held. */
     flowTicks: seconds(1.2),
     flowMaxStacks: 3,
@@ -177,12 +188,12 @@ export const SCALING = {
   },
 
   constitution: {
-    healthPer: 14,
-    poiseBase: 40,
-    poisePer: 2.2,
+    healthPer: 3.5,
+    poiseBase: 10,
+    poisePer: 0.55,
     /** Poise per second, before the calm multiplier. */
-    poiseRegenBase: 4,
-    poiseRegenPer: 0.35,
+    poiseRegenBase: 1,
+    poiseRegenPer: 0.0875,
     armorPer: 0.008,
     healingPer: 0.006,
     /** Shield ceiling, as a fraction of max health. */
@@ -201,7 +212,18 @@ export const SCALING = {
     /** What being `exposed` is worth to whoever exposed the target. */
     exposedDamagePct: 0.15,
     openingReadTicks: seconds(0.75),
-    vulnerableWeakPointFactor: 2,
+    /**
+     * What the Perception 35 milestone adds to the Vulnerable weak-point
+     * factor, **as a bonus above 1** (spec 239).
+     *
+     * It was `vulnerableWeakPointFactor: 2` -- a *total* -- and the milestone
+     * granted it while the skill granted 0, which is what made the skill inert:
+     * a total cannot be shared between two layers without one of them knowing
+     * what the other is. As a bonus the two simply add, and `deriveTraits`
+     * turns the sum into a factor exactly once. 1.0 is still "double", so what
+     * a Perception character with the milestone alone gets has not moved.
+     */
+    vulnerableWeakPointBonus: 1,
     steadyAimTicks: seconds(0.5),
   },
 
@@ -221,7 +243,16 @@ export const SCALING = {
     masteryRelief: 3,
   },
 
-  /** Shared combat constants the attributes act through. */
+  /**
+   * Shared combat constants the attributes act through.
+   *
+   * The poise numbers here and in `strength`/`constitution` above divide by the
+   * same four the health economy did in spec 217, and they had to: a monster's
+   * guard is `maxHealth * monsterPoiseFraction` floored at {@link minPoise}, so
+   * quartering health alone put **every** monster in the game on the floor --
+   * one guard value for the grazer and the ravager alike, and every stagger
+   * threshold met by blows that used to bounce.
+   */
   combat: {
     /**
      * How long after a poise break a body cannot be broken again.
@@ -235,16 +266,122 @@ export const SCALING = {
     /** Overkill fraction that counts as an overkill, for Strength's payoff. */
     overkillFraction: 0.25,
     /** Poise a body with no Constitution at all still has. */
-    minPoise: 20,
+    minPoise: 5,
     /** Poise a monster gets, as a fraction of its health. */
     monsterPoiseFraction: 0.35,
     /** Poise a monster regains per second. */
-    monsterPoiseRegen: 6,
+    monsterPoiseRegen: 1.5,
+  },
+
+  /**
+   * What a weapon's scaling letters are worth (spec 216).
+   *
+   * **The one place a grade becomes a number.** Nothing else in the tree may
+   * spell a coefficient: `coefficientOf` in `data/weapon-scaling.ts` is the only
+   * reader, the weapon rows author a *letter*, and the tooltip draws the letter
+   * it was authored with rather than inferring one back out of a number. So
+   * deciding that `S` is worth 1.30 is an edit here and nowhere else, and it
+   * reaches every `S` weapon in the game on the next tick.
+   *
+   * `damagePerPoint` is **one rate shared by all three attributes**, and that is
+   * what makes a grade mean something. Before this spec Strength bought 0.6
+   * damage a point and Agility 0.15, which is a four-to-one gap living
+   * underneath the grades -- an `A` in Agility would have been worth less than
+   * an `E` in Strength, and no letter a designer could write would have fixed
+   * it. The differentiation belongs in the grade or it belongs nowhere.
+   *
+   * It is `2/3` because `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the
+   * Strength rate this spec inherited, so migrating the existing weapons to `A`
+   * moves a Strength build's damage by nothing at all. Retuning `A` afterwards
+   * is a deliberate rebalance rather than a side effect, which is the whole
+   * reason this rate is its own constant instead of being derived from the
+   * ladder it was chosen against.
+   */
+  weaponScaling: {
+    /**
+     * Damage a point of a scaling attribute buys, at grade `A` times this.
+     *
+     * Retuned from `2/3` to `0.15` by spec 217, along with the whole damage
+     * economy: a weapon's own range is now what a swing is built on, and a
+     * scaling term an order of magnitude larger than the weapon would have made
+     * the range decorative. Measured from `above()` since 217 too, so this is
+     * what a point *past the starting five* is worth rather than what a point
+     * is.
+     */
+    damagePerPoint: 0.15,
+    /**
+     * Grade to coefficient. Keyed by the grade's own name, so a reader can check
+     * this against the ladder without counting array positions.
+     */
+    grades: {
+      none: 0,
+      E: 0.15,
+      D: 0.3,
+      C: 0.5,
+      B: 0.7,
+      A: 0.9,
+      S: 1.15,
+    },
+  },
+
+  /**
+   * What an *ability's* own letters are worth (spec 238).
+   *
+   * Deliberately thin, and that is the point: the ladder, the letters and the
+   * damage a point buys are all `weaponScaling` above, shared, so an `A` on
+   * Whirlwind and an `A` on a sword buy the same damage per point of Strength.
+   * A second ladder here would be the second coefficient language spec 238
+   * exists to refuse.
+   *
+   * What an ability does need of its own is the rate for the effects that are
+   * **not** damage -- an affliction's pulse, a slow's bite -- because those are
+   * in a different currency. A row in `data/damage-over-time.ts` states its
+   * damage per second whole, and what an applier moves is one multiplier on
+   * top of it.
+   */
+  abilityScaling: {
+    /**
+     * The multiplier an `A`-grade ability's effects gain, per point above the
+     * starting attribute, times the grade's coefficient.
+     *
+     * Chosen to reproduce the curve this replaced rather than to retune it:
+     * before spec 238 an affliction's magnitude was the applier's `spellPower`,
+     * `1 + 0.04 * Intelligence`, which is `3.0` at 50 Intelligence. At `A`
+     * (coefficient 0.9) and 45 points above the start this gives `1 + 45 * 0.9
+     * * 0.05 = 3.025`, so a fully-specialised caster's Poison is worth what it
+     * was worth. What moved is *which* casters get it: a Rending Cut's Bleed
+     * now grows with the build that threw it, and a fresh character is exactly
+     * `1.0` rather than `1.2`, which is the baseline rule `above()` states.
+     */
+    effectPerPoint: 0.05,
+    /**
+     * What an ability's **own** letters may add up to.
+     *
+     * A shade over the ladder's best single grade (`S`, 1.15) on purpose, so a
+     * two-attribute hybrid can carry a real second letter rather than a token
+     * one -- `A` and `D` together, which is the shape the design brief asks for
+     * -- and paid for by the cooldown and the resource cost an active ability
+     * has and a basic attack does not.
+     *
+     * The **weapon** fraction is deliberately outside it: that term is the
+     * weapon's own scaling, already budgeted where weapons are budgeted, and
+     * counting it twice would price a technique against its own tool.
+     *
+     * Asserted rather than trusted -- `ability-scaling.test.ts` fails a row that
+     * exceeds it, which is what keeps "breadth is paid for" a property of the
+     * table rather than a habit.
+     */
+    coefficientBudget: 1.2,
   },
 } as const;
 
-/** Thresholds the three milestone tiers sit on, and the stat-skill tiers too. */
+/**
+ * The six thresholds on every attribute track (spec 244).
+ *
+ * A specialization threshold is where a mechanic becomes *purchasable*; a
+ * milestone threshold is where one deepens *automatically*. Neither moved when
+ * the two point pools became one -- the conversion is an economy change and not
+ * a content change, and every number a designer tuned still means what it did.
+ */
 export const MILESTONE_THRESHOLDS: readonly number[] = [20, 35, 50];
-export const SKILL_THRESHOLDS: readonly number[] = [10, 25, 40];
-/** Both halves of a pair must reach this for its synergy to be active. */
-export const SYNERGY_THRESHOLD = 25;
+export const SPECIALIZATION_THRESHOLDS: readonly number[] = [10, 25, 40];

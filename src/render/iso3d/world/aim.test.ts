@@ -9,6 +9,7 @@ import {
   aimGesture,
   aimShape,
   castOrder,
+  effectiveReach,
   startAim,
   type AimOrder,
   type CastOrderInput,
@@ -25,10 +26,10 @@ function ability(id: string) {
 
 describe('the gesture an ability asks for (spec 080)', () => {
   it('is nothing for a self cast, a body for a unit cast, and ground for the rest', () => {
-    expect(aimGesture(ability('self.mend'))).toBe('none');
-    expect(aimGesture(ability('bolt.seek'))).toBe('unit');
-    expect(aimGesture(ability('ground.quake'))).toBe('ground');
-    expect(aimGesture(ability('melee.heavy'))).toBe('ground');
+    expect(aimGesture(ability('self.hearthdraught'))).toBe('none');
+    expect(aimGesture(ability('skill.poisonDart'))).toBe('unit');
+    expect(aimGesture(ability('skill.blight'))).toBe('ground');
+    expect(aimGesture(ability('skill.acidSpray'))).toBe('ground');
   });
 
   it('answers for every ability in the table', () => {
@@ -42,14 +43,14 @@ describe('what a press turns into (spec 080)', () => {
   const ready = { readyAtTick: 0, tick: 100 };
 
   it('asks for a self cast now, and aims everything else', () => {
-    expect(startAim(ability('self.mend'), ready)).toEqual({ kind: 'cast' });
-    expect(startAim(ability('bolt.seek'), ready)).toEqual({ kind: 'aim', gesture: 'unit' });
-    expect(startAim(ability('ground.quake'), ready)).toEqual({ kind: 'aim', gesture: 'ground' });
+    expect(startAim(ability('self.hearthdraught'), ready)).toEqual({ kind: 'cast' });
+    expect(startAim(ability('skill.poisonDart'), ready)).toEqual({ kind: 'aim', gesture: 'unit' });
+    expect(startAim(ability('skill.blight'), ready)).toEqual({ kind: 'aim', gesture: 'ground' });
   });
 
   it('refuses a press while the ability is on cooldown, whatever it aims at', () => {
     const cooling = { readyAtTick: 120, tick: 100 };
-    for (const id of ['self.mend', 'bolt.seek', 'ground.quake', 'melee.heavy']) {
+    for (const id of ['self.hearthdraught', 'skill.poisonDart', 'skill.blight', 'skill.acidSpray']) {
       expect(startAim(ability(id), cooling), id).toEqual({
         kind: 'refused',
         reason: 'onCooldown',
@@ -58,8 +59,8 @@ describe('what a press turns into (spec 080)', () => {
   });
 
   it('allows it on the very tick the cooldown comes back, and not before', () => {
-    expect(startAim(ability('ground.quake'), { readyAtTick: 120, tick: 119 }).kind).toBe('refused');
-    expect(startAim(ability('ground.quake'), { readyAtTick: 120, tick: 120 }).kind).toBe('aim');
+    expect(startAim(ability('skill.blight'), { readyAtTick: 120, tick: 119 }).kind).toBe('refused');
+    expect(startAim(ability('skill.blight'), { readyAtTick: 120, tick: 120 }).kind).toBe('aim');
   });
 
   it('never refuses an ability with no cooldown standing against it', () => {
@@ -71,30 +72,30 @@ describe('what a press turns into (spec 080)', () => {
 
 describe('the shape drawn on the ground (spec 080)', () => {
   it('draws nothing for a self cast or a named body -- the body is the indicator', () => {
-    expect(aimShape(ability('self.mend'))).toEqual({ kind: 'none' });
-    expect(aimShape(ability('bolt.seek'))).toEqual({ kind: 'none' });
+    expect(aimShape(ability('self.hearthdraught'))).toEqual({ kind: 'none' });
+    expect(aimShape(ability('skill.poisonDart'))).toEqual({ kind: 'none' });
   });
 
   it('recovers the wedge the sim will actually test, from arcCosSq', () => {
-    const drain = ability('channel.drain');
-    const shape = aimShape(drain);
+    const spray = ability('skill.acidSpray');
+    const shape = aimShape(spray);
     if (shape.kind !== 'cone') throw new Error('expected a cone');
-    expect(shape.length).toBe(drain.range);
+    expect(shape.length).toBe(spray.range);
     // The half-angle round-trips: cos(half)^2 is the table's number back again.
-    expect(Math.cos(shape.halfAngle) ** 2).toBeCloseTo(drain.arcCosSq ?? 0, 6);
+    expect(Math.cos(shape.halfAngle) ** 2).toBeCloseTo(spray.arcCosSq ?? 0, 6);
   });
 
   it('draws a circle of the table radius for a blast and for a bursting lob', () => {
-    expect(aimShape(ability('ground.quake'))).toEqual({ kind: 'circle', radius: 140 });
-    expect(aimShape(ability('bolt.lob'))).toEqual({ kind: 'circle', radius: 90 });
+    expect(aimShape(ability('skill.blight'))).toEqual({ kind: 'circle', radius: 110 });
+    expect(aimShape(ability('skill.emberToss'))).toEqual({ kind: 'circle', radius: 70 });
   });
 
   it('draws the lane a flat shot flies down', () => {
-    const bolt = ability('bolt.arcane');
-    expect(aimShape(bolt)).toEqual({
+    const shot = ability('ranged.shot');
+    expect(aimShape(shot)).toEqual({
       kind: 'line',
-      length: bolt.range,
-      width: (bolt.projectile?.radius ?? 0) * 2,
+      length: shot.range,
+      width: (shot.projectile?.radius ?? 0) * 2,
     });
   });
 
@@ -107,15 +108,20 @@ describe('the shape drawn on the ground (spec 080)', () => {
 });
 
 const MARK: TargetSnapshot = { id: 9, x: 600, y: 0, radius: 24, health: 50 };
-const UNIT_ORDER: AimOrder = { abilityId: 'bolt.seek', targetEntityId: MARK.id, x: MARK.x, y: MARK.y, range: 480 };
-const GROUND_ORDER: AimOrder = { abilityId: 'ground.quake', targetEntityId: 0, x: 900, y: 0, range: 420 };
+const UNIT_ORDER: AimOrder = { abilityId: 'skill.poisonDart', targetEntityId: MARK.id, x: MARK.x, y: MARK.y, range: 480 };
+const GROUND_ORDER: AimOrder = { abilityId: 'skill.blight', targetEntityId: 0, x: 900, y: 0, range: 420 };
 
 function step(overrides: Partial<CastOrderInput> = {}): ReturnType<typeof castOrder> {
   return castOrder({
     self: { x: 0, y: 0 },
     order: UNIT_ORDER,
     target: MARK,
+    // A placed cast's margin (spec 236). Non-zero, so the tests below exercise
+    // the real comparison rather than the degenerate one.
+    castLead: 20,
     rooted: false,
+    // Holding its own footing, unless a case says otherwise (spec 173).
+    staggered: false,
     readyAtTick: 0,
     tick: 100,
     ...overrides,
@@ -142,7 +148,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
     const decision = step({ self: { x: 400, y: 0 } });
     expect(decision.chaseTo).toBeNull();
     expect(decision.cast).toEqual({
-      abilityId: 'bolt.seek',
+      abilityId: 'skill.poisonDart',
       x: MARK.x,
       y: MARK.y,
       targetEntityId: MARK.id,
@@ -165,7 +171,7 @@ describe('one tick of a confirmed aim (spec 080)', () => {
     const early = step({ self: { x: 400, y: 0 }, tick: 100, readyAtTick: 120 });
     expect(early).toEqual({ chaseTo: null, cast: null, drop: true });
     const ready = step({ self: { x: 400, y: 0 }, tick: 120, readyAtTick: 120 });
-    expect(ready.cast?.abilityId).toBe('bolt.seek');
+    expect(ready.cast?.abilityId).toBe('skill.poisonDart');
   });
 
   it('still walks toward a mark while the ability comes back, and gives up on arrival', () => {
@@ -208,7 +214,9 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       self: { x: 0, y: 0 },
       order: GROUND_ORDER,
       target: null,
+      castLead: 20,
       rooted: false,
+      staggered: false,
       readyAtTick: 0,
       tick: 100,
     });
@@ -222,12 +230,14 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       self: { x: 700, y: 0 },
       order: GROUND_ORDER,
       target: null,
+      castLead: 20,
       rooted: false,
+      staggered: false,
       readyAtTick: 0,
       tick: 100,
     });
     expect(near.cast).toEqual({
-      abilityId: 'ground.quake',
+      abilityId: 'skill.blight',
       x: GROUND_ORDER.x,
       y: GROUND_ORDER.y,
       targetEntityId: 0,
@@ -256,7 +266,9 @@ describe('one tick of a confirmed aim (spec 080)', () => {
         self,
         order: UNIT_ORDER,
         target: MARK,
+        castLead: 20,
         rooted: false,
+        staggered: false,
         readyAtTick: 0,
         tick: 100 + i,
       });
@@ -271,6 +283,128 @@ describe('one tick of a confirmed aim (spec 080)', () => {
       const stepLength = Math.min(20, length);
       self = { x: self.x + (dx / length) * stepLength, y: self.y + (dy / length) * stepLength };
     }
-    expect(cast?.abilityId).toBe('bolt.seek');
+    expect(cast?.abilityId).toBe('skill.poisonDart');
+  });
+});
+
+describe('a broken body does nothing with a standing cast order (spec 173)', () => {
+  it('does not chase while staggered', () => {
+    expect(step({ staggered: true, self: { x: 0, y: 0 } }).chaseTo).toBeNull();
+  });
+
+  it('does not cast while staggered, even in reach and off cooldown', () => {
+    // The failure this closes: a break *clears* the cast it interrupted, so
+    // `rooted` is false for the whole window. An order running on `rooted`
+    // alone treats a stunned body as a free one and sends a request the server
+    // answers with `'staggered'`.
+    expect(step({ staggered: true, self: { x: MARK.x - 100, y: 0 } }).cast).toBeNull();
+  });
+
+  it('keeps the order rather than spending it', () => {
+    // The same rule the standing attack order follows: half a second of being
+    // stunned must not also cost the player their plan.
+    expect(step({ staggered: true, self: { x: MARK.x - 100, y: 0 } }).drop).toBe(false);
+  });
+
+  it('still drops an order whose mark has died', () => {
+    // Being staggered does not suspend the rule above it.
+    expect(
+      step({ staggered: true, target: { ...MARK, health: 0 } }).drop,
+    ).toBe(true);
+  });
+
+  it('acts again the moment the window ends', () => {
+    expect(step({ staggered: false, self: { x: MARK.x - 100, y: 0 } }).cast).not.toBeNull();
+  });
+});
+
+/**
+ * A placed cast at the edge of its own range (spec 236).
+ *
+ * The bug this is written against: clicking inside a skill's range ring but near
+ * its rim walked the body forward first, because the decision ran on
+ * `HOLD_FRACTION` -- a *chase* constant that guards against a moving target
+ * flipping the answer and against a chase parking on its own threshold. Neither
+ * is true of a patch of ground.
+ */
+describe('a placed cast does not walk from inside its own range', () => {
+  const RANGE = GROUND_ORDER.range;
+
+  it('casts from just inside the rim rather than walking', () => {
+    // 95% of the range: comfortably inside, and squarely in the band
+    // `HOLD_FRACTION` used to send walking.
+    const at = RANGE * 0.95;
+    const decision = step({ order: { ...GROUND_ORDER, x: at, y: 0 }, target: null, castLead: 10 });
+    expect(decision.chaseTo).toBeNull();
+    expect(decision.cast).not.toBeNull();
+  });
+
+  it('still walks when the point is genuinely out of range', () => {
+    const decision = step({
+      order: { ...GROUND_ORDER, x: RANGE * 1.4, y: 0 },
+      target: null,
+      castLead: 10,
+    });
+    expect(decision.chaseTo).not.toBeNull();
+    expect(decision.cast).toBeNull();
+  });
+
+  it('keeps back exactly the lead it was given, and no more', () => {
+    // The margin is a distance a body travels, not a fraction of the range: at
+    // the same lead a long-ranged skill keeps back the same few units as a short
+    // one, where a fraction kept back 38 units of Blight's 380.
+    const lead = 30;
+    const inside = step({
+      order: { ...GROUND_ORDER, x: RANGE - lead - 1, y: 0 },
+      target: null,
+      castLead: lead,
+    });
+    expect(inside.cast).not.toBeNull();
+    const outside = step({
+      order: { ...GROUND_ORDER, x: RANGE - lead + 1, y: 0 },
+      target: null,
+      castLead: lead,
+    });
+    expect(outside.cast).toBeNull();
+  });
+
+  it('leaves a named order on the chase rule, because its mark moves', () => {
+    // The hold band is what stops a shuffling body flipping the decision every
+    // tick, so a unit order keeps it.
+    const reach = UNIT_ORDER.range + MARK.radius;
+    const decision = step({ order: { ...UNIT_ORDER, x: reach * 0.95, y: 0 }, castLead: 10 });
+    expect(decision.chaseTo).not.toBeNull();
+  });
+});
+
+describe('how far an ability reaches, for the hover ring (spec 236)', () => {
+  it('answers a caster-centred area with its radius, not its zero range', () => {
+    // Whirlwind states `range: 0` -- there is nothing to be out of range of --
+    // so the ring drew nothing at all, which reads as a skill with no reach.
+    const whirlwind = abilityById('skill.whirlwind');
+    expect(whirlwind).toBeDefined();
+    if (!whirlwind) return;
+    expect(whirlwind.range).toBe(0);
+    const area = whirlwind.area;
+    expect(area?.shape).toBe('circle');
+    if (area?.shape !== 'circle') return;
+    expect(effectiveReach(whirlwind)).toBe(area.radius);
+  });
+
+  it('answers a ranged skill with its range', () => {
+    const blight = abilityById('skill.blight');
+    expect(blight).toBeDefined();
+    if (!blight) return;
+    // Placed anywhere inside 380, and its blast is 110: the reach a player
+    // wants drawn is the one they may click within.
+    expect(effectiveReach(blight)).toBe(blight.range);
+  });
+
+  it('never answers zero for a skill that reaches anywhere', () => {
+    for (const ability of ALL_ABILITIES) {
+      if (!ability.skill) continue;
+      if (ability.targeting === 'self' && !ability.area) continue;
+      expect(effectiveReach(ability), ability.id).toBeGreaterThan(0);
+    }
   });
 });

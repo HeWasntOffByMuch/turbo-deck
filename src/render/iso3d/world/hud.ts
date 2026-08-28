@@ -27,24 +27,74 @@ import {
   BASIC_ATTACK_ID,
   type AbilityDefinition,
 } from '../../../server/data/abilities.js';
-import { ALL_ITEMS } from '../../../server/data/items.js';
+import { ALL_ITEMS, STARTING_KIT } from '../../../server/data/items.js';
 import { EntityKind } from '../../../server/net/protocol.js';
-import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { SERVER_TICK_RATE } from '../../../server/config.js';
 import { castBar } from './cast.js';
 import { aimGesture } from './aim.js';
 import { appearanceOf, displayName } from './appearance.js';
+import {
+  CROSSHAIR_BOX,
+  CROSSHAIR_CENTRE,
+  crosshairSvg,
+  type CrosshairArt,
+} from './crosshair.js';
 import { pixelTextSvg } from './pixel-font.js';
+import type { RarityId } from '../../../server/data/items.js';
+
+/** How far above the drop the name floats, in world units. */
+const DROP_LABEL_LIFT = 34;
+
+/**
+ * The tier's colour in *text* (spec 158).
+ *
+ * Separate values from `drop-rig.ts`'s mesh colours and deliberately so: those
+ * are lit and go through the retro pass, and these are 12px type on a dark
+ * plate that has to stay readable. Same three tiers, two different jobs.
+ */
+const DROP_LABEL_COLOR: Record<RarityId, string> = {
+  common: '#cfd6e0',
+  rare: '#8ec5ff',
+  exceptional: '#ffd489',
+};
 import { isHandheldDevice } from '../device.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
-import { errorStackBottom, hudLayout } from './hud-layout.js';
-import { systemIconSvg, weaponIconSvg, type SystemIconId } from './icons.js';
-import type { WindowId } from './key-actions.js';
+import {
+  ACCOUNT_GUEST_LABEL,
+  ACTION_SLOT_CSS,
+  accountButtonCaption,
+  bottomEdge,
+  NO_ACTION_BAR,
+  poolReserve,
+  type ActionBarBox,
+  errorStackBottom,
+  hudLayout,
+  poolBottom,
+  readoutShown,
+} from './hud-layout.js';
+import {
+  statusIconSvg,
+  stunIconSvg,
+  systemIconSvg,
+  weaponIconSvg,
+  type SystemIconId,
+} from './icons.js';
+import { stunMark } from './stun-icon.js';
+import { statusMarks } from './status-marks.js';
+import { MAX_VISIBLE_STATUSES, visualFor } from '../../../server/data/status-visuals.js';
+import { describeAbility, describeStatus, technicalText } from '../../../server/data/description.js';
+import { BAR_SLOT_COUNT } from './action-bar.js';
+import {
+  swapOverhead,
+} from './skill-swap-view.js';
+import { deathOverlay } from './death.js';
+import { poolBars } from './pool-bars.js';
+import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
+import type { WindowId } from './control-actions.js';
 
 /** The slot being aimed (spec 080). The aim indicator's colour, in the DOM. */
-const AIM_HIGHLIGHT = '#7fd4ff';
 
 /**
  * The refusal stack's ink (spec 143, the wind-up warnings).
@@ -67,34 +117,46 @@ const ERROR_RED = '#ff3b3b';
  */
 const TICK_MS = 1000 / SERVER_TICK_RATE;
 
-/** Which abilities the hotbar offers, in order. Keys 1..n. */
-export const HOTBAR: readonly string[] = [
-  'melee.slash',
-  'melee.heavy',
-  'bolt.arcane',
-  'bolt.lob',
-  'bolt.seek',
-  'ground.quake',
-  'self.mend',
-  'channel.drain',
-];
-
 /**
- * One main-hand weapon per distinct auto-attack (spec 079).
+ * One main-hand weapon per distinct auto-attack a fresh character can reach
+ * (spec 079, narrowed by spec 218).
  *
  * Derived from the item table rather than listed, so a crossbow added there
  * turns up here without this file being told. The *attack* is what the switch
  * is really choosing -- two swords that both slash are one entry, because
  * picking between them would change numbers and not the motion.
+ *
+ * ## Why the starting kit is a filter and not a coincidence
+ *
+ * Two rules have been asserted about this table since spec 126 and neither was
+ * enforced by anything: every entry has to be level 1, because the server
+ * refuses to equip above your level, and every entry has to be **in the
+ * player's bag**, because the server refuses to equip what you are not
+ * carrying. Both held only because the two weapons that named a shot happened
+ * to be level-1 commons in the starting kit.
+ *
+ * Spec 216 gave a rare level-4 staff a shot of its own and the promise in the
+ * paragraph above came due: the new attack "turned up here without this file
+ * being told", as a fourth button that equips nothing, refuses silently, and
+ * has no icon. So the derivation reads the kit -- which makes both rules true
+ * *by construction* rather than by luck, and means the next weapon that names
+ * an attack a starting character cannot hold adds no button at all instead of
+ * a dead one.
+ *
+ * What is lost is nothing: a player who buys the staff equips it out of the bag
+ * like every other item, and the switch has never been the way anything but the
+ * three starting weapons is reached.
  */
 export const WEAPON_SWITCH: readonly {
   readonly itemId: string;
   readonly name: string;
   readonly abilityId: string;
 }[] = (() => {
+  const carried = new Set(STARTING_KIT.map((entry) => entry.defId));
   const byAttack = new Map<string, { itemId: string; name: string; abilityId: string }>();
   for (const item of ALL_ITEMS) {
     if (item.slot !== 'mainHand') continue;
+    if (!carried.has(item.id) || item.levelRequirement > 1) continue;
     const abilityId = item.basicAttackId ?? BASIC_ATTACK_ID;
     if (byAttack.has(abilityId)) continue;
     byAttack.set(abilityId, { itemId: item.id, name: item.name, abilityId });
@@ -143,6 +205,47 @@ interface Bar {
   readonly guardFill: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
+  /**
+   * Changing a skill (spec 188).
+   *
+   * The third timed commitment a body can be in and the only one with nothing
+   * else on screen saying so: a cast has its bar, a stagger has the swirl, and
+   * a swap used to be a second and a half in which the player simply stood
+   * there. Driven off `activity` and `activityUntilTick`, both already
+   * replicated, so every observer sees it and nothing new rides the wire.
+   */
+  readonly swap: HTMLElement;
+  readonly swapFill: HTMLElement;
+  /**
+   * The swirl over a stunned body (spec 173).
+   *
+   * Above the name, so it is the topmost thing in the stack and cannot be
+   * confused with anything the body *has* -- health, guard and the cast bar are
+   * all quantities, and this is a state. It sits in the same bottom-anchored
+   * holder as the rest, so it rides the body without a second projection.
+   */
+  readonly stun: HTMLElement;
+  /**
+   * The row of status marks (spec 186).
+   *
+   * Above the swirl, so the stack reads downward as state, then what is
+   * happening, then who this is, then how it is doing. Safe to hide with
+   * `display` -- unlike the guard bar, which has to keep its box -- because the
+   * holder is anchored by its *bottom*, so a row appearing at the top grows the
+   * holder upward and moves nothing a player is reading. The swirl above it has
+   * always relied on the same thing.
+   */
+  readonly statusRow: HTMLElement;
+  readonly statusSlots: readonly StatusSlot[];
+}
+
+/** One reusable mark in the row: its box, its glyph and its stack count. */
+interface StatusSlot {
+  readonly root: HTMLElement;
+  readonly glyph: HTMLElement;
+  readonly count: HTMLElement;
+  /** What is currently drawn, so an unchanged mark rewrites no markup. */
+  drawn: string;
 }
 
 /**
@@ -163,6 +266,75 @@ const BAR_LOST = '#f4f2ee';
  * player has to be able to tell at a glance which bar just moved.
  */
 const BAR_GUARD = '#8fa6c8';
+/**
+ * The two status colours (spec 186), and there are deliberately only two.
+ *
+ * A boon takes the guard blue the bar under it already uses for "this body is
+ * holding"; an affliction takes the debuff rust from the VFX palette, which is
+ * the colour a body already gets ringed in when something is wrong with it. One
+ * colour per status would be a legend a player has to learn before a fight
+ * tells them anything, and the question they actually ask -- is that good for
+ * them or bad for them -- has two answers.
+ */
+const STATUS_BOON = BAR_GUARD;
+const STATUS_AFFLICTION = '#d0796f';
+/** Small enough that eight fit over a body, big enough to tell apart. */
+const STATUS_ICON_PX = 13;
+
+/**
+ * What hovering an ability says (spec 191).
+ *
+ * The name, then its Technical Description, then the flavour -- separated by a
+ * blank line, because the standard's §2.6 is that flavour is never mixed into
+ * the mechanical block.
+ *
+ * One function for the action bar, the vial and the weapon switch, which used
+ * to hold three different formulations of it and all three showed only
+ * `ability.description`. That string is flavour and only flavour now, so before
+ * this the bar's hover said "Both hands, and everything you weigh, put behind
+ * one swing" and nothing about 42 damage, 1.1s or a 3s cooldown.
+ */
+function abilityTitle(ability: AbilityDefinition): string {
+  const described = describeAbility(ability);
+  const body = technicalText(described);
+  const flavour = described.flavor === null ? '' : `\n\n${described.flavor}`;
+  return `${ability.name}\n${body}${flavour}`;
+}
+/**
+ * The resource pool (spec 164). Blue, and the one bar on screen that is *spent*
+ * rather than lost -- health and guard are both taken off you by somebody else.
+ */
+const POOL_RESOURCE = '#4f9fe0';
+
+/**
+ * Experience (specs 164, 184). One palette, because experience now has two
+ * places it is shown -- the number that floats off a kill and the strip along
+ * the bottom edge -- and they are the same fact: what that body was worth, and
+ * how far it moved you. A player who learns the colour from one reads the other
+ * for free, which is only true if there is one colour to learn.
+ *
+ * Purple rather than the gold this strip opened with, and the swap is what
+ * makes the pair possible: gold is already a cast that can still be called off,
+ * and a floating gold number is a critical hit. Both of those are over a body,
+ * which is exactly where the reward now floats too -- the strip could get away
+ * with sharing a hue from the frame's own edge and a number cannot.
+ *
+ * Light on dark in both places. `XP_PURPLE_LIT` is the strip's inset highlight
+ * along the top, which is what stops six pixels of flat fill reading as a
+ * coloured border; `XP_PURPLE_DARK` is the number's outline and the empty half
+ * of the strip, so what the fill is drawn against and what the digits are cut
+ * out of are the same colour.
+ */
+const XP_PURPLE = '#a878e8';
+const XP_PURPLE_LIT = '#d3b6ff';
+const XP_PURPLE_DARK = '#200d36';
+
+/**
+ * The death banner (spec 164). Brighter than `BAR_ENEMY` and than the blood: it
+ * is drawn over a world with dark reds already in it, and outlined in black, so
+ * anything less saturated reads as part of the scene.
+ */
+const DEATH_RED = '#ff2b2b';
 
 export interface HudHandle {
   readonly element: HTMLElement;
@@ -179,6 +351,15 @@ export interface HudHandle {
      * Lights the slot it came from and says what the next click will do.
      */
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
+    /**
+     * The entity under the cursor, or null (spec 158).
+     *
+     * Only a drop does anything with it today: the name of a *revealed* drop is
+     * shown while it is hovered. It comes in as a parameter rather than off the
+     * view because hovering is a render-local pick and has no business being
+     * replicated.
+     */
+    hoveredId: number | null,
     /**
      * The frame's timestamp, straight from `requestAnimationFrame` (spec 143).
      *
@@ -198,6 +379,20 @@ export interface HudHandle {
    * fan a burst out into lanes.
    */
   addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
+  /**
+   * `amount` experience was earned, at the world point `at` (spec 184).
+   *
+   * The same field and the same rules as {@link addDamage} -- a world point
+   * taken once and re-projected, so the reward for a kill stays on the ground
+   * the body fell on. What differs is the path and the colour, and both are
+   * about the one number this shares a frame with: the killing blow's, spawned
+   * on the same tick from the same anchor.
+   *
+   * `group` is the body that died, for the same reason a blow's is the body it
+   * landed on -- it is never resolved to anything, and here it is what lets the
+   * field sweep the reward away from the lane that blow's number took.
+   */
+  addExperience(group: number, at: WorldAnchor, amount: number): void;
   /**
    * Something was refused, and this is what to say about it (spec 143).
    *
@@ -232,8 +427,66 @@ export interface HudHandle {
    * about whether it is open.
    */
   showOpenWindows(open: readonly WindowId[]): void;
-  /** What to call when a hotbar button is clicked. */
-  onUse(handler: (abilityId: string) => void): void;
+  /**
+   * Who the account button is for (spec 227): a guest, or a signed-in
+   * account's own name.
+   *
+   * Pushed in rather than derived here, for the same reason as
+   * {@link showOpenWindows}: the session held in `view.ts` is the state, and
+   * this file only draws what it is handed. `null` is a guest, which is what
+   * makes the button say `REGISTER` -- the reason it exists at all.
+   */
+  setAccount(state: { readonly signedInAs: string | null }): void;
+  /**
+   * How big the action bar is, in CSS pixels (spec 196).
+   *
+   * The bar moved to the interface canvas, so its box is a fact about the UI
+   * scale rather than about this file's table -- and everything left along that
+   * edge is placed *relative to it*: the pool block sits immediately left of it
+   * and centred on it, and the aim hint sits above it. Told rather than derived,
+   * because a second description of somebody else's layout is the mistake that
+   * put the chat log on the weapon switch.
+   *
+   * A box that has not changed costs a comparison.
+   */
+  setActionBar(box: ActionBarBox): void;
+  /**
+   * The mark under the pointer, and where the pointer is (spec 200).
+   *
+   * `null` draws nothing and is the ordinary case. The point is in canvas
+   * pixels -- the same space `project` answers in -- and the mark is *centred*
+   * on it, which is the whole reason this is drawn here rather than handed to
+   * CSS as a cursor image: a cursor is placed by a hotspot applied somewhere
+   * between the style and the glass, and on a real machine that put the mark
+   * four to seven pixels up and left of the point it was marking.
+   */
+  setCrosshair(mark: CrosshairArt | null, at: { readonly x: number; readonly y: number } | null): void;
+  /**
+   * How much of the frame's floor is spoken for, in CSS pixels (spec 196).
+   *
+   * The experience strip spans the whole width and is pinned to the bottom, so
+   * everything else along that edge has to clear it -- including the action bar,
+   * which is drawn on the other surface and therefore has to be *told*. Constant
+   * for the life of the HUD: it is a fact about which layout is in force, and
+   * that is decided once (spec 094).
+   */
+  readonly floorCss: number;
+  /**
+   * How big one action-bar slot should be drawn, in CSS pixels (spec 196).
+   *
+   * Beside {@link floorCss} and told for the same reason: the bar is on the
+   * other surface, and how big a thing a finger has to hit is a physical fact
+   * this file's table has always been the one to state.
+   */
+  readonly slotSideCss: number;
+  /**
+   * Whether a slot names the key that fires it (specs 094, 196).
+   *
+   * False on a finger, which has no keyboard: see `HudLayout.showsKeyNumber`.
+   * Told rather than asked, because the half of the mount that builds the bar's
+   * rows is pure and `isHandheldDevice` reads the platform.
+   */
+  readonly showsSlotKeys: boolean;
   /**
    * What to call when a window button is pressed (spec 140). It hands back a
    * window id and nothing else -- the mount calls the same `ui.toggle` a key
@@ -247,6 +500,20 @@ export interface HudHandle {
    * click.
    */
   onEquip(handler: (itemId: string) => void): void;
+  /**
+   * What to call when the respawn button is pressed (spec 164).
+   *
+   * It hands back nothing, for the same reason the request carries nothing: the
+   * server decides where a respawn puts you and what it restores. This end asks.
+   */
+  onRespawn(handler: () => void): void;
+  /**
+   * Show or hide the diagnostic readout (spec 183). Returns whether it is now
+   * shown, which on a compact layout is always false -- see `readoutShown`.
+   *
+   * Hidden, never silenced: the text is written every frame either way.
+   */
+  toggleReadout(): boolean;
 }
 
 /**
@@ -268,17 +535,38 @@ export function createHud(project: Projector): HudHandle {
   status.style.cssText =
     'position:absolute;left:12px;top:52px;font:12px ui-monospace,Menlo,monospace;color:#cfd6e0;' +
     'background:rgba(10,14,20,.72);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;';
-  if (!layout.showsReadout) {
-    // Hidden, not removed, and still written every frame. It is developer
-    // instrumentation and has no business on a 390px frame -- but it is also the
-    // only clock `scripts/preview-touch.ts` has: it reads the tick and the target
-    // line out of `document.body.textContent`, which includes a `display:none`
-    // subtree. Deleting it would leave the touch harness unable to tell "the tap
-    // did nothing" from "the frame had not run yet", which is the confusion
-    // spec 093 was debugged out of.
-    status.style.display = 'none';
-    status.setAttribute('aria-hidden', 'true');
-  }
+  /**
+   * Whether the player has asked for the readout (spec 183). Shown to begin
+   * with, because that is what every session before the toggle existed did, and
+   * nothing about it is persisted -- the *binding* outlives a session, where the
+   * switch does not.
+   */
+  let readoutWanted = true;
+
+  /**
+   * Hidden, not removed, and still written every frame. It is developer
+   * instrumentation and has no business on a 390px frame -- but it is also the
+   * only clock `scripts/preview-touch.ts` has: it reads the tick and the target
+   * line out of `document.body.textContent`, which includes a `display:none`
+   * subtree. Deleting it would leave the touch harness unable to tell "the tap
+   * did nothing" from "the frame had not run yet", which is the confusion
+   * spec 093 was debugged out of.
+   *
+   * So the toggle moves these two properties and nothing else: the readout is
+   * hidden, never silenced.
+   */
+  const applyReadout = (): boolean => {
+    const shown = readoutShown(layout, readoutWanted);
+    status.style.display = shown ? 'block' : 'none';
+    if (shown) status.removeAttribute('aria-hidden');
+    else status.setAttribute('aria-hidden', 'true');
+    // Published on the readout itself, because "the key did nothing" and "the
+    // key hid a box that was already hidden" are the same screenshot -- and
+    // because a probe wanting the box's text wants the same element.
+    status.dataset['statsReadout'] = shown ? 'on' : 'off';
+    return shown;
+  };
+  applyReadout();
   root.append(status);
 
   // The refusal stack (spec 143). Its *bottom* is pinned and it has no height of
@@ -298,6 +586,27 @@ export function createHud(project: Projector): HudHandle {
   errors.dataset['errorStack'] = 'true';
   root.append(errors);
 
+  /**
+   * The name of the drop under the cursor (spec 158).
+   *
+   * **One element, not one per drop**, because there is only ever one hovered
+   * thing -- and because a name over every drop in a field is a loot feed with
+   * extra steps, which `docs/reward-philosophy.md` §10 rules out. It is the
+   * whole of the reveal's payoff on screen: before the reveal there is no name
+   * to show, and asking for one gets nothing rather than a placeholder.
+   *
+   * DOM for the reason the health bars are: text through the low-res buffer and
+   * the dither pass comes out as chewed pixels.
+   */
+  const dropLabel = document.createElement('div');
+  dropLabel.style.cssText =
+    'position:absolute;transform:translate(-50%,-100%);white-space:nowrap;display:none;' +
+    'font:12px ui-monospace,Menlo,monospace;padding:2px 6px;border-radius:4px;' +
+    'background:rgba(10,14,20,.78);pointer-events:none;';
+  // Read by `scripts/probe-loot.ts`, like every other invisible handle here.
+  dropLabel.dataset['dropLabel'] = 'true';
+  root.append(dropLabel);
+
   // The spawner overlay lives in its own layer so clearing it is one truncation
   // rather than a walk looking for which children were spawners.
   const spawnerLayer = document.createElement('div');
@@ -308,13 +617,21 @@ export function createHud(project: Projector): HudHandle {
   // Bottom edge insets are `env()` rather than a number: in landscape the home
   // indicator runs along the bottom and the notch along a side, which is exactly
   // where the hotbar and the weapon switch sit (spec 093).
-  const bottom = `calc(${layout.edge}px + env(safe-area-inset-bottom))`;
+  //
+  // `bottomEdge` rather than `edge` since spec 164: the experience strip is
+  // pinned to the frame's bottom and spans its whole width, so every other
+  // group has to clear it rather than sit beside it.
+  const bottom = `calc(${bottomEdge(layout)}px + env(safe-area-inset-bottom))`;
 
-  const bar = document.createElement('div');
-  bar.style.cssText =
-    `position:absolute;left:50%;bottom:${bottom};transform:translateX(-50%);display:flex;` +
-    `gap:${layout.slotGap}px;font:${layout.slotFontPx}px ui-monospace,Menlo,monospace;pointer-events:auto;`;
-  root.append(bar);
+  /**
+   * Where the action bar is, in CSS pixels, told by the mount (spec 196).
+   *
+   * The bar itself is drawn on the interface canvas now. What is left here is
+   * everything placed *against* it -- the pool block, which sits immediately to
+   * its left and centred on it, and the aim hint above it -- so this file needs
+   * its box and nothing else about it.
+   */
+  let actionBar: ActionBarBox = NO_ACTION_BAR;
 
   /**
    * What the next tap does, while a skill is aimed (spec 080).
@@ -325,63 +642,442 @@ export function createHud(project: Projector): HudHandle {
    * -- so it gets its own place above the hotbar rather than going with the
    * panel. Idle, it says nothing; the world is the hint.
    */
+  /**
+   * The mark drawn at the pointer (spec 200): the crosshair, or the same mark
+   * with its arms pulled in, or nothing.
+   *
+   * Drawn here rather than set as a CSS cursor image because a cursor is placed
+   * by a *hotspot*, and a hotspot is applied by a layer that also has a device
+   * scale and a page zoom to apply: measured on a real machine, the mark landed
+   * four to seven pixels up and left of the point it was marking, with the
+   * pointer provably still. Here it is placed from the pointer position the
+   * game already tracks, in the coordinate space everything else on this layer
+   * is placed in, and so it is where it says it is.
+   *
+   * Both marks are built once and swapped by `display`. They are the same box,
+   * so the swap moves nothing; the element itself never moves for a swap
+   * either, since only its `transform` places it.
+   */
+  const crosshairLayer = document.createElement('div');
+  crosshairLayer.dataset['crosshair'] = 'none';
+  // `top:0;left:0` plus a transform rather than `left/top` in pixels: a
+  // transform is composited, so following the pointer costs no layout.
+  //
+  // Sized, rather than left to its absolutely-positioned children: they are out
+  // of flow, so an unsized holder has a zero rectangle at its own origin -- and
+  // then the one thing worth measuring about this element, where the mark
+  // actually landed, reads eleven pixels up and left of the truth. Which is the
+  // very number this whole change exists to stop being wrong.
+  crosshairLayer.style.cssText =
+    `position:absolute;left:0;top:0;width:${CROSSHAIR_BOX}px;height:${CROSSHAIR_BOX}px;` +
+    'pointer-events:none;display:none;will-change:transform;';
+  const crosshairArt: Record<CrosshairArt, HTMLElement> = {
+    full: document.createElement('div'),
+    small: document.createElement('div'),
+    bubble: document.createElement('div'),
+  };
+  for (const art of ['full', 'small', 'bubble'] as const) {
+    const holder = crosshairArt[art];
+    holder.style.cssText = 'position:absolute;left:0;top:0;display:none;';
+    holder.innerHTML = crosshairSvg({ art });
+    crosshairLayer.append(holder);
+  }
+  root.append(crosshairLayer);
+  let crosshairShown: CrosshairArt | null = null;
+
   const aimHint = document.createElement('div');
   if (layout.compact) {
     aimHint.style.cssText =
       `position:absolute;left:50%;transform:translateX(-50%);white-space:nowrap;` +
-      `bottom:calc(${layout.edge + layout.slot.height + 6}px + env(safe-area-inset-bottom));` +
       'font:11px ui-monospace,Menlo,monospace;color:#dbe3ee;background:rgba(10,14,20,.72);' +
       'padding:3px 8px;border-radius:5px;pointer-events:none;';
     root.append(aimHint);
   }
 
-  let useHandler: (abilityId: string) => void = () => undefined;
+  /**
+   * The two pools, immediately left of the slots (spec 164).
+   *
+   * Placed off the *bar's* half-width rather than from the frame's left edge,
+   * because the bar is centred: pinning the pool to the left would leave a gap
+   * between them that grew with the window, and the two are one group.
+   *
+   * Sat at `poolBottom` rather than at the same floor as the slots, so the two
+   * are centred on one another. The first cut shared the floor, which put a
+   * 40px block against the bottom of a 46px row: all the daylight above it and
+   * none below, which reads as a mistake because everything else along that edge
+   * lines up.
+   */
+  const poolBlock = document.createElement('div');
+  // Bottom furniture too. See the weapon switch below.
+  poolBlock.dataset['hudBottom'] = 'pools';
+  poolBlock.style.cssText =
+    `position:absolute;left:50%;` +
+    `display:flex;flex-direction:column;` +
+    `gap:${layout.poolGap}px;width:${layout.pool.width}px;pointer-events:none;`;
+  root.append(poolBlock);
 
-  const slots = HOTBAR.map((abilityId, index) => {
-    const ability = abilityById(abilityId);
-    const button = document.createElement('button');
-    button.style.cssText =
-      `width:${layout.slot.width}px;border-radius:6px;border:1px solid #33405a;background:#182130;` +
-      'color:#cfd6e0;cursor:pointer;font:inherit;text-align:center;' +
-      // Square and centred on a finger: the label is whatever fits inside the
-      // target rather than the target being whatever the label needs.
-      (layout.compact
-        ? `height:${layout.slot.height}px;padding:2px;line-height:1.15;display:flex;` +
-          'align-items:center;justify-content:center;'
-        : 'padding:6px 4px;line-height:1.5;');
-    button.style.position = 'relative';
-    button.style.overflow = 'hidden';
-    // The number is the key that casts it, so it goes where there are keys. A
-    // phone has none, and the digit was taking a third of the button to say so.
-    button.innerHTML = layout.showsKeyNumber
-      ? `<b>${index + 1}</b><br>${ability?.name ?? abilityId}`
-      : (ability?.name ?? abilityId);
-    button.title = ability?.description ?? '';
-    button.addEventListener('click', () => useHandler(abilityId));
+  /**
+   * The player's own statuses, above their own health bar (spec 191).
+   *
+   * A second row, and the reason it is not simply the floating one is that the
+   * two answer different questions. A mark over a body is 13px and moving with
+   * it: it says *that* something is on that body, at a glance, and it is not a
+   * thing anybody can point at -- a 13px hit target over every body in interest
+   * range that swallowed a click would break the movement order this whole game
+   * is driven by. A row anchored to the frame can be pointed at, so this is
+   * where the countdown and the Technical Description live.
+   *
+   * First child of `poolBlock`, which is anchored by its **bottom**: the block
+   * grows upward when a status appears and the two bars underneath do not move.
+   * The same property the floating holder's `translate(-50%,-100%)` gives it,
+   * and the reason the cast bar had to be taken out of flow in the first place.
+   */
+  const selfStatusRow = document.createElement('div');
+  selfStatusRow.dataset['bar'] = 'selfStatuses';
+  selfStatusRow.style.cssText = [
+    'display:none',
+    'align-items:flex-end',
+    `gap:${String(layout.poolGap)}px`,
+    `margin-bottom:${String(layout.poolGap)}px`,
+    // The row itself takes no pointer: only the marks in it do, so the gaps
+    // between them stay world.
+    'pointer-events:none',
+  ].join(';');
+  poolBlock.append(selfStatusRow);
 
-    // The cooldown sweep: a shade that drains off the bottom as the ability
-    // comes back. Drawn under the label rather than over it, so a greyed button
-    // is still readable.
-    const sweep = document.createElement('div');
-    sweep.style.cssText =
-      'position:absolute;left:0;right:0;bottom:0;height:0;background:rgba(8,12,20,.72);' +
-      'pointer-events:none;';
-    button.append(sweep);
+  interface SelfStatusSlot {
+    readonly root: HTMLElement;
+    readonly glyph: HTMLElement;
+    readonly count: HTMLElement;
+    readonly timer: HTMLElement;
+    /** What is currently drawn, so an unchanged mark costs no innerHTML parse. */
+    drawn: string;
+  }
 
-    const remaining = document.createElement('span');
-    remaining.style.cssText =
+  /**
+   * Bigger than the 13px floating mark, because this one is read rather than
+   * noticed -- and it is the thing being hovered, so it has to be a target a
+   * pointer can find without care.
+   */
+  const SELF_STATUS_PX = 20;
+
+  const selfStatusSlots: SelfStatusSlot[] = [];
+  for (let index = 0; index < MAX_VISIBLE_STATUSES; index += 1) {
+    const slot = document.createElement('div');
+    slot.style.cssText = [
+      'display:none',
+      'flex:0 0 auto',
+      'flex-direction:column',
+      'align-items:center',
+      'gap:1px',
+      // The one place in this band that takes a pointer, so the tooltip has
+      // something to hang off.
+      'pointer-events:auto',
+      'cursor:help',
+    ].join(';');
+    const glyph = document.createElement('div');
+    glyph.style.cssText =
+      `position:relative;width:${String(SELF_STATUS_PX)}px;height:${String(SELF_STATUS_PX)}px;` +
+      'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9));';
+    const count = document.createElement('div');
+    count.style.cssText = [
+      'position:absolute',
+      'right:0',
+      'bottom:0',
+      'font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'color:#f2f6fb',
+      'text-shadow:0 0 2px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,.95)',
+    ].join(';');
+    // Under the glyph rather than over it: a countdown moves every frame, and a
+    // moving number on top of a picture makes the picture unreadable.
+    const timer = document.createElement('div');
+    timer.style.cssText = [
+      'font:9px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+      'color:#d7deea',
+      'text-shadow:0 1px 2px rgba(0,0,0,.95)',
+      // Held even when empty, so an indefinite status does not make the marks
+      // beside it jump up by a line.
+      'min-height:9px',
+    ].join(';');
+    glyph.append(count);
+    slot.append(glyph, timer);
+    selfStatusRow.append(slot);
+    selfStatusSlots.push({ root: slot, glyph, count, timer, drawn: '' });
+  }
+
+  /**
+* Place everything that hangs off the action bar, in one go (spec 196).
+   *
+   * Called when the box changes rather than per frame: the bar's size follows
+   * the interface scale, which moves when the window is resized or the player
+   * chooses a different one, and not otherwise. A box of zero is what the frames
+   * before the interface has laid itself out look like, and it puts the pool
+   * block in the middle for one of them -- which is honest, and is why the
+   * number is told rather than guessed at with a constant that would be wrong
+   * forever.
+   */
+  const placeAgainstBar = (): void => {
+    poolBlock.style.bottom = `calc(${poolBottom(layout, actionBar)}px + env(safe-area-inset-bottom))`;
+    // Left of a bar that is centred on the frame: half the bar, then the block
+    // and the gap beside it. `POOL_TO_BAR_GAP` rather than `poolGap`, which is
+    // the space *inside* the block -- sharing them had the pools hugging the
+    // slots.
+    poolBlock.style.marginLeft = `${-(actionBar.width / 2 + poolReserve(layout))}px`;
+    if (layout.compact) {
+      aimHint.style.bottom =
+        `calc(${actionBar.bottom + actionBar.height + 6}px + env(safe-area-inset-bottom))`;
+    }
+  };
+  placeAgainstBar();
+
+  interface Pool {
+    readonly fill: HTMLElement;
+    /**
+     * The white band behind the fill, or null on a bar that has none.
+     *
+     * Only health has one: the chunk is what a *blow* took, and nothing takes
+     * resource off you -- you spend it, and a white chunk marking your own cast
+     * would be the bar objecting to being used.
+     */
+    readonly ghost: HTMLElement | null;
+    readonly label: HTMLElement;
+  }
+
+  function makePool(fillColor: string, name: string, ghosted: boolean): Pool {
+    const track = document.createElement('div');
+    track.dataset['pool'] = name;
+    track.style.cssText =
+      `position:relative;height:${layout.pool.height}px;background:${BAR_EMPTY};border-radius:3px;` +
+      'overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.7);';
+    // Two bands in one track, the white underneath -- laid out exactly as the
+    // floating bar's are (spec 145), so the fill's width is still just health
+    // and the chunk is whatever the white is left showing past it. Stacked
+    // rather than end to end, so the two can never disagree about where the
+    // fill ends.
+    const ghost = ghosted ? document.createElement('div') : null;
+    if (ghost) {
+      ghost.style.cssText =
+        `position:absolute;left:0;top:0;height:100%;width:0;background:${BAR_LOST};`;
+      track.append(ghost);
+    }
+    const fill = document.createElement('div');
+    fill.style.cssText = `position:absolute;left:0;top:0;height:100%;width:0;background:${fillColor};`;
+    // Over the bar rather than beside it: the numbers are what you read when you
+    // want to know, and the length is what you read when you are fighting. Two
+    // rows for that would double the height of a block that has to stay under
+    // one slot. In the game's own face, like everything else in this band.
+    const label = document.createElement('div');
+    label.style.cssText =
       'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
-      `font:700 ${layout.slotCountdownPx}px ui-monospace,Menlo,monospace;color:#e8eef6;` +
-      'text-shadow:0 1px 2px #000;pointer-events:none;';
-    button.append(remaining);
+      'pointer-events:none;';
+    track.append(fill, label);
+    poolBlock.append(track);
+    return { fill, ghost, label };
+  }
 
-    bar.append(button);
-    return { abilityId, ability, button, sweep, remaining };
+  // Green for health, matching the player's own floating bar (spec 145), because
+  // "green is you" is already true in this game and a second colour for the same
+  // quantity would be a second thing to learn. Blue for the pool, which is the
+  // one thing on screen that is spent rather than lost.
+  const healthPool = makePool(BAR_SELF, 'health', true);
+  const resourcePool = makePool(POOL_RESOURCE, 'resource', false);
+
+  /**
+   * The white chunk and the flinch, for the pool bar (specs 145/146, 163).
+   *
+   * The *same* class the floating bars are read through, on an instance of its
+   * own: one bar is placed by an anchor over a body and the other is pinned to
+   * the frame, and the floating one is only read on frames the body is on
+   * screen. Sharing one instance would make the chunk on the pool bar depend on
+   * whether the camera happened to be looking at the player -- which is exactly
+   * the frames a hit is most worth marking.
+   */
+  const poolFlashes = new HealthFlashes();
+
+  /**
+   * A pool bar's numbers, in the game's own face.
+   *
+   * Rewritten only when the string changes. Health moves on almost every frame
+   * of a fight and resource regenerates continuously, so this is the one label
+   * in the band that would genuinely be rebuilt sixty times a second -- and the
+   * *rounded* string changes far less often than the number behind it does.
+   */
+  function writePoolLabel(element: HTMLElement, text: string): void {
+    if (element.dataset['text'] === text) return;
+    element.dataset['text'] = text;
+    element.innerHTML = pixelTextSvg(text, {
+      scale: layout.poolScale,
+      fill: '#f2f6fb',
+      outline: '#0a0d14',
+    });
+  }
+
+  /**
+   * The experience strip (spec 164), pinned to the very bottom, full width.
+   *
+   * Not inset by `layout.edge`: it is the frame's own bottom edge, the way a
+   * progress bar at the foot of a window is, and an inset one would read as a
+   * floating widget rather than as the boundary of the screen.
+   *
+   * Ten subdivisions as a repeating gradient over one element, rather than ten
+   * elements. A subdivision has no state -- it is a mark on the bar, and ten
+   * boxes would be ten things that could get out of step with the fill under
+   * them.
+   */
+  const xpStrip = document.createElement('div');
+  xpStrip.dataset['xpBar'] = 'true';
+  xpStrip.style.cssText =
+    `position:absolute;left:0;right:0;bottom:0;height:${layout.xpBarHeight}px;` +
+    `background:${XP_PURPLE_DARK};border-top:1px solid #000;box-sizing:content-box;` +
+    // Auto, so it can be hovered: it is the only thing in the HUD whose detail
+    // is *only* available on hover, and a strip that ignored the pointer would
+    // have no way to be asked.
+    'pointer-events:auto;overflow:hidden;';
+  const xpFill = document.createElement('div');
+  xpFill.style.cssText =
+    `position:absolute;left:0;top:0;bottom:0;width:0;background:${XP_PURPLE};` +
+    `box-shadow:inset 0 1px 0 ${XP_PURPLE_LIT};`;
+  const xpTicks = document.createElement('div');
+  xpTicks.style.cssText =
+    'position:absolute;inset:0;pointer-events:none;background:repeating-linear-gradient(' +
+    `to right,transparent 0,transparent calc(${100 / XP_SUBDIVISIONS}% - 1px),` +
+    `#000 calc(${100 / XP_SUBDIVISIONS}% - 1px),#000 ${100 / XP_SUBDIVISIONS}%);`;
+  xpStrip.append(xpFill, xpTicks);
+  root.append(xpStrip);
+
+  /**
+   * The exact percentage, on hover.
+   *
+   * Ten marks is what a player can read off the strip at a glance; a number to
+   * one decimal is what they came to it for. Built once and shown by the two
+   * pointer handlers, which are the only listeners in this file that are not on
+   * a button -- there is nothing to press here, only something to ask.
+   */
+  const xpDetail = document.createElement('div');
+  xpDetail.style.cssText =
+    `position:absolute;left:8px;bottom:${layout.xpBarHeight + 4}px;display:none;` +
+    'background:rgba(10,14,20,.85);padding:4px 8px;border-radius:4px;border:1px solid #000;' +
+    'pointer-events:none;white-space:nowrap;';
+  xpDetail.dataset['xpDetail'] = 'true';
+  root.append(xpDetail);
+  xpStrip.addEventListener('pointerenter', () => {
+    xpDetail.style.display = 'block';
+  });
+  xpStrip.addEventListener('pointerleave', () => {
+    xpDetail.style.display = 'none';
   });
 
-  // The weapon switch (spec 079), bottom left and out of the hotbar's way.
-  // Which one is lit is read back off `stats.basicAttackId` -- the server's
-  // answer -- so a refused equip simply leaves the old one lit.
+  let respawnHandler: () => void = () => undefined;
+
+  /**
+   * "YOU ARE DEAD", and the way back (spec 164).
+   *
+   * Over everything, and the only part of the HUD that takes the pointer across
+   * the whole frame -- deliberately: while it is up, clicking the world would be
+   * ordering a corpse to walk, and every one of those orders is a refusal.
+   *
+   * The words are `pixelTextSvg` rather than DOM text with a text-shadow. The
+   * damage numbers and the refusal stack are already drawn that way (specs
+   * 065/143), so this is the vocabulary the game has for shouting rather than a
+   * second one invented for one screen -- and the outline it draws is a real
+   * outline on every side rather than four stacked shadows.
+   */
+  const deathLayer = document.createElement('div');
+  deathLayer.style.cssText =
+    'position:absolute;inset:0;display:none;flex-direction:column;align-items:center;' +
+    'justify-content:center;gap:18px;background:rgba(20,2,4,.42);pointer-events:auto;' +
+    // The one z-index in this file. Everything else here is `position:absolute`
+    // with no stacking of its own, so DOM order decides -- and this layer is
+    // built before the weapon switch and the window buttons, which would
+    // otherwise sit on top of the thing that is supposed to be covering them.
+    'z-index:5;';
+  deathLayer.dataset['death'] = 'true';
+  const deathBanner = document.createElement('div');
+  const respawnButton = document.createElement('button');
+  respawnButton.style.cssText =
+    'padding:10px 26px;border-radius:6px;border:1px solid #000;background:#7a1a1a;' +
+    'cursor:pointer;box-shadow:0 2px 0 #000;display:flex;align-items:center;';
+  respawnButton.innerHTML = pixelTextSvg('RESPAWN', {
+    scale: layout.respawnScale,
+    fill: '#ffe2e2',
+    outline: '#000000',
+  });
+  // The word is a glyph path, so the button has no text of its own to be found
+  // or read out by.
+  respawnButton.setAttribute('aria-label', 'Respawn');
+  respawnButton.dataset['respawn'] = 'true';
+  respawnButton.addEventListener('click', () => respawnHandler());
+  deathLayer.append(deathBanner, respawnButton);
+  root.append(deathLayer);
+
+  /**
+   * Builds one window-style button: the box, border, background and caption
+   * face every button in this corner and the opposite one share (spec 140,
+   * spec 227's account button included, which is why this moved out of the
+   * window row's own map below). Extracted rather than copied a second time,
+   * because "the same style expression as a system button" is a claim only
+   * true while there is one function drawing it.
+   *
+   * The caption span is built and returned even when nobody appends it (see
+   * the icon-only branch), so a caller whose label changes after the button
+   * exists -- the account button's does, the three window buttons' never do
+   * -- has something to rewrite rather than a button it would have to tear
+   * down and rebuild.
+   */
+  function buildSystemStyleButton(
+    icon: SystemIconId,
+    label: string,
+  ): { readonly button: HTMLButtonElement; readonly caption: HTMLElement | null } {
+    const button = document.createElement('button');
+    button.style.cssText =
+      `width:${layout.systemButton.width}px;height:${layout.systemButton.height}px;border-radius:6px;` +
+      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
+      'display:flex;align-items:center;gap:6px;line-height:1.4;' +
+      (layout.systemIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
+    button.innerHTML = systemIconSvg(icon, { size: layout.systemIconPx });
+    // The label survives the button having no text: it is what a screen reader
+    // reads out, and what `scripts/preview-touch.ts` finds the button by.
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    let caption: HTMLElement | null = null;
+    if (!layout.systemIconOnly) {
+      caption = document.createElement('span');
+      caption.innerHTML = pixelTextSvg(label.toUpperCase(), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
+      button.append(caption);
+    }
+    return { button, caption };
+  }
+
+  let openHandler: (id: WindowId) => void = () => undefined;
+
+  // The account button (spec 227), above the weapon switch: the same box a
+  // window button draws, in the corner a guest is already looking at while
+  // choosing a weapon. `openHandler` is the one both corners share -- a
+  // button and a key must not be able to mean different things -- so this is
+  // wired exactly like a `SYSTEM_BUTTONS` entry rather than through a second
+  // handler that only this button would call.
+  const { button: accountButton, caption: accountCaption } = buildSystemStyleButton(
+    'account',
+    ACCOUNT_GUEST_LABEL,
+  );
+  // Marked on the button rather than on the column below: this is the topmost
+  // thing in the corner, so its own top is already the whole group's, and
+  // `scripts/probe-chat.ts`'s furniture report has a name to print instead of
+  // a bare wrapper with nothing of its own worth measuring.
+  accountButton.dataset['hudBottom'] = 'account';
+  // For `scripts/probe-account.ts`: the label the button is actually showing,
+  // the way `data-held-weapons` publishes what is attached rather than what
+  // was asked for -- so a registration that failed still reads as a guest.
+  accountButton.dataset['accountButton'] = ACCOUNT_GUEST_LABEL;
+  accountButton.addEventListener('click', () => openHandler('account'));
+
+  // The weapon switch (spec 079), out of the hotbar's way. Which one is lit is
+  // read back off `stats.basicAttackId` -- the server's answer -- so a refused
+  // equip simply leaves the old one lit.
   //
   // Not built at all on a phone (spec 141): three permanent buttons is a lot of
   // corner for a choice made rarely, and the bag and the sheet both make it and
@@ -389,21 +1085,49 @@ export function createHud(project: Projector): HudHandle {
   // appended when the layout says no -- the update loop below styles these
   // buttons every frame and a conditional `weaponSlots` would put a branch in it.
   const weapons = document.createElement('div');
+  // Furniture along the bottom that the canvas interface must not cover
+  // (spec 189). The chat is docked bottom-left, which is exactly here, and it
+  // is drawn on a canvas stacked over this element -- so how far up the frame
+  // this reaches has to be *measured* rather than derived: the switch is a
+  // column whose height depends on how many weapons there are and on whether
+  // the layout is the compact one.
+  weapons.dataset['hudBottom'] = 'weapons';
   weapons.style.cssText =
-    `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
     `display:flex;flex-direction:${layout.weaponDirection};gap:${layout.weaponGap}px;` +
-    'font:11px ui-monospace,Menlo,monospace;pointer-events:auto;' +
+    'font:11px ui-monospace,Menlo,monospace;' +
     // Backed like the status readout: the caption is small grey text and the
     // world behind it is a bright green field, so unbacked it disappears over
     // half the map. Icons carry their own backing, so the compact row drops the
     // panel and the padding with the caption.
     (layout.weaponIconOnly ? '' : 'background:rgba(10,14,20,.72);padding:8px;border-radius:6px;');
-  if (layout.showsWeaponSwitch) root.append(weapons);
+
+  // The bottom-left corner is a column (spec 227): the account button above
+  // the weapon switch, wrapped in one absolutely-positioned flex column
+  // rather than positioned separately, so the stacking needs no measurement
+  // -- the weapon switch's own bottom edge lands exactly where it always did,
+  // and the account button simply sits above it. `pointer-events:auto` lives
+  // here rather than on each child, the way `systemRow` below already puts it
+  // on the whole row rather than on each of its three buttons.
+  const bottomLeft = document.createElement('div');
+  bottomLeft.style.cssText =
+    `position:absolute;left:calc(${layout.edge}px + env(safe-area-inset-left));bottom:${bottom};` +
+    `display:flex;flex-direction:column;align-items:flex-start;gap:${layout.weaponGap}px;` +
+    'pointer-events:auto;';
+  root.append(bottomLeft);
+  bottomLeft.append(accountButton);
+  // A phone has no weapon switch at all (spec 141): the column then holds the
+  // account button alone, at the same position the switch used to occupy on
+  // its own.
+  if (layout.showsWeaponSwitch) bottomLeft.append(weapons);
 
   if (!layout.weaponIconOnly) {
     const weaponCaption = document.createElement('div');
-    weaponCaption.style.cssText = 'color:#8b97a8;letter-spacing:.08em;padding-left:2px;';
-    weaponCaption.textContent = 'WEAPON';
+    weaponCaption.style.cssText = 'padding-left:2px;';
+    weaponCaption.innerHTML = pixelTextSvg('WEAPON', {
+      scale: layout.captionScale,
+      fill: '#8b97a8',
+      outline: '#0a0d14',
+    });
     weapons.append(weaponCaption);
   }
 
@@ -433,11 +1157,19 @@ export function createHud(project: Projector): HudHandle {
     // is the honest version of that, and it survives the button having no text.
     button.dataset['weapon'] = weapon.itemId;
     if (!layout.weaponIconOnly) {
+      // In the game's own face like the rest of the band (spec 164). The button
+      // still carries the name as an `aria-label` above, which is what a screen
+      // reader reads and what `preview-touch.ts` finds it by -- a drawn glyph
+      // path is not text and cannot be either.
       const name = document.createElement('span');
-      name.textContent = weapon.name;
+      name.innerHTML = pixelTextSvg(weapon.name.toUpperCase(), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
       button.append(name);
     }
-    button.title = ability ? `${ability.name} -- ${ability.description}` : weapon.itemId;
+    button.title = ability ? abilityTitle(ability) : weapon.itemId;
     button.addEventListener('click', () => equipHandler(weapon.itemId));
     weapons.append(button);
     return { ...weapon, button };
@@ -453,30 +1185,24 @@ export function createHud(project: Projector): HudHandle {
     `gap:${layout.systemGap}px;font:11px ui-monospace,Menlo,monospace;pointer-events:auto;`;
   root.append(systemRow);
 
-  let openHandler: (id: WindowId) => void = () => undefined;
-
   const systemSlots = SYSTEM_BUTTONS.map((entry) => {
-    const button = document.createElement('button');
-    button.style.cssText =
-      `width:${layout.systemButton.width}px;height:${layout.systemButton.height}px;border-radius:6px;` +
-      'border:1px solid #33405a;background:#182130;color:#cfd6e0;cursor:pointer;font:inherit;' +
-      'display:flex;align-items:center;gap:6px;line-height:1.4;' +
-      (layout.systemIconOnly ? 'justify-content:center;padding:0;' : 'padding:5px 8px;');
-    button.innerHTML = systemIconSvg(entry.icon, { size: layout.systemIconPx });
-    // The name survives the button having no text: it is what a screen reader
-    // reads out, and what `scripts/preview-touch.ts` finds the button by.
-    button.setAttribute('aria-label', entry.name);
-    button.title = entry.name;
+    const { button } = buildSystemStyleButton(entry.icon, entry.name);
     button.dataset['window'] = entry.id;
-    if (!layout.systemIconOnly) {
-      const name = document.createElement('span');
-      name.textContent = entry.name;
-      button.append(name);
-    }
     button.addEventListener('click', () => openHandler(entry.id));
     systemRow.append(button);
     return { ...entry, button };
   });
+
+  /**
+   * Every button that opens a window and lights up while it is open (spec
+   * 140, spec 227): the three in the corner they have always been in, plus
+   * the account button in the opposite one. One list, so `showOpenWindows`
+   * cannot light one kind of window button and forget the other.
+   */
+  const windowButtons: readonly { readonly id: WindowId; readonly button: HTMLButtonElement }[] = [
+    ...systemSlots,
+    { id: 'account', button: accountButton },
+  ];
 
   const bars = new Map<number, Bar>();
   /** Same division as the numbers: the judgement is pure, this holds elements. */
@@ -571,9 +1297,131 @@ export function createHud(project: Projector): HudHandle {
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
     cast.append(castFill);
 
-    holder.append(name, healthTrack, guard, cast);
+    // The stun swirl (spec 173). Built once and hidden, like the name: a body
+    // is stunned for well under a second at a time and creating an element per
+    // break would churn the DOM on every blow that lands.
+    const stun = document.createElement('div');
+    stun.style.cssText = [
+      'display:none',
+      'margin:0 auto 2px',
+      'width:18px',
+      'height:18px',
+      // Amber, the cast bar's colour, because both mean "this body is committed
+      // to something it cannot get out of" -- and deliberately not the guard
+      // blue, which marks the bar that ran out rather than what happened next.
+      'color:#ffcf6b',
+      'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))',
+      // The glyph is turned by writing a transform each frame; naming the origin
+      // here means that write is one property rather than two.
+      'transform-origin:50% 50%',
+    ].join(';');
+    stun.innerHTML = stunIconSvg({ size: 18 });
+
+    // The status row (spec 186). Built once at full width and hidden, like the
+    // swirl and the name: a body picks statuses up and drops them several times
+    // a fight, and creating elements per application would churn the DOM on
+    // every blow that lands.
+    //
+    // A fixed pool of slots rather than one element per status, so the row never
+    // allocates while a fight is running and a mark that goes away is a
+    // `display` write rather than a removal.
+    const statusRow = document.createElement('div');
+    statusRow.dataset['bar'] = 'statuses';
+    statusRow.style.cssText = [
+      'display:none',
+      'justify-content:center',
+      'align-items:center',
+      // Four rather than two. Each glyph's ink fills most of its own box -- the
+      // paths run nearly the full 24-unit viewBox -- so at two the row read as
+      // one continuous ribbon rather than as several marks, which is the one
+      // thing a row of marks must not do.
+      'gap:4px',
+      'margin-bottom:2px',
+      'pointer-events:none',
+      // Allowed to be wider than the holder, and centred on it.
+      //
+      // The holder is a fixed 52px -- the width of the health bar -- and four
+      // marks already need more than that. Left in flow the slots are flex items
+      // in a box too small for them, so they *shrink*: eight of them came out
+      // 3px wide each, which is a row of specks that passes every check about
+      // what is drawn and shows a player nothing. `max-content` takes the row
+      // out of that negotiation, and the half-shifts re-centre it over the body.
+      'width:max-content',
+      'position:relative',
+      'left:50%',
+      'transform:translateX(-50%)',
+    ].join(';');
+
+    const statusSlots: StatusSlot[] = [];
+    for (let index = 0; index < MAX_VISIBLE_STATUSES; index += 1) {
+      const slot = document.createElement('div');
+      slot.style.cssText = [
+        'display:none',
+        'position:relative',
+        `width:${STATUS_ICON_PX}px`,
+        `height:${STATUS_ICON_PX}px`,
+        // Belt and braces with the row's `max-content` above: a mark is a fixed
+        // size and must never be negotiated down to fit.
+        'flex:0 0 auto',
+        'filter:drop-shadow(0 1px 2px rgba(0,0,0,.9))',
+      ].join(';');
+      const glyph = document.createElement('div');
+      glyph.style.cssText = 'position:absolute;inset:0;';
+      // Bottom-right, outside the glyph's own weight, so a two-stack Flow reads
+      // as a marked glyph rather than as a different glyph.
+      const count = document.createElement('div');
+      count.style.cssText = [
+        'position:absolute',
+        // Inside the box, not hanging off it. Outside, the digit sat in the gap
+        // and collided with the next mark's glyph, so a stacking status made the
+        // one after it unreadable.
+        'right:0',
+        'bottom:0',
+        'font:7px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+        'color:#f2f6fb',
+        'text-shadow:0 0 2px rgba(0,0,0,1),0 1px 2px rgba(0,0,0,.95)',
+      ].join(';');
+      slot.append(glyph, count);
+      statusRow.append(slot);
+      statusSlots.push({ root: slot, glyph, count, drawn: '' });
+    }
+
+    // Changing a skill (spec 188). The cast bar's shape in a different colour,
+    // because it means the same kind of thing -- this body is committed to
+    // something with a clock on it -- and a fourth vocabulary for the fourth
+    // timed thing would be three too many. Below the cast bar rather than in
+    // place of it: the two cannot both be running (committing to a cast gives
+    // up the swap), but stacking them keeps either from moving when the other
+    // appears.
+    const swap = document.createElement('div');
+    swap.dataset['bar'] = 'swap';
+    swap.style.cssText =
+      'position:absolute;left:0;right:0;top:calc(100% + 2px);height:4px;' +
+      'background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
+    const swapFill = document.createElement('div');
+    // Teal: not the cast bar's amber, not the guard's blue, not the health
+    // reds. A body changing a skill has to be distinguishable at a glance from
+    // one winding up a blow, because the answer to the two is different.
+    swapFill.style.cssText = 'height:100%;width:0;background:#6bd7cf;';
+    swap.append(swapFill);
+
+    holder.append(statusRow, stun, name, healthTrack, guard, cast, swap);
     root.append(holder);
-    const made: Bar = { root: holder, name, health, ghost, guard, guardFill, cast, castFill };
+    const made: Bar = {
+      root: holder,
+      name,
+      health,
+      ghost,
+      guard,
+      guardFill,
+      cast,
+      castFill,
+      stun,
+      statusRow,
+      statusSlots,
+      swap,
+      swapFill,
+    };
     bars.set(id, made);
     return made;
   }
@@ -581,6 +1429,44 @@ export function createHud(project: Projector): HudHandle {
   function dropPopup(id: number): void {
     popupElements.get(id)?.remove();
     popupElements.delete(id);
+  }
+
+  /**
+   * Name the hovered drop, once it has one (spec 158).
+   *
+   * Three ways to show nothing and they are all the same branch: nothing is
+   * hovered, the hovered thing is not a drop, or the drop has not revealed and
+   * therefore has no name. That last one is the feature -- `label` is null
+   * rather than "???", so there is nothing here that could put a placeholder on
+   * screen.
+   */
+  function showDropLabel(
+    view: ClientView,
+    byId: ReadonlyMap<number, ClientView['entities'][number]>,
+    hoveredId: number | null,
+  ): void {
+    const drop = hoveredId === null ? undefined : view.drops.find((d) => d.entityId === hoveredId);
+    const entity = hoveredId === null ? undefined : byId.get(hoveredId);
+    const name = drop?.name ?? null;
+    if (!drop || !entity || name === null) {
+      dropLabel.style.display = 'none';
+      delete dropLabel.dataset['name'];
+      return;
+    }
+    const at = project(entity.x, entity.y, DROP_LABEL_LIFT);
+    if (!at.onScreen) {
+      dropLabel.style.display = 'none';
+      return;
+    }
+    // The count is on the label because a stack of three potions and one potion
+    // are different objects, and the drop draws identically either way.
+    const text = drop.count > 1 ? `${name} x${drop.count}` : name;
+    dropLabel.style.display = 'block';
+    dropLabel.style.left = `${at.x}px`;
+    dropLabel.style.top = `${at.y}px`;
+    dropLabel.style.color = DROP_LABEL_COLOR[drop.rarity] ?? DROP_LABEL_COLOR.common;
+    dropLabel.textContent = text;
+    dropLabel.dataset['name'] = text;
   }
 
   function dropError(id: number): void {
@@ -595,9 +1481,11 @@ export function createHud(project: Projector): HudHandle {
     corrections: number,
     targetId: number | null,
     aiming: { readonly abilityId: string | null; readonly pending: boolean },
+    hoveredId: number | null,
     nowMs: number,
   ): void {
     const byId = new Map(view.entities.map((entity) => [entity.id, entity]));
+    showDropLabel(view, byId, hoveredId);
     const casts = new Map(view.casts.map((cast) => [cast.entityId, cast]));
     const live = new Set<number>();
 
@@ -641,6 +1529,71 @@ export function createHud(project: Projector): HudHandle {
       // The fill is replicated health and nothing here delays it; the white
       // band behind it is the chunk the last blow took, decided in the pure
       // field off the same presentation clock the bars are placed by.
+      // The stun swirl (spec 173). Stateless, so unlike the flash above there is
+      // nothing per-body to retain or prune: a body that is stunned right now is
+      // stunned whether or not this client watched the blow, which is exactly
+      // what a *state* mark should say and the opposite of the flinch's rule.
+      const stun = stunMark(entity.activity, entity.activityUntilTick, tick);
+      element.stun.style.display = stun.visible ? 'block' : 'none';
+      if (stun.visible) {
+        element.stun.style.transform = `rotate(${stun.spin.toFixed(1)}deg)`;
+        element.stun.style.opacity = stun.opacity.toFixed(2);
+      }
+
+      // The status marks (spec 186), on the same terms as the swirl above: a
+      // pure function of what was replicated and the tick being drawn, with
+      // nothing kept between frames. A status whose window has passed is refused
+      // by `statusMarks` rather than by anything here, so a delta that has not
+      // arrived yet cannot leave a mark up.
+      // `?? []` for the same reason the guard above reads `entity.poise ?? 1`:
+      // several harnesses fabricate a view by hand (`hud-probe.ts`, the bot
+      // client) and a field added to `ReplicatedEntity` is not a field they
+      // know to set. The type says it is always there; the rigs say otherwise,
+      // and a HUD that throws on a missing field takes the whole frame.
+      const marks = statusMarks(entity.statuses ?? [], tick);
+      element.statusRow.style.display = marks.length > 0 ? 'flex' : 'none';
+      for (let index = 0; index < element.statusSlots.length; index += 1) {
+        const slot = element.statusSlots[index];
+        if (!slot) continue;
+        const mark = marks[index];
+        if (!mark) {
+          slot.root.style.display = 'none';
+          continue;
+        }
+        slot.root.style.display = 'block';
+        slot.root.style.opacity = mark.opacity.toFixed(2);
+        // The markup is rewritten only when the glyph in this position actually
+        // changes. A mark that merely fades or re-counts costs two style writes
+        // rather than an innerHTML parse, which matters because this runs for
+        // every body in interest range every frame.
+        const wanted = `${mark.icon}:${mark.kind}`;
+        if (slot.drawn !== wanted) {
+          slot.drawn = wanted;
+          // Colour by `kind` and by nothing else: eight colours over a head is a
+          // legend rather than a picture, and "is that good or bad for them"
+          // is the question a player asks first and answers fastest.
+          slot.glyph.innerHTML = statusIconSvg(mark.icon, {
+            size: STATUS_ICON_PX,
+            color: mark.kind === 'boon' ? STATUS_BOON : STATUS_AFFLICTION,
+          });
+        }
+        const count = mark.showsCount && mark.stacks > 1 ? String(mark.stacks) : '';
+        if (slot.count.textContent !== count) slot.count.textContent = count;
+        // Read by `scripts/probe-status-marks.ts`, for the same reason the health
+        // bar carries `data-entity`: so a probe can assert what is on a body
+        // without re-deriving the camera projection or reading SVG paths.
+        slot.root.dataset['status'] = mark.id;
+      }
+
+      // Changing a skill (spec 188). Stateless like the swirl above and for the
+      // same reason: a body that is busy right now is busy whether or not this
+      // client watched it start, so there is nothing per-body to retain.
+      const changing = swapOverhead(entity.activity, entity.activityUntilTick, tick);
+      element.swap.style.display = changing.visible ? 'block' : 'none';
+      if (changing.visible) {
+        element.swapFill.style.width = `${changing.progress * 100}%`;
+      }
+
       const fill = flashes.read(anchor.id, entity.health, entity.maxHealth, tick * TICK_MS);
       // The flinch moves the *bar*, not the body: it is added to the anchor
       // here rather than being a transform of its own, because the holder's
@@ -739,43 +1692,118 @@ export function createHud(project: Projector): HudHandle {
       weapon.button.style.color = current ? '#f2f6fb' : '#98a4b4';
     }
 
-    for (const slot of slots) {
-      const casting = view.casts.some(
-        (cast) => cast.entityId === view.selfEntityId && cast.abilityId === slot.abilityId,
+    // The two pools, left of the slots (spec 164). Both numbers have been on the
+    // wire since spec 069 and both were text in a hidden readout.
+    //
+    // Health goes through `HealthFlashes` -- the same reading the bar over a
+    // body gets (specs 145/146), so the white chunk a blow leaves and the kick
+    // it lands with are the ones already on screen rather than a second
+    // implementation of them. Absolute health rather than the fraction, because
+    // that is what stops a changing maximum reading as a blow.
+    //
+    // Only once the maximum is known: reading 0-of-0 for the opening frames
+    // would put a track at zero and draw the first `Stats` message as a heal,
+    // which is harmless but is a state worth not creating.
+    const pools = poolBars(view);
+    if (pools.health.known) {
+      const fill = poolFlashes.read(
+        view.selfEntityId,
+        pools.health.current,
+        pools.health.max,
+        tick * TICK_MS,
       );
-      const requested = view.requestedAbilityId === slot.abilityId;
-      slot.button.style.borderColor = casting ? '#ffcf6b' : requested ? '#5c7ba6' : '#33405a';
-      slot.button.style.opacity = affordable(view, slot.ability) ? '1' : '0.45';
+      healthPool.fill.style.width = `${fill.health * 100}%`;
+      if (healthPool.ghost) healthPool.ghost.style.width = `${fill.ghost * 100}%`;
+      // The kick moves the whole block rather than one bar: the two pools are one
+      // group and half of it flinching would read as a layout bug.
+      poolBlock.style.transform = `translate(${fill.shakeX.toFixed(2)}px,${fill.shakeY.toFixed(2)}px)`;
+    } else {
+      healthPool.fill.style.width = '0';
+      if (healthPool.ghost) healthPool.ghost.style.width = '0';
+    }
+    // Only ever the local body, and only the current one: an id changes on a
+    // reconnect, and a map that only grew would be a leak with one entry a
+    // session in it.
+    poolFlashes.retain(new Set([view.selfEntityId]));
+    resourcePool.fill.style.width = `${pools.resource.fraction * 100}%`;
+    writePoolLabel(healthPool.label, pools.health.text);
+    writePoolLabel(resourcePool.label, pools.resource.text);
 
-      // The slot being aimed, lit in the aim's own colour (spec 080), so the
-      // question on the ground and the button it came from are one thing.
-      const aimed = slot.abilityId === aiming.abilityId;
-      slot.button.style.borderColor = aimed ? AIM_HIGHLIGHT : '#33405a';
-      slot.button.style.background = aimed ? '#1d2c3d' : '#182130';
-
-      // The sweep is the server's cooldown, played back (spec 065). Its *length*
-      // comes from the ability table so the shade shrinks proportionally; the
-      // client never decides when something is ready.
-      const readyAt = view.cooldowns[slot.abilityId] ?? 0;
-      const left = readyAt - tick;
-      // The sweep's length is the cadence the cooldown was stamped with, which
-      // for the basic attack is the player's own attack interval (specs 070,
-      // 144) -- against the table's number the shade would start part-drained
-      // and finish early. Through `attackTimingFor`, so the sweep and the sim
-      // cannot come to different answers about how long a swing takes.
-      const total = Math.max(
-        1,
-        slot.ability && view.stats
-          ? attackTimingFor(slot.ability, { stats: view.stats }).intervalTicks
-          : (slot.ability?.cooldownTicks ?? 1),
-      );
-      if (left > 0) {
-        slot.sweep.style.height = `${Math.min(1, left / total) * 100}%`;
-        slot.remaining.textContent = formatSeconds(left / SERVER_TICK_RATE);
-      } else {
-        slot.sweep.style.height = '0';
-        slot.remaining.textContent = '';
+    // The player's own status row (spec 191). Same pure function the floating
+    // marks are drawn from, so the two can never disagree about what is on the
+    // body; what this one adds is the countdown and the description.
+    const selfBody = view.entities.find((entity) => entity.id === view.selfEntityId);
+    const selfMarks = statusMarks(selfBody?.statuses ?? [], tick);
+    selfStatusRow.style.display = selfMarks.length > 0 ? 'flex' : 'none';
+    for (let index = 0; index < selfStatusSlots.length; index += 1) {
+      const slot = selfStatusSlots[index];
+      if (!slot) continue;
+      const mark = selfMarks[index];
+      if (!mark) {
+        slot.root.style.display = 'none';
+        continue;
       }
+      slot.root.style.display = 'flex';
+      slot.root.style.opacity = mark.opacity.toFixed(2);
+      if (slot.drawn !== mark.id) {
+        slot.drawn = mark.id;
+        slot.glyph.innerHTML = statusIconSvg(mark.icon, {
+          size: SELF_STATUS_PX,
+          color: mark.kind === 'boon' ? STATUS_BOON : STATUS_AFFLICTION,
+        });
+        // `innerHTML` replaces the count element, so it goes back afterwards.
+        slot.glyph.append(slot.count);
+        // The Technical Description, from the one writer (spec 191). Set with
+        // the glyph rather than per frame: it is a property of *which* status
+        // this is and nothing about it changes as the clock runs down.
+        const visual = visualFor(mark.id);
+        slot.root.title =
+          visual === null ? mark.name : `${mark.name}\n${technicalText(describeStatus(visual))}`;
+        // Read by `scripts/probe-status-marks.ts`, like the floating row's.
+        slot.root.dataset['selfStatus'] = mark.id;
+      }
+      const count = mark.showsCount && mark.stacks > 1 ? String(mark.stacks) : '';
+      if (slot.count.textContent !== count) slot.count.textContent = count;
+      // Null timer draws nothing at all -- not a dash and not a zero. An
+      // indefinite status showing a clock is the one thing this must not do.
+      const timer = mark.timer ?? '';
+      if (slot.timer.textContent !== timer) slot.timer.textContent = timer;
+    }
+
+    // The experience strip along the very bottom (spec 164). Written only when
+    // it moves: a per-frame style write is a per-frame layout, and experience
+    // changes a handful of times a session.
+    const xp = xpBar(view.level, view.experience);
+    if (xpFill.dataset['detail'] !== xp.detail) {
+      xpFill.dataset['detail'] = xp.detail;
+      xpFill.style.width = `${xp.fraction * 100}%`;
+      xpStrip.title = xp.detail;
+      xpDetail.innerHTML = pixelTextSvg(xp.detail, {
+        scale: layout.xpDetailScale,
+        fill: '#ffe6a8',
+        outline: '#0a0d14',
+      });
+      // What `scripts/probe-bottom-hud.ts` reads: the line is a path now and has
+      // no text content to ask for.
+      xpDetail.dataset['text'] = xp.detail;
+    }
+
+    // "YOU ARE DEAD", and the way back up (spec 164). The overlay is derived
+    // from replicated health, and the button asks the server -- nothing here
+    // decides that a player is alive again.
+    const death = deathOverlay(view);
+    if (death) {
+      if (deathBanner.dataset['text'] !== death.text) {
+        deathBanner.dataset['text'] = death.text;
+        deathBanner.innerHTML = pixelTextSvg(death.text, {
+          scale: layout.compact ? 5 : 8,
+          fill: DEATH_RED,
+          outline: '#000000',
+        });
+      }
+      deathLayer.style.display = 'flex';
+    } else {
+      deathLayer.style.display = 'none';
     }
 
     const self = view.entities.find((entity) => entity.id === view.selfEntityId);
@@ -797,6 +1825,12 @@ export function createHud(project: Projector): HudHandle {
       `guard ${Math.round((self?.poise ?? 0) * (stats?.traits.maxPoise ?? 0))}/` +
       `${Math.round(stats?.traits.maxPoise ?? 0)}   ` +
       `lvl ${view.level}   xp ${view.experience}\n` +
+      // The health economy, in the readout rather than as a bar (spec 156). The
+      // meter arrives as a fraction and is shown as one: the absolute progress
+      // and the threshold behind it are server tuning, and a client that knew
+      // both could work out exactly which kill produces the next mote.
+      `motes ${Math.round(view.restoration.meter * 100)}%   ` +
+      `flask ${view.restoration.charges}/${view.restoration.maxCharges}\n` +
       `monsters ${monsters}   corrections ${corrections}` +
       (view.connected ? '' : '   (disconnected)') +
       `\n${targetLine(view, targetId)}` +
@@ -876,6 +1910,36 @@ export function createHud(project: Projector): HudHandle {
       // is an element nobody will place again.
       for (const id of added.expired) dropPopup(id);
     },
+    addExperience(group, at, amount) {
+      // Nothing to say about a gain of nothing. `XpGains` already reports 0
+      // rather than a negative, so this is the rounding's floor and not a
+      // second opinion about whether experience can go backwards.
+      const whole = Math.round(amount);
+      if (whole <= 0) return;
+      const element = document.createElement('div');
+      element.style.cssText = 'position:absolute;transform:translate(-50%,-100%);display:none;';
+      // Labelled, because the colour and the column say "this is not damage"
+      // and neither of them says what it *is*: a purple number under a white
+      // one is a second quantity, and which quantity is the whole point.
+      //
+      // What the label cost was measured before it was kept -- `+24 XP` is
+      // three times the width of the `24` alone, which is why this is the
+      // smallest text of the pair, at half a critical's scale. It is the
+      // second number spawned on one tick and its job is to be readable
+      // rather than to be the headline.
+      element.innerHTML = pixelTextSvg(`+${whole} XP`, {
+        scale: 2,
+        fill: XP_PURPLE,
+        outline: XP_PURPLE_DARK,
+      });
+      root.append(element);
+      const added = popups.add(group, at, 'xp');
+      // Stamped the way a damage number is, so one can be followed across
+      // frames from outside without re-deriving the camera.
+      element.dataset['xpPopup'] = String(added.id);
+      popupElements.set(added.id, element);
+      for (const id of added.expired) dropPopup(id);
+    },
     error(text) {
       const added = errorLog.add(text);
       // Nothing is created for a repeat: `add` folded it into a line that
@@ -891,7 +1955,7 @@ export function createHud(project: Projector): HudHandle {
       for (const id of added.expired) dropError(id);
     },
     showOpenWindows(open) {
-      for (const slot of systemSlots) {
+      for (const slot of windowButtons) {
         const on = open.includes(slot.id);
         slot.button.style.borderColor = on ? '#ffcf6b' : '#33405a';
         slot.button.style.background = on ? '#243044' : '#182130';
@@ -901,14 +1965,69 @@ export function createHud(project: Projector): HudHandle {
         slot.button.setAttribute('aria-pressed', String(on));
       }
     },
-    onUse(handler) {
-      useHandler = handler;
+    setAccount(state) {
+      const label = state.signedInAs ?? ACCOUNT_GUEST_LABEL;
+      accountButton.setAttribute('aria-label', label);
+      accountButton.title = label;
+      // The whole, untruncated label: a probe asserting "the button now shows
+      // the account name" wants the fact, not the glyphs it happened to fit --
+      // truncation is this file's own drawing concern, not the state.
+      accountButton.dataset['accountButton'] = label;
+      // Absent on a phone: the button is icon-only there and never builds a
+      // caption to rewrite.
+      if (!accountCaption) return;
+      accountCaption.innerHTML = pixelTextSvg(accountButtonCaption(state.signedInAs, layout), {
+        scale: layout.captionScale,
+        fill: '#cfd6e0',
+        outline: '#0a0d14',
+      });
+    },
+    floorCss: bottomEdge(layout),
+    slotSideCss: ACTION_SLOT_CSS,
+    showsSlotKeys: layout.showsKeyNumber,
+    setActionBar(box) {
+      if (box.width === actionBar.width && box.height === actionBar.height) return;
+      actionBar = box;
+      placeAgainstBar();
+    },
+    setCrosshair(mark, at) {
+      if (mark === null || at === null) {
+        if (crosshairShown === null) return;
+        crosshairArt[crosshairShown].style.display = 'none';
+        crosshairLayer.style.display = 'none';
+        crosshairLayer.dataset['crosshair'] = 'none';
+        crosshairShown = null;
+        return;
+      }
+      if (mark !== crosshairShown) {
+        if (crosshairShown !== null) crosshairArt[crosshairShown].style.display = 'none';
+        crosshairArt[mark].style.display = 'block';
+        crosshairLayer.style.display = 'block';
+        crosshairLayer.dataset['crosshair'] = mark;
+        crosshairShown = mark;
+      }
+      // Centred on the point, which is what a crosshair means. Rounded, so the
+      // art stays on the pixel grid it was authored for -- half a pixel of lag
+      // against a blurred mark is not a trade worth making.
+      const left = Math.round(at.x) - CROSSHAIR_CENTRE;
+      const top = Math.round(at.y) - CROSSHAIR_CENTRE;
+      crosshairLayer.style.transform = `translate(${left}px, ${top}px)`;
+      // For the probe: where the mark actually went, in the same pixels the
+      // pointer was reported in. Nothing in the game reads it.
+      crosshairLayer.dataset['crosshairAt'] = `${left + CROSSHAIR_CENTRE},${top + CROSSHAIR_CENTRE}`;
     },
     onOpen(handler) {
       openHandler = handler;
     },
     onEquip(handler) {
       equipHandler = handler;
+    },
+    onRespawn(handler) {
+      respawnHandler = handler;
+    },
+    toggleReadout() {
+      readoutWanted = !readoutWanted;
+      return applyReadout();
     },
   };
 }
@@ -954,7 +2073,10 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
     return touch
       // No key numbers to name on a phone since spec 094 -- the bar is tapped.
       ? 'tap ground to move, a unit to attack · pinch to zoom · tap a skill to cast it'
-      : 'right-click ground to move, a unit to attack · WASD · 1-8 abilities · Esc cancel';
+      // The range is derived rather than typed, or it goes stale the next time a
+      // row is added to the bar -- which is exactly what spec 156 did to the
+      // `1-8` that was here.
+      : `right-click ground to move, a unit to attack · WASD · 1-${BAR_SLOT_COUNT} slots · Esc cancel`;
   }
   if (!aiming.pending) {
     return touch
@@ -972,23 +2094,3 @@ function aimLine(aiming: { readonly abilityId: string | null; readonly pending: 
   return `aiming ${ability.name} — ${pick}, right-click to cancel`;
 }
 
-/** A cooldown countdown: whole seconds while there are several, tenths at the end. */
-function formatSeconds(seconds: number): string {
-  if (seconds >= 10) return String(Math.ceil(seconds));
-  if (seconds >= 1) return seconds.toFixed(1);
-  return seconds.toFixed(1);
-}
-
-/**
- * Whether the player could pay for an ability right now. Cosmetic dimming only:
- * the server decides, and refuses a cast it will not fund whatever this said.
- *
- * Against the live pool since spec 069. It used to compare with `maxResource`,
- * which only ever answered "could this *ever* be afforded" -- the live number
- * was on the entity and had never been on the wire, so a button for a bolt the
- * player could not currently pay for looked exactly like one they could.
- */
-function affordable(view: ClientView, ability: AbilityDefinition | null): boolean {
-  if (!ability || !view.stats) return true;
-  return ability.cost <= view.resource;
-}

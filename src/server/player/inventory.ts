@@ -18,6 +18,7 @@ import { itemById, maxStackOf } from '../data/items.js';
 import {
   EQUIP_SLOTS,
   INVENTORY_SLOTS,
+  slotFamily,
   type Equipment,
   type EquipSlot,
   type Inventory,
@@ -130,7 +131,11 @@ function equipRefusal(stack: ItemStack, index: number, level: number): string | 
   if (slot === null) return `no such equipment slot: ${index}`;
   const definition = itemById(stack.defId);
   if (!definition) return `no such item: ${stack.defId}`;
-  if (definition.slot !== slot) return `${definition.name} does not go in ${slot}`;
+  // Families rather than names since spec 188: the four skill slots all accept
+  // `slot: 'skill'`, and everything else still accepts exactly one thing. An
+  // item that named one particular skill slot would be an item that can only
+  // ever be your second skill, which is not a thing anybody wants to author.
+  if (definition.slot !== slotFamily(slot)) return `${definition.name} does not go in ${slot}`;
   if (level < definition.levelRequirement) {
     return `${definition.name} requires level ${definition.levelRequirement}`;
   }
@@ -209,6 +214,65 @@ export function applyMove(
   write(draft, from, target);
   write(draft, to, source);
   return done(draft);
+}
+
+/**
+ * What came out of a slot, and both containers without it.
+ *
+ * `taken` is on the success case because a removal is only ever half a
+ * transaction: the caller has to put the stack somewhere -- on the ground, today
+ * -- and asking it to read the slot again before calling this would be two
+ * reads of the same truth with a chance to disagree.
+ */
+export type RemoveOutcome =
+  | {
+      readonly ok: true;
+      readonly inventory: Inventory;
+      readonly equipment: Equipment;
+      readonly taken: ItemStack;
+    }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Take `count` (or all) of what is at `at` out of the containers (spec 172).
+ *
+ * Beside {@link applyMove} because it is the same kind of thing -- an address, a
+ * count, and both containers back whole or a reason and nothing touched -- and
+ * separate from it because a move has a target and this has none. Writing it as
+ * a move to a nowhere-container would put a null address through every rule in
+ * `applyMove` that exists to describe a real slot.
+ *
+ * Nothing is checked on the way out, equipment included. That is the rule
+ * `equipRefusal` already states for a move: a level requirement is checked as
+ * something goes *on*, and outlevelling a chestpiece must never trap it on you.
+ */
+export function removeFromSlot(
+  inventory: Inventory,
+  equipment: Equipment,
+  at: SlotAddress,
+  count?: number,
+): RemoveOutcome {
+  if (inventory.length !== INVENTORY_SLOTS) return { ok: false, reason: 'inventory is the wrong size' };
+  if (!addressInRange(at)) return { ok: false, reason: 'that slot does not exist' };
+
+  const source = stackAt(inventory, equipment, at);
+  if (source === null) return { ok: false, reason: 'that slot is empty' };
+
+  const requested = count === undefined ? source.count : count;
+  if (!Number.isInteger(requested) || requested < 1) {
+    return { ok: false, reason: 'count must be a whole number' };
+  }
+  if (requested > source.count) return { ok: false, reason: 'you are not carrying that many' };
+
+  const draft = draftOf(inventory, equipment);
+  const left = source.count - requested;
+  write(draft, at, left === 0 ? null : { defId: source.defId, count: left });
+  return {
+    ok: true,
+    inventory: draft.bag,
+    equipment: draft.worn,
+    taken: { defId: source.defId, count: requested },
+  };
 }
 
 /**

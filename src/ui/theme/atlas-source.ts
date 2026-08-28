@@ -352,6 +352,29 @@ export const ITEM_ICONS: Readonly<Record<string, readonly string[]>> = {
     '....TAAT....',
     '.....TT.....',
   ],
+  /**
+   * A sigil (spec 188): a carried skill.
+   *
+   * A disc with a mark cut through it rather than a scroll or a book, because
+   * every other icon in this table is a *thing you hold* and a skill has to
+   * read as one too -- and because a rune stamped in metal is the only shape at
+   * twelve pixels that says "this does something" without saying which. Which
+   * one it is, is the name in the tooltip and the slot it sits in.
+   */
+  sigil: [
+    '....TTTT....',
+    '..TTAAAATT..',
+    '..TAAAAAAT..',
+    '.TAAAWWAAAT.',
+    '.TAAWWWWAAT.',
+    'TAAAAWWAAAAT',
+    'TAAAAWWAAAAT',
+    '.TAAWWWWAAT.',
+    '.TAAAWWAAAT.',
+    '..TAAAAAAT..',
+    '..TTAAAATT..',
+    '....TTTT....',
+  ],
   potion: [
     '....TTTT....',
     '....T..T....',
@@ -502,5 +525,226 @@ export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {
     '...AAAAAA...',
     '....AAAA....',
     '.....AA.....',
+  ],
+  /**
+   * The four active skills (specs 188, 196).
+   *
+   * Drawn rather than borrowed, and the reason is what the bar looked like
+   * without them: `abilityIconFor` answers `item:unknown` for an id with no row,
+   * so every skill a player equipped and the flask beside them came out as the
+   * same question mark. A bar of four identical boxes is worse than a bar with
+   * no art at all, because it looks like art.
+   *
+   * Each leans on silhouette rather than detail, for the reason the eight above
+   * do: these are read at a glance while something is trying to kill you.
+   */
+  /** Guard break: a shield with a split down it. */
+  guardBreak: [
+    '.TTTTTTTTTT.',
+    '.T...AA...T.',
+    '.T...AA...T.',
+    '.T..AA....T.',
+    '.T...AA...T.',
+    '.T....AA..T.',
+    '.T...AA...T.',
+    '..T..AA..T..',
+    '..T...AA.T..',
+    '...T.AA.T...',
+    '....T..T....',
+    '.....TT.....',
+  ],
+  /** Stunning blow: an impact, struck out in every direction. */
+  stunningBlow: [
+    '..T.......T.',
+    '...T.AA..T..',
+    '.T..AAAA.T..',
+    '..T.AAAA..T.',
+    '...AAAAAA...',
+    'TTAAAAAAAATT',
+    'TTAAAAAAAATT',
+    '...AAAAAA...',
+    '..T.AAAA..T.',
+    '.T..AAAA.T..',
+    '...T.AA..T..',
+    '..T.......T.',
+  ],
+  /** Whirlwind: a sweep all the way round, open where it began. */
+  whirlwind: [
+    '...TTTTTT...',
+    '..TTTTTTTT..',
+    '.TTT....TTT.',
+    'TTT......TTT',
+    'TT........TT',
+    'TT..........',
+    'TT..........',
+    'TTT......AA.',
+    '.TTT....AAAA',
+    '..TTTTTAAAAA',
+    '...TTTT.AAA.',
+    '.........A..',
+  ],
+  /** Crippling strike: a limb, snapped. */
+  cripplingStrike: [
+    '.TT.........',
+    'TTTT........',
+    '.TTTT.......',
+    '..TTTT......',
+    '...TTT......',
+    '....AA......',
+    '......AA....',
+    '......TTT...',
+    '.......TTTT.',
+    '........TTTT',
+    '........TTTT',
+    '.........TT.',
+  ],
+  /** Poison dart: a needle, and what runs off it. */
+  poisonDart: [
+    '.........TTT',
+    '........TTTT',
+    '.......TTTT.',
+    '......TTTT..',
+    '.....TTTT...',
+    '....TTTT....',
+    '...TTTT.....',
+    '..TTTT......',
+    '.TTT........',
+    '..A.........',
+    '.AAA........',
+    '..A.........',
+  ],
+  /** Rending cut: three gashes, torn the same way. */
+  rendingCut: [
+    '..T...T...T.',
+    '.TT..TT..TT.',
+    '.TT..TT..TT.',
+    'TT..TT..TT..',
+    'TT..TT..TT..',
+    'TT..TT..TT..',
+    'TT..TT..TT..',
+    'AA..AA..AA..',
+    '.A...A...A..',
+    '.A...A...A..',
+    '.A...A...A..',
+    '............',
+  ],
+  /** Acid spray: a spout, and the drops coming off it. */
+  acidSpray: [
+    'TT..........',
+    'TTT.........',
+    'TTTT........',
+    '.TTTT..AA...',
+    '..TTTT.AA...',
+    '...TTTT.....',
+    '....TTT..AA.',
+    '.....TT..AA.',
+    '......T.....',
+    '.......AA...',
+    '.......AA...',
+    '............',
+  ],
+  /** Arc lash: a bolt with a tail behind it. */
+  arcLash: [
+    '.......TTT..',
+    '......TTT...',
+    '.....TTT....',
+    '....TTT.....',
+    '...TTTTTT...',
+    '..TTTTTTT...',
+    '.....AAA....',
+    '....AAA.....',
+    '...AAA......',
+    '..AAA.......',
+    '.AAA........',
+    'AA..........',
+  ],
+  /** Blight: a spreading blot, reaching out. */
+  blight: [
+    '.T........T.',
+    '..T..TT..T..',
+    '...TTTTTT...',
+    '..TTTTTTTT..',
+    '.TTTAATTTTT.',
+    'TTTTAATTTTTT',
+    'TTTTTTTAATTT',
+    '.TTTTTTAATT.',
+    '..TTTTTTTT..',
+    '...TTTTTT...',
+    '..T..TT..T..',
+    '.T........T.',
+  ],
+  /** Ember toss: a flame, thrown along an arc. */
+  emberToss: [
+    '.......A....',
+    '......AAA...',
+    '.....AAAAA..',
+    '....AAAAAAA.',
+    '....AAAAAAA.',
+    '.....AAAAA..',
+    '......AAA...',
+    '...T........',
+    '..T.........',
+    '.T..........',
+    'T...........',
+    'T...........',
+  ],
+  /** Rime touch: frost, out from one point. */
+  rimeTouch: [
+    '..T..TT..T..',
+    '...T.TT.T...',
+    '....TTTT....',
+    '.T..TAAT..T.',
+    '..TTAAAATT..',
+    'TTTTAAAATTTT',
+    'TTTTAAAATTTT',
+    '..TTAAAATT..',
+    '.T..TAAT..T.',
+    '....TTTT....',
+    '...T.TT.T...',
+    '..T..TT..T..',
+  ],
+  /**
+   * Scorched earth (spec 223): a ring of ground with fire standing on it.
+   *
+   * The one skill sprite here that draws a *place* rather than a blow. Which is
+   * what it has to do: every other cell on the bar is a thing you do to a body,
+   * and this one is somewhere a body cannot be. The ring is `T` so the ground
+   * reads at 12px, and the flames are `A` because accent is what the whole set
+   * uses for the part that is actually happening.
+   */
+  scorchedEarth: [
+    '......A.....',
+    '.....AA.....',
+    '..A..AA..A..',
+    '.AA.AAAA.AA.',
+    '.AA.AAAA.AA.',
+    '..A.AAAA..A.',
+    '..TTTTTTTT..',
+    '.TT......TT.',
+    'TT........TT',
+    'TT........TT',
+    '.TT......TT.',
+    '..TTTTTTTT..',
+  ],
+  /**
+   * The test skill (spec 196 on main): a checklist.
+   *
+   * It is a developer path and it still needs art, because the alternative is
+   * the question mark -- and a bar that draws one is a bar that looks broken
+   * whether the slot is a real skill or a switch somebody threw.
+   */
+  testStatuses: [
+    'TTTTTTTTTTTT',
+    'T..........T',
+    'T.AA.TTTTT.T',
+    'T.AA.......T',
+    'T..........T',
+    'T.AA.TTTTT.T',
+    'T.AA.......T',
+    'T..........T',
+    'T.AA.TTTTT.T',
+    'T.AA.......T',
+    'T..........T',
+    'TTTTTTTTTTTT',
   ],
 };

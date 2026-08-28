@@ -14,8 +14,17 @@ import { LIBRARY, aura, burst, fire, puff } from './library.js';
 import { compileRegistry } from './compile.js';
 import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './curve.js';
 import { VfxSystem } from './system.js';
-import { DAMAGE_EFFECTS, DAMAGE_DEBRIS } from '../world/vfx-wire.js';
+import { DAMAGE_EFFECTS, DAMAGE_DEBRIS, effectsForBlow, REDUNDANT_SERVER_EFFECTS } from '../world/vfx-wire.js';
+import { SCORCHED_EARTH } from '../../../server/data/aura-fields.js';
+import { AFFLICTION_ART } from '../world/affliction-vfx.js';
+import { SHOT_ART } from '../world/shot-vfx.js';
+import { EMBER_BURST_RADIUS } from './brush.js';
+import { abilityById } from '../../../server/data/abilities.js';
+import { PROJECTILE_SPEED_SCALE } from '../../../server/player/stats.js';
+import { SERVER_TICK_RATE } from '../../../server/config.js';
+import { ALL_DOTS } from '../../../server/data/damage-over-time.js';
 import { spriteSheet, sheetFrames } from './textures.js';
+import { MARK_REACH } from './meshes.js';
 
 const ids = new Set(EFFECTS.map((effect) => effect.id));
 
@@ -95,7 +104,13 @@ describe('the registry as a whole', () => {
     // grows without bound the batching has stopped meaning anything. It is a
     // ceiling on what *could* be drawn: only a batch with something in it costs
     // a call, so a frame with one aura up draws three.
-    expect(REGISTRY.batches.length).toBeLessThanOrEqual(20);
+    //
+    // Moved from 20 to 25 by spec 158, deliberately and once: the painted
+    // vocabulary brings four marks, and `brush-slash` is used both additive (the
+    // explosion's flash) and cutout (everything else), so it costs five. What a
+    // *frame* pays is still bounded by the effects actually up -- a painted
+    // explosion is four calls and a painted hit is three.
+    expect(REGISTRY.batches.length).toBeLessThanOrEqual(25);
   });
 });
 
@@ -112,6 +127,56 @@ describe('the damage-type tables', () => {
 
   it('gives every damage type its own flash', () => {
     expect(new Set(Object.values(DAMAGE_EFFECTS)).size).toBe(Object.keys(DAMAGE_EFFECTS).length);
+  });
+
+  it('names only effects the registry holds, at every gore level (spec 182)', () => {
+    // The tables above are what a *typo* hides in; this is what a new branch
+    // hides in. The gore level chooses between four blood ids, and a level that
+    // names one the registry has not got plays nothing and looks like the
+    // setting working.
+    const seen = new Set<string>();
+    for (const gore of [0, 1, 2] as const) {
+      for (const damageType of Object.keys(DAMAGE_EFFECTS) as (keyof typeof DAMAGE_EFFECTS)[]) {
+        for (const bleeds of [false, true]) {
+          for (const killed of [false, true]) {
+            for (const critical of [false, true]) {
+              for (const blocked of [false, true]) {
+                for (const damage of [-14, 0, 10]) {
+                  const played = effectsForBlow(
+                    {
+                      attackerId: 1,
+                      targetId: 2,
+                      damage,
+                      killed,
+                      critical,
+                      blocked,
+                      damageType,
+                      x: 0,
+                      y: 0,
+                      z: 0,
+                      fromX: -40,
+                      fromZ: 0,
+                      bleeds,
+                      // A pulse names nothing at all (spec 219), so it can hide
+                      // no typo -- this sweep is about the blow's four ids.
+                      periodic: false,
+                    },
+                    1,
+                    gore,
+                  );
+                  for (const request of played) seen.add(request.id);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    for (const id of seen) expect(ids.has(id), id).toBe(true);
+    // And the sweep actually reached the blood vocabulary, or it proved nothing.
+    expect(seen).toContain('blood_hit_brush');
+    expect(seen).toContain('blood_hit_brush_heavy');
+    expect(seen).toContain('death_blood');
   });
 });
 
@@ -522,21 +587,43 @@ describe('the hit vocabulary', () => {
     }
   });
 
-  it('answers a walk order with the wavefront and nothing else', () => {
-    // Spec 127. An order threw no rock, lit no fire and left no mark, so the
-    // only thing here is the wave the shockwave shares.
+  it('answers a walk order with two crossed marks and nothing else', () => {
+    // Spec 175. An order threw no rock, lit no fire and scattered nothing, so
+    // there are two brush marks here and no company for them -- anything around
+    // them would be paint that came off the brush, which is the one thing that
+    // did not happen.
     const order = LIBRARY.find((effect) => effect.id === 'order_move');
-    expect(order?.emitters.map((emitter) => emitter.id)).toEqual(['wave', 'wave_halo']);
-    // The same two the shockwave's ring is, to the number: one wavefront in the
-    // library, not two that drift.
-    const shock = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
-    for (const id of ['wave', 'wave_halo']) {
-      const mine = order?.emitters.find((emitter) => emitter.id === id);
-      const theirs = shock?.emitters.find((emitter) => emitter.id === id);
-      expect(mine?.lifetimeTicks, id).toEqual(theirs?.lifetimeTicks);
-      expect(mine?.blend, id).toBe(theirs?.blend);
-      expect(mine?.mesh?.shape, id).toBe(theirs?.mesh?.shape);
+    expect(order?.emitters.map((emitter) => emitter.id)).toEqual(['stroke_a', 'stroke_b']);
+    for (const emitter of order?.emitters ?? []) {
+      expect(emitter.mesh?.shape, emitter.id).toBe('brush-mark');
+      // One mark each. A second particle in either emitter is a third stroke in
+      // a cross, which is a scribble.
+      expect(emitter.emission, emitter.id).toEqual({ kind: 'burst', count: 1 });
+      // It was placed. Nothing about it travels, or the answer drifts off the
+      // point the question was asked about.
+      expect(emitter.speed, emitter.id).toEqual([0, 0]);
     }
+  });
+
+  it('crosses the two marks rather than opening them out of a point', () => {
+    // The whole geometry of a cross, as the two numbers it actually rests on:
+    // the arms are a quarter turn apart, and neither of them is upright.
+    const order = LIBRARY.find((effect) => effect.id === 'order_move');
+    const rolls = (order?.emitters ?? []).map((emitter) => {
+      const keys = emitter.rotation?.keys ?? [];
+      // Constant over the life: a mark that turned while it was being read is a
+      // mark somebody is still drawing.
+      expect(new Set(keys.map(([, value]) => value)).size, emitter.id).toBe(1);
+      return keys[0]?.[1] ?? 0;
+    });
+    expect(rolls).toHaveLength(2);
+    const apart = Math.abs((rolls[0] ?? 0) - (rolls[1] ?? 0));
+    expect(apart).toBeGreaterThan(Math.PI / 2 - 0.12);
+    expect(apart).toBeLessThan(Math.PI / 2 + 0.12);
+    // And never exactly 90 apart, nor either arm on an axis: a cross drawn by a
+    // person is two strokes that nearly agree.
+    expect(apart).not.toBe(Math.PI / 2);
+    for (const roll of rolls) expect(Math.abs(roll)).toBeGreaterThan(0.1);
   });
 
   it('makes the order cue small, brief and undroppable', () => {
@@ -546,18 +633,22 @@ describe('the hit vocabulary', () => {
       ...(order?.emitters.flatMap((emitter) => emitter.size.keys.map(([, value]) => value)) ?? [0]),
     );
     // Inside the sigil a selected unit already stands on: this is a
-    // confirmation, not an ability.
+    // confirmation, not an ability. Its REACH against that radius, because a
+    // stroke's size is its length where a ring's is its half-width, and the
+    // version of this that compared the two raw numbers was comparing a span
+    // against half of one.
     const sigil = Math.max(
       ...(selected?.emitters
         .find((emitter) => emitter.id === 'ring')
         ?.size.keys.map(([, value]) => value) ?? [0]),
     );
-    expect(peak).toBeLessThan(sigil);
+    expect(peak * MARK_REACH).toBeLessThan(sigil);
     // It ends on its own, and nothing about it is a rate: an order's cue that
-    // outlived the click would be the marker again by another name.
+    // outlived the click would be the marker again by another name. Quicker
+    // than the wavefront it replaced, which ran to 34 ticks.
     for (const emitter of order?.emitters ?? []) {
       expect(emitter.emission.kind, emitter.id).toBe('burst');
-      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(40);
+      expect(emitter.lifetimeTicks[1], emitter.id).toBeLessThanOrEqual(24);
     }
     // Information about your own input, so never the thing dropped when the
     // budget is tight.
@@ -573,6 +664,134 @@ describe('the hit vocabulary', () => {
   it('emits a dissolve off the body rather than from a point', () => {
     const dissolve = LIBRARY.find((effect) => effect.id === 'death_dissolve');
     expect(dissolve?.emitters[0]?.shape.kind).toBe('mesh');
+  });
+});
+
+describe('the heal (spec 157)', () => {
+  const heal = LIBRARY.find((effect) => effect.id === 'heal_restore');
+  const emitter = (id: string) => heal?.emitters.find((entry) => entry.id === id);
+
+  it('is the three layers the brief asks for, and nothing else', () => {
+    expect(heal?.emitters.map((entry) => entry.id)).toEqual(['wave', 'wave_halo', 'streaks', 'plusses']);
+  });
+
+  it('shares the one wavefront rather than authoring a second one', () => {
+    // The same two emitters the shockwave's ring is, so a tuning pass on the
+    // wave moves both instead of leaving this one behind. Measured against the
+    // shockwave rather than against the walk order, which is where the wave is
+    // authored -- the order was the copy, and since spec 175 it is a cross.
+    const shock = LIBRARY.find((effect) => effect.id === 'shockwave_ring');
+    for (const id of ['wave', 'wave_halo']) {
+      expect(emitter(id)?.mesh?.shape, id).toBe(shock?.emitters.find((entry) => entry.id === id)?.mesh?.shape);
+      expect(emitter(id)?.blend, id).toBe(shock?.emitters.find((entry) => entry.id === id)?.blend);
+    }
+  });
+
+  it('keeps the shockwave at the feet and smaller than the selection ring', () => {
+    // Small, and inside every status ring: a heal is an event that happened
+    // here, and one that reached the outer radii would read as a status.
+    const peak = Math.max(...(emitter('wave')?.size.keys.map(([, value]) => value) ?? [0]));
+    const sigil = Math.max(
+      ...(LIBRARY.find((effect) => effect.id === 'aura_selected')
+        ?.emitters.find((entry) => entry.id === 'ring')
+        ?.size.keys.map(([, value]) => value) ?? [0]),
+    );
+    expect(peak).toBeLessThan(sigil);
+    // On the floor, a hair above it: the origin is the ground, not a chest.
+    for (const id of ['wave', 'wave_halo']) {
+      expect(emitter(id)?.offset?.y ?? 0, id).toBeLessThanOrEqual(3);
+    }
+  });
+
+  it('sends the streaks and the plusses straight up rather than outward', () => {
+    // A cone emits into the sky about +Y; a circle emits in the ground plane,
+    // which is what the flat shockwave uses and is exactly wrong here.
+    for (const id of ['streaks', 'plusses']) {
+      const shape = emitter(id)?.shape;
+      expect(shape?.kind, id).toBe('cone');
+      expect(shape?.kind === 'cone' ? shape.angle : Math.PI, `${id} fans out`).toBeLessThan(0.2);
+      // Gravity would arc a rise over into a spray, which is the blood this
+      // replaces. Nothing here falls.
+      expect(emitter(id)?.gravity ?? 0, id).toBe(0);
+    }
+  });
+
+  it('draws the streaks as ribbons, so a rise is a line and not a bar', () => {
+    expect(emitter('streaks')?.render).toBe('ribbon');
+    expect(emitter('streaks')?.ribbonSpacing ?? 0).toBeGreaterThan(0);
+  });
+
+  it('holds the plusses on screen after the streaks have gone', () => {
+    // The effect ends on the symbol rather than on the motion.
+    expect(emitter('plusses')?.lifetimeTicks[0] ?? 0).toBeGreaterThan(emitter('streaks')?.lifetimeTicks[1] ?? 0);
+    expect(emitter('plusses')?.speed[1] ?? 0).toBeLessThan(emitter('streaks')?.speed[0] ?? 0);
+  });
+
+  it('draws the plus as a cutout of the plus sheet, big enough to read', () => {
+    expect(emitter('plusses')?.sprite?.sheet).toBe('plus');
+    // The pixel-look blend: a plus that fades through partial alpha is a smudge
+    // the retro pass then bands.
+    expect(emitter('plusses')?.blend).toBe('dither-cutout');
+    // Roughly eleven pixels at the gameplay zoom (760px over ~900 world units),
+    // which is about a pixel and a half per texel of a 7x7 sheet.
+    const peak = Math.max(...(emitter('plusses')?.size.keys.map(([, value]) => value) ?? [0]));
+    expect(peak).toBeGreaterThanOrEqual(12);
+  });
+
+  it('is green throughout, in the greens the heal ring already uses', () => {
+    // Not "a green picked to look like healing": the same palette entries the
+    // heal aura is drawn in, so a heal landing and a heal status showing do not
+    // nearly match.
+    for (const entry of heal?.emitters ?? []) {
+      for (const [, key] of entry.color.stops) {
+        expect(['auraHeal', 'auraBuff'], `${entry.id} -> ${key}`).toContain(key);
+      }
+    }
+  });
+
+  it('ends on its own rather than standing under the body', () => {
+    // A heal is an event. A rate emitter never finishes, so one in here would be
+    // a status aura that nothing ever stops -- the plusses stagger with a ramp,
+    // which ends, rather than with a rate, which does not.
+    for (const entry of heal?.emitters ?? []) {
+      expect(entry.emission.kind, entry.id).not.toBe('rate');
+      if (entry.emission.kind === 'ramp') expect(entry.emission.overTicks, entry.id).toBeLessThanOrEqual(30);
+      expect(entry.lifetimeTicks[1], entry.id).toBeLessThanOrEqual(50);
+    }
+  });
+});
+
+describe('the plus sheet (spec 157)', () => {
+  const image = spriteSheet('plus').image;
+  // `TextureImageData.data` is a typed array of some flavour; every sheet in
+  // this file is RGBA bytes, and reading it as numbers is all this needs.
+  const data = image.data as ArrayLike<number>;
+  const alphaAt = (x: number, y: number): number => data[(y * image.width + x) * 4 + 3] ?? 0;
+
+  it('is one square frame', () => {
+    expect(sheetFrames('plus')).toBe(1);
+    expect(image.width).toBe(image.height);
+  });
+
+  it('is a cross rather than a blob or a box', () => {
+    const last = image.width - 1;
+    const mid = (image.width - 1) / 2;
+    // The arms reach all four edges...
+    expect(alphaAt(mid, 0)).toBe(255);
+    expect(alphaAt(mid, last)).toBe(255);
+    expect(alphaAt(0, mid)).toBe(255);
+    expect(alphaAt(last, mid)).toBe(255);
+    // ...and the corners are empty, which is the difference between a plus and
+    // a square.
+    for (const [x, y] of [[0, 0], [last, 0], [0, last], [last, last]]) {
+      expect(alphaAt(x ?? 0, y ?? 0)).toBe(0);
+    }
+  });
+
+  it('is every texel on or off, so the quantizer has nothing to band', () => {
+    for (let i = 3; i < data.length; i += 4) {
+      expect(data[i] === 0 || data[i] === 255).toBe(true);
+    }
   });
 });
 
@@ -612,6 +831,114 @@ describe('the whole library actually runs', () => {
   });
 });
 
+
+/**
+ * The afflictions (spec 215).
+ *
+ * Both directions, and the second one is why this block exists. Checking that
+ * every id `AFFLICTION_ART` names is in the registry catches a typo -- the
+ * failure `aurasFor`'s own test names, "a name that looks right and silently
+ * plays nothing". Checking the other way catches the failure spec 215 was
+ * written to close: an effect that was **authored and then reached by nothing**.
+ * `EmitterShape`'s `{ kind: 'mesh' }` sat in the type for eighty specs with no
+ * definition that used it and no `surface` hook to resolve it, and every test in
+ * the tree was green throughout, because a table that agrees with itself is all
+ * a one-directional check can ever prove.
+ *
+ * The third assertion closes the same loop one table further out: an affliction
+ * added to `data/damage-over-time.ts` with no art is a mechanic that takes
+ * health with nothing on the body to say so, and from the neck down it is
+ * indistinguishable from being wrong about your own health bar -- which is the
+ * exact state this spec found the game in.
+ */
+describe('the afflictions (spec 215)', () => {
+  /** Every id reachable from the art table: the cling, its heavy tier, the beat. */
+  const named = new Set<string>();
+  for (const art of Object.values(AFFLICTION_ART)) {
+    named.add(art.cling);
+    if (art.heavy) named.add(art.heavy);
+    named.add(art.pulse);
+  }
+
+  it('names only effects the registry actually holds', () => {
+    for (const id of named) expect(ids.has(id), id).toBe(true);
+    // And the sweep reached something, or an empty table passes it.
+    expect(named.size).toBeGreaterThan(ALL_DOTS.length * 2);
+  });
+
+  it('reaches every affliction effect the registry holds', () => {
+    // The direction that catches an authored effect nothing plays. A `_heavy`
+    // for a row that cannot get worse, or a beat for an affliction that was
+    // renamed, is dead paint: it costs a batch in the compiled registry, it is
+    // previewed by `preview-afflictions-vfx.ts`, and it never appears in a game.
+    const authored = EFFECTS.filter((effect) => effect.id.startsWith('affliction_')).map(
+      (effect) => effect.id,
+    );
+    expect(authored.length).toBeGreaterThan(0);
+    for (const id of authored) expect(named.has(id), `${id} is authored and reached by nothing`).toBe(true);
+    // Both directions together mean the two sets are the same set.
+    expect([...named].sort()).toEqual([...authored].sort());
+  });
+
+  it('has art for every affliction the sim can apply', () => {
+    for (const row of ALL_DOTS) {
+      const art = AFFLICTION_ART[row.id];
+      expect(art, row.id).toBeDefined();
+      expect(art?.cling, row.id).toBeTruthy();
+      expect(art?.pulse, row.id).toBeTruthy();
+    }
+    expect(Object.keys(AFFLICTION_ART)).toHaveLength(ALL_DOTS.length);
+  });
+
+  it('gives every affliction its own paint rather than two rows sharing one', () => {
+    // Seven afflictions drawn with five effects is five afflictions, and the
+    // whole problem this spec opens on is that from the neck down they already
+    // looked alike.
+    const clings = ALL_DOTS.map((row) => AFFLICTION_ART[row.id]?.cling);
+    expect(new Set(clings).size).toBe(ALL_DOTS.length);
+    const pulses = ALL_DOTS.map((row) => AFFLICTION_ART[row.id]?.pulse);
+    expect(new Set(pulses).size).toBe(ALL_DOTS.length);
+  });
+
+  it('burns until stopped, and never hard-stops', () => {
+    // `durationTicks: 0` is what makes a cling a **state**: the driver owns the
+    // stop and owes one on despawn, because nothing in this system stops itself
+    // when the body it is attached to goes away. The stop is **soft**, unlike an
+    // aura's: a cling mark lives about half a second, so letting the last few
+    // dry is what an affliction ending should look like -- where `hardStop` was
+    // written for a single particle held for ten minutes, which is not this.
+    const byId = new Map(EFFECTS.map((effect) => [effect.id, effect]));
+    for (const art of Object.values(AFFLICTION_ART)) {
+      for (const id of [art.cling, art.heavy].filter((entry): entry is string => Boolean(entry))) {
+        expect(byId.get(id)?.durationTicks, id).toBe(0);
+        expect(byId.get(id)?.hardStop, id).toBeFalsy();
+      }
+      // A beat is the opposite kind of thing: an event, thrown and over, whose
+      // handle the driver drops on the floor. A rate emitter here would be an
+      // instance nobody is holding a handle to and nothing will ever stop.
+      const beat = byId.get(art.pulse);
+      expect(beat?.emitters.length, art.pulse).toBeGreaterThan(0);
+      for (const emitter of beat?.emitters ?? []) {
+        expect(emitter.emission.kind, `${art.pulse}/${emitter.id}`).toBe('burst');
+      }
+    }
+  });
+
+  it('paints in opaque marks throughout', () => {
+    // The painted vocabulary's opacity rule (spec 159): paint is opaque, and two
+    // translucent marks crossing make a third colour that is in neither of them.
+    // It matters more here than anywhere else in the file, because a cling is
+    // *many overlapping marks on one body by construction* -- the one
+    // arrangement where a translucent mark is guaranteed to cross another.
+    for (const effect of EFFECTS) {
+      if (!effect.id.startsWith('affliction_')) continue;
+      for (const emitter of effect.emitters) {
+        expect(emitter.blend, `${effect.id}/${emitter.id}`).toBe('alpha');
+      }
+    }
+  });
+});
+
 describe('puff and fire builders', () => {
   it('return plain config, so a variant is a call rather than a class', () => {
     const made = puff({
@@ -625,5 +952,271 @@ describe('puff and fire builders', () => {
     });
     expect(made.id).toBe('puff_test');
     expect(JSON.parse(JSON.stringify(made))).toEqual(made);
+  });
+});
+
+/**
+ * The shot the staff throws, and where it lands (spec 218).
+ *
+ * Two effects, and the properties worth pinning are the ones a still frame
+ * cannot show. `worldSpace` is the whole of the flight look and is a boolean
+ * nobody can see; "no smoke" is a request that has to survive a retune of a
+ * shared builder; and "a very short trail" is an adjective until it is a number
+ * of world units.
+ */
+describe('the ember shot (spec 218)', () => {
+  const byId = new Map(EFFECTS.map((effect) => [effect.id, effect]));
+  const flight = byId.get('shot_ember');
+  const burst = byId.get('ranged.ember.impact');
+  const emitter = (effect: typeof flight, id: string) =>
+    effect?.emitters.find((entry) => entry.id === id);
+
+  it('is in the registry under both ids', () => {
+    expect(flight, 'shot_ember').toBeDefined();
+    // Named for the ability, because that is the id the server has sent on a
+    // projectile's impact since spec 062 and the seam this reaches it by.
+    expect(burst, 'ranged.ember.impact').toBeDefined();
+  });
+
+  it('clings its fire to the ball and leaves its smoke behind', () => {
+    // The one property the whole look rests on, and the one that is invisible
+    // in a still frame. The compiled default is world space, and attaching an
+    // effect moves only the emission *origin* -- so on the two layers that are
+    // the fireball, `worldSpace: false` is what makes them travel with it, and
+    // on the trail its absence is what makes a mark stay where it was laid.
+    expect(emitter(flight, 'core')?.worldSpace).toBe(false);
+    expect(emitter(flight, 'licks')?.worldSpace).toBe(false);
+    expect(emitter(flight, 'trail')?.worldSpace).not.toBe(false);
+  });
+
+  it('runs until it is stopped, because a flight has no length of its own', () => {
+    // The driver owns both ends and owes the stop; a duration here would put the
+    // paint out partway through a long shot.
+    expect(flight?.durationTicks).toBe(0);
+  });
+
+  it('leaves a very short trail, in world units rather than in adjectives', () => {
+    const spec = abilityById('ranged.ember')?.projectile;
+    const perSecond = (spec?.speed ?? 0) * PROJECTILE_SPEED_SCALE;
+    const life = emitter(flight, 'trail')?.lifetimeTicks[1] ?? 0;
+    const behind = (perSecond / SERVER_TICK_RATE) * life;
+    // Long enough to read as a trail at all -- a few shot-radii...
+    expect(behind).toBeGreaterThan((spec?.radius ?? 0) * 3);
+    // ...and short enough that it is smoke coming off a shot rather than a line
+    // drawn across the arena. The bow's whole range is 420.
+    expect(behind).toBeLessThan(100);
+  });
+
+  it('has no smoke in its burst, and therefore no soot anywhere in it', () => {
+    // `smoke: 0` is the request read literally, and `brushExplosion` omits the
+    // emitter outright at zero rather than bursting nothing.
+    expect(emitter(burst, 'smoke')).toBeUndefined();
+    // The stronger form: soot is the smoke layer's colour and appears nowhere
+    // else in the builder, so this fails if a retune reintroduces it by another
+    // route. The transitional layer stays -- burnt orange into brown, drawn
+    // among the fire -- because it is what makes a painted explosion painted.
+    for (const entry of burst?.emitters ?? []) {
+      for (const [, key] of entry.color?.stops ?? []) {
+        expect(key, `${entry.id} reaches ${key}`).not.toBe('paintSoot');
+      }
+    }
+    expect(emitter(burst, 'transitional')).toBeDefined();
+  });
+
+  it('carries no light, because a light is the one length scale does not touch', () => {
+    // A light's radius goes straight into the light buffer (`system.ts`), so a
+    // lit preset is a light sized for whatever radius it was authored at
+    // whatever it is played at. The three lit explosion presets are played by
+    // nothing, so nothing has ever noticed.
+    for (const entry of burst?.emitters ?? []) expect(entry.light, entry.id).toBeUndefined();
+  });
+
+  it('is authored at the radius it is drawn at', () => {
+    // Since spec 218 those are the same statement: `scene.addEffect` plays an
+    // authored effect at scale 1. Small against a body -- a player's radius is
+    // 16 -- which is the request, and the same number `explosion_brush_small` is
+    // authored at, so this is the vocabulary's own small blast rather than a
+    // shrunk large one.
+    expect(EMBER_BURST_RADIUS).toBeGreaterThan((abilityById('ranged.ember')?.projectile?.radius ?? 0) * 2);
+    expect(EMBER_BURST_RADIUS).toBeLessThan(46);
+  });
+
+  it('draws its shot with paint the registry holds', () => {
+    // The same pair of directions `AFFLICTION_ART` is held to, so an effect
+    // authored and reached by nothing fails here rather than being previewed
+    // forever and never appearing in a game.
+    const named = new Set(Object.values(SHOT_ART));
+    const authored = EFFECTS.filter((effect) => effect.id.startsWith('shot_')).map((e) => e.id);
+    expect([...named].sort()).toEqual([...authored].sort());
+  });
+});
+
+/**
+ * The five landings that were a debug ring (spec 234).
+ *
+ * The seam is `scene.addEffect`'s `system.has(effectId)`: the server has sent
+ * these ids since spec 062 and the registry held none of them, so authoring
+ * under the id already being sent is the whole of the wiring. What that makes
+ * fragile is the *id* -- a typo produces an effect nobody plays and a ring
+ * nobody notices, which is the state this spec found the game in.
+ */
+describe('the landings (spec 234)', () => {
+  const LANDINGS = [
+    { id: 'skill.emberToss.impact', ability: 'skill.emberToss' },
+    { id: 'skill.rimeTouch.impact', ability: 'skill.rimeTouch' },
+    { id: 'skill.blight.impact', ability: 'skill.blight' },
+    { id: 'skill.arcLash.impact', ability: 'skill.arcLash' },
+    { id: 'skill.whirlwind.impact', ability: 'skill.whirlwind' },
+    { id: 'skill.scorchedEarth.self', ability: 'skill.scorchedEarth' },
+  ] as const;
+
+  it('is in the registry, so addEffect takes the authored branch', () => {
+    for (const landing of LANDINGS) {
+      expect(REGISTRY.byId.has(landing.id), landing.id).toBe(true);
+    }
+  });
+
+  it('names an ability, with the suffix that ability actually sends', () => {
+    for (const landing of LANDINGS) {
+      const ability = abilityById(landing.ability);
+      expect(ability, landing.ability).toBeDefined();
+      if (!ability) continue;
+      if (landing.id.endsWith('.self')) {
+        // `landSelf` is the only landing that sends `.self`.
+        expect(ability.kind, landing.id).toBe('self');
+        continue;
+      }
+      // The three landings that send `.impact`: an area shape, a ground blast,
+      // and a projectile with a burst radius. A plain melee row sends nothing,
+      // so an `.impact` authored for one would never play.
+      const sendsImpact =
+        ability.kind === 'area' ||
+        ability.kind === 'ground' ||
+        (ability.kind === 'projectile' && (ability.radius ?? 0) > 0);
+      expect(sendsImpact, `${landing.id} names a row that sends no impact`).toBe(true);
+    }
+  });
+
+  it('does not drop the scorched-earth ignition before it reaches the registry', () => {
+    // `REDUNDANT_SERVER_EFFECTS` is where the two self-heals correctly sit,
+    // because the blow they report already draws them. Scorched Earth reports no
+    // blow at all -- it applies a status -- so the ignition is its only picture.
+    expect(REDUNDANT_SERVER_EFFECTS.has('skill.scorchedEarth.self')).toBe(false);
+  });
+
+  it('sizes the ignition off the field it lights, not off a number', () => {
+    // The same rule `aura_scorched` follows: this is where the fire is about to
+    // be, so a burst reaching past the field would promise ground that is safe.
+    const index = REGISTRY.byId.get('skill.scorchedEarth.self');
+    expect(index).toBeDefined();
+    const effect = EFFECTS.find((entry) => entry.id === 'skill.scorchedEarth.self');
+    expect(effect).toBeDefined();
+    // Authored at the field's reach: the longest a mark is thrown scales off it,
+    // so the check is that the definition moves when the constant does.
+    const reach = Math.max(
+      ...(effect?.emitters ?? []).map((emitter) =>
+        Math.max(...emitter.size.keys.map(([, value]) => value)),
+      ),
+    );
+    expect(reach).toBeGreaterThan(SCORCHED_EARTH.radius * 0.3);
+    expect(reach).toBeLessThan(SCORCHED_EARTH.radius * 2.2);
+  });
+
+  it('gives no two landings the same colours', () => {
+    // The sheet's own finding, turned into a check. Arc Lash's second version
+    // came out the same pale blue as Rime Touch two rows above it, and nothing
+    // else in this suite could have said so.
+    const signature = (id: string): string => {
+      const effect = EFFECTS.find((entry) => entry.id === id);
+      const stops = (effect?.emitters ?? []).flatMap((emitter) =>
+        emitter.color.stops.map(([, key]) => key),
+      );
+      return [...new Set(stops)].sort().join(',');
+    };
+    const seen = new Map<string, string>();
+    for (const landing of LANDINGS) {
+      const colours = signature(landing.id);
+      const clash = seen.get(colours);
+      // Ember Toss and Scorched Earth are both fire and are allowed to share:
+      // they are the same element, which is the rule rather than an exception.
+      const firePair =
+        clash !== undefined &&
+        [clash, landing.id].every((id) => id === 'skill.emberToss.impact' || id === 'skill.scorchedEarth.self');
+      expect(clash === undefined || firePair, `${landing.id} shares a palette with ${String(clash)}`).toBe(true);
+      seen.set(colours, landing.id);
+    }
+  });
+});
+
+/**
+ * The aimed landings and the shards (spec 235).
+ *
+ * Three of these assert numbers, and each is a regression the sheet caught and
+ * no other check could: a lane that is not a lane, shards small enough to
+ * vanish, and two skills in one colour.
+ */
+describe('the aimed landings (spec 235)', () => {
+  const effectOf = (id: string) => EFFECTS.find((entry) => entry.id === id);
+
+  it('gives Acid Spray a cue at all', () => {
+    // `landCone` computed a bearing and raised no effect event for 170 specs, so
+    // this was the one skill with not even a debug ring to fall back from.
+    expect(REGISTRY.byId.has('skill.acidSpray.impact')).toBe(true);
+  });
+
+  it('strings the lane along its bearing rather than around a point', () => {
+    const lane = effectOf('skill.arcLash.impact');
+    expect(lane).toBeDefined();
+    const offsets = (lane?.emitters ?? []).map((emitter) => emitter.offset?.x ?? 0);
+    // Every node ahead of the origin, and reaching most of the row's own 300.
+    expect(Math.min(...offsets)).toBeGreaterThan(0);
+    expect(Math.max(...offsets)).toBeGreaterThan(200);
+    // And off the centre line, alternately: a ruled line is a laser, not a bolt.
+    const sides = (lane?.emitters ?? []).map((emitter) => Math.sign(emitter.offset?.z ?? 0));
+    expect(new Set(sides).size).toBeGreaterThan(1);
+  });
+
+  it('fans the cone instead of kinking it', () => {
+    const cone = effectOf('skill.acidSpray.impact');
+    expect(cone).toBeDefined();
+    const bearings = (cone?.emitters ?? []).map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    // A lane's nodes all point straight down the run; a cone's do not.
+    expect(new Set(bearings.map((b) => b.toFixed(3))).size).toBeGreaterThan(1);
+    const lane = effectOf('skill.arcLash.impact');
+    const laneBearings = (lane?.emitters ?? []).map((emitter) =>
+      emitter.shape.kind === 'fan' ? (emitter.shape.bearing ?? 0) : 0,
+    );
+    expect(new Set(laneBearings).size).toBe(1);
+  });
+
+  it('makes frost shards big enough to see', () => {
+    // The correction from "water" went straight past "shards" into a scatter of
+    // specks. A shard has to be a piece you can see the shape of.
+    const shards = effectOf('skill.rimeTouch.impact');
+    expect(shards).toBeDefined();
+    const longest = Math.max(
+      ...(shards?.emitters ?? []).flatMap((emitter) => emitter.size.keys.map(([, value]) => value)),
+    );
+    expect(longest).toBeGreaterThan(20);
+  });
+
+  it('throws frost radially, with no lobe', () => {
+    // `brushExplosion`'s "asymmetry has to be composed" argument is right about
+    // a blast and wrong about a shatter: ice breaking has no side it favours,
+    // and composing one is what made this read as a splash.
+    const shards = effectOf('skill.rimeTouch.impact');
+    for (const emitter of shards?.emitters ?? []) {
+      expect(emitter.shape.kind, emitter.id).toBe('circle');
+    }
+  });
+
+  it('lets the shards fall, where a blast does not', () => {
+    const shards = effectOf('skill.rimeTouch.impact');
+    const rings = (shards?.emitters ?? []).filter((emitter) => emitter.id !== 'flash');
+    for (const emitter of rings) {
+      expect(emitter.gravity ?? 0, emitter.id).toBeLessThan(-500);
+    }
   });
 });

@@ -23,8 +23,9 @@
  * Pure. No clock, no randomness, no entity.
  */
 
-import { MAX_DAMAGE_REDUCTION, PLAYER_ATTACK_DAMAGE } from '../../sim/constants.js';
+import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
 import { above, linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
+import { desperationSurge, maxFallbackCharges, RESTORATION } from '../data/restoration.js';
 import { emptyTraitTotals, type ModifierTotals } from '../data/modifiers.js';
 import type { TraitStats } from '../state/types.js';
 import type { AttributeTotals } from './progression.js';
@@ -66,7 +67,6 @@ export const NEUTRAL_TRAITS: TraitStats = {
   executeBonus: 0,
   executeBelow: 0,
   overkillResource: 0,
-  weaponPower: 1,
   momentumTicks: 0,
   momentumWindupScale: 0,
   heavyWindupScale: 1,
@@ -102,6 +102,7 @@ export const NEUTRAL_TRAITS: TraitStats = {
   secondWindHeal: 0,
   resoluteBelow: 0,
   resoluteReduction: 0,
+  staggerImmuneBelow: 0,
   overhealShieldTicks: 0,
   maxShield: 0,
   weakPointChance: 0,
@@ -133,6 +134,16 @@ export const NEUTRAL_TRAITS: TraitStats = {
   adaptationTicks: 0,
   conversionCap: 0,
   masteryRelief: 0,
+  restoreOverkillPct: 0,
+  restoreEvasivePct: 0,
+  restoreAbilityKillPct: 0,
+  restoreWeakPointPct: 0,
+  moteAttractRadius: 0,
+  restoreSalvagePct: 0,
+  // A body with no progression carries the flask everybody carries. Monsters
+  // never cast it -- no monster row names it -- so the number is harmless there
+  // and the alternative would be a player-shaped special case in `blankEntity`.
+  fallbackCharges: RESTORATION.fallback.charges,
 };
 
 /**
@@ -188,6 +199,8 @@ export function deriveTraits(
   const { strength: STR, agility: AGI, intelligence: INT } = attributes;
   const { constitution: CON, perception: PER, wisdom: WIS } = attributes;
   const S = SCALING;
+  /** The health economy's per-point rates (spec 156), read like `S`. */
+  const R = RESTORATION.stats;
   const rate = context.tickRate > 0 ? context.tickRate : 60;
 
   // --- Strength -----------------------------------------------------------
@@ -236,6 +249,15 @@ export function deriveTraits(
   // is multiplied by a flag rather than added to a grant -- Intelligence is
   // worth nothing here until the thing that shapes exists.
   const shaping = t.shapingCostPct > 0 ? 1 : 0;
+  // The three capability flags (spec 239), read once and named, because each
+  // gates two or three fields below and a repeated `t.grantsX > 0` is three
+  // chances to gate one of them differently. See `TraitModifier` for why each
+  // exists: in every case the capability used to be *inferred* from a number
+  // that a skill grants as a delta, so the skill that improved the mechanic
+  // switched it off instead.
+  const prepared = t.grantsPrepared > 0;
+  const reads = t.grantsOpeningRead > 0;
+  const adapts = t.grantsAdaptation > 0;
   const spellRadiusPct = Math.max(0, linear(INT, S.intelligence.radiusPer) * shaping + t.spellRadiusPct);
   const spellRangePct = Math.max(0, linear(INT, S.intelligence.rangePer) * shaping + t.spellRangePct);
   const shapingCostRelief = clamp(t.shapingCostRelief, 0, 1);
@@ -275,6 +297,23 @@ export function deriveTraits(
       ? Math.max(0, context.maxHealth * S.constitution.shieldFraction)
       : 0;
 
+  // --- the health economy (spec 156) --------------------------------------
+  // One route per attribute, and none of them is "+X% healing received". These
+  // are granted by attributes alone and by no content table, which is why there
+  // is no `t.` term on any of them: `TraitModifier` deliberately only names
+  // what something actually grants.
+  //
+  // Constitution's route runs through `healingSurge`, which already existed and
+  // already runs inside `applyHealing`. Its threshold has to come with it: a
+  // surge with no `healingSurgeBelow` never fires, and the synergy that grants
+  // both keeps its own (deeper) threshold because this is a max rather than an
+  // assignment.
+  const healingSurge = Math.max(0, t.healingSurge + desperationSurge(CON));
+  const healingSurgeBelow =
+    healingSurge > 0
+      ? Math.max(RESTORATION.stats.desperationBelow, clamp(t.healingSurgeBelow, 0, 1))
+      : 0;
+
   return {
     staggerPower: Math.max(0, staggerPower),
     staggerTicks,
@@ -291,9 +330,6 @@ export function deriveTraits(
     executeBonus: Math.max(0, t.executeBonus),
     executeBelow: clamp(t.executeBelow, 0, 1),
     overkillResource: Math.max(0, t.overkillResource),
-    // The Damage row, expressed as a multiplier a blow can be multiplied by.
-    // A body with the reference damage hits for exactly what the ability says.
-    weaponPower: Math.max(0, context.attackDamage / PLAYER_ATTACK_DAMAGE),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
     heavyWindupScale: reduction(t.heavyWindupReduction),
@@ -315,12 +351,46 @@ export function deriveTraits(
     spellRangePct,
     shapingCostPct: Math.max(0, t.shapingCostPct * (1 - shapingCostRelief)),
     shapingCostRelief,
-    prepareTicks: t.preparedWindupScale > 0 ? Math.max(rate * 0.25, t.prepareTicks) : 0,
-    preparedWindupScale: t.preparedWindupScale > 0 ? clamp(t.preparedWindupScale, 0.2, 1) : 1,
+    // **Prepared, and what enables it** (spec 239).
+    //
+    // The capability is `grantsPrepared`, a flag, and the two numbers below are
+    // *deltas onto the base in `SCALING`*. That is the whole fix: they were the
+    // capability as well as the size, inferred as `preparedWindupScale > 0`, and
+    // a skill that improves Prepared grants a **negative** scale -- so the
+    // Intelligence 25 skill switched the mechanic off rather than sharpening
+    // it, and did nothing at all until the Intelligence 35 milestone. Ten points
+    // of a ranked, purchasable skill worth exactly zero.
+    //
+    // Deltas onto a shared base also make the two layers additive in the
+    // direction they read: every source shortens the stillness and sharpens the
+    // opener, and nothing can make either worse.
+    prepareTicks: prepared
+      ? Math.max(rate * 0.25, S.intelligence.prepareTicks + t.prepareTicks)
+      : 0,
+    preparedWindupScale: prepared
+      ? clamp(S.intelligence.preparedWindupScale + t.preparedWindupScale, 0.2, 1)
+      : 1,
     preparedMastery: t.preparedMastery > 0 ? 1 : 0,
     vsAfflictedPct: Math.max(0, t.vsAfflictedPct),
     appliesSundered: t.appliesSundered > 0 ? 1 : 0,
-    overflowHealthPerResource: Math.max(0, t.overflowHealthPerResource * reduction(t.overflowCostReduction)),
+    // **Arcane Overflow's price, which progression may only ever lower**
+    // (spec 239).
+    //
+    // The summed field decides *whether* you have Overflow and nothing else;
+    // the rate itself comes from `SCALING`, and the only thing that moves it is
+    // `overflowCostReduction`, which by the reduction convention can only
+    // shrink. Backwards progression is therefore impossible by construction
+    // rather than by the numbers happening to work out.
+    //
+    // It was `sum * reduction(...)`, and two sources grant it: the Intelligence
+    // 40 skill and the Intelligence 50 milestone. So reaching the milestone
+    // **doubled** the health an overflow cast costs, from 2 a point to 4 --
+    // progression running backwards at the exact moment the tree says an
+    // Intelligence character has arrived.
+    overflowHealthPerResource:
+      t.overflowHealthPerResource > 0
+        ? S.intelligence.overflowHealthPerResource * reduction(t.overflowCostReduction)
+        : 0,
     damageToShield: clamp(t.damageToShield, 0, 0.5),
 
     maxPoise,
@@ -335,6 +405,14 @@ export function deriveTraits(
     secondWindHeal: clamp(t.secondWindHeal, 0, 0.5),
     resoluteBelow: t.resoluteReduction > 0 ? Math.max(0.3, t.resoluteBelow) : 0,
     resoluteReduction: clamp(t.resoluteReduction, 0, 0.4),
+    // **Granted, never inferred** (spec 239). This used to be `resoluteBelow`'s
+    // twin -- `isResolute` answered both questions -- so the Constitution 25
+    // skill, whose entire grant is a damage reduction and whose description
+    // says the execute range is where you get harder, also handed out complete
+    // immunity to guard breaks. A skill must grant what its tooltip says and
+    // not a qualitative mechanic nobody wrote down; the milestone that *does*
+    // say "you cannot be staggered" is the one that grants this.
+    staggerImmuneBelow: clamp(t.staggerImmuneBelow, 0, 1),
     overhealShieldTicks: Math.max(0, Math.round(t.overhealShieldTicks)),
     maxShield,
 
@@ -342,9 +420,22 @@ export function deriveTraits(
     weakPointMultiplier: Math.max(1, weakPointMultiplier),
     exposeTicks,
     exposedDamagePct: Math.max(0, t.exposedDamagePct),
-    openingReadTicks:
-      t.vulnerableWeakPointFactor > 0 ? Math.max(0, Math.round(t.openingReadTicks)) : 0,
-    vulnerableWeakPointFactor: Math.max(1, t.vulnerableWeakPointFactor),
+    // **Opening Read, and what enables it** (spec 239). Prepared's fix again,
+    // for the same reason: the capability was inferred from the *payoff*
+    // (`vulnerableWeakPointFactor > 0`), and the Perception 10 skill grants a
+    // longer window rather than a bigger payoff -- so it did nothing for the
+    // twenty-five points between it and the Perception 35 milestone.
+    //
+    // The two layers split along the distinction the design already draws.
+    // **Vulnerable is a fact about the target**, so the skill introduces the
+    // window and lengthens it; how well an opening can be *exploited* is
+    // Perception's, so both layers raise the factor and the milestone raises it
+    // most. The factor is a **bonus above 1** now, so sources add rather than
+    // one of them being a total that another has to know about.
+    openingReadTicks: reads
+      ? Math.max(0, Math.round(S.perception.openingReadTicks + t.openingReadTicks))
+      : 0,
+    vulnerableWeakPointFactor: reads ? Math.max(1, 1 + t.vulnerableWeakPointFactor) : 1,
     steadyAimPct: Math.max(0, t.steadyAimPct),
     steadyAimTicks: Math.max(1, Math.round(S.perception.steadyAimTicks + t.steadyAimTicks)),
     exploitDamagePct: Math.max(0, t.exploitDamagePct),
@@ -358,17 +449,37 @@ export function deriveTraits(
     resourceCostScale,
     cooldownScale,
     healingScale,
-    healingSurge: Math.max(0, t.healingSurge),
-    healingSurgeBelow: clamp(t.healingSurgeBelow, 0, 1),
+    healingSurge,
+    healingSurgeBelow,
     attunedMaxStacks: Math.max(0, Math.round(t.attunedMaxStacks)),
     attunedTicks: Math.max(0, Math.round(t.attunedTicks)),
     attunedCostPct: clamp(t.attunedCostPct, 0, 0.2),
     attunedFromWeakPoints: t.attunedFromWeakPoints > 0 ? 1 : 0,
-    adaptationPerStack: clamp(t.adaptationPerStack, 0, 0.2),
-    adaptationCap: clamp(t.adaptationCap, 0, 0.6),
-    adaptationTicks: Math.max(0, Math.round(t.adaptationTicks)),
+    // **Adaptation, and what enables it** (spec 239). The third of the same
+    // shape and the one that was inert twice over: `markTarget` needs a window
+    // to record a stack and `adaptationAgainst` needs a cap to read one, and
+    // the Wisdom 25 skill granted neither -- only the per-stack size. So it did
+    // nothing until the Wisdom 35 milestone supplied both, and then the
+    // milestone's own cap was the only cap there was.
+    //
+    // Base window and base cap come from `SCALING` behind the flag, and both
+    // remain summable: `pair.enduring` grants `adaptationCap: 0.15` and still
+    // reaches the 45% its effect line promises.
+    adaptationPerStack: adapts ? clamp(t.adaptationPerStack, 0, 0.2) : 0,
+    adaptationCap: adapts ? clamp(S.wisdom.adaptationCap + t.adaptationCap, 0, 0.6) : 0,
+    adaptationTicks: adapts
+      ? Math.max(1, Math.round(S.wisdom.adaptationTicks + t.adaptationTicks))
+      : 0,
     conversionCap: Math.max(0, t.conversionCap),
     masteryRelief: Math.max(0, Math.round(t.masteryRelief)),
+
+    restoreOverkillPct: linear(above(STR), R.strengthOverkillPer),
+    restoreEvasivePct: linear(above(AGI), R.agilityEvasivePer),
+    restoreAbilityKillPct: linear(above(INT), R.intelligenceAbilityPer),
+    restoreWeakPointPct: linear(above(PER), R.perceptionWeakPointPer),
+    moteAttractRadius: linear(above(PER), R.perceptionAttractPer),
+    restoreSalvagePct: Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)),
+    fallbackCharges: maxFallbackCharges(CON),
   };
 }
 

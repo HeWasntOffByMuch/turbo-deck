@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>turbo-deck · brush vfx scene</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #8fb8c8; overflow: hidden; }
+      #app { display: block; }
+      canvas { display: block; }
+      button:hover { background: #1e3040; }
+    </style>
+  </head>
+  <body>
+    <div id="app"></div>
+    <!-- Spec 159's judging rig: full resolution, MSAA, no retro pass, a lit
+         low-poly scene, a dummy to hit and an orbiting camera. Dev-server only,
+         since `vite build` bundles index.html and nothing else. This is the
+         opposite of vfx-probe.html on every setting that matters -- that one
+         proves particles are in the low-resolution buffer and therefore reports
+         jagged edges about everything; this one shows what the shapes are. -->
+    <script type="module" src="./iso3d/vfx/brush-scene.ts"></script>
+  </body>
+</html>

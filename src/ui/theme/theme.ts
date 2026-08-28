@@ -35,6 +35,35 @@ export const WIDGET_STATES: readonly WidgetState[] = [
 /** Which of the two faces a run of text is set in. */
 export type FontId = 'body' | 'numeric';
 
+/**
+ * The three scaling attributes, as this layer names them.
+ *
+ * Declared here rather than imported: `src/ui/` may not reach into the server,
+ * and these are the same three strings `SCALING_ATTRIBUTES` is -- kept in step
+ * by `theme.test.ts`, which is the honest way to hold two layers to one
+ * vocabulary when one of them is forbidden from importing the other.
+ */
+export type ScalingAttributeId = 'strength' | 'agility' | 'intelligence';
+
+/**
+ * What colour an attribute is drawn in (specs 216, 242).
+ *
+ * One hue each, and deliberately **not** `danger`/`success`: those two mean bad
+ * and good, and an `S` -- the best grade on the ladder -- drawn in the drawback
+ * colour would read as a warning.
+ *
+ * It is here rather than beside either of its callers because there are two of
+ * them now. A weapon's `S / - / D` is built by the bag and a skill's by the
+ * action bar, and a second copy of this table is a second answer to what
+ * Strength looks like -- free to drift, and drifting in the exact place the
+ * notation exists to make the two comparable.
+ */
+export const ATTRIBUTE_TOKENS: Readonly<Record<ScalingAttributeId, string>> = {
+  strength: 'attrStrength',
+  agility: 'attrAgility',
+  intelligence: 'attrIntelligence',
+};
+
 export interface StateStyle {
   readonly fill: Color;
   readonly frameTint: Color;

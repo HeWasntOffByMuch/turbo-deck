@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { MapDocument, MapMarker } from '../../terrain/index.js';
-import { monsterById } from '../data/monsters.js';
+import { monsterById, noticeRangeOf } from '../data/monsters.js';
+import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { loadMapFile } from './map-file.js';
+import { SERVER_TICK_RATE } from '../config.js';
 import { spawnPointsFrom, SpawnerError } from './spawners.js';
+import { worldBoundsOf } from './build.js';
+import { MOVE_SPEED_HARD_MIN } from '../../sim/constants.js';
 
 /**
  * A two-chunk document with nothing in it but markers. Terrain is not what this
@@ -22,7 +26,6 @@ function doc(markers: Record<string, readonly MapMarker[]>): MapDocument {
     tones: [0, chunkCells * chunkCells],
     props: [],
     markers: markers[`${cx},${cz}`] ?? [],
-    nav: null,
   });
   return {
     version: 1,
@@ -62,7 +65,9 @@ describe('reading spawners out of a map', () => {
         ],
       }),
     );
-    expect(points).toEqual([{ id: 'spawner-1', monsterId: 'grazer', x: -90, y: -80 }]);
+    expect(points).toEqual([
+      { id: 'spawner-1', monsterId: 'grazer', x: -90, y: -80, respawnTicks: null, leashRadius: null },
+    ]);
   });
 
   it('converts chunk-local coordinates to world space', () => {
@@ -116,6 +121,9 @@ describe('reading spawners out of a map', () => {
 describe('the shipped map', () => {
   const shipped = loadMapFile().doc;
 
+  /** How long a walk from the spawn point still counts as content a player meets. */
+  const REACH_SECONDS = 20;
+
   it('places spawners, and every one names a monster in the table', () => {
     const points = spawnPointsFrom(shipped);
     expect(points.length).toBeGreaterThan(0);
@@ -124,18 +132,164 @@ describe('the shipped map', () => {
     }
   });
 
-  it('puts them inside the arena, where a player will actually meet them', () => {
-    const { arena } = shipped;
+  /**
+   * What this used to assert was containment in `doc.arena`, and that stopped
+   * being the right measure the moment a map put a monster past it on purpose.
+   *
+   * `arena` is the rectangle `bake-map.ts` writes at the first bake --
+   * `PLAY_WIDTH` by `PLAY_HEIGHT`, 1200 by 900 -- and it has never tracked the
+   * world since. Spec 165 grew the map to 18,480 by 16,632 and spec 210 grew a
+   * shore onto it, leaving that rectangle as 0.35% of one corner; `constants.ts`
+   * says so in as many words beside `ARENA_WIDTH`, and spec 221 deleted the
+   * hand-authored walls that used to make it a boundary. Nothing clamps to it:
+   * `worldBoundsOf` is what bounds movement, and it reads `layer.bounds`.
+   *
+   * So the rectangle is split into the two claims it was standing in for, and
+   * both are stronger than it was -- a spawner outside `arena` used to fail and
+   * a spawner in the far corner of the real world used to pass.
+   *
+   * What is deliberately NOT asserted any more: that a spawner sits in a
+   * non-pvp zone. `DEFAULT_ZONES` gives `arena`'s exact rectangle the name
+   * `greenmarch`, so the old assertion happened to keep every monster out of
+   * The Wilds, and a map may now put one there. That is a map author's decision
+   * rather than an invariant -- and it is a real one, so it is written down
+   * here rather than lost: the shipped map puts all seven of its hostile
+   * spawners in pvp ground and leaves only the sheep inside Greenmarch.
+   *
+   * Reachability is not asserted either, and that is also deliberate. The five
+   * sheep stand in a fenced pasture that is a disconnected nav component --
+   * `findPath` from the spawn point returns nothing for any of them -- and a
+   * pen you attack over the rail is the intended shape of that pasture.
+   */
+  it('puts them on the map, inside the ground the document declares', () => {
+    const bounds = worldBoundsOf(shipped);
     for (const point of spawnPointsFrom(shipped)) {
-      expect(point.x, point.id).toBeGreaterThanOrEqual(arena.minX);
-      expect(point.x, point.id).toBeLessThanOrEqual(arena.maxX);
-      expect(point.y, point.id).toBeGreaterThanOrEqual(arena.minZ);
-      expect(point.y, point.id).toBeLessThanOrEqual(arena.maxZ);
+      expect(point.x, point.id).toBeGreaterThanOrEqual(bounds.x);
+      expect(point.x, point.id).toBeLessThanOrEqual(bounds.x + bounds.w);
+      expect(point.y, point.id).toBeGreaterThanOrEqual(bounds.y);
+      expect(point.y, point.id).toBeLessThanOrEqual(bounds.y + bounds.h);
+    }
+  });
+
+  /**
+   * The other half: on the map is not the same as in the game. The world is
+   * 18,480 across and a spawner in the far corner of it is content nobody will
+   * ever walk to.
+   *
+   * The bound is derived rather than picked. `MOVE_SPEED_HARD_MIN` is the
+   * slowest anything in this game may ever move, so `MOVE_SPEED_HARD_MIN *
+   * REACH_SECONDS` is the distance even the slowest body covers in twenty
+   * seconds -- which makes it a distance *anybody* is inside twenty seconds of,
+   * rather than a number somebody liked. It is not a loose bound: that circle
+   * is 4% of the world's area, so the other 96% still fails.
+   */
+  it('puts them within a walk of the spawn point, where a player will actually meet them', () => {
+    const reach = MOVE_SPEED_HARD_MIN * REACH_SECONDS;
+    for (const point of spawnPointsFrom(shipped)) {
+      const away = Math.hypot(point.x - DEFAULT_SPAWN.x, point.y - DEFAULT_SPAWN.y);
+      expect(away, `${point.id} (${point.monsterId}) is ${Math.round(away)} out`).toBeLessThanOrEqual(reach);
     }
   });
 
   it('survives a round trip through the map serializer', () => {
     const before = spawnPointsFrom(shipped);
     expect(spawnPointsFrom(loadMapFile().doc)).toEqual(before);
+  });
+
+  /**
+   * Spec 163. Nothing on the shipped map can see the tile every character
+   * starts and respawns on.
+   *
+   * Asserted here rather than trusted, because it is a *product* of two numbers
+   * that live in different files and neither of them mentions the other: a
+   * marker's position in `maps/arena.json` and a row's `noticeRange` in
+   * `data/monsters.ts`. It held for free while spec 076 had nothing initiating
+   * at all, and the moment proximity came back it stopped holding -- the spider
+   * nest sits 222 units north of `DEFAULT_SPAWN` and was authored to see 300.
+   *
+   * What that costs if it regresses is the worst failure this feature has: a
+   * fresh character attacked before it has moved, and a killed one respawning
+   * on the same tile into the same enemies. Hearthstead is not protection --
+   * its `pvp: false` gates player-versus-player damage, and no zone flag has
+   * ever gated a monster.
+   *
+   * The margin is deliberate and small. This is not asking for the map to be
+   * empty near town; it is asking that the first move be the player's.
+   */
+  it('places nothing that can see the spawn point before the player has moved', () => {
+    const MARGIN = 40;
+    for (const point of spawnPointsFrom(shipped)) {
+      const row = monsterById(point.monsterId);
+      if (!row) continue;
+      const sight = noticeRangeOf(row.temperament);
+      if (sight <= 0) continue;
+      const away = Math.hypot(point.x - DEFAULT_SPAWN.x, point.y - DEFAULT_SPAWN.y);
+      expect(away, `${point.id} (${point.monsterId}) sees ${sight} and is ${Math.round(away)} out`)
+        .toBeGreaterThan(sight + MARGIN);
+    }
+  });
+});
+
+/**
+ * Spec 222. The document may now say two things past which monster stands
+ * where, and this file is the one boundary that reads them -- so it is also the
+ * one place that decides what "the author did not say" means, and what a number
+ * that cannot possibly have been meant costs.
+ */
+describe("a spawner's own numbers", () => {
+  const withSettings = (settings: Record<string, unknown>): MapDocument =>
+    doc({ '0,0': [{ ...spawner('spawner-1', 'grazer', 10, 20), spawner: settings }] });
+
+  it('says nothing where the document says nothing', () => {
+    const point = spawnPointsFrom(doc({ '0,0': [spawner('spawner-1', 'grazer', 10, 20)] }))[0];
+    expect(point?.respawnTicks).toBeNull();
+    expect(point?.leashRadius).toBeNull();
+  });
+
+  /**
+   * The conversion is here and nowhere else: the document is authored in
+   * seconds because a person reads it, and the sim counts ticks.
+   */
+  it('converts the authored seconds into ticks', () => {
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 30 }))[0]?.respawnTicks).toBe(30 * SERVER_TICK_RATE);
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 2.5 }))[0]?.respawnTicks).toBe(150);
+  });
+
+  /** A sub-tick wait is a wait of zero, and nobody meant that. */
+  it('floors a wait too short to count at one tick', () => {
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 0.001 }))[0]?.respawnTicks).toBe(1);
+  });
+
+  it('passes the leash through untouched -- the cap is the sim\'s', () => {
+    expect(spawnPointsFrom(withSettings({ leashRadius: 240 }))[0]?.leashRadius).toBe(240);
+    // Deliberately past `LEASH_RADIUS`: this file reports what the document
+    // asked for, and `sim/world.ts` is where the ceiling lives, beside the nav
+    // padding derived from it.
+    expect(spawnPointsFrom(withSettings({ leashRadius: 99_999 }))[0]?.leashRadius).toBe(99_999);
+  });
+
+  it('takes each of the two without inventing the other', () => {
+    expect(spawnPointsFrom(withSettings({ respawnSeconds: 30 }))[0]?.leashRadius).toBeNull();
+    expect(spawnPointsFrom(withSettings({ leashRadius: 240 }))[0]?.respawnTicks).toBeNull();
+  });
+
+  /**
+   * Refused at boot, on the same terms as an unknown monster: a spawner with a
+   * zero respawn time or a negative leash looks, from inside the game, exactly
+   * like a patch of ground behaving strangely.
+   */
+  it.each([
+    ['respawnSeconds', 0],
+    ['respawnSeconds', -5],
+    ['respawnSeconds', Number.NaN],
+    ['leashRadius', 0],
+    ['leashRadius', -100],
+    ['leashRadius', Number.POSITIVE_INFINITY],
+  ])('refuses a %s of %s', (field, value) => {
+    expect(() => spawnPointsFrom(withSettings({ [field]: value }))).toThrow(SpawnerError);
+    // Named, because "somewhere in the map" is not a bug report.
+    expect(() => spawnPointsFrom(withSettings({ [field]: value }))).toThrow(
+      new RegExp(`spawner-1.*${field}`),
+    );
   });
 });

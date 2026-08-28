@@ -18,6 +18,7 @@
  */
 
 import type { AbilityDefinition } from '../../../server/data/abilities.js';
+import { areaReachOf } from '../../../server/sim/skill-area.js';
 import { HOLD_FRACTION, STANDOFF_FRACTION, type Point, type TargetSnapshot } from './target.js';
 
 /** What the player has to supply before an ability may be asked for. */
@@ -87,6 +88,24 @@ export function startAim(ability: AbilityDefinition, input: AimStartInput): AimS
   return gesture === 'none' ? { kind: 'cast' } : { kind: 'aim', gesture };
 }
 
+/**
+ * How far an ability actually reaches, for the ring drawn on a hover (spec 236).
+ *
+ * `range` alone is the wrong number and Whirlwind is why: it is a caster-centred
+ * area, so its row states `range: 0` -- there is nothing to be out of range of --
+ * and its reach is the 160 in `area.radius`. Hovering it drew no ring at all,
+ * which reads as a skill with no reach rather than one with a reach of its own.
+ *
+ * `areaReachOf` is the server's own answer to "what does `spellRangePct` scale",
+ * imported rather than restated so the ring and the landing cannot drift. The
+ * larger of the two, because a shaped skill can have both -- Arc Lash is a
+ * 300-unit lane thrown from a body with a 300-unit range, and Blight is a
+ * 110-radius blast placed anywhere inside 380.
+ */
+export function effectiveReach(ability: AbilityDefinition): number {
+  return Math.max(ability.range, ability.area ? areaReachOf(ability.area) : 0);
+}
+
 /** What to draw on the ground while aiming. */
 export type AimShape =
   | { readonly kind: 'none' }
@@ -106,6 +125,33 @@ export function aimShape(ability: AbilityDefinition): AimShape {
   // A named body is its own indicator -- the ring goes under it, and a wedge
   // drawn beside it would say something about the blow that is not true.
   if (ability.targeting === 'self' || ability.targeting === 'unit') return { kind: 'none' };
+  // A *declared* shape wins over every inference below it (spec 190). The three
+  // tests that follow read a number that means something else -- a melee wedge,
+  // a blast radius, a shot's girth -- and `area` is the one field that says
+  // outright what the landing tests. `kind: 'area'` never reached any of them,
+  // so an area skill aimed at a point or a direction drew nothing at all: the
+  // one ability kind that *is* a shape was the one kind you could not see.
+  if (ability.area) {
+    const area = ability.area;
+    // A circle the sim centres on the *caster* is deliberately not drawn.
+    // `AimShape` has no way to say "a disc at my own feet": the scene decides
+    // where to lay a shape from its kind alone -- `placed = kind === 'circle'`
+    // puts every circle under the cursor -- so returning one here would draw the
+    // blast somewhere it will not land, which is worse than drawing nothing.
+    // No shipped row reaches this (a caster-origin circle is `targeting: 'self'`
+    // and has already returned above); it is a guard against the next one.
+    if (area.shape === 'circle') {
+      return area.origin === 'aim' ? { kind: 'circle', radius: area.radius } : { kind: 'none' };
+    }
+    // The row's angle is the full opening, and `AimShape` wants the half -- the
+    // same halving `castAngleEps` does, in the same direction, for the same
+    // reason: an author says how wide the mouth is and the geometry wants the
+    // deviation either side.
+    if (area.shape === 'cone') {
+      return { kind: 'cone', halfAngle: (area.angleDeg * Math.PI) / 360, length: area.range };
+    }
+    return { kind: 'line', length: area.range, width: area.width };
+  }
   if (ability.arcCosSq !== undefined) {
     // `arcCosSq` is the squared cosine of the half-angle, which is how
     // `isInCone` avoids a square root per candidate. Undoing it here costs one
@@ -137,6 +183,19 @@ export interface CastOrderInput {
   readonly self: Point;
   readonly order: AimOrder | null;
   /**
+   * How much of a placed cast's reach to keep in hand, in world units (spec 236).
+   *
+   * The margin between "the client believes it is in range" and "the server
+   * agrees", and it is a *distance a body can travel* rather than a fraction of
+   * the range, because that is what the disagreement is made of: the request is
+   * sent from the prediction and checked against the last input the server
+   * applied. `pickupLead` derives the same number for the same reason one system
+   * over, and this takes it from there rather than inventing a second answer.
+   *
+   * A named order does not use it -- see the comment at the comparison.
+   */
+  readonly castLead: number;
+  /**
    * The named body as the view last saw it, or null when the order was placed
    * on the ground -- or when the body it named is no longer in the world.
    */
@@ -147,6 +206,17 @@ export interface CastOrderInput {
    * player's behalf, and asking would earn an `alreadyCasting` refusal.
    */
   readonly rooted: boolean;
+  /**
+   * True while a poise break holds this body (spec 173).
+   *
+   * Its own field beside {@link rooted}, and it has to be: a break *clears* the
+   * cast it interrupted (`applyPoiseDamage` nulls it), so `rooted` -- which is
+   * "a cast is in progress" -- is false for the whole stagger. An order left to
+   * run on `rooted` alone therefore treats a stunned body as a free one: it
+   * chases, and in reach it sends a `useAbility` the server answers with
+   * `'staggered'`, then drops the order as though it had been spent.
+   */
+  readonly staggered: boolean;
   /** The tick this ability is ready again, from the server's own table. */
   readonly readyAtTick: number;
   /** The client's estimate of the server's tick. */
@@ -200,6 +270,13 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
 
   if (input.rooted) return NOTHING;
 
+  // A broken body holds its order and does nothing with it (spec 173). Returned
+  // as `NOTHING` rather than as a drop, for the same reason the standing attack
+  // order keeps its mark: a stagger is half a second, and an order that
+  // evaporated every time the player was hit would make a break cost the plan
+  // as well as the footing.
+  if (input.staggered) return NOTHING;
+
   // A unit order follows its mark: the body moves, so the placement is re-read
   // every tick rather than frozen at the click. A ground order stays put --
   // that is what placing it meant.
@@ -210,7 +287,27 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
   const reach = order.range + (named && input.target ? input.target.radius : 0);
 
   const distance = Math.hypot(at.x - input.self.x, at.y - input.self.y);
-  if (distance > reach * HOLD_FRACTION) {
+  // How far out the body may be and still throw it (spec 236).
+  //
+  // **A placed order and a named one want different numbers**, and running both
+  // on `HOLD_FRACTION` is what made a click inside a skill's own range walk
+  // first. That constant is a *chase* rule: it exists because a chase stops
+  // within `ARRIVE_EPS` of its destination, so a body whose cast threshold
+  // equalled that destination parks a few units short and stands there -- and
+  // because a body that shuffles must not flip the decision every tick.
+  //
+  // Neither applies to a patch of ground. It does not move, so there is nothing
+  // to flip; and the destination a chase would head for is `STANDOFF_FRACTION`
+  // of the reach, comfortably inside the full one, so nothing parks. What is
+  // left is the only real reason a placed cast needs any margin at all: the
+  // client asks from its **prediction** and the server checks against the last
+  // input it **applied**, so a request sent at exactly the edge can be refused
+  // for a drift the player cannot see. That is `pickupLead`'s problem exactly,
+  // and it takes `pickupLead`'s answer rather than a tenth of the range -- which
+  // on Blight's 380 was 38 units of ground a player could stand on, click
+  // inside their own range ring, and be walked forward from.
+  const hold = named ? reach * HOLD_FRACTION : Math.max(0, reach - input.castLead);
+  if (distance > hold) {
     return { chaseTo: standoffPoint(input.self, at, reach), cast: null, drop: false };
   }
 

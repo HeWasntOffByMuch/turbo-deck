@@ -54,7 +54,6 @@ function chunkMessage(mapId: string, cx: number, cz: number): MapChunkMessage {
     solid: [],
     materials: [],
     tones: [],
-    nav: null,
     props: [],
     markers: [],
   };
@@ -106,6 +105,79 @@ describe('what it wants', () => {
     const a = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99);
     const b = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99);
     expect(a).toEqual(b);
+  });
+});
+
+/**
+ * The order follows the body, not just the distance (spec 214).
+ *
+ * Nearest-first is right for a standing player and wrong for a running one:
+ * the ground a body is about to walk onto ranked in the same ring as the ground
+ * behind it, so with the server's bucket refilling at a bounded rate it arrived
+ * after ground already left.
+ */
+describe('what it wants first, when the body is moving', () => {
+  const rank = (reqs: readonly { cx: number; cz: number }[], cx: number, cz: number): number =>
+    reqs.findIndex((r) => r.cx === cx && r.cz === cz);
+
+  it('asks for exactly what it would have asked for without a lead', () => {
+    const here = at(2, 2);
+    const without = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99);
+    const withLead = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99, 0, {
+      x: here.x + 2 * EXTENT,
+      y: here.z,
+    });
+    // A reorder, never a widening: same set, whatever the order.
+    const set = (reqs: readonly { layer: number; cx: number; cz: number }[]): string[] =>
+      reqs.map((r) => `${r.layer}:${r.cx},${r.cz}`).sort();
+    expect(set(withLead)).toEqual(set(without));
+  });
+
+  it('leaves the order alone for a body that is not going anywhere', () => {
+    const here = at(2, 2);
+    const standing = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99);
+    const nulled = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99, 0, null);
+    expect(nulled).toEqual(standing);
+  });
+
+  it('still asks for the ground under the feet first', () => {
+    const here = at(2, 2);
+    const wanted = new MapChunkCache(info()).wanted(here.x, here.z, 2, 99, 0, {
+      x: here.x + 2 * EXTENT,
+      y: here.z,
+    });
+    // A bias toward the horizon that starved the ground you are standing on
+    // would be worse than no bias at all.
+    expect(wanted[0]).toEqual({ layer: 0, cx: 2, cz: 2 });
+  });
+
+  it('ranks the ground ahead over the same distance behind', () => {
+    const here = at(2, 2);
+    const cache = new MapChunkCache(info());
+    // Running east, two chunks' worth of lead.
+    const wanted = cache.wanted(here.x, here.z, 2, 99, 0, { x: here.x + 2 * EXTENT, y: here.z });
+    expect(rank(wanted, 4, 2)).toBeLessThan(rank(wanted, 0, 2));
+    expect(rank(wanted, 3, 2)).toBeLessThan(rank(wanted, 1, 2));
+    // ...and the corridor is served outward from the feet, not from the horizon.
+    expect(rank(wanted, 3, 2)).toBeLessThan(rank(wanted, 4, 2));
+
+    // ...and the other way round, so this is the lead doing it rather than the
+    // coordinate tiebreak.
+    const west = cache.wanted(here.x, here.z, 2, 99, 0, { x: here.x - 2 * EXTENT, y: here.z });
+    expect(rank(west, 0, 2)).toBeLessThan(rank(west, 4, 2));
+  });
+
+  it('spends the front of a small budget on the walk itself', () => {
+    const here = at(2, 2);
+    const cache = new MapChunkCache(info());
+    // What a pass actually looks like: a handful of requests, not the window.
+    const wanted = cache.wanted(here.x, here.z, 2, 6, 0, { x: here.x + 2 * EXTENT, y: here.z });
+    expect(wanted).toHaveLength(6);
+    expect(wanted.slice(0, 3)).toEqual([
+      { layer: 0, cx: 2, cz: 2 },
+      { layer: 0, cx: 3, cz: 2 },
+      { layer: 0, cx: 4, cz: 2 },
+    ]);
   });
 });
 

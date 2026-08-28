@@ -108,6 +108,19 @@ export interface IntentInput {
    */
   readonly castAim: Point | null;
   /**
+   * Where a drop this client has asked for is aimed, or null (spec 172).
+   *
+   * Ranked under {@link castAim} and over everything else, including a
+   * direction -- which is the one place this list is not simply "the most
+   * specific ask wins". A step withdraws from a cast, so a cast aim that lost
+   * to a direction was about to stop existing anyway; a drop is not withdrawn
+   * from by walking, because there is nothing to refund and nothing rooted. So
+   * a body that asked to put something down and then set off keeps coming round
+   * to it while it walks, which is exactly what the server is doing with the
+   * same aim.
+   */
+  readonly dropAim?: Point | null;
+  /**
    * The mark of a standing attack order, or null (spec 090).
    *
    * Faced while *waiting* to swing at it. With a target in reach and the attack
@@ -123,6 +136,63 @@ export interface IntentInput {
    * direction, because walking decides its own heading.
    */
   readonly targetAim?: Point | null;
+  /**
+   * Somebody a conversation has just started with (spec 246), or null.
+   *
+   * A **one-shot**, and that is the whole difference from {@link targetAim}
+   * beside it: this is set at the moment a conversation opens and dropped the
+   * instant the body has come round, so it turns you to face the merchant and
+   * then lets go. The player is free to walk off mid-sentence -- which is also
+   * how a conversation ends -- and a version of this that held the heading for
+   * the duration would fight them every time they stopped moving.
+   *
+   * In `targetAim`'s slot in the order below, and for its reason: a held key
+   * outranks it, because walking decides its own heading.
+   */
+  readonly talkAim?: Point | null;
+  /**
+   * True while a poise break holds this body (spec 173).
+   *
+   * Outranks every other branch below, including {@link castAim} and a held
+   * key, because on the server it outranks them too: the movement pass zeroes
+   * the components *and pins the facing to where the body already points*, so a
+   * staggered body neither steps nor turns however the keys are being held.
+   *
+   * The facing half is the part that is easy to miss and the part that shows.
+   * Movement is reconciled -- a `Correction` carries a position, so a predicted
+   * step the server discarded is pulled back within a round trip -- and facing
+   * is not carried on one at all. A drawn heading that keeps turning through a
+   * stagger is therefore an error nothing ever corrects; it is only diluted by
+   * whatever the player does next. So the one place it can be prevented is
+   * here, by not asking for the turn in the first place.
+   */
+  readonly staggered?: boolean;
+  /**
+   * True while this body is at zero health (spec 229).
+   *
+   * Outranks every branch below, including {@link staggered}, because on the
+   * server it outranks them by not being a branch at all: `stepWorld`'s
+   * movement pass steps past anything at zero health *before* it reads an
+   * intent, so a corpse is neither moved nor turned however the keys are being
+   * held.
+   *
+   * Which makes this the one root nothing ever pulls back. A stagger is
+   * reconciled -- the server reads the intent, discards the components and
+   * corrects the step -- and a corpse is never read, so it is never corrected
+   * either: a predicted walk while dead stands until the respawn teleport,
+   * seconds later, and is bounded only by how far the order was. Measured
+   * before this existed, one second of a standing move order walked a body 155
+   * units across its own screen while every other client watched it lie where
+   * it fell.
+   *
+   * Here rather than in the drivers because there are five doors into a
+   * destination -- a key, a move order, a chase, an aim's approach, a pickup
+   * walk -- and being dead is a fact about the body rather than about any of
+   * them. `autoAttack` and `pickupOrderFor` keep their own death rules because
+   * they also decide whether to *ask the server for something*, which a rule at
+   * the legs cannot cover.
+   */
+  readonly dead?: boolean;
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
@@ -136,6 +206,35 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // back, and having to cancel an order first would feel like a stuck key. A
   // spent order steers nothing, whatever waypoint is still on offer.
   const direction = keyed ?? (arrived ? null : steerTo(input.self, input.route ?? input.destination));
+
+  // A corpse does neither (spec 229), and does it first: a stagger is something
+  // the server reads and discards, and a dead body is one it never reads at
+  // all. `input.facing` for the same reason the stagger holds it -- the server
+  // leaves `facing` exactly where it was, and a `Correction` carries no facing
+  // to disagree with, so a heading predicted here would be an error nothing
+  // ever corrects.
+  //
+  // `arrived` is still reported honestly. Being dead is not being somewhere,
+  // and a caller that reads it as "the order is spent" is right either way --
+  // the view drops the orders at the death itself.
+  if (input.dead) {
+    return { moveX: 0, moveY: 0, facing: input.facing, arrived };
+  }
+
+  // A poise break holds the body outright (spec 173), and holds it harder than
+  // a cast does: no step, and no turn either.
+  //
+  // First, so it beats the wind-up aim and a held key both. It has to beat the
+  // key in particular, because that is the one branch a player is actively
+  // driving -- somebody who was walking when they were broken is still holding
+  // the key, and every other branch here would happily keep asking for the
+  // heading it implies.
+  //
+  // `input.facing` rather than any aim: the server holds `steered.facing`, so
+  // the only heading that agrees with it is the one the body already has.
+  if (input.staggered) {
+    return { moveX: 0, moveY: 0, facing: input.facing, arrived };
+  }
 
   // Rooted, and turning into the blow. Asking for the aim rather than holding
   // the old heading is what makes the figure visibly come round during a
@@ -153,14 +252,28 @@ export function moveIntent(input: IntentInput): MoveIntent {
     return { moveX: 0, moveY: 0, facing, arrived };
   }
 
+  // Turning to put something down (spec 172). Over the direction rather than
+  // under it: the walk still happens -- `direction` is what moves the body --
+  // and only the heading is the drop's. See the field.
+  if (input.dropAim) {
+    const dx = input.dropAim.x - input.self.x;
+    const dy = input.dropAim.y - input.self.y;
+    const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
+    return { moveX: direction?.x ?? 0, moveY: direction?.y ?? 0, facing, arrived };
+  }
+
   // Standing over a mark, waiting for the swing to come off cooldown. Turning
   // now is free -- the wait is dead time -- and it means the wind-up starts
   // already aligned rather than paying for the turn once the clock has run
   // (spec 090). The server turns the body from this at its own rate, so it is
   // the same turn every other player sees.
-  if (!direction && input.targetAim) {
-    const dx = input.targetAim.x - input.self.x;
-    const dy = input.targetAim.y - input.self.y;
+  // Coming round to face somebody you have just spoken to (spec 246). Beside
+  // `targetAim` rather than above or below it because the two cannot both be
+  // set: a friendly body is never an attack target.
+  const standingAim = input.targetAim ?? input.talkAim;
+  if (!direction && standingAim) {
+    const dx = standingAim.x - input.self.x;
+    const dy = standingAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
     return { moveX: 0, moveY: 0, facing, arrived };
   }
@@ -183,6 +296,25 @@ export function moveIntent(input: IntentInput): MoveIntent {
     // standing forever.
     arrived,
   };
+}
+
+/**
+ * How close two headings have to be before a turn counts as finished.
+ *
+ * Deliberately loose. What reads this is a one-shot aim being let go of
+ * (spec 246), and the cost of being a degree out is nothing at all, where the
+ * cost of a threshold too tight is an aim that never clears -- `turnToward`
+ * approaches its goal and a body whose turn rate is scaled by a modifier can
+ * sit a hair short of it for a long time.
+ */
+const ALIGNED_RADIANS = 0.05;
+
+/** Whether a body pointing `facing` has arrived at `wanted`. */
+export function aligned(facing: number, wanted: number): boolean {
+  // Through sin/cos rather than by subtracting, so the wrap at pi is not a
+  // special case: two headings either side of it are close, and the difference
+  // of the numbers is not.
+  return Math.abs(Math.atan2(Math.sin(facing - wanted), Math.cos(facing - wanted))) <= ALIGNED_RADIANS;
 }
 
 /** The normalised direction the held keys ask for, or null when they cancel out. */

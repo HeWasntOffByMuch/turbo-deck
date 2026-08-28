@@ -21,9 +21,11 @@
  * here departs from it, the reason is in a comment.
  */
 
+import { ORDER_MARK_ARM, brushCross, brushExplosion, brushLane, brushShards, brushSwing } from './brush.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
+import { SCORCHED_EARTH } from '../../../server/data/aura-fields.js';
 
 // --- fire --------------------------------------------------------------------
 
@@ -472,9 +474,11 @@ export interface BurstParams {
  * them rather than one because a single ring is a hoop, where the reference has
  * an edge with a glow trailing it.
  *
- * Its own function rather than a block inside {@link burst} because spec 127
- * plays the wave with nothing around it, and a wave authored twice is two waves
- * that drift apart the first time one of them is tuned.
+ * Its own function rather than a block inside {@link burst} because the heal
+ * (spec 157) plays the wave with none of the burst around it, and a wave
+ * authored twice is two waves that drift apart the first time one is tuned.
+ * The walk order was its third caller until spec 175 answered a click with a
+ * cross instead; what that changed is the number of callers and nothing here.
  */
 export function waveEmitters(s: number, hot: PaletteKey, warm: PaletteKey): Emitter[] {
   return [
@@ -815,23 +819,348 @@ export const LIBRARY: readonly EffectDefinition[] = [
   // The one a player must never miss. Louder in the same language: a still sigil
   // ringed with shafts, never a different vocabulary.
   aura({ id: 'aura_telegraph', color: 'auraTelegraph', radius: 110, spin: 0, shafts: 10, priority: 3 }),
+  // The field (spec 223), and the one aura here whose radius is **not an art
+  // decision**: it is the reach in `data/aura-fields.ts`, imported rather than
+  // retyped, because this ring is not decoration around the mechanic -- it is
+  // where the fire is, and a player who cannot tell which bodies are inside it
+  // cannot play the skill at all. Two literals that have to agree is the drift
+  // `ground-decal.ts` exists to refuse one level down.
+  //
+  // Widest in the set by some way and therefore last, which keeps the
+  // separation rule above holding by construction: it cannot smear into
+  // anything, because nothing else is near it.
+  //
+  // Shafts and no diamonds. A diamond floats *above* a sigil -- it is a mote
+  // over a body, and this sigil is not under one body, it is a region.
+  // `priority: 3` for the reason the telegraph has it: a player standing in
+  // fire needs to see the fire more than they need to see anything else in the
+  // instance pool.
+  aura({
+    id: 'aura_scorched',
+    color: 'fireAmber',
+    radius: SCORCHED_EARTH.radius,
+    spin: 0.12,
+    shafts: 9,
+    priority: 3,
+  }),
+
+  // --- healing ---------------------------------------------------------------
+  // What restoring health looks like (spec 157). Played at the healed body's
+  // *feet*, not at the chest a blow lands on: a heal comes up out of the ground,
+  // and the three layers below are stacked in the order they are read -- the
+  // ground says where, the streaks say which way, the plusses say what.
+  //
+  // Green throughout, and only the two green palette entries: `auraHeal` is the
+  // colour the heal ring already is, so a heal landing and a heal status showing
+  // are the same colour rather than two greens that nearly match.
+  //
+  // Nothing here is directional and nothing here is thrown. Every other impact
+  // in this library follows the blow vector, because "direction is information"
+  // and the information is where the blow came from; a heal has no such fact to
+  // carry, and a spray aimed off a healed body would be inventing one.
+  {
+    id: 'heal_restore',
+    priority: 2,
+    cullDistance: 1500,
+    emitters: [
+      // (a) The wavefront on the floor, the same one an order and a shockwave
+      // use. Peak radius is about 22 units, which is wider than a body and well
+      // inside the 34-unit selection ring -- a heal is an event that happened
+      // here, and one that reached the outer rings would read as a status.
+      ...waveEmitters(9, 'auraHeal', 'auraBuff'),
+      // (b) The streaks. Born on a disc about a body wide and thrown straight
+      // up with no gravity, drawn as ribbons -- a ribbon is the path a particle
+      // actually flew (spec 139), so "straight up" is a vertical line rather
+      // than a bar that was born full length and stayed one.
+      {
+        id: 'streaks',
+        shape: { kind: 'cone', angle: 0.05, radius: 13 },
+        emission: { kind: 'burst', count: 11 },
+        lifetimeTicks: [16, 28],
+        speed: [95, 150],
+        // No gravity at all. A rising streak that arcs over is a spray, and a
+        // spray of anything off a body is the blood this replaces.
+        drag: 0.5,
+        // Four units wide, which is between three and four pixels at the
+        // gameplay zoom. The first cut was 3.2 and the strip came out as a set
+        // of hairlines under the plusses: a streak that survives quantization
+        // has to be several pixels of solid colour, not one dithered one.
+        size: { keys: [[0, 4.2], [0.65, 4.2], [1, 1.8]] },
+        alpha: { keys: [[0, 1], [0.7, 1], [1, 0]] },
+        color: { stops: [[0, 'auraHeal'], [1, 'auraBuff']] },
+        render: 'ribbon',
+        // Alpha rather than additive, for the reason the blood is: additive
+        // green over a green field is a bright nothing, and what has to survive
+        // here is the streak's edge.
+        blend: 'alpha',
+        ribbonSpacing: 3,
+        ribbonTaper: 0.3,
+        offset: { x: 0, y: 2, z: 0 },
+      },
+      // (c) The plusses. Slower than the streaks on purpose: they are still
+      // climbing when the streaks have gone, so the effect ends on the symbol
+      // rather than on the motion. Five, because this plays on every mote
+      // picked up and a fistful of floating crosses is a status bar.
+      {
+        id: 'plusses',
+        shape: { kind: 'cone', angle: 0.08, radius: 19 },
+        // Staggered rather than burst, and this is the one tuning decision the
+        // contact sheet actually changed. Five plusses born on the same tick in
+        // the same small disc overlap into a single green mass -- the sheet
+        // showed exactly that, a blob with no cross in it anywhere -- where six
+        // arriving over a third of a second are a column of separate symbols
+        // climbing past each other.
+        emission: { kind: 'ramp', perSecond: { keys: [[0, 28], [1, 0]] }, overTicks: 20 },
+        lifetimeTicks: [30, 46],
+        // A wide spread of speeds on purpose: with a narrow one they climb in
+        // step and stay at the same height as each other, which is the clump
+        // again in slow motion.
+        speed: [30, 78],
+        drag: 0.9,
+        // Twelve units is about ten pixels at the gameplay zoom, which is a
+        // pixel and a half per texel of the 7x7 sheet -- so the bar of the
+        // cross is four pixels and its tips are two. Smaller than this and the
+        // arms fall under a pixel and the symbol is a dot.
+        size: { keys: [[0, 9], [0.25, 12], [1, 10]] },
+        // In fast and out slow. A cutout ramping in over a tenth of its life is
+        // a speckle of half a plus for three ticks; what should be brief is the
+        // arrival, and what earns the time is the symbol sitting there readable.
+        alpha: { keys: [[0, 0], [0.06, 1], [0.75, 1], [1, 0]] },
+        color: { stops: [[0, 'auraHeal'], [1, 'auraBuff']] },
+        render: 'billboard',
+        // The pixel-look blend, and the one thing that keeps a plus legible
+        // while it fades: a cutout thins to a weave of solid pixels, where an
+        // alpha fade goes translucent and the retro pass bands what is left.
+        blend: 'dither-cutout',
+        sprite: { sheet: 'plus', frames: 1, fps: 0 },
+        offset: { x: 0, y: 8, z: 0 },
+      },
+    ],
+  },
 
   // --- orders ----------------------------------------------------------------
-  // Where a walk order landed (spec 127). The wavefront on its own: no crystal,
-  // no rock, nothing thrown -- an order threw nothing. Small enough to sit
-  // inside a selected unit's own sigil, because it answers "my click landed
-  // there" and then stops existing; the standing order it began is drawn by
-  // nothing at all.
+  // Where a walk order landed (specs 127, 175). Two brush marks crossing, and
+  // nothing else -- an order threw nothing, so there is nothing scattered around
+  // it. Small enough to sit inside a selected unit's own sigil, because it
+  // answers "my click landed there" and then stops existing; the standing order
+  // it began is drawn by nothing at all.
+  //
+  // It was the shockwave's wavefront until spec 175, and it stopped being one
+  // for two reasons. A ring says something arrived and *pushed*, which is a
+  // statement about the world, where a click is a statement about the player's
+  // own input and the mark a person makes to say "there" is a cross. And a flat
+  // ring laid at `ground + 2` is spec 153's fault exactly -- right at one point
+  // of itself, and inside the hill everywhere else.
   //
   // Priority 3 for the same reason a telegraph is: it is information about your
   // own input, two particles cost nothing, and a click whose answer was dropped
   // under budget pressure reads as a click that missed.
-  {
-    id: 'order_move',
+  brushCross({ id: 'order_move', arm: ORDER_MARK_ARM, priority: 3 }),
+
+  // --- swings ----------------------------------------------------------------
+  // Painted, in the air, in the vocabulary the blood and the explosions are
+  // already in (spec 233). What these replace is `scene.addEffect`'s orange
+  // debug disc, which is what every skill in the table drew.
+  //
+  // Whirlwind needs no call-site change at all: `landArea` already sends
+  // `skill.whirlwind.impact` at the caster's own feet, *before* the target loop,
+  // so this draws on a turn that caught nobody -- which is what a swing is.
+  // Registering the id is the whole of the wiring.
+  brushSwing({
+    id: 'skill.whirlwind.impact',
+    // Inside the ability's own 160: the marks are thrown outward from 72% of the
+    // reach, so a swing authored at the reach paints past it -- and the one
+    // thing a player must read off this picture is who was caught.
+    reach: 132,
+    sweep: Math.PI * 2,
+    // Ten rather than seven: at this radius the circumference is 830 units, and
+    // seven lobes left gaps a body could stand in -- a full turn has to read as
+    // a turn rather than as a few bursts that happen to be arranged in a ring.
+    lobes: 10,
+    lifetimeTicks: 30,
     priority: 3,
-    cullDistance: 1400,
-    emitters: waveEmitters(6.5, 'sparkHot', 'auraSelected'),
-  },
+  }),
+  // --- the landings that were a debug ring (spec 234) ------------------------
+  //
+  // Five ids, and **not one call-site change between them**: the server has
+  // always sent `${ability.id}.impact` and `.self`, and `scene.addEffect` has
+  // always checked the registry before falling back to its orange disc. So the
+  // whole of "replace the generic animation" is authoring the effect under the
+  // id that was already being sent.
+  //
+  // Four are `brushExplosion` recoloured, and that is the rule rather than
+  // laziness: `docs/vfx-plan.md` asks for a *critical* to be louder in the same
+  // language rather than a new one, and the same argument holds across elements
+  // -- `burst()` already draws eight damage types as one crystal in eight
+  // ramps. A frost skill that arrived in its own private vocabulary would read
+  // as a different game's effect.
+  //
+  // Every ramp is the one spec 215 already authored for that element's
+  // affliction, so a body catching fire from an Ember Toss and the toss itself
+  // are the same orange, and Blight's rot is the desaturated ramp that exists
+  // precisely so decay does not read as poison.
+
+  // Ember Toss: the reference blast, at the row's own 70-unit burst.
+  brushExplosion({ id: 'skill.emberToss.impact', radius: 70, light: true }),
+
+  // Rime Touch: the same composition in frost, and **no smoke at all** -- ice
+  // does not produce a mass that rolls over it afterwards, and a grey cloud
+  // over a frost burst reads as a fire that went out. Shorter and faster than
+  // the fire blast for the same reason: frost arrives and is done.
+  // Rime Touch: **shards**, not a blast (spec 235).
+  //
+  // The first two versions were `brushExplosion` in ice colours and both read as
+  // *water*, which is a fact about the composition rather than about the ramp:
+  // that builder makes a few dominant strokes into lobes, and a few big pale
+  // sheets is what a splash looks like. Frost wants the opposite distribution --
+  // many small pieces, radially even, coming down rather than burning off.
+  //
+  // `brushShards` is that, and the one thing it deliberately does not have is a
+  // lobe: `brushExplosion`'s "asymmetry has to be composed" argument is right
+  // about a blast and wrong about a shatter, because ice breaking has no side it
+  // favours.
+  // `length` is the number that decides whether this reads at all. At the
+  // builder's default 0.19 the shards were 20 units against a 104-unit reach and
+  // the sheet showed a scatter of specks -- the correction from "water" went
+  // straight past "shards" into "nothing". A third of the reach is a piece you
+  // can see the shape of.
+  brushShards({ id: 'skill.rimeTouch.impact', reach: 104, count: 32, length: 0.34, lifetimeTicks: 34 }),
+
+  // Blight: rot, and the two numbers that make it rot rather than an explosion
+  // are the smoke and the speed. It creeps out and the mass outlives it, where
+  // fire throws and burns off.
+  //
+  // Deliberately **short** for a zone-denial skill, and that is a correction
+  // rather than a compromise: `landBlast` resolves Blight *once*, so nothing
+  // persists at that point, and a cloud that hung about for the ten seconds the
+  // affliction runs would draw a standing hazard over ground that stopped being
+  // dangerous the instant it landed. `cloud_poison` is authored at 600 ticks and
+  // Decay lasts 601, which agree for entirely unrelated reasons -- one is a
+  // particle lifetime and the other is the affliction on whoever was caught.
+  // The day Blight becomes a point-anchored field, this grows a long variant.
+  brushExplosion({
+    id: 'skill.blight.impact',
+    radius: 110,
+    // Rot-coloured throughout, including the soot. The first render used
+    // `smokeDark` there with ten masses arriving on tick two, and the result was
+    // a near-black shape that grew over the body -- an oil spill rather than
+    // rot, and it swallowed the decay ramp underneath it entirely. The mass is
+    // half the size, arrives later, and is made of the same desaturated ramp
+    // spec 215 authored so that decay does not read as poison.
+    // Bright end forward, and **no smoke at all**. Spec 215 authored this ramp
+    // to be a thin cling on a body -- at blast scale `decayDeep` (0x6e6a52) is
+    // mud, and five smoke masses of it grew a near-black shape over the target
+    // that swallowed the rot underneath. Twice: the first render used
+    // `smokeDark`, and halving it and recolouring the soot was not enough,
+    // because the problem is the *ramp at this size* rather than the amount.
+    //
+    // So the pale end carries it and the dark end is only the edge. What is
+    // left is a sickly burst rather than a cloud, which is also the honest
+    // picture: `landBlast` resolves Blight once and nothing lingers there.
+    // Nothing muddy anywhere in the ramp, including `deep`. Dropping the smoke
+    // fixed the black mass and cost the burst its size, so this is the third
+    // pass: pale lilac throughout, expanding at half the fire blast's rate.
+    // Slower than fire and wider than frost is what makes it rot; darker than
+    // either is what made it a hole in the ground.
+    palette: { hot: 'decayBright', warm: 'decayBright', mid: 'decayBody', burnt: 'decayBody', deep: 'decayBody', soot: 'decayDeep' },
+    smoke: 0,
+    debris: 2,
+    lifetimeTicks: 58,
+    expansionSpeed: 4.4,
+    // Wide and low. Rot spreads rather than reaching.
+    strokeLength: [0.7, 1.2],
+    strokeThickness: [1.0, 1.5],
+  }),
+
+  // Arc Lash: the electric one. Long, thin, fast and gone -- everything a fire
+  // blast is not, in one composition rather than a new vocabulary.
+  //
+  // It is a **burst at the caster** rather than the 300-unit lane the ability
+  // actually is, and that is a stated limit rather than a look choice: the
+  // effect message carries no rotation (`sim/types.ts`), and `landArea` sends a
+  // line shape's cue at the caster's own feet, so there is no bearing to lay a
+  // lane along. A lane pointing the wrong way is worse than a burst pointing
+  // nowhere. Spec 235 puts a rotation on that message and this grows a lane.
+  // Arc Lash: the lane it actually is (spec 235).
+  //
+  // Two versions of this were a `brushExplosion` at the caster, because the
+  // effect message had no bearing on it and `landArea` sends a line's cue at the
+  // caster's feet -- so a burst was the only honest thing to draw. It read, in
+  // the reviewer's words, as *"too big and makes no sense with that skill"*, and
+  // both halves of that were true: a 150-unit violet ball is neither the shape
+  // nor the size of a 300x60 lane.
+  //
+  // With the bearing it is the run: nodes strung down the aim, kinking either
+  // side of the centre line, each arriving a tick after the last.
+  brushLane({
+    id: 'skill.arcLash.impact',
+    // The row's own, exactly. A lane is one of the two shapes where the picture
+    // and the mechanic *are* the same rectangle -- unlike a burst, whose marks
+    // are thrown outward from a radius and so must be authored inside it.
+    length: 300,
+    width: 60,
+    nodes: 7,
+    marks: 3,
+    lifetimeTicks: 22,
+    priority: 3,
+  }),
+
+  // Acid Spray: the cone, and the first cue this ability has ever had.
+  //
+  // `landCone` computed a bearing and raised no `effect` event at all, so this
+  // was the one skill with not even a debug ring -- there was no id being sent
+  // to fall back from. Corrosion's own ramp, the one spec 215 authored.
+  brushLane({
+    id: 'skill.acidSpray.impact',
+    length: 150,
+    width: 54,
+    // A cone rather than a lane, which in this builder is where the nodes go
+    // and nothing else: what is thrown at each of them is identical.
+    cone: 0.5,
+    nodes: 6,
+    marks: 4,
+    lifetimeTicks: 28,
+    bright: 'corrodeBright',
+    mid: 'corrodeBody',
+    deep: 'corrodeDeep',
+  }),
+
+  // Scorched Earth: the ignition, which is the moment the ring is not.
+  // `aura_scorched` is the field standing there; this is it catching.
+  //
+  // Its radius is imported rather than typed, the same way that ring's is: this
+  // is not decoration around the mechanic, it is where the fire is about to be,
+  // and a burst that reached further than the field would promise ground that is
+  // safe.
+  brushExplosion({
+    id: 'skill.scorchedEarth.self',
+    radius: SCORCHED_EARTH.radius,
+    // Three masses, briefly. A smoke mass is sized off the radius, and at the
+    // field's 130 the five this had were a column taller than the body that lit
+    // it -- the ignition read as the whole screen catching rather than as the
+    // ground. The fire is what says the skill happened; the smoke is the beat
+    // after it, and at this size a beat is all it may be.
+    smoke: 3,
+    smokeDelayTicks: 10,
+    smokeLifeTicks: [34, 52],
+    debris: 2,
+    lifetimeTicks: 54,
+    // Outward and low: the ground catching, rather than something going off.
+    expansionSpeed: 5.5,
+    strokeLength: [0.7, 1.2],
+    light: true,
+    priority: 3,
+  }),
+
+  // The melee skills, played by `world/swing-vfx.ts` at the attacker on the tick
+  // the blow lands -- whether or not it landed on anybody. One sweep for four
+  // skills, because what differs between a cripple and a rend is the
+  // *affliction*, which is painted on the body it landed on; the blade going
+  // past is the same blade.
+  brushSwing({ id: 'swing_arc', reach: 74, sweep: 2.1, lobes: 4 }),
+  // Louder in the same language, never a different one: Stunning Blow is wound
+  // up from the shoulder over 0.9s and telegraphed the whole way.
+  brushSwing({ id: 'swing_arc_heavy', reach: 88, sweep: 2.7, lobes: 5, lifetimeTicks: 32, priority: 3 }),
 
   // --- explosions ------------------------------------------------------------
   // The reference, at full size: a crystal that opens, throws rock and leaves a
@@ -855,6 +1184,22 @@ export const LIBRARY: readonly EffectDefinition[] = [
   burst({ id: 'hit_ice', scale: 20, hot: 'iceWhite', warm: 'icePale', cool: 'iceDeep', spikes: 21, chunks: 6 }),
   burst({ id: 'hit_lightning', scale: 24, hot: 'boltWhite', warm: 'boltYellow', cool: 'boltViolet', spikes: 22, dust: false, light: true }),
   burst({ id: 'hit_arcane', scale: 21, hot: 'arcaneLilac', warm: 'arcaneMagenta', cool: 'arcaneDeep', spikes: 20, dust: false }),
+  // The two the afflictions needed and the table did not have (spec 232).
+  //
+  // Written in the same builder as the six above rather than in the painted
+  // vocabulary, because what makes this table legible is that every damage type
+  // is *the same crystal in different colours* -- two of eight in a different
+  // language would read as two effects rather than as two damage types. The day
+  // the whole table moves to paint, these move with it.
+  //
+  // Their colours are not chosen here: spec 215 authored both ramps for the
+  // afflictions they belong to, and `decay` is the only desaturated ramp in the
+  // palette precisely so rot does not read as poison. A corrosion blow and a
+  // Corrosion cling are the same yellow-green for the same reason a heal and a
+  // heal ring are the same green.
+  burst({ id: 'hit_corrosion', scale: 19, hot: 'corrodeBright', warm: 'corrodeBody', cool: 'corrodeDeep', spikes: 17 }),
+  // `dust: false` for the reason `hit_arcane` has it: rot chips nothing off.
+  burst({ id: 'hit_decay', scale: 18, hot: 'decayBright', warm: 'decayBody', cool: 'decayDeep', spikes: 15, dust: false }),
   // Louder in the same language: a bigger crystal, never a different one.
   burst({ id: 'hit_critical', scale: 34, hot: 'sparkHot', warm: 'sparkWarm', cool: 'sparkEmber', spikes: 30, chunks: 7, priority: 3, light: true }),
 

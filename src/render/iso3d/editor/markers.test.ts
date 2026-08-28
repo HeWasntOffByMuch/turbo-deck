@@ -13,7 +13,15 @@ import {
   type Rect,
 } from '../../../terrain/index.js';
 import { EditHistory } from './history.js';
-import { eraseMarkers, nextMarkerId, placeMarker } from './markers.js';
+import {
+  eraseMarkers,
+  markerAt,
+  markerCaption,
+  nextMarkerId,
+  patchMarker,
+  placeMarker,
+  updateMarker,
+} from './markers.js';
 import { DEFAULT_SCATTER, eraseStroke, scatterStroke } from './scatter.js';
 
 /**
@@ -271,5 +279,234 @@ describe('undo', () => {
     history.undo(map.store);
     expect(map.store.markers(LAYER)).toHaveLength(1);
     expect(map.store.props(LAYER)).toHaveLength(props);
+  });
+});
+
+
+describe('what a marker says', () => {
+  /**
+   * The caption is the whole reason a spawner is placeable in the editor and
+   * not merely present in it. Every marker of a kind draws the same disc with
+   * the same letter, which is right for the kinds where the kind is the whole
+   * meaning -- and wrong for the one where the label *is* the meaning. A field
+   * of sheep and a ravager were the same red M until this.
+   */
+  it('names the monster a spawner spawns', () => {
+    expect(markerCaption({ label: 'sheep' })).toBe('sheep');
+    expect(markerCaption({ label: 'ravager' })).toBe('ravager');
+  });
+
+  it('says nothing for a marker that carries no label', () => {
+    // The four other kinds, and a spawner mid-placement before one is chosen.
+    // An empty caption is what puts a marker back on the plain billboard, so
+    // this is the case that keeps every unlabelled marker on the map the size
+    // it has always been.
+    // No `{ label: undefined }` case: `exactOptionalPropertyTypes` is on, so an
+    // explicit undefined is not a value this type can hold. Absent is the only
+    // way to not have one, and `{}` is it.
+    expect(markerCaption({})).toBe('');
+    expect(markerCaption({ label: '' })).toBe('');
+    // Whitespace is not a name. It would otherwise buy a marker a wider sprite
+    // and an empty black pill, which reads as a bug rather than as a blank.
+    expect(markerCaption({ label: '   ' })).toBe('');
+  });
+
+  it('is exactly the label, so what is drawn is what is stored', () => {
+    // No prettifying. `small_spider` is the id the document carries and the id
+    // the server refuses to boot without, so an editor that displayed
+    // "Small Spider" would be showing something nobody can search the map for.
+    expect(markerCaption({ label: 'small_spider' })).toBe('small_spider');
+  });
+});
+
+/**
+ * Spec 222. Until this the marker vocabulary was place and erase, so correcting
+ * a spawner meant erasing it and placing another -- with a different id, since
+ * `nextMarkerId` reuses the lowest free number. Everything here is about the
+ * third verb.
+ */
+describe('selecting a marker', () => {
+  const at = (id: string, x: number, z: number): MapMarker => ({ kind: 'spawner', id, x, z, label: 'grazer' });
+
+  it('takes the nearest one inside the reach', () => {
+    const markers = [at('spawner-1', 0, 0), at('spawner-2', 40, 0)];
+    expect(markerAt(markers, 10, 0, 70)?.id).toBe('spawner-1');
+    expect(markerAt(markers, 34, 0, 70)?.id).toBe('spawner-2');
+  });
+
+  it('takes nothing at all past the reach', () => {
+    expect(markerAt([at('spawner-1', 0, 0)], 200, 0, 70)).toBeNull();
+  });
+
+  /**
+   * Not a hypothetical: markers are dropped at cursor positions, and two on the
+   * same spot with an order that came from whichever chunk iterated first would
+   * make clicking the same place twice select two different things.
+   */
+  it('breaks an exact tie on id, so the same click is the same answer', () => {
+    const stacked = [at('spawner-9', 5, 5), at('spawner-2', 5, 5)];
+    expect(markerAt(stacked, 5, 5, 70)?.id).toBe('spawner-2');
+    expect(markerAt([...stacked].reverse(), 5, 5, 70)?.id).toBe('spawner-2');
+  });
+
+  it('refuses a reach or a point that is not a number', () => {
+    const markers = [at('spawner-1', 0, 0)];
+    expect(markerAt(markers, 0, 0, 0)).toBeNull();
+    expect(markerAt(markers, NaN, 0, 70)).toBeNull();
+  });
+});
+
+describe('editing the selected marker', () => {
+  const spawner = (settings?: { respawnSeconds?: number; leashRadius?: number }): MapMarker => ({
+    kind: 'spawner',
+    id: 'spawner-1',
+    x: 60,
+    z: 60,
+    label: 'grazer',
+    ...(settings === undefined ? {} : { spawner: settings }),
+  });
+
+  describe('the patch itself', () => {
+    it('keeps the id, whatever else moves', () => {
+      expect(patchMarker(spawner(), { kind: 'campfire', label: 'x', x: 1, z: 2 }).id).toBe('spawner-1');
+    });
+
+    it('leaves alone what the patch does not name', () => {
+      const next = patchMarker(spawner({ leashRadius: 200 }), { label: 'stalker' });
+      expect(next).toEqual({ ...spawner({ leashRadius: 200 }), label: 'stalker' });
+    });
+
+    /**
+     * The rule this function exists for. `parseMap` refuses a `spawner` block on
+     * any other kind, so keeping one here would produce a map that saves and
+     * will not load -- and the moment the kind changes is the moment it stops
+     * being true, which is why it is dropped here rather than at the save.
+     */
+    it('drops a spawner\'s numbers when the kind can no longer read them', () => {
+      const next = patchMarker(spawner({ respawnSeconds: 30, leashRadius: 200 }), { kind: 'campfire' });
+      expect(next.kind).toBe('campfire');
+      expect(next.spawner).toBeUndefined();
+    });
+
+    it('stores no label at all for an empty one', () => {
+      expect(patchMarker(spawner(), { label: '' }).label).toBeUndefined();
+      expect(patchMarker(spawner(), { label: '   ' }).label).toBeUndefined();
+    });
+
+    it('stores no block at all for an emptied one', () => {
+      expect(patchMarker(spawner({ respawnSeconds: 30 }), { spawner: {} }).spawner).toBeUndefined();
+    });
+  });
+
+  describe('the write', () => {
+    it('changes the marker in place, keeping the map one marker long', () => {
+      const map = loaded([spawner()]);
+      const { marker } = updateMarker(map.store, LAYER, 'spawner-1', {
+        label: 'stalker',
+        spawner: { respawnSeconds: 45 },
+      });
+      expect(marker?.label).toBe('stalker');
+      const held = map.store.markers(LAYER);
+      expect(held).toHaveLength(1);
+      expect(held[0]?.spawner).toEqual({ respawnSeconds: 45 });
+    });
+
+    /**
+     * A marker lives in the chunk that contains it, so moving one is a re-file
+     * rather than a write in place -- and the failure this guards is the one
+     * that leaves it filed under ground it is no longer standing on, or filed
+     * twice.
+     */
+    it('re-files a marker dragged across a chunk seam', () => {
+      const map = loaded([spawner()]);
+      // Two chunks along from the marker at (60, 60), so this genuinely crosses
+      // a seam: chunks are 160 wide from the layer's own corner at -200.
+      const to = { x: 150, z: 150 };
+      const { marker, dirty } = updateMarker(map.store, LAYER, 'spawner-1', to);
+      expect(marker?.x).toBeCloseTo(to.x, 6);
+      // Two chunks changed: the one it left and the one it arrived in.
+      expect(dirty).toHaveLength(2);
+      const held = map.store.markers(LAYER);
+      expect(held).toHaveLength(1);
+      expect(map.store.markersWithin(LAYER, to.x, to.z, 5)).toHaveLength(1);
+      expect(map.store.markersWithin(LAYER, 60, 60, 5)).toHaveLength(0);
+    });
+
+    it('reports one chunk for an edit that did not move it', () => {
+      const map = loaded([spawner()]);
+      expect(updateMarker(map.store, LAYER, 'spawner-1', { label: 'stalker' }).dirty).toHaveLength(1);
+    });
+
+    it('announces the chunks before writing to either of them', () => {
+      const map = loaded([spawner()]);
+      const seen = new Set<string>();
+      updateMarker(map.store, LAYER, 'spawner-1', { x: 150, z: 150 }, (cx, cz) => {
+        // Still where it started when the undo entry is captured.
+        expect(map.store.markersWithin(LAYER, 60, 60, 5)).toHaveLength(1);
+        seen.add(`${cx},${cz}`);
+      });
+      expect(seen.size).toBeGreaterThan(1);
+    });
+
+    it('changes nothing for an id nothing holds, and says so', () => {
+      const map = loaded([spawner()]);
+      const result = updateMarker(map.store, LAYER, 'spawner-7', { label: 'stalker' });
+      expect(result.marker).toBeNull();
+      expect(result.dirty).toHaveLength(0);
+      expect(map.store.markers(LAYER)[0]?.label).toBe('grazer');
+    });
+
+    /**
+     * The worst bug this could have: an edit that ate the marker on its way to
+     * a point outside the map.
+     */
+    it('puts the marker back when the new point is off the layer', () => {
+      const map = loaded([spawner()]);
+      const result = updateMarker(map.store, LAYER, 'spawner-1', { x: 99_999, z: 0 });
+      expect(result.marker).toBeNull();
+      const held = map.store.markers(LAYER);
+      expect(held).toHaveLength(1);
+      expect(held[0]?.x).toBeCloseTo(60, 6);
+      expect(held[0]?.label).toBe('grazer');
+    });
+
+    it('survives the round trip through the document', () => {
+      const map = loaded([spawner()]);
+      updateMarker(map.store, LAYER, 'spawner-1', { spawner: { respawnSeconds: 90, leashRadius: 240 } });
+      const reloaded = loadMap(parseMap(serializeMap(map.store.toDocument())));
+      expect(reloaded.markers[0]?.spawner).toEqual({ respawnSeconds: 90, leashRadius: 240 });
+    });
+  });
+
+  describe('undo', () => {
+    it('takes an edit back whole', () => {
+      const map = loaded([spawner({ respawnSeconds: 30 })]);
+      const history = new EditHistory();
+      history.beginStroke();
+      updateMarker(map.store, LAYER, 'spawner-1', { label: 'stalker', spawner: { respawnSeconds: 90 } }, (cx, cz) =>
+        history.captureChunk(map.store, LAYER, cx, cz),
+      );
+      history.endStroke();
+      expect(map.store.markers(LAYER)[0]?.label).toBe('stalker');
+
+      history.undo(map.store);
+      const back = map.store.markers(LAYER)[0];
+      expect(back?.label).toBe('grazer');
+      expect(back?.spawner).toEqual({ respawnSeconds: 30 });
+    });
+
+    it('takes a move back, from both chunks', () => {
+      const map = loaded([spawner()]);
+      const history = new EditHistory();
+      history.beginStroke();
+      updateMarker(map.store, LAYER, 'spawner-1', { x: 150, z: 150 }, (cx, cz) =>
+        history.captureChunk(map.store, LAYER, cx, cz),
+      );
+      history.endStroke();
+      history.undo(map.store);
+      const held = map.store.markers(LAYER);
+      expect(held).toHaveLength(1);
+      expect(held[0]?.x).toBeCloseTo(60, 6);
+    });
   });
 });

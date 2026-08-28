@@ -6,8 +6,45 @@
  * recalculated. Buffing a sword buffs every sword already in the world.
  */
 
-import type { EquipSlot } from '../state/types.js';
+import type { EquipTarget } from '../state/types.js';
 import type { StatModifier } from './modifiers.js';
+import { ScalingGrade, type WeaponDamage, type WeaponScaling } from './weapon-scaling.js';
+
+/**
+ * The rarity tiers, in ascending order (spec 158). **Three, and on purpose.**
+ *
+ * Three is what the presentation ladder in `data/loot.ts` needs -- quiet,
+ * delayed, longer -- and a fourth would be a tier with nothing to say. Spec 158
+ * explicitly declines to design a full taxonomy: the ladder grows when
+ * something needs a rung, and until then every tier differs from its neighbours
+ * in how it behaves rather than only in its name.
+ *
+ * It lives here rather than beside the reveal timings because rarity is a fact
+ * about an item, and the timings are a fact about how one is announced. Putting
+ * the vocabulary next to the rows that carry it also keeps the two files
+ * acyclic: `loot.ts` reads this, and nothing here reads `loot.ts`.
+ *
+ * The order is the wire order. A tier is appended, never inserted.
+ */
+export const RARITY_IDS = ['common', 'rare', 'exceptional'] as const;
+
+export type RarityId = (typeof RARITY_IDS)[number];
+
+/** A tier as a byte, for the wire: its index in {@link RARITY_IDS}. */
+export function rarityToByte(id: RarityId): number {
+  return RARITY_IDS.indexOf(id);
+}
+
+/**
+ * A byte back to a tier, total by construction.
+ *
+ * An unknown byte reads as `common` rather than throwing: a client a build
+ * behind should draw a quiet drop, not take the frame down over a tier it has
+ * never heard of.
+ */
+export function rarityFromByte(byte: number): RarityId {
+  return RARITY_IDS[byte] ?? 'common';
+}
 
 export interface ItemDefinition {
   readonly id: string;
@@ -17,10 +54,40 @@ export interface ItemDefinition {
    * (spec 126). A null slot is what makes "this cannot be equipped" a fact about
    * the row rather than a list of exceptions somewhere else.
    */
-  readonly slot: EquipSlot | null;
+  readonly slot: EquipTarget | null;
   /** Character level required to equip; below it the equip is rejected. */
   readonly levelRequirement: number;
   readonly modifiers: StatModifier;
+  /**
+   * Which attributes swinging this scales with, as a letter each (spec 216).
+   *
+   * The row's **base** scaling and only that: whatever the player is wearing is
+   * applied on top by `effectiveScaling`, which never writes back here. A row is
+   * a constant, and taking an amulet off restores the effective grades because
+   * nothing ever moved them.
+   *
+   * Absent is {@link NO_SCALING} -- correct for everything that is not a weapon,
+   * and correct for a main hand nobody has configured yet, which then deals its
+   * base damage with no attribute term rather than crashing or silently
+   * inheriting somebody else's letters. An empty hand is the one case that is
+   * *not* this: see `UNARMED_SCALING`.
+   *
+   * Only ever read for the main hand. Scaling on a helmet is inert, the same
+   * nothing a `basicAttackId` on one already is.
+   */
+  readonly scaling?: WeaponScaling;
+  /**
+   * What swinging this hits for, before any attribute touches it (spec 217).
+   *
+   * The weapon's **own** damage, and since spec 217 the thing that actually
+   * decides a basic attack: before it, a swing was `melee.slash.damage` times a
+   * multiplier, so the number that set how hard every sword in the game hit was
+   * a field on an ability row shared with every monster.
+   *
+   * Absent is {@link NO_WEAPON_DAMAGE} for anything that is not a weapon, and
+   * an empty hand is {@link UNARMED_DAMAGE}. Only ever read for the main hand.
+   */
+  readonly damage?: WeaponDamage;
   /**
    * The auto-attack this weapon swings with (spec 079), or absent for one that
    * changes numbers but not the motion.
@@ -30,6 +97,19 @@ export interface ItemDefinition {
    * every bow at a different shot is one edit in `data/abilities.ts`.
    */
   readonly basicAttackId?: string;
+  /**
+   * The active skill this item *is* (spec 188).
+   *
+   * The same shape `basicAttackId` above already uses, and for the same stated
+   * reason: a bow is a row in this table rather than a class, and so is a skill.
+   * It names an ability id, so re-tuning what Guard Break does is one edit in
+   * `data/abilities.ts` and nothing here moves.
+   *
+   * Only ever read for an item in one of the four skill slots. An item that
+   * names one and cannot be worn there is inert, which is the same nothing a
+   * `basicAttackId` on a helmet already is.
+   */
+  readonly activeSkillId?: string;
   /**
    * Base worth in coins (spec 129).
    *
@@ -45,6 +125,21 @@ export interface ItemDefinition {
    * is stated once rather than at every call site.
    */
   readonly maxStack?: number;
+  /**
+   * How loudly this announces itself when it drops (spec 158). Absent is
+   * `common`, so most of the table says nothing and means it.
+   *
+   * A property of the *row*, never of a drop: two copies of the same sword are
+   * the same tier forever. A per-drop rarity would only mean something if two
+   * copies could differ in what they do, which needs affixes, which spec 158
+   * deliberately does not build.
+   *
+   * It changes presentation and nothing else -- no price, no stats, no drop
+   * weight. `data/loot.ts` decides how often a row appears and this decides how
+   * the appearance is announced, and keeping those two apart is what makes a
+   * balance change and a presentation change different diffs.
+   */
+  readonly rarity?: RarityId;
 }
 
 const DEFINITIONS: readonly ItemDefinition[] = [
@@ -55,33 +150,91 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Worn Sword',
     slot: 'mainHand',
     levelRequirement: 1,
-    modifiers: { attackDamage: 3 },
+    modifiers: {},
+    // The plain blade, and the one row migrated to scale exactly as it did
+    // before spec 216: `A` is the grade `damagePerPoint` was chosen against, so
+    // its Strength term is the pre-spec 0.6 a point to the last decimal.
+    scaling: { strength: ScalingGrade.A, agility: ScalingGrade.D, intelligence: ScalingGrade.None },
+    // The reference the rest of the table is priced against (spec 217): a fresh
+    // character has spent nothing, so `above()` gives them no attribute term at
+    // all and this range is exactly what they hit for.
+    damage: { min: 1, max: 3 },
   },
   {
     id: 'sword.keen',
+    rarity: 'rare',
     value: 90,
     name: 'Keen Longsword',
     slot: 'mainHand',
     levelRequirement: 5,
     // Keen: the speed is the point of it (spec 070), so it says so as a
     // percentage rather than by shaving a tick off the base interval.
-    modifiers: { attackDamage: 8, attackRange: 6, attackSpeedPct: 0.15 },
+    modifiers: { attackRange: 6, attackSpeedPct: 0.15 },
+    // The versatile blade: good in either hand, best in neither. `B`/`B` is 1.40
+    // of coefficient against the maul's single `S` at 1.15, which is the shape
+    // the balance rule wants -- a two-attribute weapon out-scales a
+    // one-attribute weapon only for somebody who actually paid for both, and
+    // pays for the breadth by taking a lower letter in each.
+    scaling: { strength: ScalingGrade.B, agility: ScalingGrade.B, intelligence: ScalingGrade.None },
+    // Rare and level 5, so above the starters; a narrow range, because a keen
+    // blade landing consistently is what the row already says about it.
+    damage: { min: 3, max: 6 },
   },
   {
     id: 'maul.iron',
+    rarity: 'rare',
     value: 110,
     name: 'Iron Maul',
     slot: 'mainHand',
     levelRequirement: 5,
-    modifiers: { attackDamage: 14, attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
+    modifiers: { attackSpeedPct: -0.2, attackRange: 10, strength: 2 },
+    // +2 Strength, the slowest swing and the biggest number: nothing about this
+    // row was ever ambiguous. The single-attribute `S` the balance rule is
+    // written about -- it has to be able to compete with a three-letter hybrid.
+    scaling: { strength: ScalingGrade.S, agility: ScalingGrade.None, intelligence: ScalingGrade.None },
+    // The widest spread in the table, and the highest ceiling. A maul is the
+    // weapon whose blows differ from each other, which is what pays for the
+    // -20% swing rate beside it.
+    damage: { min: 4, max: 11 },
   },
   {
     id: 'staff.emberwood',
+    rarity: 'rare',
     value: 95,
     name: 'Emberwood Staff',
     slot: 'mainHand',
     levelRequirement: 4,
-    modifiers: { attackDamage: 2, spellPower: 0.2, intelligence: 3, attackRange: 20 },
+    // No `attackRange` (spec 218). The 20 this used to carry described what a
+    // melee swing would have reached, and a weapon that names a shot never
+    // melees -- the same reason the bow below carries none. What it reaches is
+    // `ranged.ember`'s own 330, which is what `autoAttack` chases to and what
+    // `startCast` gates on.
+    modifiers: { spellPower: 0.2, intelligence: 3 },
+    // `A` in Intelligence, which spec 216 chose for a stick swung by a magus and
+    // which spec 218 makes literal: the thing this weapon throws is fire, and
+    // the attribute that decides how much of it is the one the row already
+    // named. The `E` in Strength stays. It was justified as "hitting something
+    // with a stick is still worth marginally more to a strong body" and that
+    // sentence is now about an attack this weapon no longer makes -- but the
+    // grade is the bottom of the ladder, the arm still swings the staff, and
+    // re-lettering somebody else's row for a coefficient nobody can feel is not
+    // worth the churn.
+    scaling: { strength: ScalingGrade.E, agility: ScalingGrade.None, intelligence: ScalingGrade.A },
+    // Retuned by spec 218, because the premise the old number was chosen under
+    // is gone. `{1, 2}` was the weakest range in the table and said so: *"barely
+    // a weapon, and meant to be ... hitting somebody with it is the fallback
+    // rather than the plan"*. Hitting somebody with it **is** the plan now --
+    // this is the range an Ember Shot rolls, since spec 217 made a basic
+    // attack's damage the weapon's own.
+    //
+    // Between the bow's `{2, 4}` and the keen sword's `{3, 6}`: better than a
+    // level-1 common because it is a level-4 rare, and short of the level-5
+    // melee rares because it out-ranges every one of them by three hundred
+    // units. Three wide, which is the keen blade's spread rather than the maul's
+    // seven -- a thrown ball of fire carries a fixed payload, so what varies is
+    // where it catches you and not how hard it was swung.
+    damage: { min: 2, max: 5 },
+    basicAttackId: 'ranged.ember',
   },
   {
     id: 'bow.hunting',
@@ -93,7 +246,11 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     levelRequirement: 1,
     // The range is the weapon; the shot it names carries its own (spec 079), so
     // `attackRange` here only nudges what a melee swing would have reached.
-    modifiers: { attackDamage: 5, attackSpeedPct: -0.1 },
+    modifiers: { attackSpeedPct: -0.1 },
+    // A drawn bow is a Strength act and an aimed one is not, which is why this
+    // is the one row with two live letters and neither of them top of the ladder.
+    scaling: { strength: ScalingGrade.D, agility: ScalingGrade.A, intelligence: ScalingGrade.None },
+    damage: { min: 2, max: 4 },
     basicAttackId: 'ranged.shot',
   },
   {
@@ -102,7 +259,14 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     name: 'Weighted Stars',
     slot: 'mainHand',
     levelRequirement: 1,
-    modifiers: { attackDamage: 2, attackSpeedPct: 0.2, agility: 1 },
+    modifiers: { attackSpeedPct: 0.2, agility: 1 },
+    // +1 Agility, the fastest thing in the table and two points of damage: the
+    // pure-Agility counterpart to the maul, and priced the same way.
+    scaling: { strength: ScalingGrade.None, agility: ScalingGrade.S, intelligence: ScalingGrade.None },
+    // Light, and thrown fast: the same range as the Worn Sword against a +20%
+    // rate and an `S` in Agility, which is where its damage is meant to come
+    // from rather than from the star itself.
+    damage: { min: 1, max: 3 },
     basicAttackId: 'ranged.star',
   },
   // --- off hand ---
@@ -116,6 +280,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'focus.quartz',
+    rarity: 'rare',
     value: 55,
     name: 'Quartz Focus',
     slot: 'offHand',
@@ -133,6 +298,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'helm.plated',
+    rarity: 'rare',
     value: 120,
     name: 'Plated Helm',
     slot: 'head',
@@ -149,6 +315,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'chest.scale',
+    rarity: 'rare',
     value: 160,
     name: 'Scalemail',
     slot: 'chest',
@@ -166,6 +333,7 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- trinkets ---
   {
     id: 'trinket.swiftband',
+    rarity: 'rare',
     value: 70,
     name: 'Swiftband',
     slot: 'trinket',
@@ -174,11 +342,194 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'trinket.bloodstone',
+    rarity: 'exceptional',
     value: 210,
     name: 'Bloodstone',
     slot: 'trinket',
     levelRequirement: 8,
     modifiers: { maxHealthPct: 0.12, attackDamagePct: 0.05 },
+  },
+  // Two trinkets that move a *letter* rather than a number (spec 216).
+  //
+  // They exist to make the grade-modifier path reachable content rather than a
+  // mechanism with no caller, and they are the shape every future one takes:
+  // a generic step on a named attribute, consumed by `effectiveScaling`, with
+  // nothing in combat code knowing either of these rows exists. A third is
+  // another entry in this table and no code at all.
+  //
+  // A step is worth far more than a stat point, because it re-prices every
+  // point of that attribute the holder has -- so both are priced high and gated
+  // late, and the Runic Pendant *pays* for its two steps with one off Strength
+  // rather than being strictly better than the amulet beside it.
+  {
+    id: 'trinket.precision',
+    rarity: 'rare',
+    value: 160,
+    name: 'Amulet of Precision',
+    slot: 'trinket',
+    levelRequirement: 6,
+    modifiers: { agilityScalingGrade: 1 },
+  },
+  {
+    id: 'trinket.runic',
+    rarity: 'exceptional',
+    value: 240,
+    name: 'Runic Pendant',
+    slot: 'trinket',
+    levelRequirement: 9,
+    modifiers: { intelligenceScalingGrade: 2, strengthScalingGrade: -1 },
+  },
+  // --- active skills (spec 188) ---
+  //
+  // A skill is an item, so it drops, trades, sits in a bag and is worn -- and
+  // every one of those verbs is a system that already existed. What makes these
+  // rows different from a sword is one field: `activeSkillId`, which names the
+  // row in `data/abilities.ts` that says what the thing actually does. There
+  // are no numbers here, deliberately: a sigil's damage is the ability's, and a
+  // second copy in this table would be a second place to retune it.
+  //
+  // `slot: 'skill'` is the family, so one row fits any of the four slots.
+  {
+    id: 'sigil.guardBreak',
+    name: 'Sigil of Guard Break',
+    slot: 'skill',
+    levelRequirement: 1,
+    modifiers: {},
+    activeSkillId: 'skill.guardBreak',
+    value: 45,
+  },
+  {
+    id: 'sigil.stunningBlow',
+    rarity: 'rare',
+    name: 'Sigil of the Stunning Blow',
+    slot: 'skill',
+    levelRequirement: 4,
+    modifiers: {},
+    activeSkillId: 'skill.stunningBlow',
+    value: 130,
+  },
+  {
+    id: 'sigil.whirlwind',
+    rarity: 'rare',
+    name: 'Sigil of the Whirlwind',
+    slot: 'skill',
+    levelRequirement: 5,
+    modifiers: {},
+    activeSkillId: 'skill.whirlwind',
+    value: 145,
+  },
+  {
+    id: 'sigil.cripplingStrike',
+    name: 'Sigil of the Crippling Strike',
+    slot: 'skill',
+    levelRequirement: 2,
+    modifiers: {},
+    activeSkillId: 'skill.cripplingStrike',
+    value: 60,
+  },
+  // --- the affliction sigils (spec 190) ---
+  //
+  // One per affliction, and no numbers here either -- the same rule the four
+  // above keep. What they are spread across is `levelRequirement`, which is the
+  // only knob a sigil has: the dart is the cheap one you get early and stack,
+  // and the ones that deny ground or set a crowd alight sit later.
+  {
+    id: 'sigil.poisonDart',
+    name: 'Sigil of the Poison Dart',
+    slot: 'skill',
+    levelRequirement: 2,
+    modifiers: {},
+    activeSkillId: 'skill.poisonDart',
+    value: 60,
+  },
+  {
+    id: 'sigil.rendingCut',
+    name: 'Sigil of the Rending Cut',
+    slot: 'skill',
+    levelRequirement: 2,
+    modifiers: {},
+    activeSkillId: 'skill.rendingCut',
+    value: 65,
+  },
+  {
+    id: 'sigil.emberToss',
+    rarity: 'rare',
+    name: 'Sigil of the Ember Toss',
+    slot: 'skill',
+    levelRequirement: 4,
+    modifiers: {},
+    activeSkillId: 'skill.emberToss',
+    value: 135,
+  },
+  {
+    id: 'sigil.acidSpray',
+    rarity: 'rare',
+    name: 'Sigil of the Acid Spray',
+    slot: 'skill',
+    levelRequirement: 4,
+    modifiers: {},
+    activeSkillId: 'skill.acidSpray',
+    value: 130,
+  },
+  {
+    id: 'sigil.arcLash',
+    rarity: 'rare',
+    name: 'Sigil of the Arc Lash',
+    slot: 'skill',
+    levelRequirement: 5,
+    modifiers: {},
+    activeSkillId: 'skill.arcLash',
+    value: 150,
+  },
+  {
+    id: 'sigil.rimeTouch',
+    rarity: 'rare',
+    name: 'Sigil of the Rime Touch',
+    slot: 'skill',
+    levelRequirement: 5,
+    modifiers: {},
+    activeSkillId: 'skill.rimeTouch',
+    value: 145,
+  },
+  {
+    id: 'sigil.blight',
+    rarity: 'exceptional',
+    name: 'Sigil of the Blight',
+    slot: 'skill',
+    levelRequirement: 6,
+    modifiers: {},
+    activeSkillId: 'skill.blight',
+    value: 260,
+  },
+  // --- the field sigil (spec 223) ---
+  //
+  // Exceptional, and it is the one sigil in the table that is not priced against
+  // what it does to a body: eight seconds of ground nothing can stand on is a
+  // *positional* answer, and there is nothing else in the game that gives one.
+  {
+    id: 'sigil.scorchedEarth',
+    rarity: 'exceptional',
+    name: 'Sigil of Scorched Earth',
+    slot: 'skill',
+    levelRequirement: 6,
+    modifiers: {},
+    activeSkillId: 'skill.scorchedEarth',
+    value: 280,
+  },
+  // The test row's sigil (spec 190). Not content, and three fields say so:
+  // `levelRequirement: 1` so any character can wear it, no `rarity` so it
+  // announces itself as quietly as loot can, and `value: 0` -- which is what
+  // both prices are derived from, so it can be neither bought nor sold. It is
+  // in no loot table and no vendor stock either; `admin:giveItem` is the way one
+  // reaches a tester, which is the same path every other operator action takes.
+  {
+    id: 'sigil.testStatuses',
+    name: 'Sigil of Test Statuses',
+    slot: 'skill',
+    levelRequirement: 1,
+    modifiers: {},
+    activeSkillId: 'skill.testStatuses',
+    value: 0,
   },
   // --- carried ---
   // Nothing drinks this yet: consuming an item is its own spec, and it is here
@@ -193,6 +544,23 @@ const DEFINITIONS: readonly ItemDefinition[] = [
     modifiers: {},
     maxStack: 10,
   },
+  // What a sheep leaves. Nothing spins it yet -- crafting is its own spec -- and
+  // it is deliberately here anyway, because it is the first row in this table
+  // that is *only* a material: no slot, no modifiers, no skill, and a price that
+  // is the whole of what it does today. `sword.worn` is worth three of these.
+  //
+  // Stacks high. A material a player picks up in ones and twos over an
+  // afternoon and cannot use yet is the exact shape that fills a bag, and a bag
+  // full of wool is a worse first impression than no wool at all.
+  {
+    id: 'wool',
+    value: 4,
+    name: 'Wool',
+    slot: null,
+    levelRequirement: 1,
+    modifiers: {},
+    maxStack: 20,
+  },
 ];
 
 export const ITEMS: ReadonlyMap<string, ItemDefinition> = new Map(
@@ -203,6 +571,18 @@ export const ALL_ITEMS: readonly ItemDefinition[] = DEFINITIONS;
 
 export function itemById(id: string): ItemDefinition | null {
   return ITEMS.get(id) ?? null;
+}
+
+/**
+ * An item's tier (spec 158).
+ *
+ * Read off the row, so a drop cannot have a rarity its item does not. An
+ * unknown id is `common`, like everything else about rarity that has to be
+ * total -- a body dropping something this build has never heard of should be a
+ * quiet drop, not a crash.
+ */
+export function rarityOf(defId: string): RarityId {
+  return ITEMS.get(defId)?.rarity ?? 'common';
 }
 
 /** How many of `id` fit in one slot. Unknown ids answer 1, never 0 (spec 126). */
@@ -230,4 +610,9 @@ export const STARTING_KIT: readonly { readonly defId: string; readonly count: nu
   { defId: 'helm.leather', count: 1 },
   { defId: 'legs.traveller', count: 1 },
   { defId: 'potion.minor', count: 3 },
+  // One skill to start (spec 188). Not a nicety: with four empty slots and no
+  // sigil in the bag there is no way for a new character to reach the feature
+  // at all, and "it works once you have looted one" is how a system ships
+  // untested by everybody who has not.
+  { defId: 'sigil.guardBreak', count: 1 },
 ];

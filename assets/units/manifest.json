@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "9c03955e88e036e8a4b4ed6bc5a228c7306e4691d2c2b51a518fc18e85e29a2d",
+  "hash": "23fc3253c43bcfbb0b68c8dcda897698b456ff85614d8eeee5c53a97a93346d6",
   "builtStages": [],
   "units": [
     {
@@ -50,8 +50,8 @@
       "entries": [
         {
           "path": "fox_a_pose/fox_a_pose.unitdef.json",
-          "sha256": "44f9d3e2913c61a772e8b71306793e39f248520936591603fa0cee5a8198d08e",
-          "bytes": 2819
+          "sha256": "5c523a393b56f5e31139592cb19065b4ccad03a17892b9c2d85019ef7e70977d",
+          "bytes": 4115
         },
         {
           "path": "fox_a_pose/fox_a_pose.glb",
@@ -60,8 +60,13 @@
         },
         {
           "path": "biped.core.cliplib.json",
-          "sha256": "216451016a3dbcbbe961e6b66e928c8bffe8398c62fb544cda5c6431180bfaff",
-          "bytes": 1931
+          "sha256": "d40a4eae83aa05e2a6da44f6ff82c42391d2f5bf80b36a2fced4475c11763388",
+          "bytes": 3203
+        },
+        {
+          "path": "clips/cast.glb",
+          "sha256": "02c864e8afff7af189b8c752df703ea83389b1dbce2cac36b9a0de2166d6e277",
+          "bytes": 46040
         },
         {
           "path": "clips/defeat_02.glb",
@@ -80,12 +85,17 @@
         },
         {
           "path": "clips/run.glb",
-          "sha256": "532f61a7c93d6ec9e32e2f3e0783c3327798824cb1105c91f3c4beb8f2cf580f",
-          "bytes": 365836
+          "sha256": "12b338cf95e862ce11b7c1713687973ed29a23efbbc13aec4247608c6daf7e53",
+          "bytes": 365900
+        },
+        {
+          "path": "clips/shoot.glb",
+          "sha256": "845f3d665a8bb1c002e5d652d8d173a6f35487959696b6588ba7b6795b4cab92",
+          "bytes": 44004
         },
         {
           "path": "clips/slash.glb",
-          "sha256": "6bef1b7033d4de57e159212f6ec89378d28a0bac4a1d68274a9e4f28a9d0dbdb",
+          "sha256": "26f540924c70acf8b1386bb64bf83b24eab0838ee426c6da11dcf8fbbe2d5e57",
           "bytes": 36000
         },
         {
@@ -101,8 +111,8 @@
       "entries": [
         {
           "path": "pig_a_pose_full/pig_a_pose_full.unitdef.json",
-          "sha256": "af3c2175974f910047a37ced64d9c12c57d6bf98ba2782d0817a123f664856e5",
-          "bytes": 4110
+          "sha256": "4c99cb92101f4295c9bd10b6c02cf00eb08748f0cc4259b6f0df31ebf46568c9",
+          "bytes": 6224
         },
         {
           "path": "pig_a_pose_full/pig_a_pose_full.glb",
@@ -111,8 +121,13 @@
         },
         {
           "path": "biped.core.cliplib.json",
-          "sha256": "216451016a3dbcbbe961e6b66e928c8bffe8398c62fb544cda5c6431180bfaff",
-          "bytes": 1931
+          "sha256": "d40a4eae83aa05e2a6da44f6ff82c42391d2f5bf80b36a2fced4475c11763388",
+          "bytes": 3203
+        },
+        {
+          "path": "clips/cast.glb",
+          "sha256": "02c864e8afff7af189b8c752df703ea83389b1dbce2cac36b9a0de2166d6e277",
+          "bytes": 46040
         },
         {
           "path": "clips/defeat_02.glb",
@@ -131,12 +146,17 @@
         },
         {
           "path": "clips/run.glb",
-          "sha256": "532f61a7c93d6ec9e32e2f3e0783c3327798824cb1105c91f3c4beb8f2cf580f",
-          "bytes": 365836
+          "sha256": "12b338cf95e862ce11b7c1713687973ed29a23efbbc13aec4247608c6daf7e53",
+          "bytes": 365900
+        },
+        {
+          "path": "clips/shoot.glb",
+          "sha256": "845f3d665a8bb1c002e5d652d8d173a6f35487959696b6588ba7b6795b4cab92",
+          "bytes": 44004
         },
         {
           "path": "clips/slash.glb",
-          "sha256": "6bef1b7033d4de57e159212f6ec89378d28a0bac4a1d68274a9e4f28a9d0dbdb",
+          "sha256": "26f540924c70acf8b1386bb64bf83b24eab0838ee426c6da11dcf8fbbe2d5e57",
           "bytes": 36000
         },
         {

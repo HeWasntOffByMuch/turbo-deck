@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MAP_VERSION, serializeMap } from '../../terrain/map.js';
 import { loadMap } from '../../terrain/map-world.js';
-import { bakeMap, DEFAULT_BAKE_SEED } from '../../../scripts/bake-map.js';
+import { bakeMap } from '../../../scripts/bake-map.js';
 import { buildWorldFromMap } from './build.js';
 import { DEFAULT_MAP_PATH, loadMapFile, mapPathFromEnv } from './map-file.js';
 
@@ -30,8 +30,15 @@ describe('the shipped map', () => {
 
   it('reads and parses', () => {
     expect(file.doc.version).toBe(MAP_VERSION);
-    expect(file.doc.seed).toBe(DEFAULT_BAKE_SEED);
-    expect(file.text.length).toBeGreaterThan(0);
+    // The seed is provenance, not something this test should pin to a
+    // particular number -- the shipped map has been rebaked and grown since,
+    // and does not owe `bake-map.ts`'s own default seed anything. What
+    // matters here is that the field survived parsing as a real number.
+    expect(Number.isFinite(file.doc.seed)).toBe(true);
+    // The identity comes off the manifest now rather than from hashing the
+    // whole world (spec 204), so it is 8 hex digits rather than a document.
+    expect(file.mapId).toHaveLength(8);
+    expect(file.manifest.layers.length).toBeGreaterThan(0);
   });
 
   it('loads into a world with ground under the arena', () => {
@@ -43,7 +50,7 @@ describe('the shipped map', () => {
   });
 
   it('builds a server world with colliders for its props', () => {
-    const built = buildWorldFromMap(file.doc, file.text);
+    const built = buildWorldFromMap(file.doc, file.mapId);
     expect(built.props.length).toBeGreaterThan(0);
     // The bug spec 063 was written about: terrain built here and an empty
     // vegetation list passed to collision, so the server walked through trees.

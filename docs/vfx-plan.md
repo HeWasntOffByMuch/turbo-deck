@@ -2,7 +2,12 @@
 
 Status: **Phases 0–3 landed. Fire and smoke re-authored as solids (spec 123),
 auras as drawn sigils (spec 124), impacts as crystals (spec 125), the shockwave
-combined and the counts made tunable (spec 126) — the last at its review gate.**
+combined and the counts made tunable (spec 126), blood lit and bent (spec 139),
+and a painted vocabulary added beside all of it (spec 158), corrected (159) and
+given two lingering variants (160), a second way for a mark to end (161) and a
+preview that can actually show it (162). Spec 197 put the vocabulary on a
+*body*: the seven afflictions, as paint that clings and beats — the last at its
+review gate.**
 
 | Phase | State |
 |---|---|
@@ -17,7 +22,13 @@ combined and the counts made tunable (spec 126) — the last at its review gate.
 | art direction: auras as drawn sigils (spec 124) | done |
 | art direction: impacts as crystals (spec 125) | done |
 | the shockwave, and tunable counts (spec 126) | done |
-| blood: lit stains, and streaks that bend (spec 139) | **at the review gate** |
+| blood: lit stains, and streaks that bend (spec 139) | done |
+| art direction: a painted vocabulary (spec 158) | superseded in place by 159 |
+| the painted vocabulary, corrected (spec 159) | done |
+| two variants that linger (spec 160) | done |
+| a mark that comes apart (spec 161) | done |
+| the tab could not show what it was editing (spec 162) | done |
+| the afflictions, as paint on a body (spec 215) | **at the review gate** |
 
 This is the living document for the VFX arc. It is updated as decisions land, and
 it is where the damage-type colour/shape language is written down so future
@@ -1452,3 +1463,465 @@ No changes to gameplay simulation, networking, or combat resolution. No
 third-party particle library (none is proposed; if one becomes worth it, it comes
 back here with a size and integration cost, and waits). No full-resolution
 post-processing stack.
+
+
+---
+
+## 7. The painted vocabulary (spec 158)
+
+The library up to spec 139 could say exactly one thing about a shape: which of
+nine convex lumps it was. That was the right call for fire and smoke — §3 argues
+it at length, and the argument still holds — and it is also the whole of what the
+format could express. A *brush mark* has none of the properties a lump has: its
+identity is its outline, no two of a handful may match, and a batch of identical
+ones is the failure rather than the saving.
+
+So this is an addition rather than a replacement. Nothing authored before it
+moved.
+
+### What it brings
+
+| Piece | Where | What it is for |
+|---|---|---|
+| the stroke generator | `vfx/stroke.ts` | a spine, a width sampled along it, independent noise per edge |
+| the per-instance layer | `vfx/batches.ts`, under `VFX_STROKE` | one geometry, a hundred silhouettes, no CPU cost |
+| two card orientations | `vfx/meshes.ts` `ORIENT.card` / `cardVelocity` | a flat mark that reads from every bearing |
+| the mesh dissolve | `vfx/batches.ts` | `dither-cutout` reaching solids, ten specs after it was accepted for them |
+| the `fan` emitter shape | `vfx/shapes.ts` | "away from the attacker, and a bit upward", which nothing could say |
+| the two effects | `vfx/brush.ts` | `blood_hit_brush{,_heavy}`, `explosion_brush{_small,,_large}` |
+| the spawn API | `VfxLayer.spawnBloodHit` / `.spawnBrushExplosion` | a point, a surface, a bearing, an intensity |
+
+### The decision worth restating
+
+**The variation is in the shader, not in the mesh.** `meshes.ts` says a hundred
+distinct lumpy spheres would be a hundred draw calls, and it is right; the way
+out is that a stroke splits cleanly into a *spine* and a *width along it*, so the
+geometry can carry one canonical mark and the vertex shader can re-derive the
+outline per instance from `iSeed`. Five things move — how fat, where it swells,
+where the tip gives out, how long, and which way it curls — and the whole
+painted vocabulary costs five batches and nothing per frame.
+
+The second decision is the one a reviewer should push on: **these are camera
+cards.** A brush mark is flat, and free tumbling would make a third of every
+spatter vanish depending on where the player left the camera. The marks are
+still positioned, thrown and depth-tested in three dimensions; only their plane
+is the screen's. `cardVelocity` foreshortens by the component of the throw that
+lies across the view, so a mark aimed at the camera reads as a dab rather than
+as a full-length streak pointing nowhere — the same complaint §139 made about
+`stretched` blood, and it was made again here by the first version of this.
+
+### Cost
+
+Five new batches, so `REGISTRY.batches` moved from 20 to 25 (a ceiling on what
+*could* be drawn; a painted hit is three calls and a painted explosion is four).
+A hit is 14 marks and an explosion 27–43. Nothing is rebuilt per frame and
+nothing is allocated per spawn.
+
+### What 159 changed, and why
+
+Spec 158's first cut is worth keeping on the record because four of its five
+faults were *technique* choices rather than tuning, and each one has a general
+lesson in it.
+
+| Fault | Cause | Lesson |
+|---|---|---|
+| checkerboards, halftone fills, one-pixel fragments | `dither-cutout` on every painted emitter | ordered dithering is screen-door transparency; it is a pixel-art technique and cannot be borrowed for a painterly look |
+| "the silhouettes are pixelated" | the preview drove `vfx-probe.html`, which is 240×150 upscaled 4× with `image-rendering: pixelated` | a rig built to prove one thing will report that thing about everything; judging art needs its own rig |
+| a fan of twelve marks reading as one mark twelve times | one baked outline per shape | for a *lump*, one mesh is enough; for a mark whose identity is its outline, it is not |
+| the blast was a radial star | a `cone`, which samples directions uniformly | asymmetry cannot be sampled, only composed |
+| the effects read flat | both orientations pinned every piece to the view plane | the hybrid: what carries the composition faces the camera, the small pieces do not |
+
+The structural additions were a **bank** of independently generated gestures
+merged into one geometry (clipped per instance, still one draw call), a
+**crest** vertex per node so a mark is a shell rather than a plane and can
+therefore be turned in world space, an **`iAge`** attribute so the *shape*
+extends and erodes instead of the transform scaling, and a **`bearing`** on the
+`fan` shape so an explosion is four lobes rather than one spray.
+
+### The picture
+
+`npx tsx scripts/preview-brush-vfx.ts` drives `brush-scene.html` -- full
+resolution, MSAA, no retro pass -- and writes `brush-blood.png` and
+`brush-explosion.png`, four rows of six each. It measures what a contact sheet
+cannot say: that the stroke shader compiles at all, that isolated pixels stay
+under 20% of ink (a dither fill is ~50%; these run 0.2--0.8%), that the ink
+survives six camera bearings, that six seeds differ and differ by similar
+amounts, and that the blast's ink does not sit on its own origin.
+
+`brush-scene.html` on its own is the thing to open when judging in motion: a lit
+low-poly scene with a dummy, an orbiting camera, blood from any bearing,
+explosions at three sizes, twenty seeds at a click, slow motion to 0.04x, pause
+and single-step.
+
+### One property worth knowing about the whole system
+
+These particle shaders write `gl_FragColor` themselves and include no
+`colorspace_fragment` chunk, so the **linear** value `palette.ts` decodes to is
+what reaches the framebuffer -- there is no encode on the way out. Every colour
+in the table is affected and the bright ones never notice; a brown authored at
+0x63402c arrives as near-black. 159 is the first spec to need dark colours and
+therefore the first to pay for it, and the browns are authored much lighter than
+they look for that reason.
+
+
+---
+
+## 8. The variants (spec 160)
+
+Two, and they are the same request in different material: something that
+outstays the thing that made it.
+
+| Preset | What it is |
+|---|---|
+| `explosion_brush_smoulder` | smoke on tick 3, while the major strokes are still arriving, living four to six times as long as any of them over a fire cut to half its usual life |
+| `blood_hit_brush_mist` | a spatter that never lands: no gravity at all, a gentle lift, turbulence pulling the pieces apart, and an ending that thins instead of drying |
+
+Both are parameter calls on the existing builders -- no new geometry, no new
+shapes, no new orientation. That was the point of the builders, and it is the
+first time the claim has been tested by something that wanted genuinely
+different behaviour rather than different numbers.
+
+Six parameters had to be added to make them sayable, and two of them are worth
+naming here because they are general:
+
+- **the explosion's two halves had one clock.** `lifetimeTicks` drove the fire
+  and the smoke together and the smoke's delay was a literal inside the builder,
+  so they could not move in opposite directions -- which is the whole of what a
+  smoulder is. `smokeDelayTicks` and `smokeLifeTicks` split them; `lifetimeTicks`
+  now governs the fire alone.
+- **`linger`, and the finding behind it.** Shrinking a mark and fading it early
+  does nothing if the mark is already dead. The three blood layers are authored
+  to die in order -- flick, then medium marks, then dabs -- which is right for a
+  hit, where the gesture lands and the debris outlives it, and wrong for a
+  fizzle, where the fizzling *is* the effect. The first cut of the mist was over
+  before anybody could watch it go.
+
+Both sit outside the duration windows spec 158 wrote down, deliberately, and the
+two tests that assert those windows now name the exemption rather than widening.
+
+
+---
+
+## 9. Two ways a mark can end (spec 161)
+
+Spec 159 gave every brush mark one ending -- retract it from its own root -- and
+called that a virtue, because the flecks past the tip are then the last thing
+left and a flick reads as having finished. That is true at the speed a hit runs
+at, and it stops being true the moment a mark is held.
+
+Slowed to a second, retract is the brush retracing its own path backwards: the
+mark is drawn out from its root and taken back in at its root, which is the
+animation in reverse. Spec 160's mist inherited it and dissipated by
+**un-painting itself**. Shrinking and fading on top only made it fainter while
+it rewound.
+
+So `strokeDecay` is now a field on the emitter with two values:
+
+| | what it does | who wants it |
+|---|---|---|
+| `retract` | an eroding threshold walks from the root, pulling the spine after it | a hit: it is over in a third of a second and reads as finishing |
+| `fizzle` | the spine is untouched; a field varying *along* the mark opens gaps through it, and it comes apart into islands that shrink where they stand | anything held long enough to be watched |
+
+Two notes worth carrying forward.
+
+**The smoke had the fault worse, and nobody had reported it.** A cloud lobe is a
+lens with no root the eye can point at, so retract does not read as finishing --
+it reads as the mass being eaten from one side -- and the smoke is the
+longest-lived mark in the library by a distance. Every explosion's smoke fizzles
+now, and it separates into clumps as it clears, which is what the original brief
+asked smoke to do and what it had never quite done.
+
+**The frequency of the break-up field is an art decision, not a detail.** About
+one and a half cycles over the mark's length gives two or three islands. A high
+one takes it apart into a dotted line, which is the stipple spec 159 exists
+without -- the same failure arriving through a different door.
+
+
+---
+
+## 10. The tab could not show what it was editing (spec 162)
+
+`Ends by` was reported as doing nothing in the VFX tab. The wiring was correct
+end to end and every existing check was green; three separate things were wrong
+and none of them was the wiring.
+
+**The preview never zoomed in.** `resize()` framed with
+`Math.max(cameraSpan, fit.span)`, and `cameraSpan` is the cog's world zoom --
+640 units, because that is the *Play tab's*. Every effect smaller than the game's
+zoom was drawn at the game's zoom, so a blood hit covered about **1% of the
+canvas**. A field that changes the last third of a mark's life then moves a few
+dozen pixels. The cog is a ratio on the measured frame now.
+
+**The ending was partly applied at birth.** Both decays tested
+`smoothstep(0, band, x - leaving)`, which at `leaving = 0` is already under 1
+wherever `x` is under the band -- so retract pinched the first 9% of every mark
+from its first frame and fizzle was permanently *full of* holes rather than
+coming apart into them. Both sweep from `-band` now.
+
+**And the fizzle had no room.** It shared retract's window, so it finished at the
+same moment the alpha fade reached zero. It has its own now, and the mist stopped
+racing it with alpha.
+
+### The gap this closed
+
+The VFX tab had **no browser check on its editing path at all** -- `preview-studio`
+proves it mounts, `vfx-panels.test.ts` proves the table partitions and the JSON
+round-trips, and between them a row can be missing or wired to nothing forever.
+`scripts/probe-vfx-studio.ts` drives the real controls under a virtual clock and
+asserts an edit reaches the definition *and* the pixels, with a control edit
+beside it so a broken harness cannot pass as a broken product.
+
+Its measure is **piece count**, not pixel churn, and that is the transferable
+part: a broken stroke and an intact one overlap everywhere except the gap, so the
+obvious measurement is small when the read is completely different. Gating on it
+would have got the shader retuned to satisfy a number rather than the picture.
+
+---
+
+## 11. The afflictions, as paint on a body (spec 215)
+
+The painted vocabulary had three builders and all three were *events*: a hit, a
+blast, a placed cross. Nothing in it held to a body, and nothing in it lasted
+longer than a second and a bit. Spec 190 had meanwhile shipped seven afflictions
+— the one damage in this game that stays on a body after the thing that did it
+has walked away — and the only thing separating four seconds of fire from ten
+seconds of rot was which thirteen-pixel glyph sat in a row of glyphs over the
+head.
+
+### Three sockets, each with a comment naming this work
+
+Worth recording together, because the pattern is the finding rather than any one
+of them:
+
+- `world/auras.ts` has said since spec 121 that *"the day a status list is
+  replicated, `aurasFor` gains a branch and nothing else in the renderer
+  changes."* Spec 186 replicated it. `aurasFor` and `AuraTracker` still had no
+  caller outside their own test — seventy-five specs of written, tested,
+  mounted-nowhere code.
+- `EmitterShape`'s `{ kind: 'mesh' }` is documented as *"the surface of whatever
+  the effect is attached to … which is what makes a **burning-unit** definition
+  safe to preview in isolation."* There was no burning-unit definition, and
+  `scene.ts` supplied no `surface` hook, so in the game that shape had never
+  once resolved to anything but a point.
+- `scene.ts`'s `attach` hook says *"the effects that need a socket — **a burning
+  unit**, a weapon trail — arrive with the fire and slash work."*
+
+### The one decision the whole thing turns on
+
+**The beat is derived, not sent.** `WireStatus` carries an *absolute*
+`expiresAtTick` and `data/damage-over-time.ts` is shared code, so the client can
+recover the entire schedule:
+
+```
+elapsed = tick - (expiresAtTick - dotDurationTicks(row))
+landed  = clamp(floor(elapsed / row.intervalTicks), 0, row.pulses)
+```
+
+Every client beats together, nothing new crosses the wire, and the paint lands on
+the frame the damage number does. That is the whole difference between "there is
+a green haze on that thing" and "that thing is being poisoned."
+
+It is a **count** rather than "is this tick a pulse tick", and that is the
+load-bearing half. A frame drains several ticks — three at 20fps, and this
+environment paints a real page at about five — so a rule that asked whether
+`tick` were exactly a multiple would skip most beats and all of them on a slow
+frame. Counting what has landed and firing on the increase is frame-rate
+independent by construction, and fires **once** for a frame that drained three,
+because a beat is a beat and not a quantity.
+
+The stated limit: the sim measures elapsed from `appliedAtTick`, which a refresh
+does not move; the client has only the expiry, which a refresh does. So after a
+refresh the derived phase can sit up to `intervalTicks - 1` off. The *cadence*
+stays exact and the offset is under half a second on every row, so it is accepted
+rather than fixed with a protocol change.
+
+### Two layers, and one of them is the whole feature
+
+**The cling** is a state — marks born on the body's own surface, riding it,
+renewed about twice a second, `worldSpace: false`. **The shed** is what says
+*which* — marks leaving that surface along `rise`, and up-or-down is the cheapest
+direction there is: fire lifts, every rot falls, cold barely moves.
+
+There is deliberately no third layer. The hit has three because it is a *gesture*
+and needs a dominant mark to carry the bearing. An affliction has no bearing.
+
+### What the vocabulary decided, rather than taste
+
+- **`worldSpace: false` is the whole of "it clings."** The compiled default is
+  `true`, and attaching an effect moves only the emission *origin* — so a mark
+  born on a walking body and left in world space is one the body walks out of.
+  It is a translation and not a rotation, so a stain does not turn with a body
+  spinning on the spot; at half a second a mark and twice a second a refresh,
+  that is not visible, and paying for it would mean giving every particle a
+  frame.
+- **The shape choice is the orientation choice.** `brush-blot` is `tumble`
+  (world space, where this vocabulary's depth comes from) so the cling turns with
+  the body's volume; `brush-slash`/`brush-flick` are `cardVelocity`, always
+  camera-facing, so the beat always reads. `brush-mark` is `ground` and is the
+  one brush shape that cannot go on a body at all.
+- **`fizzle`, never `retract`, for the cling.** Spec 161's rule, and this is the
+  case it was written about.
+- **`alpha`, nothing additive.** It matters more here than anywhere else in the
+  file, because a cling is *many overlapping marks on one body by construction* —
+  the one arrangement where a translucent mark is guaranteed to cross another.
+
+### Lengths are in body radii
+
+Every length is a multiple of the effect's own scale, the driver plays with
+`scale` set to the body's footprint radius, and the `surface` hook answers in the
+same units. `system.ts` multiplies *both* the shape's local coordinates and the
+size curve by the instance scale, so one authored definition lands on a spider
+and on a player at the right place **and** the right size. Speed and gravity are
+not scaled, which is correct: gravity is gravity.
+
+### Two severities, not five
+
+`stacks` rides the wire, and Poison at five must not look like Poison at one. But
+the count is already drawn — the mark over the head carries it — so what the paint
+owes is *severity*, and two tiers is the honest resolution at three hundred pixels
+tall. More paint, never brighter paint: brightness is what the beat says, and one
+signal meaning two things is a legend nobody can read. Frostbite crosses on
+**elapsed** rather than stacks, because its ramp is that row's whole design.
+
+Burn and Shock get no heavy tier at all. Neither stacks and neither ramps, so
+there is no state of a body where either is worse than it already is, and a
+louder version would be a picture of something that never happens.
+
+### Why the driver does its own diff instead of using `AuraTracker`
+
+`play` returns **0** on refusal — unknown id, over budget, or beyond
+`cullDistance` — and a tracker that records *ids* cannot say "wanted, asked for,
+did not start". Committing a refused id leaves a body silently unmarked for the
+rest of its life. Holding **handles** makes a refusal mean "not started yet", so
+a body that walks into range gets its paint on the frame it does.
+
+The same argument answers eviction, which is the half that had to be *read* for
+rather than tripped over. A full instance pool does not refuse: `claimInstance`
+takes the lowest-priority, furthest instance, hands the slot over and bumps its
+generation, so every handle to it goes stale in place. A cling is priority 1 and
+is therefore the first thing evicted -- correctly. A driver that kept believing
+its handle would leave that body unpainted permanently, and only in the crowded
+fight that caused the pressure. `isLive` is asked each step and a dead handle
+means "not started", so the restart happens the moment the pressure lifts.
+
+The obligation that comes with holding one: on despawn **nothing stops itself.**
+The attach hook answers false, the instance stays where it last resolved, and a
+`durationTicks: 0` effect hangs in the air forever holding one of 128 slots.
+Nothing in this game had ever held a persistent attached effect, so `forget` is
+the pattern rather than a use of one — and it is called from the sweep that knows
+a body has left, never inferred from an absence.
+
+### Two colours the palette did not have
+
+Five of the seven already had a ramp. Corrosion and Decay did not, and both had
+to be unmistakable against the neighbour they would otherwise read as: Corrosion
+is a *chemical* green pushed hard toward chartreuse against Poison's leaf, and
+Decay is the only **desaturated** ramp in the table — it suppresses healing, so it
+should look like colour draining rather than colour landing.
+
+### What the sheets said, and what changed because of them
+
+`npx tsx scripts/preview-afflictions-vfx.ts` writes three: one row per
+affliction across its life with the beats fired on their real cadence, the four
+heavy clings interleaved with their light ones, and three seeds each. It reports
+the same four numbers `preview-brush-vfx.ts` already computes, because two
+harnesses answering "is this crisp" two ways would be two definitions of crisp.
+
+Three things came out of looking at the first one, and only the first was a
+number anybody had predicted.
+
+**The cling was spending its life in the dark end of its own ramp.** With the
+gradient running `bright → mid → deep`, the back half of every mark was the
+darkest tone the affliction has, which against grass and dirt is mud. It showed
+up as Frostbite being far and away the most legible of the seven for a reason
+nobody had chosen: its ramp is the only one whose dark end is still light. So
+the two layers divide the ramp. The cling is what is *on* the body and lives in
+the top two tones; the shed is what is coming *off* it and goes dark on the way
+out — which also buys the thing one ramp could not, that the paint on a body and
+the paint falling from it are different colours without either needing a new
+palette entry.
+
+**There was nowhere near enough of it.** Five to seven live marks reads as flecks
+caught on a body rather than as a body that is burning, and it left the light
+tiers very close to invisible beside the heavy ones. Roughly doubled: ten to
+thirteen live for light, nineteen to thirty-three for heavy.
+
+**Corrosion stopped being pitting.** It was authored as small marks renewed twice
+as fast as anything else, on the argument that what it eats through is the guard
+and the armour. It came out at a third of Frostbite's ink and was the one row of
+the seven you had to look for. Small and fast is *detail*, and this vocabulary's
+rule is silhouette over detail at three hundred pixels tall. It keeps the fast
+renewal, which is where the sense of something being eaten away comes from, and
+the marks are the size of everybody else's.
+
+Where it landed, means over the sampled ticks:
+
+| | marks | ink % | isolated % | biggest piece % | pieces | body % |
+|---|---|---|---|---|---|---|
+| burn | 12 | 0.71 | 2.3 | 31 | 7.4 | 98 |
+| bleed | 10 | 0.42 | 2.9 | 42 | 4.7 | 93 |
+| poison | 11 | 0.70 | 2.0 | 31 | 8.5 | 92 |
+| corrosion | 12 | 0.72 | 1.7 | 36 | 7.2 | 88 |
+| shock | 10 | 0.58 | 2.8 | 45 | 5.8 | 102 |
+| frostbite | 13 | 0.80 | 1.9 | 45 | 6.5 | 113 |
+| decay | 13 | 0.89 | 1.4 | 40 | 7.0 | 93 |
+
+**Isolated %** is the crispness number and the one worth reading: a dithered or
+stippled fill is roughly half isolated pixels and these are between one and
+three, all of it boundary. **Biggest piece** and **pieces** say the mass is in a
+handful of strokes rather than in confetti. **Body %** is how much of the body's
+own height the paint spans, so a sampler that piled everything into the caps
+would show up as a number well under a hundred. Severity carries two to five
+times the ink of its light tier in every pair.
+
+### And the half no rig can answer
+
+`npx tsx scripts/probe-afflictions.ts` drives the shipped Play tab: a real
+server in the tab, the real `?afflict=` path, the real driver, the real particle
+system. It exists because everything above is true of a rig, and spec 121's
+aura system has a decision function, a tracker, eight authored effects and no
+caller *to this day* — a green suite sits beside an unplugged feature perfectly
+happily.
+
+It compares each affliction's frame against a control with nothing applied, and
+the measurement has to survive a world that moves on its own: the trees sway,
+and the control and each affliction are separate page loads whose wind phases
+are uncorrelated. So each state is captured twice a beat apart and only pixels
+that agreed both times are trusted — `preview-paint.ts`'s trick, and the same
+reason it needed it.
+
+### The art-direction pass on three of them
+
+Three notes after the first look, none of which moved the shape language.
+
+**Shock was a bolt, not lightning.** `boltWhite`/`boltYellow`/`boltViolet` is a
+cream white through a warm yellow to purple, which on a *body* reads as arcane
+sparks rather than as electricity. It is near-white with an off-blue cast now,
+and the blue is chosen against Frostbite rather than in isolation: ice is
+cyan-leaning and this is violet-leaning, which is the difference that survives
+the quantizer when a shocked body and a frostbitten one are on screen together.
+Its mid tone is barely blue at all, deliberately — the cling settles on `mid`,
+so that is what the body wears, and what a shocked body should wear is white.
+
+**Burn had no yellow in it.** The ramp settled on `fireBody` and ran to
+`fireDeep`, so a burning body was orange into red. `fireAmber` between the cream
+and the orange gives it yellow, orange, red in that order and takes the red off
+the body itself, leaving it on what falls away.
+
+**Poison's character moved from the coat to the shed.** Bubbles, rising off the
+body and wobbling as they go, with the coat thinned to pay for them — a body
+both coated *and* fizzing reads as two afflictions. It is the second row with a
+positive `rise` and the two are not confusable: fire lifts nearly three times as
+hard and its marks streak where these drift.
+
+The one thing in that which is not a number: the shed became a `brush-blot`
+rather than a `brush-dab`, and that is the whole of whether it reads as bubbles.
+`orientOf` gives a dab `velocity`, so it lies along its own travel — a dab
+rising is a vertical dash, and a dash going up is not a bubble however slowly it
+moves. A blot is `tumble`, turning in world space, and is the roundest mark in
+the set.
+
+All three arrived as **new palette keys rather than edited ones**. `fireBody`
+alone has seventeen call sites — the torch, the campfire, the explosion's own
+ramp — and none of them asked for a different flame.
+

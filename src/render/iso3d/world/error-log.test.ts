@@ -9,20 +9,38 @@ import {
   refusalPhrase,
 } from './error-log.js';
 import { ALL_ABILITIES } from '../../../server/data/abilities.js';
+import type { CastRejection } from '../../../server/sim/abilities.js';
 import { hasGlyph, textWidth } from './pixel-font.js';
 import { errorLineWidth, hudLayout, PHONE_LANDSCAPE } from './hud-layout.js';
 
 /** Every reason `abilities.ts` and `world.ts` can refuse a cast with. */
-const REASONS = [
-  'onCooldown',
-  'notEnoughResource',
-  'outOfRange',
-  'alreadyCasting',
-  'noTarget',
-  'unknownAbility',
-  'dead',
-  'withdrawn',
-] as const;
+/**
+ * Every reason the server can refuse a cast with.
+ *
+ * A `Record<CastRejection, true>` rather than a hand-kept array, so **a new
+ * rejection reason fails the typecheck here** instead of quietly reaching a
+ * player as a camelCase code. Written as a list it had already drifted: spec
+ * 173's `staggered` and spec 156's `noCharges` were both live on the wire and
+ * neither was in it, so the coverage test below was comparing two copies of the
+ * same gap.
+ */
+const REASON_SET: Record<CastRejection, true> = {
+  onCooldown: true,
+  notEnoughResource: true,
+  outOfRange: true,
+  alreadyCasting: true,
+  noTarget: true,
+  unknownAbility: true,
+  dead: true,
+  withdrawn: true,
+  staggered: true,
+  noCharges: true,
+  notEquipped: true,
+  notEnoughHealth: true,
+  notEnoughPoise: true,
+};
+
+const REASONS = Object.keys(REASON_SET) as readonly CastRejection[];
 
 /** The texts of a step, in the order the caller will draw them: top to bottom. */
 function texts(log: ErrorLog, nowMs: number): string[] {

@@ -25,7 +25,7 @@ import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../../../server/config.j
 import { abilityById } from '../../../server/data/abilities.js';
 import { CastPhaseValue } from '../../../server/net/protocol.js';
 import { castBar } from './cast.js';
-import { facesAim } from '../../../server/sim/abilities.js';
+import { attackTimingFor, facesAim } from '../../../server/sim/abilities.js';
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { GameServer } from '../../../server/server.js';
 import { turnToward } from '../../../server/sim/movement.js';
@@ -37,6 +37,7 @@ import { EMPTY_EQUIPMENT, emptyInventory } from '../../../server/state/types.js'
 import { createWorldPredictor } from '../../../server/client/prediction.js';
 import { moveIntent } from './intent.js';
 import { autoAttack } from './target.js';
+import { windupLostItsMarkIn } from './withdraw.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -49,6 +50,18 @@ interface Fought {
   readonly rejects: readonly string[];
   /** Wind-ups of ours the server withdrew from: spec 080's headline. */
   readonly cancels: number;
+  /**
+   * Blows this client called off itself, because the mark had left the world
+   * (spec 155).
+   *
+   * The pair is what spec 080's headline became. That number was zero and the
+   * property under it was "the order does not throw a wind-up away"; a client
+   * that now calls one off on purpose when its mark dies cannot claim that, but
+   * it can claim the sharper thing: every withdrawal in the run is one this
+   * client made, and every one it made had a body that had left the world
+   * behind it.
+   */
+  readonly withdrawals: number;
   /** Bodies put down, so "nothing was withdrawn from" is not vacuous. */
   readonly kills: number;
   /** Ticks the server was casting and the client drew no bar. */
@@ -107,6 +120,8 @@ async function play(options: {
   let previous: number | null = null;
   let facing = 0;
   let asks = 0;
+  /** The marks a wind-up of ours was called off over (spec 155). */
+  const withdrawnMarks = new Set<number>();
   let commits = 0;
   let kills = 0;
   let missing = 0;
@@ -123,6 +138,22 @@ async function play(options: {
       ticks += 1;
       server.tick();
       client.advanceTick();
+
+      // The first thing `sendInput` does, off its own read of the view
+      // (spec 155): a blow whose mark has left the world is called off rather
+      // than loosed at the ground it left.
+      if (windupLostItsMarkIn(client.view())) {
+        const withdrawn = client.view();
+        const blow = withdrawn.casts.find((known) => known.entityId === withdrawn.selfEntityId);
+        // The *mark*, not the firing. The rule can fire twice over one blow: the
+        // withdrawal clears the client's copy of the cast at once, and a
+        // `CastState` for it can still arrive before the server has dequeued
+        // the cancel, putting the cast back in a view whose mark is still gone.
+        // The repeat is a no-op on the server -- there is nothing left to
+        // cancel -- so what pairs with the count below is the blow, not the ask.
+        if (blow) withdrawnMarks.add(blow.targetEntityId);
+        client.cancelCast();
+      }
 
       const view = client.view();
       if (!view.self || !view.stats) continue;
@@ -168,6 +199,7 @@ async function play(options: {
           : null,
         range: swing?.range ?? 0,
         rooted: view.selfRoot !== null,
+        staggered: view.selfStaggered,
         pending: view.awaitingCast,
         readyAtTick: view.cooldowns[swingId] ?? 0,
         // The local heading, as the shipped client asks it (spec 090).
@@ -215,8 +247,32 @@ async function play(options: {
     await settle();
   }
 
+  // Let the answers land before the socket goes (spec 155). A withdrawal asked
+  // for on one of the last ticks is still in flight, and an unanswered one
+  // would read as a cancel the client did not make -- which is precisely the
+  // thing the assertion below exists to rule out. The input is held at a
+  // standstill through the drain, because asking to walk is itself a
+  // withdrawal (spec 079) and would put a cancel nobody asked for on the end
+  // of every run.
+  for (let n = 0; n < 20; n++) {
+    client.sendInput({ moveX: 0, moveY: 0, facing, buttons: 0 });
+    server.tick();
+    client.advanceTick();
+    await settle();
+  }
+
   client.disconnect();
-  return { asks, commits, rejects, cancels, kills, missing, unrooted, ticks: sampled };
+  return {
+    asks,
+    withdrawals: withdrawnMarks.size,
+    commits,
+    rejects,
+    cancels,
+    kills,
+    missing,
+    unrooted,
+    ticks: sampled,
+  };
 }
 
 /** Every basic attack in the game, and the one a bare hand falls back to. */
@@ -239,7 +295,7 @@ function ticksFor(weapon: string | null): number {
     id: 'p',
     displayName: 'P',
     baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-    skills: [],
+    specializations: [],
     equipment: { ...EMPTY_EQUIPMENT, ...(weapon ? { mainHand: weapon } : {}) },
     inventory: emptyInventory(),
     coins: 0,
@@ -248,8 +304,7 @@ function ticksFor(weapon: string | null): number {
     currentZone: 'greenmarch',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 20,
   });
@@ -269,7 +324,7 @@ describe('a standing attack order, over a real session (spec 080)', () => {
     for (const weapon of WEAPONS) {
       const name = `${weapon ?? 'empty hands'} at ${cadence.join('/')} ticks a frame`;
 
-      it(`withdraws from nothing and asks once a swing: ${name}`, async () => {
+      it(`withdraws from nothing but a corpse and asks once a swing: ${name}`, async () => {
         const result = await play({ ticks: ticksFor(weapon), weapon, monster: 'grazer', cadence });
         const seen = JSON.stringify(result);
 
@@ -277,11 +332,28 @@ describe('a standing attack order, over a real session (spec 080)', () => {
         expect(result.kills, seen).toBeGreaterThan(2);
         expect(result.commits, seen).toBeGreaterThan(8);
 
-        // The headline. Before spec 080 this was one per kill with a ranged
-        // weapon -- a bar that filled three-quarters of the way and vanished --
-        // and zero with melee, because a swing resolves on its own release
-        // while a shot resolves when it arrives.
-        expect(result.cancels, seen).toBe(0);
+        // The headline, in the form that survives spec 155.
+        //
+        // It used to read `cancels === 0`: before spec 080 a ranged auto-attack
+        // threw a wind-up away once per kill -- a bar that filled
+        // three-quarters of the way and vanished, with another starting
+        // immediately behind it -- and melee never did, because a swing
+        // resolves on its own release while a shot resolves when it arrives.
+        //
+        // 155 puts a withdrawal back on that same beat, and it is a different
+        // animal: the client asks for it, the order ends with it, and nothing
+        // starts behind it. So the two clauses. **Every withdrawal in the run
+        // is one this client made** -- the server never withdrew anything on
+        // its own, which is the stutter 080 removed -- and **every one it made
+        // had a body that had left the world behind it**, which bounds them by
+        // the kills.
+        expect(result.cancels, seen).toBe(result.withdrawals);
+        expect(result.withdrawals, seen).toBeLessThanOrEqual(result.kills);
+        // And melee still withdraws from nothing at all, which is the half of
+        // 080's reading that 155 does not touch: a swing resolves on its own
+        // release, so the client knows the body is down before it commits
+        // again and never has a wind-up left over to call off.
+        if (weapon === null) expect(result.withdrawals, seen).toBe(0);
 
         // One ask per swing, and nothing refused. Over a loopback the client's
         // mirror agrees with the server about nearly everything, so this is a
@@ -289,7 +361,19 @@ describe('a standing attack order, over a real session (spec 080)', () => {
         // hold when they *disagree* is pinned directly in `target.test.ts`.
         // What it does catch is the loop asking twice for one commit, which is
         // what any future brake on the ask would break first.
-        expect(result.asks - result.commits, seen).toBeLessThanOrEqual(1);
+        //
+        // The allowance is `withdrawals + 1`, and both terms are a named thing
+        // rather than slack. An ask can fail to become a commit in exactly two
+        // ways: the run ended between the two, which is the +1; or this client
+        // called the blow off in the tick or two between asking and the server
+        // committing, because the mark died in that window (spec 155) -- and a
+        // cancel outranks a commit asked for on the same tick, so it eats the
+        // ask. That second term was zero on the trajectory this was first
+        // measured on, which made the constant look like the rule; spec 187
+        // moved a grazer by a few units and it stopped being. For melee, where
+        // `withdrawals` is asserted to be zero just above, this is still
+        // exactly `asks - commits <= 1`.
+        expect(result.asks - result.commits, seen).toBeLessThanOrEqual(result.withdrawals + 1);
         expect(result.rejects, seen).toEqual([]);
       }, 30_000);
     }
@@ -310,8 +394,30 @@ describe('a standing attack order, over a real session (spec 080)', () => {
       });
       const seen = `${weapon ?? 'empty hands'}: ${JSON.stringify(result)}`;
       expect(result.kills, seen).toBeGreaterThan(2);
-      expect(result.cancels, seen).toBe(0);
-      expect(result.rejects, seen).toEqual([]);
+      expect(result.cancels, seen).toBe(result.withdrawals);
+      expect(result.withdrawals, seen).toBeLessThanOrEqual(result.kills);
+      // Nothing refused except the one refusal that cannot be predicted
+      // (spec 173).
+      //
+      // The grazer runs above still assert `rejects` is empty outright, and
+      // this one cannot, because a stalker breaks your poise: a stagger is
+      // something done *to* this body, so the client learns about it when the
+      // next delta arrives and may ask inside that window. The gate in
+      // `target.ts` closes the window it can see -- 146 refusals per fight
+      // before it existed, a couple after -- and what is left is the broadcast
+      // interval itself, which no client-side rule can shorten.
+      //
+      // Asserted as a *reason* rather than relaxed to a count, because the
+      // property worth keeping is the original one: no ask of this loop is ever
+      // refused for a reason the client could have worked out for itself.
+      // `alreadyCasting`, `onCooldown` or `outOfRange` appearing here would be
+      // the mirror going stale, which is exactly what this guard is for.
+      expect([...new Set(result.rejects)], seen).toEqual(
+        result.rejects.length > 0 ? ['staggered'] : [],
+      );
+      // And bounded by the breaks themselves: one leaked ask per stagger is the
+      // round trip, many would mean the gate is not being consulted.
+      expect(result.rejects.length, seen).toBeLessThan(result.commits);
       // A bar for every blow, and no walking through one.
       expect(result.missing / result.ticks, seen).toBeLessThan(0.01);
       expect(result.unrooted / result.ticks, seen).toBeLessThan(0.01);
@@ -437,8 +543,16 @@ async function twoShots(): Promise<{
       targetId = [...live.values()].find((e) => e.id !== view.selfEntityId)?.id ?? null;
       orderedAt = ticks;
       facing = self.facing;
-      windupTicks = abilityById('ranged.shot')?.windupTicks ?? 0;
-      delayTicks = view.stats.baseAttackTimeTicks;
+      // Both budgets come from the *resolved* timing rather than from the
+      // ability's authored wind-up and the bare BAT (spec 174). The bow says
+      // `attackSpeedPct: -0.1` and that now reaches the factor, which divides
+      // the interval and the attack point alike -- so reading either number raw
+      // is measuring the body against a clock it is not running on. Through
+      // `attackTimingFor`, so this asks the same function the sim answers with.
+      const shot = abilityById('ranged.shot');
+      const timing = shot ? attackTimingFor(shot, { stats: view.stats }) : null;
+      windupTicks = timing?.attackPointTicks ?? 0;
+      delayTicks = timing?.intervalTicks ?? view.stats.baseAttackTimeTicks;
       // Half a revolution at this body's own rate, in ticks.
       turnTicks = Math.ceil(180 / (view.stats.turnRate / SERVER_TICK_RATE));
       continue;
@@ -460,6 +574,7 @@ async function twoShots(): Promise<{
         : null,
       range: swing?.range ?? 0,
       rooted: view.selfRoot !== null,
+      staggered: view.selfStaggered,
       pending: view.awaitingCast,
       readyAtTick: view.cooldowns[view.stats.basicAttackId] ?? 0,
       aligned: !entity ? true : facesAim(view.self, facing, { x: entity.x, y: entity.y }),

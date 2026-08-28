@@ -75,6 +75,18 @@ export const DEFAULT_LIMITS: VfxLimits = {
 };
 
 /**
+ * How many effect starts the debug ring remembers, and how many ticks back it
+ * reports (spec 182).
+ *
+ * Three quarters of a second, which is several frames at the rate a browser
+ * under software GL actually paints -- so a harness polling the readout cannot
+ * step over an effect that happened, and two measurements a few seconds apart
+ * cannot bleed into each other.
+ */
+const RECENT_STARTS = 32;
+const RECENT_TICKS = 45;
+
+/**
  * How much of an effect gets played at each intensity setting. Index is the
  * setting; 0 is off and skips the whole update.
  */
@@ -220,6 +232,10 @@ export class VfxSystem {
   private hasViewpoint = false;
 
   private intensity = 3;
+  /** Ticks stepped, for the debug ring alone -- nothing in the sim reads it. */
+  private steps = 0;
+  private readonly recentIds: string[] = [];
+  private readonly recentAt: number[] = [];
   private timeScale = 1;
   private tickDebt = 0;
   private paused = false;
@@ -290,6 +306,45 @@ export class VfxSystem {
 
   getIntensity(): number {
     return this.intensity;
+  }
+
+  /**
+   * The ids of the effects started in the last {@link RECENT_TICKS} ticks, each
+   * named once, newest last (spec 182).
+   *
+   * A window for a harness rather than anything the sim reads. It exists because
+   * every other way of asking "did that blow throw blood" is a threshold on a
+   * particle count, and what the gore setting changes is *which effect* -- which
+   * is an equality test the moment anybody can see it, the same reason
+   * `data-held-weapons` reports the bone's contents rather than the intent.
+   *
+   * Started rather than *live*, which is what the first cut asked and is
+   * unanswerable: a burst instance is retired on the tick it fires, since its
+   * emission is done and its particles are the pool's problem from then on. So a
+   * hit effect exists as an instance for about 16ms, a browser under software GL
+   * paints about every 200ms, and every blood effect in the game was invisible
+   * to a reader that walked the instance table -- while its stains piled up on
+   * the ground beside it, which is how that was spotted.
+   */
+  recentlyStarted(): readonly string[] {
+    const out: string[] = [];
+    for (let i = 0; i < this.recentIds.length; i++) {
+      const id = this.recentIds[i];
+      if (id === undefined) continue;
+      if (this.steps - (this.recentAt[i] ?? 0) > RECENT_TICKS) continue;
+      if (!out.includes(id)) out.push(id);
+    }
+    return out;
+  }
+
+  /** Note that an effect began. Bounded, and the oldest entry falls off. */
+  private recordStart(id: string): void {
+    this.recentIds.push(id);
+    this.recentAt.push(this.steps);
+    if (this.recentIds.length > RECENT_STARTS) {
+      this.recentIds.shift();
+      this.recentAt.shift();
+    }
   }
 
   setTimeScale(scale: number): void {
@@ -420,6 +475,7 @@ export class VfxSystem {
   }
 
   private step(): void {
+    this.steps += 1;
     this.updateInstances();
     this.updateParticles();
     this.flushQueue();
@@ -888,6 +944,9 @@ export class VfxSystem {
     this.instRefs[slot] = 0;
     this.instPriority[slot] = effect.priority;
     this.liveInstances += 1;
+    // The one place every effect in the game is born, sub-effects included, so
+    // the debug ring cannot miss a path (spec 182).
+    this.recordStart(effect.id);
 
     const tint = options?.tint;
     if (tint) {

@@ -19,6 +19,17 @@ export const PLAYER_ID_KEY = 'turbo-deck.net.playerId';
 export const PLAYER_NAME_KEY = 'turbo-deck.net.name';
 /** The resume token from this tab's last session (spec 150). */
 export const SESSION_TOKEN_KEY = 'turbo-deck.net.session';
+/**
+ * The auth session token this tab signed in with (spec 226).
+ *
+ * `localStorage`, not `sessionStorage`, and it is the one identity here that
+ * deliberately does not follow the "two tabs are two players" rule above: an
+ * *account* is a person, so a second tab is the same person, and a guest
+ * character you keep is worth nothing if closing the tab loses the credential
+ * that reaches it. Which body each tab drives is still settled per tab, by the
+ * resume token beside it.
+ */
+export const AUTH_TOKEN_KEY = 'turbo-deck.net.auth';
 
 /**
  * The path a browser client dials. The server accepts the upgrade on any path
@@ -45,6 +56,35 @@ export type ConnectionPlan =
        * there is none, which is every first load.
        */
       readonly resumeToken: string;
+      /**
+       * The session token to present in `Hello` (spec 226). Empty when this tab
+       * has never signed in; `ensureAuthToken` is what fills it, and a server
+       * with no auth gate ignores it either way.
+       */
+      readonly authToken: string;
+      /**
+       * A `?server=` value that was typed and then ignored (spec 226).
+       *
+       * `explicitUrl` recognises four lowercase scheme prefixes and answers
+       * null for everything else, and null falls back to the page's own origin
+       * -- so `?server=localhost:8787` does **not** dial :8787, it dials
+       * whatever served the page, silently. That is the same shape of confusion
+       * as the missing proxy: the client goes somewhere the player did not ask
+       * for and says nothing.
+       *
+       * Reported rather than refused, because falling back is the right
+       * behaviour for a bare `?server` and there is no way to tell a typo from
+       * a deliberate bare one except by whether a value was given. Empty when
+       * nothing was ignored. `view.ts` is what warns; this file stays pure.
+       */
+      readonly ignoredServerValue: string;
+      /**
+       * Where this tab's `/api/auth/*` calls go: the same host as `url`, over
+       * http(s) rather than ws(s). Derived here rather than at the call site so
+       * that the one place which decides which server this tab talks to decides
+       * both halves of it.
+       */
+      readonly httpOrigin: string;
     };
 
 /** Just the two fields of `location` this needs, so a test can pass a literal. */
@@ -153,27 +193,105 @@ function identify(
  * needing a server to boot.
  *
  * `defaultServer` is an argument rather than an `import.meta.env` read because
- * this file is pure -- the same reason the storage and the id minter are
- * arguments. `view.ts` is where the bundler's value enters.
+ * this file is pure -- the same reason the storages and the id minter are
+ * arguments. `view.ts` is where the bundler's value enters. It is last and
+ * optional because it is the only parameter here a caller can reasonably not
+ * have: every caller knows its own two storages.
+ *
+ * Two storages, because this function reads two identities with two lifetimes
+ * (spec 226).
+ *
+ * `tabStorage` is `sessionStorage`: which body this tab drives, and the resume
+ * token that comes back to it. Per tab *and* surviving a reload is exactly the
+ * lifetime "two tabs are two players" needs.
+ *
+ * `accountStorage` is `localStorage`: who the person is. An account is not
+ * per-tab, and a guest character you keep is worth nothing if closing the tab
+ * loses the only credential that reaches it.
+ *
+ * A second parameter rather than a default, and that is the whole point of the
+ * change: it was one storage, `sessionStorage` was passed, and every *writer*
+ * used `localStorage` -- so `authToken` came back empty on every load,
+ * `needsGuestSession` was always true, and **the page minted a brand-new
+ * character every time it was refreshed**. Signing into an account survived
+ * exactly until the reload that signing in itself triggers. Making the caller
+ * name both is what stops that being expressible.
  */
 export function planConnection(
   search: string,
   origin: OriginLike,
-  storage: StorageLike,
+  tabStorage: StorageLike,
   newId: () => string,
+  accountStorage: StorageLike,
   defaultServer = '',
 ): ConnectionPlan {
   const params = new URLSearchParams(search);
-  const asked = params.has('server') ? (params.get('server') ?? '') : defaultServer;
+  const typed = params.has('server');
+  const asked = typed ? (params.get('server') ?? '') : defaultServer;
   if (LOOPBACK_WORDS.includes(asked)) return { mode: 'loopback' };
-  if (!params.has('server') && asked === '') return { mode: 'loopback' };
+  if (!typed && asked === '') return { mode: 'loopback' };
 
+  const explicit = explicitUrl(asked);
   // A default is normalised exactly like a typed one -- including the fallback
   // to this origin -- so a misconfigured `VITE_SERVER_URL` cannot be dialled
   // literally, and pasting `https://host` into the deploy works like pasting it
   // into the address bar.
-  const url = explicitUrl(asked) ?? sameOrigin(origin);
-  const { playerId, displayName } = identify(params, storage, newId);
-  const resumeToken = read(storage, SESSION_TOKEN_KEY) ?? '';
-  return { mode: 'remote', url, playerId, displayName, resumeToken };
+  const url = explicit ?? sameOrigin(origin);
+  // A value was given and none of the four schemes matched, so it was dropped.
+  // Only a value somebody *typed*: a bad `VITE_SERVER_URL` is not something the
+  // player can act on, and this string is shown to them.
+  const ignoredServerValue = typed && explicit === null && asked !== '' ? asked : '';
+  const { playerId, displayName } = identify(params, tabStorage, newId);
+  const resumeToken = read(tabStorage, SESSION_TOKEN_KEY) ?? '';
+  // The one field that comes from the other storage. Read from where
+  // `rememberAuthToken` writes, which is what was wrong.
+  const authToken = read(accountStorage, AUTH_TOKEN_KEY) ?? '';
+  return {
+    mode: 'remote',
+    url,
+    playerId,
+    displayName,
+    resumeToken,
+    authToken,
+    ignoredServerValue,
+    httpOrigin: httpOriginOf(url),
+  };
+}
+
+
+/**
+ * The http(s) origin for a ws(s) url.
+ *
+ * A string swap rather than `new URL`, because the two schemes map one to one
+ * and the rest of the url is already whatever `explicitUrl`/`sameOrigin`
+ * settled on -- including the `/ws` path, which is dropped here since the auth
+ * endpoints hang off the root.
+ */
+export function httpOriginOf(wsUrl: string): string {
+  const swapped = wsUrl.replace(/^ws:/, 'http:').replace(/^wss:/, 'https:');
+  const afterScheme = swapped.indexOf('//') + 2;
+  // The origin ends at the first of a path, a query or a fragment. Cutting on
+  // '/' alone kept a query on a URL that had no path -- `ws://h:8787?x=1`
+  // produced an "origin" of `http://h:8787?x=1`, so the endpoint appended to it
+  // landed on `/` with a mangled query and the auth handler refused it.
+  let end = swapped.length;
+  for (const mark of ['/', '?', '#']) {
+    const at = swapped.indexOf(mark, afterScheme);
+    if (at !== -1 && at < end) end = at;
+  }
+  return swapped.slice(0, end);
+}
+
+/** Store the session token this tab signed in with. */
+export function rememberAuthToken(storage: StorageLike, token: string): void {
+  write(storage, AUTH_TOKEN_KEY, token);
+}
+
+/** Forget it, after a server has refused it. */
+export function forgetAuthToken(storage: StorageLike): void {
+  try {
+    storage.removeItem(AUTH_TOKEN_KEY);
+  } catch {
+    /* a storage that will not delete is not a reason to fail a connection */
+  }
 }

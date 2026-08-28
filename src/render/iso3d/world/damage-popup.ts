@@ -19,6 +19,11 @@
  *
  * `hud.ts` owns the elements and nothing else; every judgement about lifetime,
  * lanes, fade and placement lives here, where a test can reach it.
+ *
+ * Since spec 184 the field carries a second kind of number -- what a kill was
+ * worth -- and the two differ only in the path they take. Everything else about
+ * a floating number was already right for both: one capacity over the pair, one
+ * projection, one expiry, one place a test can reach any of it.
  */
 
 /** A point in the world a number is nailed to: ground x/z, plus a height. */
@@ -77,22 +82,92 @@ export const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[]
   { x: 24, y: -26 },
 ];
 
+/**
+ * Which path a number takes (spec 184).
+ *
+ * A property of one popup rather than of the field, so both kinds share the
+ * capacity, the projection and the expiry spec 096 already got right.
+ */
+export type PopupTrail = 'damage' | 'xp';
+
+/**
+ * How far *below* the blow's number an experience number sits, in CSS pixels.
+ *
+ * Below, and in the blow's own lane, because the two are one reading: what that
+ * hit took off and what the body was worth. The first cut swept the reward out
+ * to the side on an ease-out, which separated the pair perfectly and looked
+ * wrong -- a number leaving a body at 45 degrees is not a thing that happens in
+ * this game, and reading it meant tracking two marks going different ways.
+ *
+ * So the reward is stacked under the blow and rises with it, at the same rate,
+ * in the same direction: one column, and nothing to follow. The gap is a little
+ * more than the reward's own height, so the two boxes are clear of each other
+ * without a hole between them.
+ */
+export const XP_GAP = 24;
+
+/**
+ * How many rewards stack under one body before the gap starts over.
+ *
+ * The counterpart to {@link NUMBER_LANES} and for the same reason: two kills a
+ * client is told about as one total, or a grant landing twice, would otherwise
+ * be two numbers in exactly one place. Three, because a fourth would be further
+ * under the body than a number over it can be read from.
+ */
+export const XP_STACK = 3;
+
+/**
+ * How much longer an experience number floats than a blow's, in frames.
+ *
+ * Half a second at 60fps. A blow's number is one of a burst and gets out of the
+ * way; the reward is the last thing to happen to that body and is worth reading
+ * after the fight has moved on -- and outliving the blow above it is what gives
+ * it a moment on its own, which is the whole of what the sweep was reaching for.
+ */
+export const XP_EXTRA_LIFE = 30;
+
+/** How long an experience number floats, in frames. */
+export const XP_LIFE = NUMBER_LIFE + XP_EXTRA_LIFE;
+
+/**
+ * How far an experience number rises, in CSS pixels.
+ *
+ * Not a free number: it is `NUMBER_RISE` at the same rate for a longer life, so
+ * the reward holds station under the blow for as long as the blow is there and
+ * carries on alone afterwards. Rising at its own speed would have the two
+ * converge or separate, which is the diagonal's problem in another direction.
+ */
+export const XP_RISE = (NUMBER_RISE * XP_LIFE) / NUMBER_LIFE;
+
 /** A long fight should not grow the DOM without bound. */
 const CAPACITY = 40;
 
 interface Popup {
   readonly id: number;
   readonly group: number;
+  readonly trail: PopupTrail;
   readonly at: WorldAnchor;
   readonly offsetX: number;
   readonly offsetY: number;
+  /** How many frames it floats for. Per popup, because the two trails differ. */
+  readonly life: number;
+  /** How far it rises over that life, in CSS pixels. */
+  readonly rise: number;
   age: number;
+}
+
+/** What one group has been given so far, for lane and side assignment. */
+interface GroupTally {
+  /** Damage numbers, which cycle {@link NUMBER_LANES}. */
+  damage: number;
+  /** Experience numbers, which alternate sides. */
+  xp: number;
 }
 
 export class DamagePopups {
   private readonly popups: Popup[] = [];
-  /** How many numbers each group has been given, for lane assignment. */
-  private readonly lanes = new Map<number, number>();
+  /** What each group has been given, for lane and side assignment. */
+  private readonly lanes = new Map<number, GroupTally>();
   private nextId = 1;
 
   /**
@@ -102,21 +177,52 @@ export class DamagePopups {
    * It is never resolved to anything: the anchor is the whole of what the
    * popup knows about the world.
    *
+   * `trail` says which path it takes; see {@link PopupTrail}. An `xp` number
+   * does not consume a damage lane, it *reads* the last one -- so a kill's
+   * reward cannot shift where the next blow on that body draws its number.
+   *
    * Returns the id to hang an element on, plus any ids evicted to stay under
    * capacity, so the caller never orphans one.
    */
-  add(group: number, at: WorldAnchor): { readonly id: number; readonly expired: readonly number[] } {
-    const index = this.lanes.get(group) ?? 0;
-    this.lanes.set(group, index + 1);
-    const lane = NUMBER_LANES[index % NUMBER_LANES.length] ?? { x: 0, y: 0 };
+  add(
+    group: number,
+    at: WorldAnchor,
+    trail: PopupTrail = 'damage',
+  ): { readonly id: number; readonly expired: readonly number[] } {
+    const tally = this.lanes.get(group) ?? { damage: 0, xp: 0 };
+    this.lanes.set(group, tally);
+
+    let offsetX = 0;
+    let offsetY = 0;
+    if (trail === 'damage') {
+      const lane = NUMBER_LANES[tally.damage % NUMBER_LANES.length] ?? { x: 0, y: 0 };
+      offsetX = lane.x;
+      offsetY = lane.y;
+      tally.damage += 1;
+    } else {
+      // Directly under whichever lane the group's last blow took, so the pair
+      // reads as one column rather than as two marks going different ways. No
+      // damage before it -- a grant, a quest -- and that is the centre lane,
+      // which is where a lone number belongs anyway.
+      const above =
+        tally.damage > 0
+          ? (NUMBER_LANES[(tally.damage - 1) % NUMBER_LANES.length] ?? { x: 0, y: 0 })
+          : { x: 0, y: 0 };
+      offsetX = above.x;
+      offsetY = above.y + XP_GAP * (1 + (tally.xp % XP_STACK));
+      tally.xp += 1;
+    }
 
     const id = this.nextId++;
     this.popups.push({
       id,
       group,
+      trail,
       at: { x: at.x, y: at.y, lift: at.lift },
-      offsetX: lane.x,
-      offsetY: lane.y,
+      offsetX,
+      offsetY,
+      life: trail === 'xp' ? XP_LIFE : NUMBER_LIFE,
+      rise: trail === 'xp' ? XP_RISE : NUMBER_RISE,
       age: 0,
     });
 
@@ -143,17 +249,21 @@ export class DamagePopups {
       const popup = this.popups[i];
       if (!popup) continue;
       popup.age += 1;
-      const life = 1 - popup.age / NUMBER_LIFE;
+      const life = 1 - popup.age / popup.life;
       if (life <= 0) {
         this.popups.splice(i, 1);
         expired.push(popup.id);
         continue;
       }
       const point = project(popup.at.x, popup.at.y, popup.at.lift);
+      // The two trails differ only in where they start, how long they last and
+      // how far they get -- and the last two are one rate, so a reward holds
+      // station under the blow above it and carries on once that has gone.
+      const spent = 1 - life;
       live.push({
         id: popup.id,
         left: point.x + popup.offsetX,
-        top: point.y + popup.offsetY - (1 - life) * NUMBER_RISE,
+        top: point.y + popup.offsetY - spent * popup.rise,
         opacity: life,
         onScreen: point.onScreen,
       });

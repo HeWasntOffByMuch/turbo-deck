@@ -49,6 +49,10 @@ import {
 import { ballisticPeak, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
 import { PERFECT_EXIT_COOLDOWN_TICKS, RECENTLY_HIT_TICKS, resolveBlow } from './blow.js';
 import { isInCone } from './combat.js';
+import { areaReachOf, scaleArea, selectByArea } from './skill-area.js';
+import { applyEffects } from './skill-effects.js';
+import { staggered } from './poise.js';
+import { applyHealing } from './healing.js';
 import {
   applyStatus,
   clearStatus,
@@ -98,6 +102,13 @@ export type CastRejection =
   | 'alreadyCasting'
   | 'onCooldown'
   | 'notEnoughResource'
+  /**
+   * The flask is empty (spec 156). Its own reason rather than
+   * `notEnoughResource`, because the fix is different: one is "wait a moment"
+   * and the other is "go and rest", and a player told the wrong one waits
+   * forever.
+   */
+  | 'noCharges'
   | 'dead'
   | 'outOfRange'
   /** A `targeting: 'unit'` ability asked for with nothing named (spec 080). */
@@ -107,7 +118,30 @@ export type CastRejection =
    * (spec 092). Not a refusal of the request on its merits -- it is the answer
    * that keeps the reply stream paired when the two arrive together.
    */
-  | 'withdrawn';
+  | 'withdrawn'
+  /**
+   * Inside a poise break's window (spec 173).
+   *
+   * Its own reason rather than folding into `alreadyCasting`, because the two
+   * have different fixes and different lengths: one is "finish what you
+   * started", the other is "you are not holding your own body and will be in
+   * under a second". A player told the wrong one learns the wrong lesson about
+   * what just happened to them.
+   */
+  | 'staggered'
+  /**
+   * A skill asked for out of a slot that is not holding it (spec 188).
+   *
+   * The first ownership refusal this system has ever had. Its own reason
+   * because the fix is nothing like any of the others: not "wait", not "walk
+   * closer", but "you are not carrying that" -- which for an honest client is a
+   * bug in its own bar and for a dishonest one is the whole answer.
+   */
+  | 'notEquipped'
+  /** A skill priced in health, asked for with too little to pay it (spec 188). */
+  | 'notEnoughHealth'
+  /** A skill priced in guard, asked for with too little to pay it (spec 188). */
+  | 'notEnoughPoise';
 
 export interface CastAttempt {
   readonly abilityId: string;
@@ -183,7 +217,10 @@ export function attackTimingFor(
 }
 
 /** Abilities this heavy count as heavy, for Strength's Heavy Handling. */
-export const HEAVY_ABILITY_DAMAGE = 40;
+// Divided by seven with the ability damage it measures (spec 217). Left at 40 it
+// would be a threshold no ability in the table could reach, so Strength's Heavy
+// Handling would silently stop applying to anything.
+export const HEAVY_ABILITY_DAMAGE = 6;
 
 /**
  * Everything that shortens a wind-up, multiplied together.
@@ -286,7 +323,8 @@ export function resourceCostFor(
   const flow = stacksOf(statuses, StatusId.Flow, tick) * traits.flowCostPct;
   const discount = Math.max(0.1, 1 - Math.min(0.75, attuned + flow));
 
-  const shaped = ability.radius !== undefined || ability.projectile !== undefined;
+  const shaped =
+    ability.radius !== undefined || ability.projectile !== undefined || ability.area !== undefined;
   // The Archmage pair waives the premium on a prepared cast, which is the one
   // thing that makes shaping free rather than merely paid off.
   const waived = traits.preparedMastery > 0 && hasStatus(statuses, StatusId.Prepared, tick);
@@ -363,6 +401,68 @@ export function castRangeFor(
   return ability.range * (1 + entity.stats.traits.spellRangePct);
 }
 
+/**
+ * Is this body within reach of that point, counting the target's own edge?
+ *
+ * The one description of "in range", so the gate `startCast` applies at the
+ * commit and the reach stamped onto {@link CastState.targetInReach} when the
+ * wind-up begins cannot come to different answers about the same pair of
+ * bodies (spec 221). Measured to the target's edge rather than its centre,
+ * which is what `landOnTarget` measured before it stopped measuring at all.
+ */
+export function withinReach(
+  ability: AbilityDefinition,
+  caster: Pick<ServerEntity, 'stats' | 'position'>,
+  targetX: number,
+  targetY: number,
+  targetRadius: number,
+): boolean {
+  const dx = targetX - caster.position.x;
+  const dy = targetY - caster.position.y;
+  return Math.hypot(dx, dy) <= castRangeFor(ability, caster) + targetRadius;
+}
+
+/**
+ * The health and guard this skill costs, and whether the caster can pay
+ * (spec 188).
+ *
+ * One function so that the check and the charge cannot disagree: `startCast`
+ * asks it once, refuses on a reason, and spends exactly the numbers it was
+ * given back. Two reads of a cost table is how a body ends up paying a price it
+ * was never quoted.
+ *
+ * Both are **refused rather than clamped**, and each for its own reason.
+ *
+ *  - Health: the bill has to leave the caster alive, so it is refused at
+ *    `health <= cost` rather than at `<`. A skill that could kill its user is a
+ *    skill nobody uses in the fight it was designed for, which makes the cost a
+ *    fiction and the skill a worse version of a free one.
+ *  - Guard: paying poise you have not got would *break* the caster -- the pool
+ *    empties, `applyPoiseDamage`'s consequences do not run, and the body is
+ *    left at zero guard for the next blow to trivially stagger. A self-stagger
+ *    that arrives through the cost line is a bug that looks exactly like a
+ *    mechanic, so it is refused at the door.
+ *
+ * Unlike the pool cost this is **not scaled by anything**. Wisdom buys
+ * efficiency with mana; it has never bought cheaper blood, and a cost in a
+ * second currency that quietly followed the first would make the second
+ * currency decorative.
+ */
+export function extraCostsFor(
+  entity: Pick<ServerEntity, 'health' | 'poise'>,
+  ability: AbilityDefinition,
+): { readonly health: number; readonly poise: number; readonly refusal: CastRejection | null } {
+  const health = Math.max(0, ability.costs?.health ?? 0);
+  const poise = Math.max(0, ability.costs?.poise ?? 0);
+  if (health > 0 && entity.health <= health) {
+    return { health, poise, refusal: 'notEnoughHealth' };
+  }
+  if (poise > 0 && entity.poise < poise) {
+    return { health, poise, refusal: 'notEnoughPoise' };
+  }
+  return { health, poise, refusal: null };
+}
+
 export type CastStartResult =
   | { readonly ok: true; readonly entity: ServerEntity; readonly events: readonly ServerSimEvent[] }
   | { readonly ok: false; readonly reason: CastRejection };
@@ -395,6 +495,29 @@ export function startCast(
   if (!ability) return { ok: false, reason: 'unknownAbility' };
   if (entity.health <= 0) return { ok: false, reason: 'dead' };
   if (entity.cast !== null) return { ok: false, reason: 'alreadyCasting' };
+  // A broken body does not get to swing through its own stagger (spec 173).
+  //
+  // Ordered above the cooldown deliberately: when a body is both staggered and
+  // on cooldown, the stagger is the more useful answer, because it is the one
+  // that just happened and the one that is about to end. It is also the gate
+  // that makes the window last -- `startCast` writes `activity: Casting`, so a
+  // cast let through here would overwrite `Stunned` and end the stagger early,
+  // which is exactly how the window used to be shorter than `staggerTicks`.
+  if (staggered(entity, tick)) return { ok: false, reason: 'staggered' };
+
+  // **You have to be carrying it** (spec 188). The first ownership check the
+  // ability system has ever had, and it is here rather than in `world.ts` for
+  // the reason every other gate is: `startCast` is what the sim, the client's
+  // prediction and every test call, so a check anywhere else would be a rule
+  // one of the three did not know about.
+  //
+  // What it reads is a *derived* stat -- `skillAbilityIds` comes off the four
+  // skill slots the way `basicAttackId` comes off the main hand -- so nothing
+  // here trusts a client, and a skill unequipped mid-wind-up is still refused
+  // the next time it is asked for.
+  if (ability.skill === true && !entity.stats.skillAbilityIds.includes(ability.id)) {
+    return { ok: false, reason: 'notEquipped' };
+  }
 
   const readyAt = entity.cooldowns[ability.id] ?? 0;
   if (tick < readyAt) return { ok: false, reason: 'onCooldown' };
@@ -407,6 +530,22 @@ export function startCast(
   const shortfall = cost - entity.resource;
   const overflow = shortfall > 0 ? overflowCostFor(entity, shortfall) : 0;
   if (shortfall > 0 && overflow <= 0) return { ok: false, reason: 'notEnoughResource' };
+
+  // The flask's cost (spec 156). Checked here and spent below with everything
+  // else, so a charge behaves exactly like resource: taken at the commit, handed
+  // back by a withdrawal, and gone for good once the draught is down. There is
+  // deliberately no overflow equivalent -- a charge you have not got is a
+  // refusal, because the whole point of insurance is that it runs out.
+  const charges = Math.max(0, Math.floor(ability.chargeCost ?? 0));
+  if (charges > 0 && entity.fallbackCharges < charges) {
+    return { ok: false, reason: 'noCharges' };
+  }
+
+  // Health and guard (spec 188). Checked here with everything else and spent
+  // below with everything else, so a skill priced in blood behaves exactly like
+  // one priced in mana: taken at the commit, handed back by a withdrawal.
+  const extra = extraCostsFor(entity, ability);
+  if (extra.refusal !== null) return { ok: false, reason: extra.refusal };
 
   // A skill aimed at a body has to have one (spec 080). Refused rather than
   // quietly downgraded to a cone or a patch of ground: an ability whose whole
@@ -439,11 +578,17 @@ export function startCast(
   // Generous at the commit, and only at the commit (spec 090): see
   // `commitAlignEps`. `advanceCast` still holds the wind-up back at the strict
   // tolerance, so a body that genuinely has to come round still pays for it.
+  // Generous at the commit and only at the commit (spec 090), *or* as wide as
+  // the row says, whichever is wider (spec 188). The two answer different
+  // questions -- one is "close enough that a turn would be a formality", the
+  // other is "close enough that this skill does not care" -- and taking the max
+  // means a wide `castAngleDeg` can only ever make a cast easier to start,
+  // never harder than it already was.
   const turning = !facesAim(
     entity.position,
     entity.facing,
     aim,
-    commitAlignEps(entity.stats.turnRate, SERVER_TICK_RATE),
+    Math.max(commitAlignEps(entity.stats.turnRate, SERVER_TICK_RATE), castAngleEps(ability)),
   );
   const phase = turning ? CastPhase.Turning : CastPhase.Windup;
   // Snapshotted here and never recomputed (spec 144): a buff that lands halfway
@@ -452,10 +597,19 @@ export function startCast(
   const releaseTick = tick + timing.attackPointTicks;
   const endTick = endTickFor(ability, releaseTick, timing);
 
+  // A self cast is aimed at the caster whatever id came with the request, so it
+  // can never be turned into an attack on somebody else by naming them.
+  const namedTarget = ability.targeting === 'self' ? 0 : (attempt.targetEntityId ?? 0);
+
   const cast: CastState = {
     abilityId: ability.id,
     spentResource: Math.min(cost, entity.resource),
-    spentHealth: overflow,
+    // The overflow and the skill's own blood price are one number from here on
+    // (spec 188): both are health this cast took, both come back on a
+    // withdrawal, and two fields would be two things to keep in step.
+    spentHealth: overflow + extra.health,
+    spentCharges: charges,
+    spentPoise: extra.poise,
     startedTick: tick,
     // Provisional while turning, and re-stamped at alignment: the attack has
     // not started until the wind-up has, and the interval is measured from it.
@@ -467,9 +621,15 @@ export function startCast(
     timing,
     targetX: aim.x,
     targetY: aim.y,
-    // A self cast is aimed at the caster whatever id came with the request, so
-    // it can never be turned into an attack on somebody else by naming them.
-    targetEntityId: ability.targeting === 'self' ? 0 : (attempt.targetEntityId ?? 0),
+    targetEntityId: namedTarget,
+    // Left false here and stamped by `advanceCast`, which runs on this same
+    // tick (spec 221). Not because it could not be worked out now, but because
+    // what is to hand *here* is `attempt.targetX/Y` -- the position the client
+    // claimed -- and with the release no longer measuring anything, a reach
+    // taken from a claim is a reach a client could simply assert. `advanceCast`
+    // is handed the server's own view of the target, rewound to what this
+    // attacker was looking at (spec 149).
+    targetInReach: false,
     nextPulseTick: 0,
   };
 
@@ -479,11 +639,19 @@ export function startCast(
       ...entity,
       cast,
       resource: Math.max(0, entity.resource - cost),
+      fallbackCharges: entity.fallbackCharges - charges,
       // Arcane Overflow: the shortfall, paid in health (spec 147). Never lethal
       // -- `overflowCostFor` refuses anything past 40% of what is left -- so the
       // risk is that the *next* thing to hit you finds you low, which is the
       // trade the milestone is offering rather than a way to kill yourself.
-      health: overflow > 0 ? Math.max(1, entity.health - overflow) : entity.health,
+      health:
+        overflow + extra.health > 0
+          ? Math.max(1, entity.health - overflow - extra.health)
+          : entity.health,
+      // Guard, spent (spec 188). Floored at zero rather than allowed to empty
+      // into a break: `extraCostsFor` has already refused a cast that could not
+      // afford it, so this floor is arithmetic hygiene rather than a rule.
+      poise: extra.poise > 0 ? Math.max(0, entity.poise - extra.poise) : entity.poise,
       stillSinceTick: tick,
       // The cooldown is *not* stamped here (spec 091). It starts when the blow
       // goes off, so a wind-up withdrawn from costs the time it took and
@@ -547,6 +715,28 @@ function endTickFor(
 export const TURN_ALIGN_EPS = (0.5 * Math.PI) / 180;
 
 /**
+ * How far off its aim this ability may be pointed and still start (spec 188).
+ *
+ * The brief's `castAngle`, and it is four lines rather than a system because
+ * spec 065 already built the mechanism: a body turns into its aim *before* the
+ * wind-up clock starts, and `facesAim` has always taken the tolerance as an
+ * argument. This makes that argument the row's to name.
+ *
+ * A row's `castAngleDeg` is the full opening angle, so the tolerance is half of
+ * it either side -- which is how anybody reading "a 60 degree cast angle" would
+ * expect it to behave. Absent is {@link TURN_ALIGN_EPS}, which is what every row
+ * written before this spec has always meant.
+ *
+ * Never *narrower* than `TURN_ALIGN_EPS`: a row authoring zero would be a body
+ * that can never satisfy its own gate through float drift, and a cast that can
+ * never start is worse than one that starts a tick early.
+ */
+export function castAngleEps(ability: AbilityDefinition): number {
+  if (ability.castAngleDeg === undefined) return TURN_ALIGN_EPS;
+  return Math.max(TURN_ALIGN_EPS, (Math.max(0, ability.castAngleDeg) * Math.PI) / 360);
+}
+
+/**
  * Whether a body at `from`, pointing `facing`, counts as facing `aim`.
  *
  * Exported in this shape -- loose numbers rather than a `ServerEntity` -- so the
@@ -598,8 +788,12 @@ export function commitAlignEps(turnRateDegrees: number, tickRate: number): numbe
 }
 
 /** Whether `entity` is already pointing at `aim` closely enough to swing. */
-function facingAim(entity: ServerEntity, aim: { readonly x: number; readonly y: number }): boolean {
-  return facesAim(entity.position, entity.facing, aim);
+function facingAim(
+  entity: ServerEntity,
+  aim: { readonly x: number; readonly y: number },
+  ability: AbilityDefinition,
+): boolean {
+  return facesAim(entity.position, entity.facing, aim, castAngleEps(ability));
 }
 
 /** A self cast aims at itself; everything else aims where it was told. */
@@ -762,6 +956,20 @@ function cancelWindup(
       health: cast.spentHealth > 0
         ? Math.min(entity.stats.maxHealth, entity.health + cast.spentHealth)
         : entity.health,
+      // And the guard a skill was priced in (spec 188). Clamped like the other
+      // three refunds and for the same reason: poise regenerates during a
+      // wind-up, so an unclamped hand-back would put the pool above its own
+      // ceiling and hand a feint free guard.
+      poise: cast.spentPoise > 0
+        ? Math.min(entity.stats.traits.maxPoise, entity.poise + cast.spentPoise)
+        : entity.poise,
+      // And the flask charge (spec 156). Clamped like the resource refund, for
+      // the same reason -- a rest tick can return a charge mid-wind-up, and an
+      // unclamped refund would put the flask above its own ceiling.
+      fallbackCharges: Math.min(
+        entity.stats.traits.fallbackCharges,
+        entity.fallbackCharges + cast.spentCharges,
+      ),
       cooldowns,
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
@@ -881,9 +1089,12 @@ export function advanceCast(
   tick: number,
   rng: Rng,
 ): AdvanceResult {
-  const cast = entity.cast;
+  const opening = entity.cast;
   const empty: AdvanceResult = { updated: new Map(), spawns: [], events: [], rng };
-  if (!cast) return empty;
+  if (!opening) return empty;
+  // Reassignable because the wind-up's reach is stamped onto it below (spec
+  // 219) and everything after that has to read the stamped one.
+  let cast: CastState = opening;
 
   const ability = abilityById(cast.abilityId);
   if (!ability) {
@@ -943,7 +1154,7 @@ export function advanceCast(
   // Held here until the body is pointing at what it committed to. Movement runs
   // before casts within a tick, so `entity.facing` is already this tick's.
   if (cast.phase === CastPhase.Turning) {
-    if (!facingAim(caster, { x: cast.targetX, y: cast.targetY })) {
+    if (!facingAim(caster, { x: cast.targetX, y: cast.targetY }, ability)) {
       return { updated: new Map(), spawns: [], events: [], rng: currentRng };
     }
 
@@ -956,6 +1167,12 @@ export function advanceCast(
     // does not have those six ticks quietly counted against its next swing.
     const releaseTick = tick + cast.timing.attackPointTicks;
     const endTick = endTickFor(ability, releaseTick, cast.timing);
+    // And the reach is measured now, for the same reason the clock is restarted
+    // now (spec 221): the swing begins here, so this is the tick "was it in
+    // range when I started" is asking about. Off the target's *live* position
+    // rather than the aim captured at the commit, because a body that walked
+    // away during a long turn has walked away.
+    const turned = candidates.find((candidate) => candidate.id === cast.targetEntityId);
     caster = {
       ...caster,
       cast: {
@@ -964,6 +1181,9 @@ export function advanceCast(
         windupStartTick: tick,
         releaseTick,
         endTick,
+        targetInReach:
+          turned !== undefined &&
+          withinReach(ability, caster, turned.position.x, turned.position.y, turned.radius),
       },
       activityUntilTick: endTick,
     };
@@ -981,6 +1201,28 @@ export function advanceCast(
       targetEntityId: cast.targetEntityId,
     });
     return { updated, spawns, events, rng: currentRng };
+  }
+
+  // --- the wind-up begins ----------------------------------------------
+  // The one tick "was this in reach" is ever asked (spec 221), for a cast that
+  // needed no turn: `startCast` runs earlier in this same tick and leaves the
+  // question to here, where the *server's* view of the target is. `candidates`
+  // has been rewound to what this attacker was looking at (spec 149), so a
+  // laggy player still gets the swing they saw connect, and a lying one gets
+  // nothing -- which matters now in a way it did not before, since the release
+  // no longer measures anything.
+  //
+  // The turning branch above stamps its own on the tick it aligns, through this
+  // same `withinReach`, because it returns before reaching this.
+  if (cast.phase === CastPhase.Windup && cast.windupStartTick === tick && cast.targetEntityId > 0) {
+    const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
+    cast = {
+      ...cast,
+      targetInReach:
+        named !== undefined &&
+        withinReach(ability, caster, named.position.x, named.position.y, named.radius),
+    };
+    caster = { ...caster, cast };
   }
 
   // --- the attack point: COMMIT ----------------------------------------
@@ -1177,21 +1419,152 @@ function landAbility(
       return landSelf(ability, caster, tick, rng);
     case 'projectile':
       return launchProjectile(ability, caster, cast, tick, rng);
+    case 'area':
+      // The kind that reads a *shape* (spec 188). Everything else here names
+      // either a body or a point; this names a region and asks
+      // `sim/skill-area.ts` who is standing in it.
+      return landArea(ability, caster, cast, candidates, tick, rng);
   }
 }
 
 /**
- * One blow, on one named body (spec 070).
+ * One application of an ability to one body (spec 188).
  *
- * Range is measured at the *release*, not at the commit, and that is the whole
- * decision this function encodes: a target that walked out of reach during the
- * wind-up is a miss. The alternative -- checking at the commit and landing
- * regardless -- would make the wind-up unreadable from the other side, which is
- * exactly the thing spec 062 replaced the parry window to avoid.
+ * The seam the whole feature hangs off, and it is four lines: an ability with
+ * no `effects` is the blow it always was, and one with them runs its list. Put
+ * here rather than in each lander so that a skill inherits every one of the
+ * landers' existing rules -- the range measured at the *release*, the miss on a
+ * target that walked out of it, the cone's geometry, the caster folded back --
+ * instead of the effect pipeline growing a second, slightly different copy of
+ * each.
  *
- * The facing is not re-checked. The body already turned into the aim before the
- * wind-up started (spec 065), and a target that side-stepped without leaving
- * reach is inside the swing.
+ * Exported since spec 190, for the one landing that does not happen in this
+ * file: a projectile's impact resolves in `world.ts`, which called `applyDamage`
+ * directly and so dropped `ability.effects` on the floor. Spec 188 listed that
+ * as out of scope and the four skills it shipped did not need it; a poison dart
+ * is a ranged skill, so it does. Exporting this rather than reimplementing the
+ * check there is the whole point -- two copies of "does this row have effects"
+ * is exactly how a projectile skill ends up subtly different from a melee one.
+ */
+export function applyToTarget(
+  ability: AbilityDefinition,
+  attacker: ServerEntity,
+  target: ServerEntity,
+  rng: Rng,
+  tick: number,
+): { readonly attacker: ServerEntity; readonly target: ServerEntity; readonly events: readonly ServerSimEvent[]; readonly rng: Rng } {
+  if (!ability.effects || ability.effects.length === 0) {
+    return applyDamage(ability, attacker, target, rng, tick);
+  }
+  const applied = applyEffects(ability, attacker, target, tick, rng);
+  return {
+    attacker: applied.caster,
+    target: applied.target,
+    events: applied.events,
+    rng: applied.rng,
+  };
+}
+
+/**
+ * A landing that picks its targets by shape (spec 188).
+ *
+ * Written beside `landBlast` rather than replacing it, because the two are not
+ * the same thing: a blast is a `ground` ability's crater at the point the cast
+ * named, and this is a skill's own geometry, which may be centred on the caster
+ * and may be a cone or a lane. Deleting one into the other would be this spec
+ * rewriting a working system to fit a new feature.
+ *
+ * Intelligence's shaping widens the shape's *reach* here, the same line
+ * `landBlast` has had since spec 147 -- so a shaped Whirlwind sweeps further,
+ * which is a different fight rather than a bigger number.
+ */
+function landArea(
+  ability: AbilityDefinition,
+  caster: ServerEntity,
+  cast: CastState,
+  candidates: readonly ServerEntity[],
+  tick: number,
+  rng: Rng,
+): LandResult {
+  const authored = ability.area;
+  if (!authored) return { updated: new Map(), spawns: [], events: [], rng };
+  const area = scaleArea(authored, 1 + caster.stats.traits.spellRadiusPct);
+  // A caster-centred shape draws its cue on the caster; an aimed one draws it
+  // where it was aimed. Either way it is the point the shape is measured from,
+  // so the picture and the geometry cannot come apart.
+  const centreX = area.shape === 'circle' && area.origin === 'aim' ? cast.targetX : caster.position.x;
+  const centreY = area.shape === 'circle' && area.origin === 'aim' ? cast.targetY : caster.position.y;
+
+  const updated = new Map<number, ServerEntity>();
+  // Which way the cue points (spec 235).
+  //
+  // A circle is the same picture whichever way the caster was standing, so it
+  // sends nothing and the client draws it radially, exactly as before. A line
+  // and a cone are not: both run from the caster toward the aim, and this cue is
+  // sent at the caster's own feet -- so without a bearing there is nothing a
+  // client could do with a lane but draw it as a burst, which is what Arc Lash
+  // was.
+  //
+  // Measured to `cast.targetX/Y`, which is where the player pointed, rather than
+  // to `caster.facing`: spec 065 turns a body before its wind-up and holds the
+  // aim live to the commit, so by the landing they agree -- and the aim is the
+  // one of them that is right even when the turn was interrupted.
+  const aimed = area.shape !== 'circle';
+  const aimDx = cast.targetX - caster.position.x;
+  const aimDy = cast.targetY - caster.position.y;
+  const rotation =
+    aimed && Math.hypot(aimDx, aimDy) > 1e-6 ? Math.atan2(aimDy, aimDx) : caster.facing;
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'effect',
+      effectId: `${ability.id}.impact`,
+      x: centreX,
+      y: centreY,
+      z: caster.position.z,
+      radius: areaReachOf(area),
+      durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
+      ...(aimed ? { rotation } : {}),
+    },
+  ];
+
+  let currentRng = rng;
+  let attacker = caster;
+  let connected = false;
+  for (const target of selectByArea(area, caster, { x: cast.targetX, y: cast.targetY }, candidates)) {
+    const hit = applyToTarget(ability, attacker, target, currentRng, tick);
+    currentRng = hit.rng;
+    attacker = hit.attacker;
+    connected = true;
+    updated.set(target.id, hit.target);
+    events.push(...hit.events);
+  }
+
+  // A sweep that caught nobody still reports a miss, so the client's "that did
+  // nothing" feedback is the one it already has for every other landing.
+  if (!connected) events.push({ kind: 'attackMissed', attackerId: caster.id });
+  else updated.set(caster.id, attacker);
+  return { updated, spawns: [], events, rng: currentRng };
+}
+
+/**
+ * One blow, on one named body (specs 070, 221).
+ *
+ * **Range is not measured here.** It was measured once, at the tick the wind-up
+ * began, and `cast.targetInReach` is that answer: a swing that started in reach
+ * lands, and a target that walked out of it during a wind-up nobody withdrew
+ * from is hit anyway. Spec 070 asked the question at the release instead, on
+ * the argument that checking earlier would make the wind-up unreadable from the
+ * other side -- but that readability lives in the wind-up being long enough to
+ * *withdraw* from, which it still is, and asking at the release meant a
+ * completed swing could quietly amount to nothing. Spec 221 reverses it.
+ *
+ * What still misses: a target that is dead, or gone from `candidates`
+ * altogether. That last one is the natural bound on "unconditional" -- a body
+ * that left the simulated set cannot be hit by a swing that is still finishing.
+ *
+ * The facing is not re-checked either. The body already turned into the aim
+ * before the wind-up started (spec 065), and a target that side-stepped without
+ * leaving reach is inside the swing.
  */
 function landOnTarget(
   ability: AbilityDefinition,
@@ -1204,11 +1577,8 @@ function landOnTarget(
   // Only from `candidates`, which the caller has already filtered by hostility:
   // naming an id is a request, not a licence to hit an ally or a projectile.
   const target = candidates.find((candidate) => candidate.id === cast.targetEntityId);
-  const dx = target ? target.position.x - caster.position.x : 0;
-  const dy = target ? target.position.y - caster.position.y : 0;
-  const reach = target ? ability.range + target.radius : 0;
 
-  if (!target || target.health <= 0 || Math.hypot(dx, dy) > reach) {
+  if (!target || target.health <= 0 || !cast.targetInReach) {
     return {
       updated: new Map(),
       spawns: [],
@@ -1217,7 +1587,7 @@ function landOnTarget(
     };
   }
 
-  const hit = applyDamage(ability, caster, target, rng, tick);
+  const hit = applyToTarget(ability, caster, target, rng, tick);
   return {
     // The caster goes back in the map too (spec 147). `advanceCast` folds an
     // entry with the caster's own id into its local copy, so this is how a weak
@@ -1248,7 +1618,26 @@ function landCone(
   const dirY = length > 1e-6 ? aimY / length : Math.sin(caster.facing);
 
   const updated = new Map<number, ServerEntity>();
-  const events: ServerSimEvent[] = [];
+  // A cone finally draws something (spec 235).
+  //
+  // This landing has computed `dirX/dirY` since spec 062 and raised no `effect`
+  // event at all, so Acid Spray -- the one ability in the table that *is* a
+  // shape -- was the only skill with no cue of any kind: not even the debug
+  // ring the other five got, because there was no id being sent to fall back
+  // from. It is sent whether or not the sweep caught anybody, like every other
+  // landing's, because a spray that hit nothing still happened.
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'effect',
+      effectId: `${ability.id}.impact`,
+      x: caster.position.x,
+      y: caster.position.y,
+      z: caster.position.z,
+      radius: ability.range,
+      durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
+      rotation: Math.atan2(dirY, dirX),
+    },
+  ];
   let currentRng = rng;
   let connected = false;
   // Carried forward across the sweep so a cone that catches three bodies pays
@@ -1261,7 +1650,7 @@ function landCone(
       continue;
     }
     connected = true;
-    const hit = applyDamage(ability, attacker, target, currentRng, tick);
+    const hit = applyToTarget(ability, attacker, target, currentRng, tick);
     currentRng = hit.rng;
     attacker = hit.attacker;
     updated.set(target.id, hit.target);
@@ -1300,7 +1689,7 @@ function landBlast(
     const dx = target.position.x - x;
     const dy = target.position.y - y;
     if (Math.hypot(dx, dy) > radius + target.radius) continue;
-    const hit = applyDamage(ability, attacker, target, currentRng, tick);
+    const hit = applyToTarget(ability, attacker, target, currentRng, tick);
     currentRng = hit.rng;
     attacker = hit.attacker;
     connected = true;
@@ -1316,100 +1705,68 @@ function landSelf(ability: AbilityDefinition, caster: ServerEntity, tick: number
   // Wisdom scales what a restorative tool is worth, and Constitution decides
   // what happens to the part that will not fit (spec 147). Both go through
   // `applyHealing`, which is the one place either question is answered.
-  const restored = applyHealing(caster, ability.healing ?? 0, tick);
-  const healed = restored.entity.health;
-  return {
-    updated: new Map([[caster.id, restored.entity]]),
-    spawns: [],
-    events: [
-      {
-        kind: 'effect',
-        effectId: `${ability.id}.self`,
-        x: caster.position.x,
-        y: caster.position.y,
-        z: caster.position.z,
-        radius: caster.radius * 2,
-        durationTicks: Math.round(SERVER_TICK_RATE * 0.5),
-      },
-      // Reported as a hit against itself with negative damage, so a client has
-      // exactly one code path for "a number floated off someone".
-      {
-        kind: 'hit',
-        attackerId: caster.id,
-        targetId: caster.id,
-        damage: -(healed - caster.health),
-        targetHealth: healed,
-        killed: false,
-        critical: false,
-        blocked: false,
-        weakPoint: false,
-      },
-    ],
-    rng,
-  };
-}
-
-export interface HealResult {
-  readonly entity: ServerEntity;
-  /** What actually went into the health bar. */
-  readonly healed: number;
-  /** What did not fit, before Constitution or Wisdom got hold of it. */
-  readonly overheal: number;
-}
-
-/**
- * One restoration, with the economy applied (spec 147).
- *
- * The one place healing is scaled and the one place overheal goes anywhere. In
- * order:
- *
- *  1. Wisdom (and a little Constitution) scale the amount.
- *  2. The Constitution+Wisdom pair doubles it below its threshold, because an
- *     attrition build should get *more* out of a heal exactly when it is losing.
- *  3. What fits goes into health.
- *  4. What does not fit goes to a shield (Constitution 50), or to resource
- *     (Wisdom 50), or nowhere. Both are capped -- the shield by `maxShield`, the
- *     conversion by `conversionCap` per event -- so neither is a loop.
- *
- * A body with no traits at all gets `min(max, health + amount)`, which is
- * exactly what `landSelf` did before this existed.
- */
-export function applyHealing(entity: ServerEntity, amount: number, tick: number): HealResult {
-  if (!(amount > 0)) return { entity, healed: 0, overheal: 0 };
-  const traits = entity.stats.traits;
-
-  const surge =
-    traits.healingSurge > 0 &&
-    entity.stats.maxHealth > 0 &&
-    entity.health / entity.stats.maxHealth <= traits.healingSurgeBelow
-      ? 1 + traits.healingSurge
-      : 1;
-  const total = amount * traits.healingScale * surge;
-
-  const room = Math.max(0, entity.stats.maxHealth - entity.health);
-  const healed = Math.min(room, total);
-  const overheal = total - healed;
-
-  let shield = tick < entity.shieldUntilTick ? entity.shield : 0;
-  let shieldUntilTick = entity.shieldUntilTick;
-  let resource = entity.resource;
-
-  if (overheal > 0) {
-    if (traits.overhealShieldTicks > 0 && traits.maxShield > 0) {
-      shield = Math.min(traits.maxShield, shield + overheal);
-      shieldUntilTick = tick + traits.overhealShieldTicks;
-    } else if (traits.conversionCap > 0) {
-      resource = Math.min(
-        entity.stats.maxResource,
-        resource + Math.min(traits.conversionCap, overheal),
-      );
-    }
+  //
+  // Flat plus proportional (spec 156). A flask has to be a fraction of the
+  // drinker or it stops being insurance as a character grows; Mend is flat and
+  // stays flat, because a spell's number is the spell's statement about itself.
+  const amount =
+    (ability.healing ?? 0) + caster.stats.maxHealth * (ability.healingFraction ?? 0);
+  const restored = applyHealing(caster, amount, tick);
+  // And then whatever else the row says (spec 190). `landSelf` read `healing`
+  // and `healingFraction` and nothing else, so a self-targeted skill's effect
+  // list was written, validated, typechecked and never run -- the same stranded
+  // path a projectile's was. Run *after* the healing rather than instead of it,
+  // because the two columns are independent: a row may be a heal, or a list, or
+  // both, and folding one into the other would make a self-heal an effect list
+  // for no reason.
+  const applied = applyEffects(ability, restored.entity, restored.entity, tick, rng);
+  const healed = applied.target.health;
+  // What actually went into the health bar. `applyHealing` returns the caster
+  // untouched when there was no room for any of it, so this is exactly zero for
+  // a flask drunk at full health.
+  const gained = restored.entity.health - caster.health;
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'effect',
+      effectId: `${ability.id}.self`,
+      x: caster.position.x,
+      y: caster.position.y,
+      z: caster.position.z,
+      radius: caster.radius * 2,
+      durationTicks: Math.round(SERVER_TICK_RATE * 0.5),
+    },
+  ];
+  // Reported as a hit against itself with negative damage, so a client has
+  // exactly one code path for "a number floated off someone" -- and only when
+  // there is a number (spec 219).
+  //
+  // `collectMote` has always guarded this and this never did, and what an
+  // unguarded one sends is `-0`: `effectsForBlow` tests `damage < 0`, `-0 < 0`
+  // is false, and a heal that restored nothing therefore fell through the heal
+  // branch into the *blow* one -- so a flask drunk at full health painted a
+  // brush hit on the drinker's own chest and floated a `0` off them.
+  if (gained > 0) {
+    events.push({
+      kind: 'hit',
+      attackerId: caster.id,
+      targetId: caster.id,
+      damage: -gained,
+      targetHealth: healed,
+      killed: false,
+      critical: false,
+      blocked: false,
+      weakPoint: false,
+    });
   }
-
+  // The effect list's own events after the heal's, in the order they happened.
+  // The floating number above is still the *healing* only -- what an effect did
+  // to the caster reports itself.
+  events.push(...applied.events);
   return {
-    healed,
-    overheal,
-    entity: { ...entity, health: entity.health + healed, shield, shieldUntilTick, resource },
+    updated: new Map([[caster.id, applied.target]]),
+    spawns: [],
+    events,
+    rng: applied.rng,
   };
 }
 
@@ -1520,6 +1877,9 @@ export function projectileHits(projectile: ServerEntity, target: ServerEntity): 
   if (!flight) return false;
   if (target.id === flight.ownerId || target.id === projectile.id) return false;
   if (target.health <= 0 || target.kind === EntityKindValue.Projectile) return false;
+  // A drop is not a body (spec 158). Without this a shot loosed at a monster
+  // that died to the previous one detonates on the item it left behind.
+  if (target.kind === EntityKindValue.Drop) return false;
   const dx = target.position.x - projectile.position.x;
   const dy = target.position.y - projectile.position.y;
   return Math.hypot(dx, dy) <= projectile.radius + target.radius;

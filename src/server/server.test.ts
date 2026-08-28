@@ -9,17 +9,21 @@ import { createHmacAdminVerifier, signToken } from './admin/auth.js';
 import { abilityById } from './data/abilities.js';
 import { BROADCAST_EVERY_N_TICKS, PROTOCOL_VERSION, SERVER_TICK_RATE } from './config.js';
 import { encodeAdminRequest, decodeAdminReply, type AdminReply } from './net/admin-messages.js';
-import { decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
+import { CombatFlag, decodeServerMessage, encodeClientMessage, type ServerMessage } from './net/messages.js';
 import {
   AdminMessageType,
+  AdminProgressMode,
   AdminReplyType,
   ClientMessageType,
+  ProgressionTarget,
   CorrectionReason,
   EntityField,
   ErrorCode,
   ServerMessageType,
 } from './net/protocol.js';
+import { experienceForLevel } from './player/levels.js';
 import { GameServer } from './server.js';
+import { applyHealing } from './sim/healing.js';
 import { WORLD_BOUNDS } from '../sim/constants.js';
 
 const SECRET = 'integration-secret';
@@ -38,7 +42,7 @@ class Client {
     });
   }
 
-  async hello(playerId: string, assetManifest = '', resumeToken = ''): Promise<void> {
+  async hello(playerId: string, assetManifest = '', resumeToken = '', authToken = ''): Promise<void> {
     await this.server.receive(
       this.connection,
       encodeClientMessage({
@@ -49,6 +53,7 @@ class Client {
         token: '',
         resumeToken,
         assetManifest,
+        authToken,
       }),
     );
   }
@@ -135,6 +140,7 @@ describe('login', () => {
         token: '',
         assetManifest: '',
         resumeToken: '',
+        authToken: '',
       }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.BadProtocolVersion);
@@ -332,32 +338,36 @@ describe('inventory and skills are server-side only', () => {
     // A skill whose attribute gate a fresh character does not meet (spec 147).
     await game.receive(
       client.connection,
-      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'str.unstoppable' }),
+      encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.unstoppable' }),
     );
     expect(client.of(ServerMessageType.Error)[0]?.code).toBe(ErrorCode.RejectedAction);
-    expect(game.playerManager.get('alice')?.record.skills).toEqual([]);
+    expect(game.playerManager.get('alice')?.record.specializations).toEqual([]);
   });
 
   it('accepts a legal one and spends exactly one point', async () => {
     const game = server();
     const client = new Client(game);
     await client.hello('alice');
-    const before = game.playerManager.get('alice')?.record.unspentSkillPoints ?? 0;
+    const before = game.playerManager.get('alice')?.record.unspentProgressionPoints ?? 0;
 
     // Enough Strength for the tier-1 row, placed the way a player would.
     for (let i = 0; i < 5; i++) {
       await game.receive(
         client.connection,
-        encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: 0 }),
+        encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Attribute, attribute: 0 }),
       );
     }
     await game.receive(
       client.connection,
-      encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId: 'str.crushingBlows' }),
+      encodeClientMessage({ type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.crushingBlows' }),
     );
     const record = game.playerManager.get('alice')?.record;
-    expect(record?.skills).toEqual([{ skillId: 'str.crushingBlows', level: 1 }]);
-    expect(record?.unspentSkillPoints).toBe(before - 1);
+    expect(record?.specializations).toEqual([{ specializationId: 'str.crushingBlows', tier: 1 }]);
+    // Six points off one pool: five to open the threshold and one for the tier.
+    // It used to be `before - 1`, because the five came out of the *other*
+    // budget -- which is the whole of what spec 244 changed, seen from the wire.
+    expect(record?.unspentProgressionPoints).toBe(before - 6);
+    expect(record?.baseStats.strength).toBe(10);
   });
 });
 
@@ -394,6 +404,148 @@ describe('combat over the wire', () => {
     expect(result?.attackerId).toBe(entityId);
     expect(result?.damage).toBeGreaterThan(0);
     expect(result?.targetHealth).toBeGreaterThanOrEqual(0);
+    // A swing is not periodic, and the client draws its picture (spec 219).
+    expect((result?.flags ?? 0) & CombatFlag.Periodic).toBe(0);
+  });
+
+  it("marks an affliction's pulses as periodic, so no blow is drawn for them (spec 219)", async () => {
+    // The sim has known a pulse from a blow since spec 190 and kept it to
+    // itself, so every beat of a Poison arrived at the client indistinguishable
+    // from a sword landing -- and got a brush hit thrown along a bearing from an
+    // attacker who is no longer there. The bit is the whole fix; `vfx-wire.ts`
+    // is what reads it.
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+    const at = game.world.entities.get(entityId)?.position ?? { x: 600, y: 450, z: 0 };
+
+    const admin = new Client(game);
+    await admin.admin({
+      type: AdminMessageType.Auth,
+      token: signToken({ sub: 'root', role: 'admin' }, SECRET, Date.now()),
+    });
+    // The developer path that puts a real affliction on a real body: same pass,
+    // same cadence, same damage as one a skill lands.
+    await admin.admin({
+      type: AdminMessageType.TriggerEvent,
+      eventName: 'affliction',
+      x: at.x,
+      y: at.y,
+      magnitude: 0,
+    });
+    client.clear();
+
+    for (let i = 0; i < SERVER_TICK_RATE; i++) game.tick();
+
+    const pulses = client.of(ServerMessageType.CombatResult);
+    expect(pulses.length).toBeGreaterThan(0);
+    for (const pulse of pulses) {
+      expect(pulse.flags & CombatFlag.Periodic, JSON.stringify(pulse)).not.toBe(0);
+      // The number still rides. What a pulse loses is the blow's picture, not
+      // its damage -- an affliction that reported nothing would be a health bar
+      // falling on its own.
+      expect(pulse.damage).toBeGreaterThan(0);
+    }
+  });
+});
+
+/**
+ * A level-up has to reach the body, not only the sheet.
+ *
+ * The entity carries its own `EffectiveStats`, taken when it spawned, and
+ * nothing in the tick ever looks a session up -- so a level-up that settled the
+ * record and told the client left the sim clamping every pool against the
+ * ceiling the character logged in with. What that looks like from the player's
+ * seat is a health bar that says 226 and a heal that stops at 218, because
+ * `applyHealing`'s room is `entity.stats.maxHealth - entity.health`.
+ *
+ * Both routes to a level are covered, because they are two call sites and only
+ * one of them is an action anybody reported: an admin's edit, and the kill that
+ * every level in a real session actually comes from.
+ */
+describe('a level-up reaches the authoritative body', () => {
+  it('raises the entity own ceiling on an admin edit, and lets a heal pass the old one', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+
+    const before = game.world.entities.get(entityId)?.stats.maxHealth ?? 0;
+    expect(before).toBeGreaterThan(0);
+
+    const outcome = await game.setProgress('alice', AdminProgressMode.AddLevels, 5);
+    expect(outcome.ok).toBe(true);
+
+    const session = game.playerManager.get('alice');
+    const body = game.world.entities.get(entityId);
+    expect(body).toBeDefined();
+    if (!body) return;
+    expect(session?.stats.maxHealth ?? 0).toBeGreaterThan(before);
+    // The half that was missing. The sheet and the body agreed about the level
+    // and disagreed about the pool.
+    expect(body.stats.maxHealth).toBe(session?.stats.maxHealth);
+    expect(body.level).toBe(session?.record.level);
+
+    // And the consequence, measured where the player felt it.
+    const healed = applyHealing({ ...body, health: before - 10 }, 1000, 0);
+    expect(healed.entity.health).toBeGreaterThan(before);
+    expect(healed.entity.health).toBe(session?.stats.maxHealth);
+  });
+
+  it('raises it on a kill, which is where a level comes from in a real session', async () => {
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+    const at = game.world.entities.get(entityId)?.position ?? { x: 600, y: 450, z: 0 };
+
+    // One spider short of level 2, so the fight is one body rather than seven.
+    await game.setProgress('alice', AdminProgressMode.SetExperience, experienceForLevel(2) - 1);
+    expect(game.playerManager.get('alice')?.record.level).toBe(1);
+    const before = game.world.entities.get(entityId)?.stats.maxHealth ?? 0;
+
+    expect(game.spawnEntities('small_spider', at.x + 40, at.y, 1)).toBe(1);
+    const spiderId = [...game.world.entities.values()].find(
+      (entity) => entity.typeId === 'small_spider',
+    )?.id;
+    expect(spiderId).toBeDefined();
+
+    // Swing until it falls. Ferocious, so it closes and stays in reach rather
+    // than being chased; bounded, because a test that hangs is worse than one
+    // that fails.
+    let seq = 0;
+    for (let i = 0; i < 1200 && game.world.entities.has(spiderId ?? -1); i++) {
+      const me = game.world.entities.get(entityId);
+      if (me && me.cast === null) {
+        seq += 1;
+        await client.input(seq);
+        await game.receive(
+          client.connection,
+          encodeClientMessage({
+            type: ClientMessageType.UseAbility,
+            abilityId: 'melee.slash',
+            targetEntityId: spiderId ?? 0,
+            targetX: 0,
+            targetY: 0,
+            afterInputSeq: seq,
+          }),
+        );
+      }
+      game.tick();
+    }
+    expect(game.world.entities.has(spiderId ?? -1)).toBe(false);
+
+    // The grant is awaited off the tick -- it is a store write and a
+    // recalculation deep enough that draining the microtask queue is not
+    // enough, so this yields the loop the way the next real tick would.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const session = game.playerManager.get('alice');
+    expect(session?.record.level).toBe(2);
+    expect(session?.stats.maxHealth ?? 0).toBeGreaterThan(before);
+    expect(game.world.entities.get(entityId)?.stats.maxHealth).toBe(session?.stats.maxHealth);
+    expect(game.world.entities.get(entityId)?.level).toBe(2);
   });
 });
 
@@ -504,7 +656,7 @@ describe('a cast commits on the input it was asked for', () => {
     await client.hello('alice');
     const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
 
-    for (const abilityId of ['melee.slash', 'melee.heavy']) {
+    for (const abilityId of ['melee.slash', 'skill.acidSpray']) {
       await game.receive(
         client.connection,
         encodeClientMessage({
@@ -523,7 +675,7 @@ describe('a cast commits on the input it was asked for', () => {
     game.tick();
     expect(game.world.entities.get(entityId)?.cast?.abilityId).toBe('melee.slash');
     game.tick();
-    expect(client.of(ServerMessageType.CastRejected)[0]?.abilityId).toBe('melee.heavy');
+    expect(client.of(ServerMessageType.CastRejected)[0]?.abilityId).toBe('skill.acidSpray');
   });
 });
 

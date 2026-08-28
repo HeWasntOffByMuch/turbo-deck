@@ -28,6 +28,7 @@ import {
   type CombatResultMessage,
   type EffectMessage,
   type MapInfoMessage,
+  type PendingSkillSwap,
   type ServerChatMessage,
   type SpawnerStatus,
   type TradeSideView,
@@ -38,10 +39,11 @@ import {
   ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
+  ProgressionTarget,
   ServerMessageType,
   TradeStageValue,
 } from '../net/protocol.js';
-import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
+import { MAP_CHUNK_KEEP_RADIUS, MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
 
 /**
  * How many chunks one pass may ask for (spec 072).
@@ -49,8 +51,29 @@ import { MAP_CHUNK_REQUEST_RADIUS, PROTOCOL_VERSION } from '../config.js';
  * Comfortably under the server's `MAP_CHUNK_BURST`, so the throttle is a guard
  * against a misbehaving client rather than something that shapes the stream in
  * normal play -- a cold start should be paced by this number, not by a refusal.
+ *
+ * 8 was that pace for a 56-chunk map. On the grown map the radius reached 169,
+ * and 8 per 50ms pump is twenty-one pumps of asking before the last one is even
+ * requested (spec 165). 24 brought the ask down to about seven pumps.
+ *
+ * Since spec 202 narrowed the request radius to 2 the whole window is 25 chunks,
+ * so one pass now very nearly covers a cold start outright -- which is what this
+ * number was always trying to buy. It stays at 24 rather than shrinking with the
+ * window: the pass is a *ceiling* on one pump, and there is nothing to gain from
+ * lowering a ceiling the stream no longer reaches.
+ *
+ * It must stay at or under {@link MAP_CHUNK_BURST}, or the client's own pacing
+ * would outrun the server's bucket and the throttle would start shaping normal
+ * play. That was a sentence in this comment and is now asserted in
+ * `map-radius.test.ts`, because narrowing the radius moved the burst underneath
+ * it and nothing would have said so.
+ *
+ * Raising it is only safe because the *meshing* is budgeted separately now:
+ * before spec 165 a bigger pass would have arrived as a bigger pile of geometry
+ * rebuilds inside one frame, and asking faster would have traded a slow load for
+ * a juddering one.
  */
-const CHUNK_REQUESTS_PER_PASS = 8;
+export const CHUNK_REQUESTS_PER_PASS = 24;
 
 /**
  * How often the backstop pump runs, in client ticks. One broadcast period: often
@@ -68,7 +91,35 @@ const CHUNK_REQUEST_INTERVAL_TICKS = 3;
  * throttle worse rather than respecting it.
  */
 const CHUNK_THROTTLE_BACKOFF_TICKS = 15;
+
+/**
+ * How far ahead of the body the request order looks, in seconds (spec 214).
+ *
+ * The stream is bounded by the server's bucket, so the useful question is not
+ * "how far can I see" -- the radius already answers that -- but "which of the
+ * ground I can see will I be standing on first". Two seconds is the honest
+ * answer to that: it is several broadcast periods, so a chunk asked for on the
+ * strength of it has time to arrive.
+ *
+ * A *duration* rather than a distance, so it scales with the body: at walking
+ * speed it is about half a chunk and the order barely moves, and at
+ * `MOVE_SPEED_HARD_MAX` it is 1100 units, which since spec 201 shrank the
+ * request radius to 2 is most of the window. Both are right -- what the rule
+ * says is "the ground you reach soonest, soonest", and a body that crosses the
+ * whole window in two seconds should be asking for the far edge of it.
+ *
+ * Nothing depends on it being right. It reorders the requests inside a window
+ * it cannot widen, so the cost of a bad lead is a chunk arriving in the order it
+ * would have arrived in anyway.
+ */
+const CHUNK_LEAD_SECONDS = 2;
 import { abilityById } from '../data/abilities.js';
+import { itemById, rarityFromByte, type RarityId } from '../data/items.js';
+import {
+  anticipationTickFor,
+  revealPhaseAt,
+  type RevealPhaseValue,
+} from '../sim/loot.js';
 import {
   EMPTY_EQUIPMENT,
   type BaseStatKey,
@@ -76,12 +127,13 @@ import {
   type EffectiveStats,
   type Equipment,
   type Inventory,
-  type SkillAllocation,
+  type SpecializationAllocation,
   type SlotAddress,
 } from '../state/types.js';
 import { ordinalOfAttribute } from '../data/attributes.js';
 import { startingBaseStats } from '../player/attributes.js';
-import { applyMove, type MoveRequest } from '../player/inventory.js';
+import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory.js';
+import { movesASkill } from '../player/skill-slots.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { ReplicatedWorld } from './replica.js';
@@ -94,6 +146,7 @@ import {
 } from './combat.js';
 import { attackTimingFor } from '../sim/abilities.js';
 import { NO_ATTACK_SPEED, resolveAttackTiming } from '../sim/attack-timing.js';
+import { staggered } from '../sim/poise.js';
 import type { CastState } from '../sim/types.js';
 
 export interface WelcomeInfo {
@@ -108,9 +161,20 @@ export interface WelcomeInfo {
 }
 
 export interface GameClientOptions {
+  /**
+   * Who to ask to be.
+   *
+   * Advisory against a server with an auth gate: it answers with the player its
+   * own session record names, and `WelcomeInfo.playerId` is the one to believe.
+   */
   readonly playerId: string;
   readonly displayName?: string;
   readonly token?: string;
+  /**
+   * The session token from `/api/auth/*` (spec 226). Required by a server that
+   * authenticates; ignored by one that does not.
+   */
+  readonly authToken?: string;
   /**
    * The asset manifest hash this build was made against (spec 113).
    *
@@ -158,6 +222,46 @@ export interface TradeView {
   readonly you: TradeSideView;
   readonly them: TradeSideView;
   readonly reason: string;
+  /** You are the side being asked (spec 170). Only meaningful while offered. */
+  readonly invited: boolean;
+  /** What would stop this going through, in your terms. Empty when nothing. */
+  readonly warning: string;
+}
+
+/**
+ * A drop as this client knows it (spec 158).
+ *
+ * The withholding is expressed in the *types*: `defId` and `name` are `null`
+ * until the reveal, so a screen that wanted to draw the label early has nothing
+ * to draw rather than a value it was asked politely not to use. There is no
+ * placeholder either -- a made-up name is a lie the player would read as a fact.
+ *
+ * `phase` is recomputed on every `view()` off the client's estimated tick, so it
+ * advances with the clock rather than on the arrival of a message. Nothing on
+ * this side ever decides that a drop has revealed *for the purposes of taking
+ * it*: the pickup is served by the server and the identity arrives in an
+ * `Inventory`, so the worst a wrong local phase can do is draw a glow a frame
+ * early.
+ */
+export interface DropView {
+  readonly entityId: number;
+  readonly rarity: RarityId;
+  readonly spawnTick: number;
+  readonly anticipationTick: number;
+  readonly revealTick: number;
+  /**
+   * Where the body fell (spec 158). The far end of the throw; the near end is
+   * the entity's own replicated position, which is where it landed.
+   */
+  readonly origin: { readonly x: number; readonly y: number; readonly z: number };
+  /** One of `RevealPhase`, at the client's current estimate of the tick. */
+  readonly phase: RevealPhaseValue;
+  /** The item, or null while the server is still withholding it. */
+  readonly defId: string | null;
+  /** Its name, or null. From the content table, never from the wire. */
+  readonly name: string | null;
+  /** How many, or 0 while the identity is withheld. */
+  readonly count: number;
 }
 
 export interface ClientMapView {
@@ -214,6 +318,13 @@ export interface ClientView {
   readonly entities: readonly import('./replica.js').ReplicatedEntity[];
   /** The local player's predicted position -- what to draw them at. */
   readonly self: { readonly x: number; readonly y: number } | null;
+  /**
+   * Where this client is turning to put something down, or null (spec 172).
+   *
+   * The oldest unanswered drop: the server serves them in the order they were
+   * asked for and turns to one aim at a time.
+   */
+  readonly dropAim: { readonly x: number; readonly y: number } | null;
   readonly selfEntityId: number;
   /**
    * The world the server is running, or null before the welcome lands. A
@@ -236,6 +347,16 @@ export interface ClientView {
    * one nobody is drawing costs nothing.
    */
   readonly spawners: readonly SpawnerStatus[];
+  /**
+   * Items lying in the world that this client can see (spec 158).
+   *
+   * Beside {@link entities} rather than folded into it, because a drop's
+   * identity does not travel on the entity record -- the two halves arrive on
+   * different messages and joining them here would hide which half is which.
+   * A renderer takes the position from the entity and everything else from
+   * this.
+   */
+  readonly drops: readonly DropView[];
   readonly stats: EffectiveStats | null;
   /**
    * What the player is carrying and wearing (spec 126), with any move still in
@@ -251,6 +372,21 @@ export interface ClientView {
   /** What the player can spend (spec 129). */
   readonly coins: number;
   /**
+   * A skill-slot change in flight, or null (spec 188).
+   *
+   * The one container edit this client does **not** predict, and this is what
+   * it draws instead: the server holds the change for `SKILL_SWAP.durationTicks`
+   * on purpose, so what the interface has to show is not the new arrangement
+   * but the commitment to it -- which slot, which direction, and how far
+   * through.
+   *
+   * Both ticks are the server's, so progress is a comparison against
+   * {@link estimatedTick} rather than a clock this client keeps. Cleared by any
+   * `Inventory` that arrives without one, which is what the message ending a
+   * swap looks like whether it landed or was given up.
+   */
+  readonly pendingSwap: PendingSkillSwap | null;
+  /**
    * The shop that is open, or null.
    *
    * Whole, and replaced by whatever the server last said -- including an empty
@@ -264,6 +400,16 @@ export interface ClientView {
    */
   readonly vendorRevision: number;
   /**
+   * The NPC this player is talking to, or 0 (spec 246).
+   *
+   * Authoritative, and the client never decides it for itself -- the same rule
+   * `vendor` above lives by, and for a stronger reason: the claim on the body is
+   * what stops the merchant wandering off, so a client that believed it was
+   * talking to something the server had released would draw a conversation with
+   * a body walking away mid-sentence.
+   */
+  readonly conversationEntityId: number;
+  /**
    * The trade in progress, or null (spec 132).
    *
    * Whole, and replaced by whatever the server last said. A client never decides
@@ -272,9 +418,19 @@ export interface ClientView {
    * an exchange happened when it may not have.
    */
   readonly trade: TradeView | null;
+  /**
+   * The last trade to end, until the player dismisses it (spec 134).
+   *
+   * Beside {@link trade} rather than folded into it, because they are different
+   * questions: one is an exchange the server is still running, the other is a
+   * sentence about an exchange that is over. Folding them would mean a screen
+   * had to read the stage to know whether its buttons still mean anything, and
+   * the window would have no way to tell "no trade" from "a trade just ended"
+   * -- which is exactly the difference the ending exists to say.
+   */
+  readonly endedTrade: TradeView | null;
   readonly level: number;
   readonly experience: number;
-  readonly unspentSkillPoints: number;
   /**
    * Every point this character has spent in the attuned tree (specs 128, 147).
    *
@@ -283,7 +439,7 @@ export interface ClientView {
    * which is the same reason equipment had to be replicated rather than
    * inferred.
    */
-  readonly skills: readonly SkillAllocation[];
+  readonly specializations: readonly SpecializationAllocation[];
   /**
    * The progression half of the sheet (spec 147).
    *
@@ -296,7 +452,7 @@ export interface ClientView {
    */
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
   readonly connected: boolean;
   /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
   readonly casts: readonly KnownCast[];
@@ -321,6 +477,32 @@ export interface ClientView {
    */
   readonly selfRoot: { readonly x: number; readonly y: number } | null;
   /**
+   * True while a poise break holds this body (spec 173).
+   *
+   * Beside {@link selfRoot} and answering the neighbouring question, because
+   * the two are different states with the same consequence: one is a commitment
+   * this client made and can call off, the other is something done to it that
+   * it can only wait out. Published rather than recomputed by the renderer, so
+   * the rule lives once in the sim's own `staggered` and a screen cannot come
+   * to a different answer than the server about whether a button should ask.
+   */
+  readonly selfStaggered: boolean;
+  /**
+   * True while this body is at zero health (spec 229).
+   *
+   * Beside {@link selfStaggered} and published for the same reason: the rule
+   * lives once, and a screen cannot come to a different answer than the client
+   * about whether the legs should ask for anything. `death.ts` reads it too, so
+   * the overlay and the movement agree by construction rather than by two
+   * copies of `health <= 0` staying in step.
+   *
+   * False before the first delta and false for a body missing from the
+   * replicated set -- what a reconnect looks like for a frame or two -- which is
+   * the right way round to be wrong: freezing a live player because we cannot
+   * currently see them is worse than a frame of walking.
+   */
+  readonly selfDead: boolean;
+  /**
    * True while a request of ours has been sent and not yet answered (spec 080).
    *
    * The other half of "am I committed", and the half nothing outside this class
@@ -336,6 +518,15 @@ export interface ClientView {
    */
   readonly awaitingCast: boolean;
   /**
+   * True while a `pickUp` of ours is unanswered (spec 158).
+   *
+   * What stops a standing pickup order asking sixty times a second -- and,
+   * because it is cleared by the answer rather than by a timer, what lets the
+   * order ask *again* when the server says no. The client keeps no optimistic
+   * bag state for a pickup, so this is the whole of what it remembers.
+   */
+  readonly awaitingPickup: boolean;
+  /**
    * Ability id -> the tick it may next be used (spec 065). Straight from the
    * server; the client subtracts the tick it is drawing to get the sweep, and
    * never works out how long a cooldown is for itself.
@@ -347,11 +538,39 @@ export interface ClientView {
    * answered. The number a button is greyed out against.
    */
   readonly resource: number;
+  /**
+   * The health economy, as the server last said it stood (spec 156).
+   *
+   * Replicated rather than modelled, unlike `resource`: the meter moves on kills
+   * this client did not resolve and the flask moves on casts it did not decide,
+   * so there is no local curve that could carry either forward honestly. The
+   * one thing predicted is a charge already spent on a request in flight, which
+   * is what stops a double press asking for a draught the server will refuse.
+   */
+  readonly restoration: RestorationView;
+}
+
+/** Two numbers and a ceiling: what the HUD draws for the health economy. */
+export interface RestorationView {
+  /** Progress toward the next mote, 0..1. */
+  readonly meter: number;
+  readonly charges: number;
+  readonly maxCharges: number;
 }
 
 type CombatListener = (result: CombatResultMessage) => void;
 type ChatListener = (message: ServerChatMessage) => void;
 type ErrorListener = (code: number, message: string) => void;
+/**
+ * Told on every welcome, not only the first (spec 157).
+ *
+ * The server mints a fresh `sessionToken` on each one -- a fresh login, a
+ * resume and a takeover alike -- so anything persisting the token has to hear
+ * about all of them. The Play tab wrote it once, in the `.then()` of the
+ * initial connect, which left `sessionStorage` holding a token the server would
+ * refuse the moment a reconnect had happened.
+ */
+type WelcomeListener = (info: WelcomeInfo) => void;
 type CastListener = (cast: CastStateMessage) => void;
 type CastEndListener = (end: CastEndedMessage) => void;
 type EffectListener = (effect: EffectMessage) => void;
@@ -447,6 +666,30 @@ export interface KnownCast {
   readonly targetEntityId: number;
 }
 
+/**
+ * One container edit this client has guessed at and not yet been answered about.
+ *
+ * A drop is in here beside a move because the argument spec 126 made for
+ * predicting a move applies to it unchanged: the rule is pure, it is the same
+ * code the server runs, and what it reads is a slot this client can see. A
+ * pickup is the one that stays unpredicted -- see {@link GameClient.pickUp}.
+ */
+type PendingEdit =
+  | { readonly requestId: number; readonly kind: 'move'; readonly request: MoveRequest }
+  | {
+      readonly requestId: number;
+      readonly kind: 'drop';
+      readonly request: { readonly at: SlotAddress; readonly count?: number };
+      /**
+       * Where it was aimed, so the predicted body turns to it (spec 172).
+       *
+       * On the edit rather than in a field of its own, because the queue of
+       * edits *is* the queue of drops: the head is what the body is coming
+       * round to, and an answer retires both at once.
+       */
+      readonly aim: { readonly x: number; readonly y: number };
+    };
+
 export class GameClient {
   private readonly world = new ReplicatedWorld();
   private prediction: PredictionBuffer | null = null;
@@ -459,6 +702,11 @@ export class GameClient {
   private mapCache: MapChunkCache | null = null;
   /** Ticks to wait before asking for chunks again, after being throttled. */
   private chunkBackoffTicks = 0;
+  /**
+   * The direction the last input asked to move in (spec 214). See
+   * {@link chunkLead}. Zero means "standing", which is its own answer.
+   */
+  private lastMoveRequest: { x: number; y: number } = { x: 0, y: 0 };
   /** The spawner readout, when it has been asked for (spec 076). */
   private spawners: readonly SpawnerStatus[] = [];
   private stats: EffectiveStats | null = null;
@@ -474,7 +722,27 @@ export class GameClient {
   private serverEquipment: Equipment = EMPTY_EQUIPMENT;
   private inventory: Inventory = [];
   private coins = 0;
+  private pendingSwap: PendingSkillSwap | null = null;
   private vendorView: VendorView | null = null;
+  /**
+   * Drops by entity id, exactly as the server described them (spec 158).
+   *
+   * Replaced whole by each `LootDrop`, which is the same rule `Inventory` and
+   * `TradeState` follow: the server's last word *is* the state, so a reveal is
+   * an overwrite rather than a field being patched. Nothing here is ever
+   * derived from a previous message, so there is no path by which a stale
+   * identity could survive one.
+   */
+  private readonly drops = new Map<number, Omit<DropView, 'phase'>>();
+  /**
+   * The pickup this client is waiting on, or null (spec 158).
+   *
+   * A request id rather than a boolean, because that is what the answer names.
+   * Cleared by the `Inventory` that settles it -- taken or refused, since both
+   * arrive the same way -- which is what stops a refused pickup wedging an
+   * order that would otherwise never ask again.
+   */
+  private pickUpInFlight: number | null = null;
   /**
    * How many answers about a shop this client has had (spec 131).
    *
@@ -485,20 +753,45 @@ export class GameClient {
    * on the same frame, forever.
    */
   private vendorReplies = 0;
+  /** What the server last said about who this player is talking to (spec 246). */
+  private conversationEntityId = 0;
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
   private equipment: Equipment = EMPTY_EQUIPMENT;
-  /** Moves sent and not yet answered, oldest first. */
-  private readonly pendingMoves: { readonly requestId: number; readonly request: MoveRequest }[] = [];
+  /**
+   * Container edits sent and not yet answered, oldest first.
+   *
+   * Two kinds since spec 172, in **one list** rather than two: a move and a drop
+   * can be in flight at the same time and the order they were sent in is the
+   * order they have to be replayed in -- dropping half a stack and then moving
+   * the rest is a different bag from doing it the other way round. Two lists
+   * would have to be merged by request id at every replay, which is this list
+   * with extra steps.
+   */
+  private readonly pendingMoves: PendingEdit[] = [];
   private moveRequests = 0;
+
+  /**
+   * The next id for anything answered by an `Inventory` (spec 158).
+   *
+   * **One counter for `MoveItem` and `PickUpItem` together**, because they share
+   * an answer: both are replied to with an `Inventory` at their request id, and
+   * two counters meant a pickup's answer could carry an id a move had already
+   * used. `replayMoves` retires everything at or below the id that arrives, so
+   * a pickup answered at 3 was silently throwing away a drag still in flight at
+   * 3 -- a rollback nobody asked for, on a message about something else.
+   */
+  private nextRequestId(): number {
+    this.moveRequests += 1;
+    return this.moveRequests;
+  }
   private shopRequests = 0;
   private level = 1;
   private experience = 0;
-  private unspentSkillPoints = 0;
-  private skills: readonly SkillAllocation[] = [];
+  private specializations: readonly SpecializationAllocation[] = [];
   private baseStats: BaseStats = startingBaseStats();
   private attributes: BaseStats = startingBaseStats();
-  private unspentAttributePoints = 0;
+  private unspentProgressionPoints = 0;
   private seq = 0;
   private connected = false;
   private resolveWelcome: ((info: WelcomeInfo) => void) | null = null;
@@ -506,6 +799,7 @@ export class GameClient {
   private readonly combatListeners: CombatListener[] = [];
   private readonly chatListeners: ChatListener[] = [];
   private readonly errorListeners: ErrorListener[] = [];
+  private readonly welcomeListeners: WelcomeListener[] = [];
   private readonly castListeners: CastListener[] = [];
   private readonly castEndListeners: CastEndListener[] = [];
   private readonly effectListeners: EffectListener[] = [];
@@ -513,6 +807,30 @@ export class GameClient {
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
+  /**
+   * The health economy as the server last reported it (spec 156).
+   *
+   * All three are replicated rather than modelled, unlike resource: the meter
+   * moves on kills the client does not resolve, and the flask moves on casts the
+   * client does not decide, so there is nothing here that a local curve could
+   * carry forward honestly between messages.
+   */
+  private restorationMeter = 0;
+  private fallbackCharges = 0;
+  private maxFallbackCharges = 0;
+  /**
+   * Flask charges spent by a request in flight, and what the count was when it
+   * went out.
+   *
+   * The same shape as `predictedCooldowns` above and for exactly the same
+   * reason: the server's answer is a round trip away, and a flask that stayed
+   * lit through the whole wind-up is a second press the server refuses. The
+   * guess is retired only once the server's own count has come down to meet it,
+   * because the message in flight when the press was sent describes the state
+   * before it.
+   */
+  private predictedCharges = 0;
+  private chargesWhenPredicted = 0;
   private estimated = 0;
   /**
    * Ability requests sent and not yet answered, oldest first (spec 067).
@@ -594,6 +912,8 @@ export class GameClient {
   private serverResourceTick = 0;
   /** Ticks since this client started, which is the only clock it has. */
   private localTick = 0;
+  /** The tick `keepAlive` last saw, so it can tell a stalled loop from a live one. */
+  private lastKeepAliveTick = -1;
   private nextPingNonce = 1;
   /** Nonce -> the local tick it went out on, so a pong measures a round trip. */
   private readonly pingsInFlight = new Map<number, number>();
@@ -608,6 +928,11 @@ export class GameClient {
     channel.onMessage((bytes) => this.receive(bytes));
     channel.onClose(() => {
       this.connected = false;
+      // A conversation cannot outlive the socket it was held over (spec 246).
+      // The server drops the claim on its side when the connection goes, so a
+      // client that kept believing in one would draw a bubble over a merchant
+      // that had already gone back to wandering.
+      this.conversationEntityId = 0;
     });
   }
 
@@ -631,6 +956,10 @@ export class GameClient {
         // Empty on a first connection; set once a `Welcome` has issued one
         // and we are coming back to the same body (spec 150).
         resumeToken: this.token,
+        // The session this client signed in with (spec 226). Empty when there
+        // is nothing to sign into -- the in-tab server and the bot harness --
+        // and in that case the server falls back to `playerId` above.
+        authToken: this.options.authToken ?? '',
       }),
     );
     return pending;
@@ -658,7 +987,44 @@ export class GameClient {
     // server moved them -- a correction on every tick of the step away, and a
     // bar still draining for a blow that has been called off.
     if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
-    const input: PredictedInput = { ...intent, seq: this.seq };
+    // A poise break roots this body and the server has already started
+    // discarding these components (spec 173). The onset cannot be predicted --
+    // nobody knows they are about to be hit -- so the first round trip's worth
+    // of movement is sent, discarded and corrected, and that is the accepted
+    // cost. What is not accepted is continuing to send it *after* the stagger
+    // has been replicated: from that point on the client agrees with the
+    // server, and the divergence is bounded by the round trip rather than by
+    // how long the player keeps holding the key.
+    //
+    // The facing is left alone because the server holds it anyway -- the intent
+    // it drops is dropped whole.
+    //
+    // A corpse is the same zero for a stronger reason (spec 229): the server is
+    // not discarding these components, it never reads them -- its movement pass
+    // steps past a body at zero health before intent -- so it emits no
+    // correction either, and a predicted walk while dead is the one mispredict
+    // nothing pulls back. It stands until the respawn teleport: measured, one
+    // second of a standing move order carried a corpse 155 units across its own
+    // screen while every other client watched it lie where it fell.
+    //
+    // Both are zeroed here rather than at the call site so they cover every
+    // caller, which is the half `moveIntent` cannot reach: the bot harness and
+    // the tests build an input themselves.
+    const rooted = this.staggeredNow() || this.deadNow();
+    const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
+    // The slow the server last told us about (spec 188). Carried on the input
+    // rather than baked into the predictor, so a replay after a correction
+    // walks each buffered input at the speed that applied when it was made.
+    //
+    // Unlike a stagger's onset, this **is** predictable: `EntityField.MoveScale`
+    // rides the delta, so the client knows it is slowed a broadcast interval
+    // after the blow lands rather than never. Without it a two-and-a-half-second
+    // slow would be a correction every tick for its whole duration, which is
+    // the one thing spec 067's drift nudges are not for.
+    const input: PredictedInput = { ...intended, seq: this.seq, moveScale: this.selfMoveScale() };
+    // What the body is committed to, for the chunk stream to aim at (spec 214).
+    // The *intended* one, so a request the stagger dropped leads nowhere.
+    this.lastMoveRequest = { x: input.moveX, y: input.moveY };
     const predicted = this.prediction.apply(input);
     this.channel.send(
       encodeClientMessage({
@@ -694,15 +1060,77 @@ export class GameClient {
    */
   moveItem(from: SlotAddress, to: SlotAddress, count = 0): number {
     if (!this.connected) return 0;
-    this.moveRequests += 1;
-    const requestId = this.moveRequests;
+    const requestId = this.nextRequestId();
     const request: MoveRequest = { from, to, ...(count === 0 ? {} : { count }) };
-    this.pendingMoves.push({ requestId, request });
-    this.replayMoves();
+    // **A skill swap is not predicted** (spec 188).
+    //
+    // Every other move is: the rule is pure, the slots are ones this client can
+    // see, and the answer comes back inside a round trip. A swap does not --
+    // the server holds it for `SKILL_SWAP.durationTicks` on purpose, and a
+    // guess drawn immediately would put the new skill in the bar, and in the
+    // *bar's* ability list, for a second and a half during which the server
+    // refuses to cast it. That is worse than a slower-looking bag: it is a
+    // button that lies about what it does.
+    //
+    // So the item stays where it is until the swap lands, which is also the
+    // only honest picture of "this takes time".
+    if (!movesASkill(request)) {
+      this.pendingMoves.push({ requestId, kind: 'move', request });
+      this.replayMoves();
+    }
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.MoveItem, requestId, from, to, count }),
     );
     return requestId;
+  }
+
+  /**
+   * Put a stack down in the world (spec 172).
+   *
+   * Predicted like a move and for the same reason -- the removal is a pure rule
+   * over a slot this client can see -- and rolled back by the same `Inventory`
+   * answer, which arrives whether the server took it or refused it.
+   *
+   * What is deliberately *not* predicted is the drop appearing on the ground.
+   * That is an entity, and entities arrive in deltas; a client that invented one
+   * would have to reconcile it against the real one a round trip later.
+   *
+   * `count` of 0 means the whole stack, as on the wire.
+   */
+  dropItem(at: SlotAddress, aim: { readonly x: number; readonly y: number }, count = 0): number {
+    if (!this.connected) return 0;
+    const requestId = this.nextRequestId();
+    this.pendingMoves.push({
+      requestId,
+      kind: 'drop',
+      request: { at, ...(count === 0 ? {} : { count }) },
+      aim,
+    });
+    this.replayMoves();
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.DropItem,
+        requestId,
+        at,
+        count,
+        aimX: aim.x,
+        aimY: aim.y,
+      }),
+    );
+    return requestId;
+  }
+
+  /**
+   * Where the body is turning to put something down, or null (spec 172).
+   *
+   * The oldest unanswered drop, because the server serves them in the order
+   * they were asked for and turns to one aim at a time.
+   */
+  private get dropAim(): { readonly x: number; readonly y: number } | null {
+    for (const pending of this.pendingMoves) {
+      if (pending.kind === 'drop') return pending.aim;
+    }
+    return null;
   }
 
   /**
@@ -719,7 +1147,10 @@ export class GameClient {
     let bag = this.serverInventory;
     let worn = this.serverEquipment;
     for (const pending of this.pendingMoves) {
-      const outcome = applyMove(bag, worn, pending.request, this.level);
+      const outcome =
+        pending.kind === 'move'
+          ? applyMove(bag, worn, pending.request, this.level)
+          : removeFromSlot(bag, worn, pending.request.at, pending.request.count);
       // A guess the local rules refuse is simply not drawn. The server is about
       // to refuse it too, and predicting an illegal move is worse than lagging.
       if (!outcome.ok) continue;
@@ -750,6 +1181,54 @@ export class GameClient {
     return this.lastTrade;
   }
 
+  /**
+   * Forget the last ending, because the player has read it (spec 134).
+   *
+   * The one piece of trade state a client is allowed to drop on its own, and it
+   * is allowed precisely because it is not state: the trade is already gone at
+   * the server, so there is nothing here that could disagree with it. Every
+   * other trade fact stays the server's to retract.
+   */
+  dismissEndedTrade(): void {
+    this.lastTrade = null;
+  }
+
+  /**
+   * Ask for the drop under `entityId` (spec 158).
+   *
+   * Deliberately **not** predicted, where a bag move is. A move is between two
+   * slots this client can both see and the rules for it are pure and local; a
+   * pickup depends on a range check, an ownership check and an item this client
+   * may not have been told the identity of yet. Guessing at that would mean
+   * drawing an item into the bag that the server is about to say is not yours,
+   * and the one thing worse than a slow pickup is a bag that flickers.
+   *
+   * Legal at any phase of the reveal, and the server serves it at any phase.
+   */
+  pickUp(entityId: number): number {
+    if (!this.connected) return 0;
+    const requestId = this.nextRequestId();
+    this.pickUpInFlight = requestId;
+    this.channel.send(
+      encodeClientMessage({ type: ClientMessageType.PickUpItem, requestId, entityId }),
+    );
+    return requestId;
+  }
+
+  /**
+   * Ask to be put back on our feet (spec 164).
+   *
+   * Nothing optimistic and nothing remembered: the server answers with a
+   * `Correction` and a delta carrying full health, and until it does the body is
+   * still dead. A predicted respawn would be the one prediction that could not be
+   * rolled back honestly -- a client that drew itself alive at the spawn and was
+   * refused would have to un-resurrect.
+   */
+  respawn(): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.Respawn }));
+  }
+
   inviteToTrade(entityId: number): void {
     if (!this.connected) return;
     this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeInvite, entityId }));
@@ -773,6 +1252,19 @@ export class GameClient {
   cancelTrade(): void {
     if (!this.connected) return;
     this.channel.send(encodeClientMessage({ type: ClientMessageType.TradeCancel }));
+  }
+
+  /**
+   * Ask to talk to `entityId`, or 0 to end the conversation (spec 246).
+   *
+   * Not predicted, and deliberately: the answer decides whether a body stops
+   * walking, so a client that opened a bubble on the press would show a
+   * conversation with something still ambling away. `conversationEntityId` moves
+   * when the server says so.
+   */
+  talk(entityId: number): void {
+    if (!this.connected) return;
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.Talk, entityId }));
   }
 
   openVendor(vendorId: string): void {
@@ -825,28 +1317,45 @@ export class GameClient {
     return this.shopRequests;
   }
 
-  spendSkillPoint(skillId: string): void {
-    this.channel.send(encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId }));
-  }
-
   /**
-   * Ask for one attribute point (spec 147).
+   * Spend one progression point on an attribute track (spec 147, 244).
    *
    * Sends an *ordinal*, and nothing else. There is no amount, no derived value
    * and no optimistic local update: the answer is the `Stats` message that
    * follows, or a refusal in the corner. A client that guessed here would draw
    * a stat it does not have for a round trip.
    */
-  allocateAttribute(key: BaseStatKey): void {
+  spendOnAttribute(key: BaseStatKey): void {
     const ordinal = ordinalOfAttribute(key);
     if (ordinal < 0) return;
     this.channel.send(
-      encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: ordinal }),
+      encodeClientMessage({
+        type: ClientMessageType.SpendProgressionPoint,
+        target: ProgressionTarget.Attribute,
+        attribute: ordinal,
+      }),
     );
   }
 
-  respecAttributes(): void {
-    this.channel.send(encodeClientMessage({ type: ClientMessageType.RespecAttributes }));
+  /**
+   * Spend one progression point on a milestone specialization (spec 244).
+   *
+   * The same pool and the same posture as {@link spendOnAttribute}: an id, no
+   * tier number, and the consequences read back off `Stats`. What differs is
+   * only what the point buys -- this one leaves the attribute where it is.
+   */
+  spendOnSpecialization(specializationId: string): void {
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.SpendProgressionPoint,
+        target: ProgressionTarget.Specialization,
+        specializationId,
+      }),
+    );
+  }
+
+  respecProgression(): void {
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.RespecProgression }));
   }
 
 
@@ -953,6 +1462,12 @@ export class GameClient {
       // that way until the clock caught up with it.
       this.predictedCast = decision.cast;
       this.predictedCastRequestId = id;
+      // The flask's charge, spent locally so a second press inside the round
+      // trip is refused by this end rather than by the server (spec 156).
+      if (decision.cast.spentCharges > 0) {
+        this.predictedCharges = decision.cast.spentCharges;
+        this.chargesWhenPredicted = Math.max(0, this.fallbackCharges - decision.cast.spentCharges);
+      }
     }
 
 
@@ -1036,7 +1551,65 @@ export class GameClient {
       // back cheaper.
       poise: self.poise * this.stats.traits.maxPoise,
       shield: atTick < self.shieldUntilTick ? self.shield : 0,
+      // The flask's own message (spec 156), plus whatever this client has
+      // already spent and not been told about -- the same shape as the
+      // cooldowns above, and for the same reason: the press has to grey the
+      // button out now rather than in a round trip.
+      fallbackCharges: Math.max(0, this.fallbackCharges - this.predictedCharges),
+      // The stagger window, straight off the replica (spec 173). Not predicted
+      // and deliberately not: nobody knows they are about to be hit, so this is
+      // the server's word arriving a round trip late and there is nothing
+      // honest to guess in the meantime.
+      activity: self.activity,
+      activityUntilTick: self.activityUntilTick,
     };
+  }
+
+  /**
+   * How fast this client believes its own body may move, 0..1 (spec 188).
+   *
+   * Read off the *replicated* body rather than from anything local, because a
+   * slow is the server's to apply and this is the client agreeing with it. 1
+   * before the first delta and 1 for a body carrying nothing, which is the
+   * right way round to be wrong: guessing slower than the server would make an
+   * unslowed player trail their own body for no reason.
+   */
+  private selfMoveScale(): number {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    return self?.moveScale ?? 1;
+  }
+
+  /**
+   * Whether this client's own body is a corpse (spec 229).
+   *
+   * Health rather than `activity`, which is also `Dead` and would be a second
+   * opinion -- the server writes both from the same blow, and a client reading
+   * the one the wire quantizes hardest would be the one to disagree first. The
+   * same test `death.ts` has always made, moved here so the overlay and the
+   * legs read it from one place.
+   */
+  private deadNow(): boolean {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self) return false;
+    return self.health <= 0;
+  }
+
+  /**
+   * Whether this client can see itself inside a poise break's window
+   * (spec 173).
+   *
+   * Asked of the replica rather than of the mirror, because the mirror is built
+   * for `startCast` and this is a movement question -- and asked through the
+   * sim's own {@link staggered}, so the client and the server cannot disagree
+   * about where the window ends.
+   */
+  private staggeredNow(): boolean {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self) return false;
+    return staggered(
+      { activity: self.activity, activityUntilTick: self.activityUntilTick },
+      this.estimated,
+    );
   }
 
   /** The cast this client will still be in at `tick`, or null if it is over. */
@@ -1083,6 +1656,10 @@ export class GameClient {
   private withdrawLocally(): void {
     const live = this.predictedCast ?? (this.welcome ? this.casts.get(this.welcome.entityId) : null);
     if (live) this.predictedCooldowns.delete(live.abilityId);
+    // The charge comes back with everything else: a withdrawal before the attack
+    // point means the draught never happened (spec 156), and the server's own
+    // refund is the thing this is guessing at.
+    this.predictedCharges = 0;
     this.predictedCast = null;
     this.predictedCastRequestId = -1;
     if (this.welcome) this.casts.delete(this.welcome.entityId);
@@ -1101,6 +1678,11 @@ export class GameClient {
         // refund", which is the truth.
         spentResource: 0,
         spentHealth: 0,
+        // And no flask charge either, for the same reason (spec 156): the
+        // refund is the server's, and the `Restoration` message tells this
+        // client what it actually has left.
+        spentCharges: 0,
+        spentPoise: 0,
         startedTick: confirmed.startTick,
         windupStartTick: confirmed.startTick,
         releaseTick: confirmed.releaseTick,
@@ -1121,6 +1703,12 @@ export class GameClient {
         targetX: confirmed.targetX,
         targetY: confirmed.targetY,
         targetEntityId: confirmed.targetEntityId,
+        // Not replicated and not guessed at either (spec 221), for the reason
+        // the refunds above are not: whether a swing began in reach is what
+        // decides the *damage*, which is the server's alone. Nothing on this
+        // side reads it -- the client draws a bar and predicts a cooldown -- and
+        // `false` is the truthful "this client is not modelling that".
+        targetInReach: false,
         nextPulseTick: 0,
       };
     }
@@ -1167,6 +1755,34 @@ export class GameClient {
 
   onError(listener: ErrorListener): void {
     this.errorListeners.push(listener);
+  }
+
+  /** Every welcome, so a caller keeping the resume token keeps the current one. */
+  onWelcome(listener: WelcomeListener): void {
+    this.welcomeListeners.push(listener);
+  }
+
+  /**
+   * A heartbeat for a tick loop that has stopped (spec 157).
+   *
+   * `advanceTick` pings every 30 ticks and is driven by the renderer's
+   * animation frame, which a browser throttles to nothing in a hidden tab. So
+   * ticks stop, pings stop, and the server's ten-second timeout drops a player
+   * whose only crime was looking at a different tab.
+   *
+   * The caller drives this from a wall clock, which is the one place a wall
+   * clock belongs. It stays pure by *detecting* the stall rather than timing
+   * it: two calls with no tick in between mean the loop is not running. While
+   * the tab is visible this sends nothing at all, so the ping rate is unchanged
+   * and the server's heartbeat bucket never sees the difference.
+   */
+  keepAlive(): void {
+    if (!this.connected) return;
+    if (this.localTick !== this.lastKeepAliveTick) {
+      this.lastKeepAliveTick = this.localTick;
+      return;
+    }
+    this.ping();
   }
 
   /**
@@ -1218,6 +1834,7 @@ export class GameClient {
       this.wantedFacing,
       this.stats.turnRate,
       this.welcome?.tickRate ?? 60,
+      this.dropAim,
     );
     // A confirmed cast is over when the server's own `endTick` says it is, not
     // when `CastEnded` gets here (spec 069).
@@ -1335,32 +1952,73 @@ export class GameClient {
       commitDelayTicks: this.commitDelayTicks(),
       entities: this.world.all(),
       self: this.prediction?.drawn ?? null,
+      // What the body is turning to put something down at (spec 172). On the
+      // view because the renderer keeps a drawn heading of its own and steps it
+      // from the intent -- so without this the local player is the one person
+      // who does not see their own body come round.
+      dropAim: this.dropAim,
       selfEntityId: this.welcome?.entityId ?? -1,
       worldSeed: this.welcome?.worldSeed ?? null,
       map: this.mapView(),
       spawners: this.spawners,
+      drops: this.visibleDrops(),
       stats: this.stats,
       inventory: this.inventory,
       equipment: this.equipment,
       coins: this.coins,
+      pendingSwap: this.pendingSwap,
       vendor: this.vendorView,
       vendorRevision: this.vendorReplies,
+      conversationEntityId: this.conversationEntityId,
       trade: this.tradeView,
+      endedTrade: this.lastTrade,
       level: this.level,
       experience: this.experience,
-      unspentSkillPoints: this.unspentSkillPoints,
-      skills: this.skills,
+      specializations: this.specializations,
       baseStats: this.baseStats,
       attributes: this.attributes,
-      unspentAttributePoints: this.unspentAttributePoints,
+      unspentProgressionPoints: this.unspentProgressionPoints,
       connected: this.connected,
       casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
       cooldowns: this.visibleCooldowns(),
       selfRoot: this.selfRoot(),
+      selfStaggered: this.staggeredNow(),
+      selfDead: this.deadNow(),
       awaitingCast: this.outstandingCasts.length > 0,
+      awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),
+      restoration: {
+        meter: this.restorationMeter,
+        charges: Math.max(0, this.fallbackCharges - this.predictedCharges),
+        maxCharges: this.maxFallbackCharges,
+      },
     };
+  }
+
+  /**
+   * The drops this client knows about, phased against its own clock.
+   *
+   * Built per call rather than stored, for the reason the cast list is: the
+   * phase is a function of the tick, so caching it would mean caching a thing
+   * that changes sixty times a second and inventing an invalidation rule for
+   * something a comparison already answers.
+   *
+   * A drop whose entity has left the replica is skipped -- picked up, expired,
+   * or simply out of interest range -- so a renderer never draws a glow over
+   * ground the server has taken the object back from.
+   */
+  private visibleDrops(): readonly DropView[] {
+    const tick = this.estimated;
+    const out: DropView[] = [];
+    for (const [entityId, known] of this.drops) {
+      if (!this.world.get(entityId)) continue;
+      out.push({
+        ...known,
+        phase: revealPhaseAt(known, tick),
+      });
+    }
+    return out;
   }
 
   private mapView(): ClientMapView | null {
@@ -1382,13 +2040,25 @@ export class GameClient {
   private requestChunks(): void {
     const cache = this.mapCache;
     const at = this.prediction?.drawn ?? this.selfAuthoritative();
-    if (!cache || !at || this.chunkBackoffTicks > 0) return;
+    if (!cache || !at) return;
+    // Forget before asking, and on the same cadence, because both questions are
+    // "where is the player" and asking them at different moments is two answers
+    // (spec 208). Before rather than after, so a chunk that has just gone out of
+    // keep range cannot be re-requested on the very pass that drops it -- the
+    // radii are two apart so it could not anyway, and doing it in the order that
+    // makes it impossible costs nothing.
+    //
+    // Ahead of the backoff check: a client that has stopped asking is exactly
+    // the one that should still be letting go.
+    cache.evictBeyond(at.x, at.y, MAP_CHUNK_KEEP_RADIUS);
+    if (this.chunkBackoffTicks > 0) return;
     for (const req of cache.wanted(
       at.x,
       at.y,
       MAP_CHUNK_REQUEST_RADIUS,
       CHUNK_REQUESTS_PER_PASS,
       this.localTick,
+      this.chunkLead(at),
     )) {
       cache.markRequested(req, this.localTick);
       this.channel.send(
@@ -1400,6 +2070,26 @@ export class GameClient {
         }),
       );
     }
+  }
+
+  /**
+   * Where the body will be in {@link CHUNK_LEAD_SECONDS}, or null when it is not
+   * going anywhere (spec 214).
+   *
+   * Built from the direction this client last *asked* to move in rather than
+   * from a velocity differenced out of two positions: the request is what the
+   * body is committed to, it is known on the tick it is made rather than a tick
+   * later, and it is not smeared by a correction easing in underneath it. A body
+   * that has stopped asking has no lead at all, which is what makes a standing
+   * player's request order byte for byte what it always was.
+   */
+  private chunkLead(at: { readonly x: number; readonly y: number }): { x: number; y: number } | null {
+    const { x, y } = this.lastMoveRequest;
+    const length = Math.hypot(x, y);
+    if (length <= 1e-6) return null;
+    const reach = (this.stats?.moveSpeed ?? 0) * CHUNK_LEAD_SECONDS;
+    if (reach <= 0) return null;
+    return { x: at.x + (x / length) * reach, y: at.y + (y / length) * reach };
   }
 
   /** The server's own position for this client, before any prediction. */
@@ -1507,6 +2197,12 @@ export class GameClient {
 
   resume(): void {
     this.world.clear();
+    // Cleared with the world it describes: a resumed session is told about
+    // every drop still standing on first sight, and holding the old
+    // descriptions would leave a revealed name attached to an id the server may
+    // since have reused.
+    this.drops.clear();
+    this.pickUpInFlight = null;
     this.connected = false;
     void this.connect().catch(() => undefined);
   }
@@ -1536,6 +2232,10 @@ export class GameClient {
         this.resolveWelcome?.(this.welcome);
         this.resolveWelcome = null;
         this.rejectWelcome = null;
+        // After the promise, and on every welcome rather than only the first
+        // (spec 157): a resume and a takeover each mint a new token, and
+        // whoever is persisting it has to be told about those too.
+        for (const listener of this.welcomeListeners) listener(this.welcome);
         break;
       }
 
@@ -1573,14 +2273,47 @@ export class GameClient {
         this.serverInventory = message.inventory;
         this.serverEquipment = message.equipment;
         this.coins = message.coins;
+        // The change in flight, or none (spec 188). Replaced rather than
+        // merged, because every `Inventory` carries the truth at the moment it
+        // left: a message with no block is the server saying there is nothing
+        // in flight, which is exactly what the one that ends a swap says.
+        this.pendingSwap = message.pendingSwap ?? null;
         // Everything up to and including the answered request has been settled,
         // whether it was taken or refused -- the containers that arrived are the
         // truth about both. What is left is what is still in flight.
         while ((this.pendingMoves[0]?.requestId ?? Infinity) <= message.requestId) {
           this.pendingMoves.shift();
         }
+        // Settled either way -- an `Inventory` is the answer to a pickup whether
+        // it was served or refused, and a refusal that left this set would leave
+        // the order that made it never asking again (spec 158).
+        if (this.pickUpInFlight !== null && message.requestId >= this.pickUpInFlight) {
+          this.pickUpInFlight = null;
+        }
         this.replayMoves();
         break;
+
+      case ServerMessageType.LootDrop: {
+        const rarity = rarityFromByte(message.rarity);
+        // `defId` empty is the wire's way of saying "not yet" -- there is no
+        // flag beside a real value, because the value was never sent.
+        const known = message.defId !== '';
+        this.drops.set(message.entityId, {
+          entityId: message.entityId,
+          rarity,
+          spawnTick: message.spawnTick,
+          anticipationTick: anticipationTickFor(rarity, message.spawnTick, message.revealTick),
+          revealTick: message.revealTick,
+          origin: { x: message.originX, y: message.originY, z: message.originZ },
+          defId: known ? message.defId : null,
+          // From the content table the client already has, never from the wire:
+          // an item's name is not a replicated field and putting one on the
+          // wire is what "an entity only ever stores an id" exists to prevent.
+          name: known ? (itemById(message.defId)?.name ?? message.defId) : null,
+          count: known ? message.count : 0,
+        });
+        break;
+      }
 
       case ServerMessageType.TradeState:
         // Replaced whole, and a `tradeId` of 0 means "you are not in one" --
@@ -1596,13 +2329,25 @@ export class GameClient {
                 you: message.you,
                 them: message.them,
                 reason: message.reason,
+                invited: message.invited,
+                warning: message.warning,
               };
         // A finished trade is told once and then forgotten, so what is left is
         // the inventory the server has already sent alongside it.
         if (message.stage === TradeStageValue.Done || message.stage === TradeStageValue.Cancelled) {
           this.lastTrade = this.tradeView;
           this.tradeView = null;
+        } else {
+          // A live trade clears the ending behind it. Without this, an ending
+          // the player never dismissed outlives the *next* trade and is what
+          // the window falls back to the moment that one ends -- the previous
+          // reason, on a trade it does not describe.
+          this.lastTrade = null;
         }
+        break;
+
+      case ServerMessageType.Conversation:
+        this.conversationEntityId = message.entityId;
         break;
 
       case ServerMessageType.VendorState:
@@ -1622,11 +2367,26 @@ export class GameClient {
         this.stats = message.stats;
         this.level = message.level;
         this.experience = message.experience;
-        this.unspentSkillPoints = message.unspentSkillPoints;
-        this.skills = message.skills;
+        this.specializations = message.specializations;
         this.baseStats = message.baseStats;
         this.attributes = message.attributes;
-        this.unspentAttributePoints = message.unspentAttributePoints;
+        this.unspentProgressionPoints = message.unspentProgressionPoints;
+        // The recalculation reaching the *prediction* rather than only the
+        // sheet. The step closes over the derived speed, so a client told it
+        // now walks at 155 rather than 161 has to be walked at 155 -- otherwise
+        // taking a pair of greaves off leaves the local body running at the
+        // speed it wore, and the server disagrees with it on every tick of
+        // every step from then on.
+        //
+        // Every stats message rather than only the ones whose speed moved,
+        // because `options.predictor` is handed the whole `EffectiveStats` and
+        // is free to close over any of it. A rebuild is one closure. `welcome`
+        // is non-null wherever `prediction` is -- the buffer is built from its
+        // tick rate -- but it is that tick rate that is wanted here, so it is
+        // asked for rather than asserted.
+        if (this.prediction && this.welcome) {
+          this.prediction.setStep(this.predictStepFor(message.stats, this.welcome.tickRate));
+        }
         break;
 
       case ServerMessageType.Delta: {
@@ -1638,6 +2398,10 @@ export class GameClient {
         this.estimated = Math.max(this.estimated, message.tick + this.oneWayTicks());
         this.world.apply(message.tick, message.removed, message.upserts);
         for (const id of message.removed) this.casts.delete(id);
+        // A drop that left the world -- taken, expired, or simply out of range
+        // -- takes its description with it. It is re-sent in full on the next
+        // first sight, so nothing is lost by forgetting it.
+        for (const id of message.removed) this.drops.delete(id);
         this.lastAckedSeq = Math.max(this.lastAckedSeq, message.ackInputSeq);
         if (message.ackInputSeq > 0) {
           this.queueDepths.push(Math.max(0, this.seq - message.ackInputSeq));
@@ -1668,6 +2432,14 @@ export class GameClient {
 
       case ServerMessageType.Error:
         for (const listener of this.errorListeners) listener(message.code, message.message);
+        // Any error fails a pending handshake, and spec 157 tried to narrow
+        // that to the codes that refuse a connection. It cannot be done by
+        // code: `hello` refuses 'already connected' and 'bad player id' with
+        // `RejectedAction`, which is the same code an ordinary mid-session
+        // refusal carries, and spec 145's hello-twice test rightly waits for
+        // the first of those to fail its `connect()`. Telling them apart needs
+        // a handshake-specific code, which is a protocol change and not this
+        // one -- see the note in specs/157.
         this.rejectWelcome?.(new Error(`server refused connection: ${message.message}`));
         this.rejectWelcome = null;
         this.resolveWelcome = null;
@@ -1743,6 +2515,9 @@ export class GameClient {
           if (refused && refused.id === this.predictedCastRequestId) {
             this.predictedCast = null;
             this.predictedCastRequestId = -1;
+            // And the charge, for the same reason the cooldown goes back: a
+            // refused draught was never drunk (spec 156).
+            this.predictedCharges = 0;
           }
         }
         for (const listener of this.castRejectedListeners) {
@@ -1771,6 +2546,20 @@ export class GameClient {
           if (predicted !== undefined && entry.readyAtTick >= predicted.readyAtTick) {
             this.predictedCooldowns.delete(entry.abilityId);
           }
+        }
+        break;
+
+      case ServerMessageType.Restoration:
+        this.restorationMeter = message.meter;
+        this.fallbackCharges = message.charges;
+        this.maxFallbackCharges = message.maxCharges;
+        // The guess is retired the moment the server's own count has come down
+        // to meet it -- the same rule the cooldown guesses above follow, and for
+        // the same reason: the message in flight when the press was sent
+        // describes the state *before* it, and dropping the guess on any
+        // restoration message would grey the flask back in mid-wind-up.
+        if (this.predictedCharges > 0 && message.charges <= this.chargesWhenPredicted) {
+          this.predictedCharges = 0;
         }
         break;
 
@@ -1809,10 +2598,24 @@ export class GameClient {
       this.wantedFacing = self.facing;
       this.facingSeeded = true;
     }
-    const build = this.options.predictor ?? ((stats, rate) => createFlatPredictor(stats.moveSpeed, rate));
     this.prediction = new PredictionBuffer(
       { x: self.x, y: self.y },
-      build(this.stats, this.welcome.tickRate),
+      this.predictStepFor(this.stats, this.welcome.tickRate),
     );
+  }
+
+  /**
+   * The local step for the stats this client currently has.
+   *
+   * A method rather than the expression it used to be inside
+   * {@link startPredictingIfReady}, because the step is built more than once.
+   * It closes over how fast this body walks, and that number is derived: a
+   * level, an attribute allocation and every piece of gear carrying a
+   * `moveSpeed` modifier change it mid-session. See
+   * {@link PredictionBuffer.setStep}.
+   */
+  private predictStepFor(stats: EffectiveStats, tickRate: number): PredictStep {
+    const build = this.options.predictor ?? ((s, rate) => createFlatPredictor(s.moveSpeed, rate));
+    return build(stats, tickRate);
   }
 }

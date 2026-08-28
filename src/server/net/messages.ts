@@ -18,13 +18,19 @@ import {
   type EquipSlot,
   type Inventory,
   type ItemStack,
-  type SkillAllocation,
+  type SpecializationAllocation,
   type SlotAddress,
   type TraitStats,
   type Vec3,
 } from '../state/types.js';
+import {
+  MAX_GRADE,
+  MIN_GRADE,
+  ScalingGrade,
+  type WeaponScaling,
+} from '../data/weapon-scaling.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
-import { ClientMessageType, ServerMessageType } from './protocol.js';
+import { ClientMessageType, ProgressionTarget, ServerMessageType } from './protocol.js';
 import {
   decodeChunkDenied,
   decodeMapChunk,
@@ -72,6 +78,22 @@ export interface HelloMessage {
    * that has aged out is the ordinary case rather than an attack.
    */
   readonly resumeToken: string;
+  /**
+   * The session token this client holds (spec 226).
+   *
+   * Obtained out of band -- `POST /api/auth/guest`, `/register` or `/login` --
+   * and presented on every connection. When the server has an auth gate, this
+   * is what decides which player the connection is, and `playerId` above is
+   * ignored; when it has none, this is ignored and `playerId` decides. Empty
+   * from a client that has not signed in, which is every in-tab single-player
+   * session and every bot.
+   *
+   * Distinct from `token`, which promotes a connection to admin, and from
+   * `resumeToken`, which comes back to a *body* that is still standing in the
+   * world. Three different questions: who you are, what you may do, and which
+   * entity you were driving.
+   */
+  readonly authToken: string;
 }
 
 /**
@@ -214,25 +236,34 @@ export interface BuyBackMessage {
 }
 
 /**
- * Put one attribute point somewhere (spec 147).
+ * Spend one progression point (spec 244).
  *
- * The whole payload is one ordinal into `BASE_STAT_KEYS`. There is no amount and
- * no derived value -- the client says *which button was pressed*, and reads the
- * consequences back off the `Stats` message that follows.
+ * A discriminated union rather than one shape with two optional fields, because
+ * the two targets carry different payloads and a message that can name both is a
+ * message a handler has to decide between. The wire is the discriminant and then
+ * exactly the payload that target needs.
+ *
+ * **It names a target, never a result.** There is no attribute value here, no
+ * tier number and no amount -- the client says *which button was pressed*, and
+ * reads the consequences back off the `Stats` message that follows. That is what
+ * makes a forged progression state unrepresentable rather than merely refused:
+ * there is no field on this message a client could lie in.
  */
-export interface AllocateAttributeMessage {
-  readonly type: typeof ClientMessageType.AllocateAttribute;
-  readonly attribute: number;
-}
+export type SpendProgressionPointMessage =
+  | {
+      readonly type: typeof ClientMessageType.SpendProgressionPoint;
+      readonly target: typeof ProgressionTarget.Attribute;
+      /** An ordinal into `BASE_STAT_KEYS`; out of range is a rejection. */
+      readonly attribute: number;
+    }
+  | {
+      readonly type: typeof ClientMessageType.SpendProgressionPoint;
+      readonly target: typeof ProgressionTarget.Specialization;
+      readonly specializationId: string;
+    };
 
-export interface RespecAttributesMessage {
-  readonly type: typeof ClientMessageType.RespecAttributes;
-}
-
-/** Rank up one attribute-attuned skill (spec 147). */
-export interface SpendSkillPointMessage {
-  readonly type: typeof ClientMessageType.SpendSkillPoint;
-  readonly skillId: string;
+export interface RespecProgressionMessage {
+  readonly type: typeof ClientMessageType.RespecProgression;
 }
 
 export interface ChatMessage {
@@ -291,6 +322,81 @@ export interface WatchSpawnersMessage {
   readonly on: boolean;
 }
 
+/**
+ * Take a drop off the ground (spec 158).
+ *
+ * A request like every other on this side of the wire: the server checks that
+ * the entity is a drop, that it belongs to the asker, that they are alive and
+ * close enough, and that the bag has room -- and answers with an `Inventory` at
+ * this `requestId` either way, so a refusal takes the client's guess back the
+ * same way an acceptance replaces it.
+ *
+ * There is no "and reveal it first". A drop mid-reveal is picked up now.
+ */
+/**
+ * Start or end a conversation with an NPC (spec 246).
+ *
+ * `entityId` of 0 ends whatever is in progress rather than naming a body, which
+ * is the same convention `OpenVendor`'s empty id uses -- one message rather than
+ * two, so a client leaving cannot be a client that forgot to say so.
+ *
+ * No request id, because there is nothing optimistic to roll back: a client does
+ * not predict a conversation, and the answer is a `Conversation` naming what the
+ * server decided, whether that is this body or nothing.
+ */
+export interface TalkMessage {
+  readonly type: typeof ClientMessageType.Talk;
+  /** The NPC's entity id, or 0 to end. */
+  readonly entityId: number;
+}
+
+export interface PickUpItemMessage {
+  readonly type: typeof ClientMessageType.PickUpItem;
+  readonly requestId: number;
+  /** The drop's entity id. A drop has no slot address until it is in a bag. */
+  readonly entityId: number;
+}
+
+/**
+ * Put a stack down in the world (spec 172).
+ *
+ * The same shape as a move minus its target, because the target is the ground
+ * and the ground has no address. Where it lands is the server's: the body's
+ * facing and a constant reach, neither of which a client may name.
+ *
+ * Answered with an `Inventory` at this `requestId` either way, like every other
+ * container edit.
+ */
+export interface DropItemMessage {
+  readonly type: typeof ClientMessageType.DropItem;
+  readonly requestId: number;
+  readonly at: SlotAddress;
+  /** How many to put down, or 0 for the whole stack. */
+  readonly count: number;
+  /**
+   * The world point the cursor was over: what the body turns to face, and the
+   * line the throw runs along (spec 172).
+   *
+   * An aim rather than a destination. How far the item goes is the server's
+   * constant, so a point on the horizon and a point two paces away are the same
+   * request in every respect but direction -- and a point on top of the body has
+   * no direction in it, which leaves the body's own heading standing.
+   */
+  readonly aimX: number;
+  readonly aimY: number;
+}
+
+/**
+ * "Put me back on my feet" (spec 164). See {@link ClientMessageType.Respawn}.
+ *
+ * Payloadless, like {@link GoodbyeMessage}: where a respawn puts you and what it
+ * restores are the server's to decide, so there is nothing here for a client to
+ * name.
+ */
+export interface RespawnMessage {
+  readonly type: typeof ClientMessageType.Respawn;
+}
+
 export type ClientMessage =
   | HelloMessage
   | InputMessage
@@ -308,14 +414,17 @@ export type ClientMessage =
   | TradeOfferMessage
   | TradeAcceptMessage
   | TradeCancelMessage
-  | SpendSkillPointMessage
-  | AllocateAttributeMessage
-  | RespecAttributesMessage
+  | SpendProgressionPointMessage
+  | RespecProgressionMessage
   | ChatMessage
   | UseAbilityMessage
   | CancelCastMessage
   | RequestChunkMessage
-  | WatchSpawnersMessage;
+  | WatchSpawnersMessage
+  | PickUpItemMessage
+  | DropItemMessage
+  | TalkMessage
+  | RespawnMessage;
 
 /**
  * A slot address, as a container byte and a signed index (spec 126).
@@ -409,7 +518,8 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
         .str(message.displayName)
         .str(message.token)
         .str(message.assetManifest)
-        .str(message.resumeToken);
+        .str(message.resumeToken)
+        .str(message.authToken);
       break;
     case ClientMessageType.Input:
       writer
@@ -438,6 +548,19 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       writeAddress(writer, message.from);
       writeAddress(writer, message.to);
       writer.varuint(message.count);
+      break;
+    case ClientMessageType.PickUpItem:
+      writer.varuint(message.requestId).varuint(message.entityId);
+      break;
+    case ClientMessageType.Talk:
+      writer.varuint(message.entityId);
+      break;
+    case ClientMessageType.DropItem:
+      writer.varuint(message.requestId);
+      writeAddress(writer, message.at);
+      writer.varint(message.count).f32(message.aimX).f32(message.aimY);
+      break;
+    case ClientMessageType.Respawn:
       break;
     case ClientMessageType.OpenVendor:
       writer.str(message.vendorId);
@@ -469,13 +592,12 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.TradeCancel:
       break;
-    case ClientMessageType.SpendSkillPoint:
-      writer.str(message.skillId);
+    case ClientMessageType.SpendProgressionPoint:
+      writer.u8(message.target);
+      if (message.target === ProgressionTarget.Attribute) writer.u8(message.attribute);
+      else writer.str(message.specializationId);
       break;
-    case ClientMessageType.AllocateAttribute:
-      writer.u8(message.attribute);
-      break;
-    case ClientMessageType.RespecAttributes:
+    case ClientMessageType.RespecProgression:
       break;
     case ClientMessageType.Chat:
       writer.str(message.text);
@@ -514,6 +636,7 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         token: reader.str(),
         assetManifest: reader.str(),
         resumeToken: reader.str(),
+        authToken: reader.str(),
       };
     case ClientMessageType.Input:
       return {
@@ -543,6 +666,25 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
         to: readAddress(reader),
         count: reader.varuint(),
       };
+    case ClientMessageType.PickUpItem:
+      return {
+        type: ClientMessageType.PickUpItem,
+        requestId: reader.varuint(),
+        entityId: reader.varuint(),
+      };
+    case ClientMessageType.Talk:
+      return { type: ClientMessageType.Talk, entityId: reader.varuint() };
+    case ClientMessageType.DropItem:
+      return {
+        type: ClientMessageType.DropItem,
+        requestId: reader.varuint(),
+        at: readAddress(reader),
+        count: reader.varint(),
+        aimX: reader.f32(),
+        aimY: reader.f32(),
+      };
+    case ClientMessageType.Respawn:
+      return { type: ClientMessageType.Respawn };
     case ClientMessageType.OpenVendor:
       return { type: ClientMessageType.OpenVendor, vendorId: reader.str() };
     case ClientMessageType.BuyItem:
@@ -584,12 +726,25 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { type: ClientMessageType.TradeAccept, revision: reader.varint() };
     case ClientMessageType.TradeCancel:
       return { type: ClientMessageType.TradeCancel };
-    case ClientMessageType.SpendSkillPoint:
-      return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
-    case ClientMessageType.AllocateAttribute:
-      return { type: ClientMessageType.AllocateAttribute, attribute: reader.u8() };
-    case ClientMessageType.RespecAttributes:
-      return { type: ClientMessageType.RespecAttributes };
+    case ClientMessageType.SpendProgressionPoint: {
+      // An unknown target is decoded as `Specialization` with whatever string
+      // follows, which `buySpecializationTier` then refuses by id. Reading it as
+      // an attribute ordinal instead would hand a garbage byte to a table lookup.
+      const target = reader.u8();
+      return target === ProgressionTarget.Attribute
+        ? {
+            type: ClientMessageType.SpendProgressionPoint,
+            target: ProgressionTarget.Attribute,
+            attribute: reader.u8(),
+          }
+        : {
+            type: ClientMessageType.SpendProgressionPoint,
+            target: ProgressionTarget.Specialization,
+            specializationId: reader.str(),
+          };
+    }
+    case ClientMessageType.RespecProgression:
+      return { type: ClientMessageType.RespecProgression };
     case ClientMessageType.Chat:
       return { type: ClientMessageType.Chat, text: reader.str() };
     case ClientMessageType.UseAbility:
@@ -670,9 +825,32 @@ export interface EntityDelta {
   readonly turnRate?: number;
   /** Guard left, 0..1 (spec 147). Quantised to a byte on the wire. */
   readonly poise?: number;
+  /**
+   * How fast this body may move, as a fraction of its own speed (spec 188).
+   * Absent means unchanged; 1 is not slowed.
+   */
+  readonly moveScale?: number;
   /** Absorb left in health units, and the tick the whole thing falls off. */
   readonly shield?: number;
   readonly shieldUntilTick?: number;
+  /** What this body is visibly carrying (spec 186). See {@link EntityField.Statuses}. */
+  readonly statuses?: readonly WireStatus[];
+}
+
+/**
+ * One status as it crosses the wire (spec 186).
+ *
+ * A table index rather than a string id, and an **absolute** expiry rather than
+ * a remaining count -- the two choices that let the client's mark be a pure
+ * function of this record and the tick being drawn. `magnitude` deliberately
+ * does not ride: the picture says *that* a body is Exposed, not by how much, on
+ * the same argument that made poise a fraction.
+ */
+export interface WireStatus {
+  /** `StatusVisual.wire`. */
+  readonly wire: number;
+  readonly stacks: number;
+  readonly expiresAtTick: number;
 }
 
 export interface DeltaMessage {
@@ -707,14 +885,42 @@ export interface CombatResultMessage {
   readonly targetId: number;
   readonly damage: number;
   readonly targetHealth: number;
-  /** bit 0 = killing blow, bit 1 = critical, bit 2 = blocked. */
+  /** bit 0 = killing blow, bit 1 = critical, bit 2 = blocked, bit 3 = periodic. */
   readonly flags: number;
+  /**
+   * What the blow was made of, as `DAMAGE_ELEMENTS`' append-only ordinal
+   * (spec 232).
+   *
+   * A byte of its own rather than three more bits of `flags`, because eight
+   * elements is exactly eight and a bitfield with no room left is one the next
+   * element silently overflows. `damageElementOf` is total, so an ordinal this
+   * build has no name for reads as `physical`.
+   *
+   * It rides at all for the reason spec 219 gave when it promoted `periodic`
+   * onto this same message: the client cannot work it out. A `CombatResult`
+   * names an attacker and a target and no ability, and the one join available --
+   * against the attacker's live cast -- is exactly wrong for a projectile, whose
+   * blow lands seconds after its cast ended.
+   */
+  readonly element: number;
 }
 
 export const CombatFlag = {
   Killed: 1 << 0,
   Critical: 1 << 1,
   Blocked: 1 << 2,
+  /**
+   * This damage came from an affliction rather than from a blow (spec 219).
+   *
+   * The sim has carried a `periodic` flag on its `hit` event since spec 190 and
+   * kept it to itself, on the argument that *"a client draws a floating number
+   * the same way whatever caused it"*. True of the number and false of
+   * everything else a client does with a blow: a pulse has an attacker who
+   * walked off seconds ago and a bearing that means nothing, so eight beats of
+   * Poison drew eight brush hits thrown along a line nobody is standing on. The
+   * number still rides; the blow's picture does not (`vfx-wire.ts`).
+   */
+  Periodic: 1 << 3,
 } as const;
 
 export interface StatsMessage {
@@ -722,20 +928,22 @@ export interface StatsMessage {
   readonly entityId: number;
   readonly level: number;
   readonly experience: number;
-  readonly unspentSkillPoints: number;
   /**
-   * Every point this character has spent (spec 128). Whole, never a delta.
+   * Every tier this character has bought (spec 147, 244). Whole, never a delta.
    *
    * On this message rather than one of its own because it changes at exactly the
    * moments `Stats` is already sent -- login, equip, unequip, spend, level -- and
    * a second message on the same trigger is a second thing to keep in step.
    *
-   * Without it a client can spend a point and is never told what it owns, so a
-   * skill tree cannot be drawn at all; the same hole spec 126 closed for
-   * equipment, and with the same answer.
+   * Without it a client can spend a point and is never told what it owns, so the
+   * tracks cannot be drawn at all; the same hole spec 126 closed for equipment,
+   * and with the same answer.
+   *
+   * What does **not** ride is the track structure -- which milestones exist, what
+   * they unlock, what a tier costs. That is content, both ends import the tables,
+   * and sending it would be replicating a constant. What rides is state.
    */
-  /** Every point spent in the attuned tree (spec 147). Whole, never a delta. */
-  readonly skills: readonly SkillAllocation[];
+  readonly specializations: readonly SpecializationAllocation[];
   /**
    * The six attributes as *allocated* (spec 147), plus what is left to place.
    *
@@ -747,7 +955,7 @@ export interface StatsMessage {
    */
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
   readonly stats: EffectiveStats;
 }
 
@@ -772,6 +980,37 @@ export interface InventoryMessage {
    * instant, and two messages for one event is two things to keep in step.
    */
   readonly coins: number;
+  /**
+   * A skill-slot change in flight, or absent (spec 188).
+   *
+   * On this message rather than on one of its own, for the reason the coins are
+   * on it: a swap being asked for, landing, or being given up are all container
+   * events, and two messages for one event is two things to keep in step.
+   *
+   * It rides only on the messages that bracket the change -- one when it is
+   * asked for, one when it ends -- because the client needs no ticking: the two
+   * ticks are enough to draw a bar from, which is the same trick the loot
+   * reveal uses. A resend for any other reason simply carries whatever is true
+   * at the time.
+   */
+  readonly pendingSwap?: PendingSkillSwap;
+}
+
+/**
+ * A skill-slot change the server has committed the player to (spec 188).
+ *
+ * Both addresses, both ticks, and which of the three kinds it is -- everything
+ * the interface needs to say *what* is happening to *which* slot and how far
+ * through it is. Nothing here is a client's claim: the server derived the kind
+ * from its own containers and stamped both ticks off its own clock.
+ */
+export interface PendingSkillSwap {
+  /** A {@link SkillSwapKind}. */
+  readonly kind: number;
+  readonly from: SlotAddress;
+  readonly to: SlotAddress;
+  readonly startedTick: number;
+  readonly readyAtTick: number;
 }
 
 /** What a vendor is offering, and what can be undone (spec 129). */
@@ -817,6 +1056,25 @@ export interface TradeStateMessage {
   readonly them: TradeSideView;
   /** Why it ended, when it ended badly. Empty otherwise. */
   readonly reason: string;
+  /**
+   * You are the side being asked (spec 170). Only meaningful while `stage` is
+   * offered.
+   *
+   * On the wire because it cannot be derived: `you` and `them` are symmetric by
+   * construction, so nothing in this message says which of the two opened the
+   * trade -- which left the sender being shown "Accept invitation" for their
+   * own invitation.
+   */
+  readonly invited: boolean;
+  /**
+   * What would stop this trade going through right now, from *your* point of
+   * view. Empty when nothing would.
+   *
+   * Per player, because "your bag is full" and "their bag is full" are
+   * different sentences and a single shared string is wrong for one of the two
+   * people reading it.
+   */
+  readonly warning: string;
 }
 
 export interface ServerChatMessage {
@@ -904,6 +1162,15 @@ export interface EffectMessage {
   readonly z: number;
   readonly radius: number;
   readonly durationTicks: number;
+  /**
+   * Radians about Y: which way the cue points (spec 235).
+   *
+   * Zero for every radial cue, which is what they all sent before this existed,
+   * so no picture in the game moved when it was added. What needed it is the two
+   * shapes that are not radial: `scene.addEffect` had no bearing to hand `play`,
+   * so a lane and a cone could only ever be drawn as a burst.
+   */
+  readonly rotation: number;
 }
 
 /** Why the server would not start an ability the client asked for. */
@@ -945,6 +1212,34 @@ export interface CooldownsMessage {
   readonly atTick: number;
 }
 
+/**
+ * The health economy, as the owner sees it (spec 156).
+ *
+ * Two numbers and a tick. It rides the same reasoning as {@link
+ * CooldownsMessage}: owner-only, sent when it changes, and never on the entity
+ * delta -- what somebody else has left to drink changes nothing this client
+ * draws, and the delta is the message that is paid for per entity.
+ *
+ * `meter` is a **fraction**, and that is the interesting decision. The
+ * absolute progress and the threshold it is measured against are both server
+ * tuning; a bar asks only how full it is; and a client told its raw progress is
+ * a client that could work out exactly which kill produces the next mote, which
+ * is a thing to farm rather than a thing to feel.
+ *
+ * `atTick` is not decoration, for the reason it is not on the cooldowns: the
+ * number is a round trip old when it lands, and a client easing a bar toward it
+ * has to know how far behind it is.
+ */
+export interface RestorationMessage {
+  readonly type: typeof ServerMessageType.Restoration;
+  /** Progress toward the next mote, 0..1. */
+  readonly meter: number;
+  readonly charges: number;
+  /** What this build's Constitution allows, so the pips can be drawn empty. */
+  readonly maxCharges: number;
+  readonly atTick: number;
+}
+
 /** One spawner's live state, as the overlay draws it (spec 076). */
 export interface SpawnerStatus {
   readonly id: string;
@@ -971,6 +1266,67 @@ export interface SpawnerStatesMessage {
   readonly spawners: readonly SpawnerStatus[];
 }
 
+/**
+ * A drop in the world, and how much of it this client may know yet (spec 158).
+ *
+ * The one place an item's identity crosses the wire for something lying on the
+ * ground, and the reason the drop's entity record carries no `typeId`: the
+ * delta goes to everyone in range on first sight, and *what* an unrevealed drop
+ * is must not.
+ *
+ * `defId` empty (and `count` zero) is the wire form of "not revealed yet". Not a
+ * flag beside the real value -- the value is genuinely absent, so there is no
+ * path by which a client could draw it early, honest or otherwise.
+ *
+ * `spawnTick` and `revealTick` are both sent because a client needs the whole
+ * span to draw the run-up, and because a late observer's own "when did I first
+ * see this" is not the answer -- it would restart the anticipation for somebody
+ * who walked up halfway through it.
+ */
+/**
+ * Which NPC this client is talking to, or 0 (spec 246).
+ *
+ * The answer to a `Talk` and also what arrives unasked when the server ends one
+ * -- walking out of range, either body dying, the NPC despawning -- so a client
+ * never has to infer the end of a conversation from silence.
+ *
+ * One field, because everything else about the conversation is a table the
+ * client already has: the entity id names the body, `entity.typeId` names the
+ * NPC row, and the row is the name, the voice and the script. Sending any of
+ * that would be replicating a file both ends were built from.
+ */
+export interface ConversationMessage {
+  readonly type: typeof ServerMessageType.Conversation;
+  /** The NPC's entity id, or 0 for "you are not talking to anybody". */
+  readonly entityId: number;
+}
+
+export interface LootDropMessage {
+  readonly type: typeof ServerMessageType.LootDrop;
+  readonly entityId: number;
+  /** One of `RARITY_IDS`, as its index. Drives the cue, never the identity. */
+  readonly rarity: number;
+  readonly spawnTick: number;
+  /** Equal to `spawnTick` for a drop that was never going to wait. */
+  readonly revealTick: number;
+  /**
+   * Where the body fell -- the point the item was thrown from (spec 158).
+   *
+   * The entity's replicated position is where it *lands*, so these two are the
+   * ends of an arc the client draws over `TOSS_TICKS` from `spawnTick`. Sent
+   * rather than guessed because the throw has to be the same throw on every
+   * screen, and because a client arriving after the toss computes "already
+   * landed" from the same two numbers with no special case.
+   */
+  readonly originX: number;
+  readonly originY: number;
+  readonly originZ: number;
+  /** The item, or `''` while it is still being withheld. */
+  readonly defId: string;
+  /** How many, or `0` while the identity is withheld. */
+  readonly count: number;
+}
+
 export type ServerMessage =
   | WelcomeMessage
   | DeltaMessage
@@ -989,10 +1345,13 @@ export type ServerMessage =
   | EffectMessage
   | CastRejectedMessage
   | CooldownsMessage
+  | RestorationMessage
   | MapInfoMessage
   | MapChunkMessage
   | ChunkDeniedMessage
-  | SpawnerStatesMessage;
+  | SpawnerStatesMessage
+  | LootDropMessage
+  | ConversationMessage;
 
 // Field bits, duplicated here as plain numbers so the hot encode path is a
 // bitmask test rather than a property lookup. Kept in sync with protocol.ts.
@@ -1005,6 +1364,8 @@ const FIELD_LEVEL = 1 << 5;
 const FIELD_IDENTITY = 1 << 6;
 const FIELD_POISE = 1 << 7;
 const FIELD_SHIELD = 1 << 8;
+const FIELD_STATUSES = 1 << 9;
+const FIELD_MOVE_SCALE = 1 << 10;
 
 function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   // A varuint rather than a byte since spec 147: `Identity` took the eighth bit
@@ -1035,6 +1396,25 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   if (entity.fields & FIELD_SHIELD) {
     writer.f32(entity.shield ?? 0).u32(entity.shieldUntilTick ?? 0);
   }
+  // Six bytes each behind a count (spec 186). The count is written even when the
+  // list is empty, because an empty list is the message "everything you were
+  // told about is gone" -- without it a status could only ever be added.
+  if (entity.fields & FIELD_STATUSES) {
+    const held = entity.statuses ?? [];
+    writer.u8(Math.min(255, held.length));
+    for (const status of held) {
+      writer
+        .u8(Math.max(0, Math.min(255, status.wire)))
+        .u8(Math.max(0, Math.min(255, status.stacks)))
+        .u32(Math.max(0, status.expiresAtTick));
+    }
+  }
+  // A fraction in one byte, like the guard above (spec 188). 255 is "not
+  // slowed", which is what an absent field has always meant and what a body
+  // carrying nothing is.
+  if (entity.fields & FIELD_MOVE_SCALE) {
+    writer.u8(Math.max(0, Math.min(255, Math.round((entity.moveScale ?? 1) * 255))));
+  }
 }
 
 function readEntityDelta(reader: BufferReader): EntityDelta {
@@ -1054,6 +1434,8 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let poise: number | undefined;
   let shield: number | undefined;
   let shieldUntilTick: number | undefined;
+  let statuses: WireStatus[] | undefined;
+  let moveScale: number | undefined;
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
@@ -1080,6 +1462,19 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     shield = reader.f32();
     shieldUntilTick = reader.u32();
   }
+  if (fields & FIELD_STATUSES) {
+    const count = reader.u8();
+    const read: WireStatus[] = [];
+    // Every entry is read whatever this build makes of it. A `wire` index with
+    // no row here is a client talking to a newer server, and skipping the bytes
+    // rather than reading them would desync the whole frame -- so the unknown
+    // one is carried and dropped where it is drawn, not where it is decoded.
+    for (let index = 0; index < count; index += 1) {
+      read.push({ wire: reader.u8(), stacks: reader.u8(), expiresAtTick: reader.u32() });
+    }
+    statuses = read;
+  }
+  if (fields & FIELD_MOVE_SCALE) moveScale = reader.u8() / 255;
   return {
     id,
     fields,
@@ -1096,19 +1491,24 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     ...(turnRate === undefined ? {} : { turnRate }),
     ...(poise === undefined ? {} : { poise }),
     ...(shield === undefined ? {} : { shield, shieldUntilTick: shieldUntilTick ?? 0 }),
+    ...(statuses === undefined ? {} : { statuses }),
+    ...(moveScale === undefined ? {} : { moveScale }),
   };
 }
 
-function writeSkills(writer: BufferWriter, skills: readonly SkillAllocation[]): void {
-  writer.varuint(skills.length);
-  for (const allocation of skills) writer.str(allocation.skillId).varuint(allocation.level);
+function writeSpecializations(
+  writer: BufferWriter,
+  held: readonly SpecializationAllocation[],
+): void {
+  writer.varuint(held.length);
+  for (const allocation of held) writer.str(allocation.specializationId).varuint(allocation.tier);
 }
 
 /**
  * The six attributes, in {@link BASE_STAT_KEYS} order (spec 147).
  *
  * By position rather than by name, which is the same decision
- * `ClientMessageType.AllocateAttribute` makes about its ordinal and for the same
+ * `ProgressionTarget.Attribute` makes about its ordinal and for the same
  * reason: the order is already canonical and already load-bearing, so spelling
  * the names out would be six strings restating a constant both ends import.
  */
@@ -1122,11 +1522,20 @@ function readAttributes(reader: BufferReader): BaseStats {
   return values as unknown as BaseStats;
 }
 
-function readSkills(reader: BufferReader): readonly SkillAllocation[] {
+function readStringList(reader: BufferReader): readonly string[] {
   const count = reader.count();
-  const skills: SkillAllocation[] = new Array<SkillAllocation>(count);
-  for (let i = 0; i < count; i++) skills[i] = { skillId: reader.str(), level: reader.varuint() };
-  return skills;
+  const ids: string[] = new Array<string>(count);
+  for (let i = 0; i < count; i++) ids[i] = reader.str();
+  return ids;
+}
+
+function readSpecializations(reader: BufferReader): readonly SpecializationAllocation[] {
+  const count = reader.count();
+  const held: SpecializationAllocation[] = new Array<SpecializationAllocation>(count);
+  for (let i = 0; i < count; i++) {
+    held[i] = { specializationId: reader.str(), tier: reader.varuint() };
+  }
+  return held;
 }
 
 function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
@@ -1146,6 +1555,43 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
     .f32(stats.maxResource)
     .f32(stats.resourceRegen)
     .str(stats.basicAttackId);
+  // The four skill slots' abilities (spec 188), count-prefixed like every other
+  // list on this wire. Owner-only already -- `Stats` is sent to the player it
+  // is about -- and sent because the client needs it for the same two reasons
+  // it needs `basicAttackId`: to know what its bar may ask for, and to grey out
+  // what it may not. It is still never *read* from a client: the server derives
+  // its own copy from equipment on every recalculation.
+  writer.varuint(stats.skillAbilityIds.length);
+  for (const id of stats.skillAbilityIds) writer.str(id);
+  // Weapon scaling (spec 216): the three resolved grades, then the three steps
+  // that produced them. Both, because they answer different questions -- the
+  // grades are what the held weapon scales with, and the steps are what the bag
+  // needs to resolve a weapon it is only hovering over.
+  //
+  // `u8` for a grade, which is `0..6`; `i16` for a step, which is small but
+  // signed and has no narrower signed writer here. Owner-only and sent on login
+  // and on equipment changes rather than per tick, like the rest of this block.
+  writeScaling(writer, stats.weaponScaling);
+  // The resolved range a basic attack rolls between (spec 217). `f32`, like
+  // every other quantity in this block: both ends carry the attribute term and
+  // the percentage, so neither is an integer once anything has been spent.
+  writer.f32(stats.weaponDamageMin).f32(stats.weaponDamageMax);
+  writer.i16(clampStep(stats.scalingModifiers.strength));
+  writer.i16(clampStep(stats.scalingModifiers.agility));
+  writer.i16(clampStep(stats.scalingModifiers.intelligence));
+  // The three attribute values every grade is resolved against (spec 238).
+  //
+  // Not redundant with the `attributes` block on the `Stats` message: that one
+  // is what has been *allocated*, which is what the sheet's respec reads, and
+  // this is the total after every grant -- items, milestones, synergies -- which
+  // is what an ability's damage is actually computed from. A client that
+  // re-derived one from the other would be the second resolver spec 216 exists
+  // to prevent.
+  //
+  // `f32`, because a grant is not required to be integral.
+  writer.f32(stats.scalingAttributes.strength);
+  writer.f32(stats.scalingAttributes.agility);
+  writer.f32(stats.scalingAttributes.intelligence);
   writeTraits(writer, stats.traits);
 }
 
@@ -1163,6 +1609,44 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
  * uniform block is one loop rather than a schema, and the message is sent on
  * login and on allocation rather than per tick, so the width is free.
  */
+/**
+ * A grade triple, one byte each (spec 216).
+ *
+ * Clamped on the way out as well as on the way in, because a grade that came
+ * off a hand-edited row outside `0..6` would otherwise be written as a wrapped
+ * byte and read back as a *different, valid* grade -- which is worse than the
+ * refusal, since nothing downstream could tell it had happened.
+ */
+function writeScaling(writer: BufferWriter, scaling: WeaponScaling): void {
+  writer.u8(clampGrade(scaling.strength)).u8(clampGrade(scaling.agility)).u8(clampGrade(scaling.intelligence));
+}
+
+function readScaling(reader: BufferReader): WeaponScaling {
+  return {
+    strength: clampGrade(reader.u8()),
+    agility: clampGrade(reader.u8()),
+    intelligence: clampGrade(reader.u8()),
+  };
+}
+
+function clampGrade(value: number): ScalingGrade {
+  if (!Number.isFinite(value)) return ScalingGrade.None;
+  return Math.min(MAX_GRADE, Math.max(MIN_GRADE, Math.round(value))) as ScalingGrade;
+}
+
+/**
+ * A step, held inside the signed short it is written as.
+ *
+ * Whole, because the ladder has no half grades and `scaleModifier` multiplies
+ * every numeric field by a skill's level -- so a passive granting half a step
+ * per level is a thing somebody can author. Rounded here as well as in
+ * `shiftGrade`, so what crosses the wire is what was resolved from.
+ */
+function clampStep(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(32767, Math.max(-32768, Math.round(value)));
+}
+
 function writeTraits(writer: BufferWriter, traits: TraitStats): void {
   for (const key of TRAIT_WIRE_ORDER) writer.f32(traits[key]);
 }
@@ -1190,6 +1674,20 @@ function readStats(reader: BufferReader): EffectiveStats {
     maxResource: reader.f32(),
     resourceRegen: reader.f32(),
     basicAttackId: reader.str(),
+    skillAbilityIds: readStringList(reader),
+    weaponScaling: readScaling(reader),
+    weaponDamageMin: reader.f32(),
+    weaponDamageMax: reader.f32(),
+    scalingModifiers: {
+      strength: reader.i16(),
+      agility: reader.i16(),
+      intelligence: reader.i16(),
+    },
+    scalingAttributes: {
+      strength: reader.f32(),
+      agility: reader.f32(),
+      intelligence: reader.f32(),
+    },
     traits: readTraits(reader),
   };
 }
@@ -1242,6 +1740,15 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       for (const entry of message.entries) writer.str(entry.abilityId).u32(entry.readyAtTick);
       writer.f32(message.resource).u32(message.atTick);
       break;
+    case ServerMessageType.Restoration:
+      // The meter in one byte, like poise on the delta and for the same reason:
+      // it draws a bar, and a 255th of a bar is a fifth of a percent.
+      writer
+        .u8(Math.max(0, Math.min(255, Math.round(message.meter * 255))))
+        .u8(Math.max(0, Math.min(255, Math.round(message.charges))))
+        .u8(Math.max(0, Math.min(255, Math.round(message.maxCharges))))
+        .u32(message.atTick);
+      break;
     case ServerMessageType.Delta:
       writer.u32(message.tick).varuint(message.ackInputSeq).varuint(message.removed.length);
       for (const id of message.removed) writer.varuint(id);
@@ -1263,25 +1770,51 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .varuint(message.targetId)
         .f32(message.damage)
         .f32(message.targetHealth)
-        .u8(message.flags);
+        .u8(message.flags)
+        .u8(message.element);
       break;
     case ServerMessageType.Stats:
       writer
         .varuint(message.entityId)
         .varuint(message.level)
-        .varuint(message.experience)
-        .varuint(message.unspentSkillPoints);
-      writeSkills(writer, message.skills);
+        .varuint(message.experience);
+      writeSpecializations(writer, message.specializations);
       writeAttributes(writer, message.baseStats);
       writeAttributes(writer, message.attributes);
-      writer.varuint(message.unspentAttributePoints);
+      writer.varuint(message.unspentProgressionPoints);
       writeStats(writer, message.stats);
       break;
-    case ServerMessageType.Inventory:
+    case ServerMessageType.Inventory: {
       writer.varuint(message.requestId);
       writeInventory(writer, message.inventory);
       writeEquipment(writer, message.equipment);
       writer.varuint(message.coins);
+      // A presence byte then the block, which is how every optional payload on
+      // this wire is written: absent is one byte and the common case.
+      const swap = message.pendingSwap;
+      writer.u8(swap ? 1 : 0);
+      if (swap) {
+        writer.u8(swap.kind);
+        writeAddress(writer, swap.from);
+        writeAddress(writer, swap.to);
+        writer.u32(swap.startedTick).u32(swap.readyAtTick);
+      }
+      break;
+    }
+    case ServerMessageType.Conversation:
+      writer.varuint(message.entityId);
+      break;
+    case ServerMessageType.LootDrop:
+      writer
+        .varuint(message.entityId)
+        .u8(message.rarity)
+        .u32(message.spawnTick)
+        .u32(message.revealTick)
+        .f32(message.originX)
+        .f32(message.originY)
+        .f32(message.originZ)
+        .str(message.defId)
+        .varuint(message.count);
       break;
     case ServerMessageType.VendorState:
       writer.str(message.vendorId).str(message.name).varuint(message.stock.length);
@@ -1295,7 +1828,7 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer.varuint(message.tradeId).u8(message.stage).varuint(message.revision);
       writeTradeSide(writer, message.you);
       writeTradeSide(writer, message.them);
-      writer.str(message.reason);
+      writer.str(message.reason).u8(message.invited ? 1 : 0).str(message.warning);
       break;
     case ServerMessageType.Chat:
       writer.u8(message.channel).str(message.from).str(message.text);
@@ -1331,7 +1864,8 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
         .f32(message.y)
         .f32(message.z)
         .f32(message.radius)
-        .u16(message.durationTicks);
+        .u16(message.durationTicks)
+        .f32(message.rotation);
       break;
     case ServerMessageType.CastRejected:
       writer.str(message.abilityId).str(message.reason);
@@ -1390,6 +1924,12 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       const atTick = reader.u32();
       return { type: ServerMessageType.Cooldowns, entries, resource, atTick };
     }
+    case ServerMessageType.Restoration: {
+      const meter = reader.u8() / 255;
+      const charges = reader.u8();
+      const maxCharges = reader.u8();
+      return { type: ServerMessageType.Restoration, meter, charges, maxCharges, atTick: reader.u32() };
+    }
     case ServerMessageType.Delta: {
       const tick = reader.u32();
       const ackInputSeq = reader.varuint();
@@ -1417,6 +1957,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         damage: reader.f32(),
         targetHealth: reader.f32(),
         flags: reader.u8(),
+        element: reader.u8(),
       };
     case ServerMessageType.Stats:
       return {
@@ -1424,20 +1965,50 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         entityId: reader.varuint(),
         level: reader.varuint(),
         experience: reader.varuint(),
-        unspentSkillPoints: reader.varuint(),
-        skills: readSkills(reader),
+        specializations: readSpecializations(reader),
         baseStats: readAttributes(reader),
         attributes: readAttributes(reader),
-        unspentAttributePoints: reader.varuint(),
+        unspentProgressionPoints: reader.varuint(),
         stats: readStats(reader),
       };
-    case ServerMessageType.Inventory:
+    case ServerMessageType.Inventory: {
+      const requestId = reader.varuint();
+      const inventory = readInventory(reader);
+      const equipment = readEquipment(reader);
+      const coins = reader.varuint();
+      const hasSwap = reader.u8() === 1;
+      const pendingSwap = hasSwap
+        ? {
+            kind: reader.u8(),
+            from: readAddress(reader),
+            to: readAddress(reader),
+            startedTick: reader.u32(),
+            readyAtTick: reader.u32(),
+          }
+        : undefined;
       return {
         type: ServerMessageType.Inventory,
-        requestId: reader.varuint(),
-        inventory: readInventory(reader),
-        equipment: readEquipment(reader),
-        coins: reader.varuint(),
+        requestId,
+        inventory,
+        equipment,
+        coins,
+        ...(pendingSwap === undefined ? {} : { pendingSwap }),
+      };
+    }
+    case ServerMessageType.Conversation:
+      return { type: ServerMessageType.Conversation, entityId: reader.varuint() };
+    case ServerMessageType.LootDrop:
+      return {
+        type: ServerMessageType.LootDrop,
+        entityId: reader.varuint(),
+        rarity: reader.u8(),
+        spawnTick: reader.u32(),
+        revealTick: reader.u32(),
+        originX: reader.f32(),
+        originY: reader.f32(),
+        originZ: reader.f32(),
+        defId: reader.str(),
+        count: reader.varuint(),
       };
     case ServerMessageType.VendorState: {
       const vendorId = reader.str();
@@ -1458,7 +2029,18 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
       const revision = reader.varuint();
       const you = readTradeSide(reader);
       const them = readTradeSide(reader);
-      return { type: ServerMessageType.TradeState, tradeId, stage, revision, you, them, reason: reader.str() };
+      const reason = reader.str();
+      return {
+        type: ServerMessageType.TradeState,
+        tradeId,
+        stage,
+        revision,
+        you,
+        them,
+        reason,
+        invited: reader.u8() !== 0,
+        warning: reader.str(),
+      };
     }
     case ServerMessageType.Chat:
       return {
@@ -1507,6 +2089,7 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         z: reader.f32(),
         radius: reader.f32(),
         durationTicks: reader.u16(),
+        rotation: reader.f32(),
       };
     case ServerMessageType.CastRejected:
       return {

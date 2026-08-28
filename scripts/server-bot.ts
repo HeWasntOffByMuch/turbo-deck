@@ -10,6 +10,17 @@
  *   npm run server:bots                    # 3 bots against ws://localhost:8787
  *   npm run server:bots -- --count 8 --url ws://localhost:8899
  *
+ * Each bot mints its own guest character over `POST /api/auth/guest` before it
+ * dials, because a server with an auth gate refuses a `Hello` carrying no
+ * session token (spec 226) -- so without that step this harness could not
+ * connect to the one server it exists to load. A server with no gate (the
+ * in-tab one, the tests) has no such endpoint, and a bot that could not mint
+ * one names itself exactly as it always did.
+ *
+ * Each run therefore leaves N guest characters behind in `data/game.db`, which
+ * is what a load harness against a persistent server means: they are real
+ * players and they are disposable. `npx tsx scripts/db-status.ts` counts them.
+ *
  * A correction count near zero while walking in the open, climbing once
  * something starts hitting back, is the expected reading. The default predictor
  * models a walk and nothing else, so every knockback is a genuine divergence the
@@ -24,6 +35,8 @@ import { fileURLToPath } from 'node:url';
 import { GameClient } from '../src/server/client/game-client.js';
 import { SERVER_TICK_RATE } from '../src/server/config.js';
 import { channelFromSocket } from '../src/server/net/transport-ws.js';
+import { AUTH_PATH_PREFIX } from '../src/render/iso3d/world/auth-client.js';
+import { httpOriginOf } from '../src/render/iso3d/world/connection.js';
 
 function flag(name: string, fallback: string): string {
   const index = process.argv.indexOf(`--${name}`);
@@ -39,7 +52,7 @@ interface Bot {
   hits: number;
 }
 
-function startBot(index: number): Bot {
+function startBot(index: number, session: GuestSession | null): Bot {
   const name = `bot-${index + 1}`;
   const bot: Bot = { name, client: null, hits: 0 };
 
@@ -48,8 +61,11 @@ function startBot(index: number): Bot {
 
   socket.on('open', () => {
     const client = new GameClient(channelFromSocket(socket), {
-      playerId: name,
+      // A gated server ignores this and believes the token instead; an ungated
+      // one has nothing else to go on, which is why the fallback is the name.
+      playerId: session?.playerId ?? name,
       displayName: name,
+      authToken: session?.token ?? '',
       // The bots are the one client here that crosses a real socket to a real
       // server, so they are the one that can actually catch a stale-asset
       // mismatch (spec 113). Empty when the bake has never run, which the
@@ -69,7 +85,25 @@ function startBot(index: number): Bot {
         // Each bot walks a circle at its own phase, so the admin panel shows
         // motion rather than a stack of identical dots.
         let angle = (index / count) * Math.PI * 2;
+        let frames = 0;
         setInterval(() => {
+          // A bot has to ask to get up (spec 164). Nothing revives a dead player
+          // on a timer any more, and a load harness whose bots quietly stop
+          // moving after their first death is a load harness measuring corpses.
+          // Asked once a second rather than every frame: the answer takes a
+          // round trip, and sixty asks inside one is a bot load-testing the
+          // respawn handler instead of the sim.
+          //
+          // Off `selfDead` rather than off a health test of its own (spec 229),
+          // which is the third copy of that test this tree had: the client
+          // answers it once now, and the legs it drives answer it from the same
+          // place, so a bot cannot come to a different view of its own corpse
+          // than the input path it is exercising.
+          frames += 1;
+          if (client.view().selfDead) {
+            if (frames % SERVER_TICK_RATE === 0) client.respawn();
+            return;
+          }
           angle += 0.02;
           client.sendInput({
             moveX: Math.cos(angle),
@@ -88,8 +122,16 @@ function startBot(index: number): Bot {
   return bot;
 }
 
-console.log(`[bots] connecting ${count} bot(s) to ${url}`);
-const bots = Array.from({ length: count }, (_, index) => startBot(index));
+const origin = httpOriginOf(url);
+const sessions = await Promise.all(
+  Array.from({ length: count }, (_, index) => guestSession(origin, `bot-${index + 1}`)),
+);
+const gated = sessions.filter((session) => session !== null).length;
+console.log(
+  `[bots] connecting ${count} bot(s) to ${url}` +
+    (gated === 0 ? ' (no session endpoint; naming ourselves)' : ` (${gated} guest session(s))`),
+);
+const bots = Array.from({ length: count }, (_, index) => startBot(index, sessions[index] ?? null));
 
 setInterval(() => {
   const lines = bots.map((bot) => {
@@ -109,6 +151,43 @@ process.on('SIGINT', () => {
   for (const bot of bots) bot.client?.disconnect();
   process.exit(0);
 });
+
+/** A guest character the server issued, and the credential that proves it. */
+interface GuestSession {
+  readonly token: string;
+  readonly playerId: string;
+}
+
+/**
+ * Mint one, or null when this server does not hand out sessions.
+ *
+ * Null covers every way that can be true and deliberately does not tell them
+ * apart -- an older build, a server with no gate, nothing listening on the http
+ * side -- because the bot does the same thing in all of them: dial anyway and
+ * let the server say whether it wanted a token. The token is returned and never
+ * logged.
+ */
+async function guestSession(origin: string, displayName: string): Promise<GuestSession | null> {
+  try {
+    // The prefix is imported rather than retyped, for the reason `auth-client`
+    // gives about the dev proxy: two literals is two answers to where the
+    // endpoint is, and only one of them gets updated.
+    const response = await fetch(`${origin}${AUTH_PATH_PREFIX}/guest`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ displayName }),
+    });
+    if (!response.ok) return null;
+    const body = (await response.json()) as {
+      session?: { token?: unknown; playerId?: unknown };
+    };
+    const token = String(body.session?.token ?? '');
+    const playerId = String(body.session?.playerId ?? '');
+    return token !== '' && playerId !== '' ? { token, playerId } : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The manifest this checkout was baked to, or '' when it has not been. */
 function assetManifestHash(): string {

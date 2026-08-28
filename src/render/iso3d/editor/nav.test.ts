@@ -13,7 +13,8 @@ import {
 } from '../../../terrain/index.js';
 import { applyTerrainBrush } from './brush.js';
 import { EditHistory } from './history.js';
-import { bakeChunkNav, bakeLayerNav, DEFAULT_WALK_SLOPE, rebakeNav } from './nav.js';
+import { MAX_STEP_HEIGHT, MAX_WALK_SLOPE, NAV_CELL_SIZE } from '../../../sim/constants.js';
+import { bakeChunkNav, bakeLayerNav, NAV_CELL_CLIFF, NAV_CELL_WALK, rebakeNav } from './nav.js';
 
 /**
  * Spec 053. The overlay is only worth looking at if the data behind it is
@@ -52,7 +53,19 @@ function walkableAt(map: LoadedMap, x: number, z: number): boolean {
   const cz = Math.floor(row / OPT.chunkCells);
   const nav = must(map.store.chunkNav(LAYER, cx, cz), 'baked nav');
   const chunk = must(map.store.buildChunk(LAYER, cx, cz), 'the chunk');
-  return nav[(row - chunk.startRow) * chunk.cols + (col - chunk.startCol)] === 1;
+  return nav[(row - chunk.startRow) * chunk.cols + (col - chunk.startCol)] === NAV_CELL_WALK;
+}
+
+/** The band the overlay puts a world point in. */
+function bandAt(map: LoadedMap, x: number, z: number): number {
+  const layer = must(map.store.layerInfo(LAYER), 'the layer');
+  const col = Math.floor((x - layer.bounds.minX) / OPT.cellSize);
+  const row = Math.floor((z - layer.bounds.minZ) / OPT.cellSize);
+  const cx = Math.floor(col / OPT.chunkCells);
+  const cz = Math.floor(row / OPT.chunkCells);
+  const nav = must(map.store.chunkNav(LAYER, cx, cz), 'baked nav');
+  const chunk = must(map.store.buildChunk(LAYER, cx, cz), 'the chunk');
+  return nav[(row - chunk.startRow) * chunk.cols + (col - chunk.startCol)] ?? NAV_CELL_CLIFF;
 }
 
 function countWalkable(map: LoadedMap): number {
@@ -62,7 +75,7 @@ function countWalkable(map: LoadedMap): number {
     for (let cx = 0; cx < layer.grid.chunksX; cx++) {
       const nav = map.store.chunkNav(LAYER, cx, cz);
       if (!nav) continue;
-      for (const flag of nav) if (flag === 1) total++;
+      for (const flag of nav) if (flag === NAV_CELL_WALK) total++;
     }
   }
   return total;
@@ -103,14 +116,31 @@ describe('what is walkable', () => {
     expect(walkableAt(map, 200, 0)).toBe(false);
   });
 
-  it('lowering the limit can only remove walkable cells', () => {
-    const map = loaded([{ kind: 'rolling', amplitude: 60, params: { frequency: 1 / 90 } }]);
-    bakeLayerNav(map.store, LAYER, 1.2);
-    const loose = countWalkable(map);
-    bakeLayerNav(map.store, LAYER, 0.3);
-    const tight = countWalkable(map);
-    expect(tight).toBeLessThan(loose);
-    expect(tight).toBeGreaterThan(0);
+  it('has fewer walked cells on rougher ground', () => {
+    const gentle = loaded([{ kind: 'rolling', amplitude: 6, params: { frequency: 1 / 90 } }]);
+    bakeLayerNav(gentle.store, LAYER);
+    // Rough enough to pass `MAX_WALK_SLOPE`, which is the sim's 2.4 -- steep
+    // ground has to actually be steep, not merely uneven.
+    const rough = loaded([{ kind: 'rolling', amplitude: 900, params: { frequency: 1 / 25 } }]);
+    bakeLayerNav(rough.store, LAYER);
+    expect(countWalkable(rough)).toBeLessThan(countWalkable(gentle));
+    expect(countWalkable(rough)).toBeGreaterThan(0);
+  });
+
+  it('only ever says walked or cliff', () => {
+    const map = loaded([{ kind: 'rolling', amplitude: 900, params: { frequency: 1 / 25 } }]);
+    bakeLayerNav(map.store, LAYER);
+    const layer = must(map.store.layerInfo(LAYER), 'the layer');
+    const seen = new Set<number>();
+    for (let cz = 0; cz < layer.grid.chunksZ; cz++) {
+      for (let cx = 0; cx < layer.grid.chunksX; cx++) {
+        for (const flag of map.store.chunkNav(LAYER, cx, cz) ?? []) seen.add(flag);
+      }
+    }
+    for (const flag of seen) expect([NAV_CELL_CLIFF, NAV_CELL_WALK]).toContain(flag);
+    // Ground this rough has to reach past the walk limit somewhere, or the
+    // assertion above is true of a world with one answer in it.
+    expect(seen.has(NAV_CELL_CLIFF)).toBe(true);
   });
 
   it('is stable: baking twice gives the same answer', () => {
@@ -120,12 +150,6 @@ describe('what is walkable', () => {
     expect([...second]).toEqual([...first]);
   });
 
-  it('resolves a nonsense limit rather than propagating it', () => {
-    const map = loaded();
-    const nav = must(bakeChunkNav(map.store, LAYER, 0, 0, NaN), 'a bake');
-    expect(nav.length).toBeGreaterThan(0);
-  });
-
   it('returns nothing for a chunk that does not exist', () => {
     const map = loaded();
     expect(bakeChunkNav(map.store, LAYER, 99, 99)).toBeNull();
@@ -133,28 +157,54 @@ describe('what is walkable', () => {
   });
 });
 
-describe('the document', () => {
-  it('has no nav before it is baked, and nav on every chunk after', () => {
+describe('the bake', () => {
+  it('fills the store, and leaves the document alone', () => {
+    // Spec 204: baked walkability is runtime state for the editor's overlay and
+    // is not part of the format. It used to ride in every chunk of every map
+    // file and on the wire to every client, for a dev visualisation that is off
+    // by default.
     const map = loaded([{ kind: 'rolling', amplitude: 20 }]);
-    for (const chunk of must(map.doc.layers[0], 'the layer').chunks) expect(chunk.nav).toBeNull();
-
     const layer = must(map.store.layerInfo(LAYER), 'the layer');
-    expect(bakeLayerNav(map.store, LAYER)).toBe(layer.grid.chunksX * layer.grid.chunksZ);
-    for (const chunk of must(map.store.toDocument().layers[0], 'the layer').chunks) {
-      expect(chunk.nav).not.toBeNull();
-      expect(chunk.nav).toHaveLength(chunk.cols * chunk.rows);
+    for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
+      for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
+        expect(map.store.chunkNav(LAYER, cx, cz)).toBeNull();
+      }
     }
+
+    expect(bakeLayerNav(map.store, LAYER)).toBe(layer.grid.chunksX * layer.grid.chunksZ);
+    for (let cz = layer.grid.minCz; cz <= layer.grid.maxCz; cz++) {
+      for (let cx = layer.grid.minCx; cx <= layer.grid.maxCx; cx++) {
+        const nav = map.store.chunkNav(LAYER, cx, cz);
+        expect(nav).not.toBeNull();
+        const shape = must(map.store.chunkShape(LAYER, cx, cz), 'the shape');
+        expect(nav).toHaveLength(shape.cols * shape.rows);
+      }
+    }
+
+    // And none of it reaches the document, however much was baked.
+    const text = JSON.stringify(map.store.toDocument());
+    expect(text).not.toContain('"nav"');
   });
 
-  it('round-trips the baked flags exactly', () => {
+  it('does not survive a document round trip, and does not need to', () => {
+    // The bake is a pure function of the ground it was baked from, which is the
+    // whole argument for spec 204 dropping it from the format: a reloaded map
+    // has none, and baking again reproduces it exactly. Storing it was paying
+    // 10.5% of every map file to avoid work that costs a function call.
     const map = loaded([{ kind: 'hill', x: 0, z: 0, radius: 100, edge: 30, height: 180 }]);
     bakeLayerNav(map.store, LAYER);
     const before = countWalkable(map);
     expect(before).toBeGreaterThan(0);
 
     const reloaded = loadMap(parseMap(serializeMap(map.store.toDocument())));
+    expect(countWalkable(reloaded)).toBe(0);
+    bakeLayerNav(reloaded.store, LAYER);
     expect(countWalkable(reloaded)).toBe(before);
-    // ...and re-exporting is still a fixed point with nav present.
+  });
+
+  it('leaves the serializer a fixed point either way', () => {
+    const map = loaded([{ kind: 'hill', x: 0, z: 0, radius: 100, edge: 30, height: 180 }]);
+    bakeLayerNav(map.store, LAYER);
     const text = serializeMap(map.store.toDocument());
     expect(serializeMap(loadMap(parseMap(text)).store.toDocument())).toBe(text);
   });
@@ -171,9 +221,15 @@ describe('staying current with the ground', () => {
   it('a raised cliff becomes unwalkable, and undo makes it walkable again', () => {
     // The property the overlay's usefulness rests on: after an edit it describes
     // the ground as it is now, not as it was when the map was baked.
+    //
+    // Counted rather than sampled at one coordinate, and the brush is a wall
+    // rather than a mound: `MAX_WALK_SLOPE` is the sim's since spec 228, where
+    // the editor used to pick its own at 0.55, so where the flank of a hill
+    // crosses it is a different place and a fixed probe point measures the
+    // fixture instead of the rule.
     const map = loaded();
     bakeLayerNav(map.store, LAYER);
-    expect(walkableAt(map, 60, 0)).toBe(true);
+    const level = countWalkable(map);
 
     const history = new EditHistory();
     history.beginStroke();
@@ -181,7 +237,7 @@ describe('staying current with the ground', () => {
     for (let i = 0; i < 40; i++) {
       dirty = applyTerrainBrush(
         map.store,
-        { tool: 'raise', radius: 70, strength: 400, falloff: 0.9 },
+        { tool: 'raise', radius: 60, strength: 4000, falloff: 0 },
         {
           layerId: LAYER,
           x: 0,
@@ -194,11 +250,11 @@ describe('staying current with the ground', () => {
     }
     history.endStroke();
     rebakeNav(map.store, LAYER, dirty);
-    expect(walkableAt(map, 60, 0)).toBe(false);
+    expect(countWalkable(map)).toBeLessThan(level);
 
     const { remeshed: restored } = history.undo(map.store);
     rebakeNav(map.store, LAYER, restored);
-    expect(walkableAt(map, 60, 0)).toBe(true);
+    expect(countWalkable(map)).toBe(level);
   });
 
   it('re-bakes each dirty chunk once, however many times it is listed', () => {
@@ -221,10 +277,22 @@ describe('staying current with the ground', () => {
 });
 
 describe('walk limit', () => {
-  it('sits under the classifier\'s dirt threshold', () => {
-    // So ground worn to bare dirt is right at the edge of walkable, and anything
-    // rockier is not -- the three consumers of slope agreeing by construction.
-    expect(DEFAULT_WALK_SLOPE).toBeGreaterThan(0);
-    expect(DEFAULT_WALK_SLOPE).toBeLessThan(0.8);
+  /**
+   * The overlay's threshold is the sim's, by import (spec 228).
+   *
+   * What this replaced asserted `DEFAULT_WALK_SLOPE < 0.8` under a comment
+   * saying it sat under the classifier's *dirt* threshold -- which is 0.45, so
+   * the claim was false and the test could not see it, because it was written
+   * against the rock threshold instead. There is one number now and it is not
+   * the editor's to pick.
+   */
+  it('is the sim\'s own, derived from the step and the nav cell', () => {
+    expect(MAX_WALK_SLOPE).toBe(MAX_STEP_HEIGHT / NAV_CELL_SIZE);
+  });
+
+  it('walks level ground', () => {
+    const map = loaded();
+    bakeLayerNav(map.store, LAYER);
+    expect(bandAt(map, 0, 0)).toBe(NAV_CELL_WALK);
   });
 });

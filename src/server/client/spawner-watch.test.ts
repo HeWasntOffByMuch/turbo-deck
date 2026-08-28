@@ -19,7 +19,7 @@ import { GameClient } from './game-client.js';
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 const file = loadMapFile();
-const built = buildWorldFromMap(file.doc, file.text);
+const built = buildWorldFromMap(file.doc, file.mapId);
 
 function harness(): { server: GameServer; transport: LoopbackTransport } {
   const transport = new LoopbackTransport();
@@ -64,9 +64,24 @@ describe('watching the map spawners', () => {
     for (const [i, status] of seen.entries()) {
       const point = points[i];
       expect(status.monsterId).toBe(point?.monsterId);
-      // Coordinates survive the thousandths encoding exactly.
-      expect(status.x).toBe(point?.x);
-      expect(status.y).toBe(point?.y);
+      // Coordinates survive the thousandths encoding to within its own
+      // resolution -- which is the guarantee the wire actually makes, and is
+      // not the same as "exactly".
+      //
+      // `SpawnerStatus` rides as `varint(round(v * 1000))` and comes back
+      // divided, so what arrives is the nearest thousandth to what was sent.
+      // A spawn point is `layer.origin + chunk * extent + marker.local`, and
+      // that sum lands off the thousandth lattice whenever the addition costs a
+      // low bit: spawner-12's `248 + 465.522` is `713.5219999999999`, which
+      // encodes to 713522 and decodes to a *cleaner* number than the one it
+      // started as. The round trip did not lose the coordinate, it snapped it.
+      //
+      // So the honest assertion is the encoding's own bound, half a thousandth,
+      // which `toBeCloseTo(_, 3)` is exactly. Asserting identity made this test
+      // a hostage to whether a particular marker's arithmetic happened to be
+      // representable, and it failed the moment one was not.
+      expect(status.x).toBeCloseTo(point?.x ?? Number.NaN, 3);
+      expect(status.y).toBeCloseTo(point?.y ?? Number.NaN, 3);
       // Everything is filled on the first tick, so nothing is counting down.
       expect(status.state).toBe(SpawnerStateValue.Occupied);
       expect(status.ticks).toBe(0);

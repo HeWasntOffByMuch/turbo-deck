@@ -29,10 +29,30 @@ function press(button: Button): void {
 
 describe('the vocabulary', () => {
   it('is closed and small', () => {
-    // Seven is a lot for an interface; an eighth should have to argue for itself.
-    expect(UI_SOUNDS).toHaveLength(7);
+    // Eight since spec 229, and this line is the gate rather than a tally: the
+    // rule spec 133 wrote is that an eighth has to argue for itself, and the
+    // argument for `ui.equip` is beside it in `sound.ts`. Anything past eight
+    // fails here and has to make its own.
+    expect(UI_SOUNDS).toHaveLength(8);
     expect(new Set(UI_SOUNDS).size).toBe(UI_SOUNDS.length);
     for (const id of UI_SOUNDS) expect(id.startsWith('ui.')).toBe(true);
+  });
+
+  /**
+   * Every widget sound is a *game* sound too (spec 229).
+   *
+   * `src/ui/` may not import the renderer, so `UiSoundId` and the audio
+   * framework's `SoundEventId` are two declarations of an overlapping set --
+   * and the bridge in `view.ts` is a plain hand-off with no mapping table. A
+   * widget id that named no row would emit into the engine and be dropped in
+   * silence, which is the failure this whole vocabulary exists to make
+   * impossible. Asserted from the renderer's side, in `events.test.ts`, where
+   * the import is allowed.
+   */
+  it('names ids the game can play', () => {
+    // The subset relation is checked in src/render/audio/events.test.ts, which
+    // may import both. Here: the shape that makes that check meaningful.
+    for (const id of UI_SOUNDS) expect(id).toMatch(/^ui\.[a-zA-Z]+$/);
   });
 });
 
