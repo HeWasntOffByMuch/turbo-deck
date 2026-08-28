@@ -520,14 +520,27 @@ that is the one thing it leaves.
 Last, and only once a key login has actually worked:
 
 ```sh
-cat > /etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
+# 00- and not 99-. sshd takes the FIRST value it sees for most keywords, not
+# the last, and cloud images ship a 50-cloud-init.conf carrying
+# `PasswordAuthentication yes` -- which beats anything numbered above it. The
+# symptom is a hardening file that is read, is valid, and does nothing.
+cat > /etc/ssh/sshd_config.d/00-hardening.conf <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
 EOF
+
+# Belt and braces: neutralise the vendor's copy too, so this does not rest on
+# filename ordering alone.
+sed -i 's/^ *PasswordAuthentication .*/PasswordAuthentication no/' \
+  /etc/ssh/sshd_config.d/50-cloud-init.conf 2>/dev/null
+
 systemctl restart ssh
-sshd -T | grep -i passwordauth   # confirm it took: sshd is socket-activated on
-                                 # 24.04+, and a restart does not always reload
+# The only thing that settles it -- `sshd -T` prints the *effective* config,
+# after every include and every ordering rule.
+sshd -T | grep -iE 'passwordauth|kbdinteractive'
+
+apt install -y fail2ban   # the scanners find a new box within minutes
 ```
 
 Verify again from a second terminal *before* closing the first, since a mistake
