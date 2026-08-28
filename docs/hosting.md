@@ -397,6 +397,37 @@ to `authorized_keys` rather than rotating the key you log into everything with.
 Paste `~/.ssh/turbo-deck.pub` — the *personal* one — into OVH's panel at
 install time. The CI key goes on the box in the next step, restricted.
 
+### If you have no domain
+
+You need a **name**, not a domain you paid for. The certificate is issued
+against a name, the client dials a name, and moving the game to a different box
+later is a DNS edit rather than every player needing a new URL.
+
+**Free, and enough: DuckDNS.** Sign in at `duckdns.org` with a GitHub or Google
+account, claim a subdomain, and point it at the VPS's address. That is the
+whole setup — the box has a static public IP, so there is no updater daemon to
+run, and `something.duckdns.org` works with Let's Encrypt's HTTP-01 challenge
+exactly like any other name. Set `SERVER_DOMAIN` to it and nothing else in this
+document changes. `duckdns.org` is on the Public Suffix List, so certificate
+rate limits are counted per subdomain rather than shared with every other user.
+
+**If you want it to look like a real game later**, a `.xyz` or similar is
+€1-3/year at Porkbun or Namecheap, and switching is two edits: `SERVER_DOMAIN`
+in the `.env`, and the `PLAY_SERVER_URL` repository variable. Worth doing
+before strangers bookmark anything; not worth blocking a playtest on.
+
+**What about a certificate for the bare IP?** Let's Encrypt has issued those
+since January 2026, so the idea is no longer impossible — but they carry a
+160-hour lifetime and need the `shortlived` ACME profile, and Caddy cannot
+reliably request one yet (its IP-certificate issue is open, and IPv6 needs an
+unreleased build). Revisit when Caddy ships it; do not build on it now.
+
+**Never a self-signed certificate.** The client is served from GitHub Pages over
+https, so a plain `ws://` is refused as mixed content and a self-signed `wss://`
+is refused outright — and a failed WebSocket TLS handshake gives the browser no
+prompt to click through, so every player would have to visit the https URL by
+hand and accept the certificate before the game would connect at all.
+
 ### If the vendor handed you a password instead
 
 Which is what happens when no key was uploaded at order time. Get your key on
