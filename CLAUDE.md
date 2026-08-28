@@ -1410,6 +1410,60 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
+                 Since spec 251 a window has an **X in its title bar**, and
+                 the interesting part is that nothing had to be invented for it:
+                 `closable`, `onClose` and `requestClose()` have been on
+                 `UiWindow` since spec 124 with `requestClose` reaching no caller
+                 anywhere in the tree, and `icon:close` has been in the atlas
+                 since 123 drawn by nothing. Escape and whichever key opened a
+                 window were the only ways to shut one, and neither is visible.
+                 Its geometry is **derived rather than authored**, from the two
+                 numbers that already set the bar: a square as tall as the body
+                 font, its right edge inset by the same `padding` the title's
+                 left edge is. Centring falls out of the first -- the bar is
+                 `font.height + padding`, so a square of the font's own height
+                 leaves exactly half the padding above and below, which is what
+                 the `heavy` frame's 2px border occupies -- so the X clears the
+                 accent edge on all four sides with no third constant to keep in
+                 step. The same length is reserved out of the title's clip and
+                 out of `minWidthFor`, or spec 147's floor ("a window is never
+                 narrower than its own name") would stop meaning what it says the
+                 moment the name ran under the button.
+                 Three rules, and two of them are about **where a press goes**,
+                 because this is the only control in the framework that lives
+                 inside a drag handle. It **swallows the press**: the router
+                 already sends the *gesture* to whichever widget took it, but
+                 `onEvent` runs on the bubble walk afterwards and
+                 `UiWindow.onEvent` would record a drag origin from a press it
+                 never took -- and nothing clears that, since `dragEnd` goes to
+                 the button, so the next press landing on the window's own
+                 padding band drags it from a stale origin. The comment on that
+                 method has claimed since 124 that "the close button takes the
+                 press first"; this is what makes it true. And **its rest colour
+                 is the title's**: the window's focus picks between `normal` and
+                 `focused` exactly as the name beside it does, because a dim X on
+                 a focused window's accent bar reads as disabled rather than as
+                 quiet -- hover and pressed beat both, and are the only two
+                 states that draw chrome at all, a box around the X at rest being
+                 a second frame inside the one bold thing the interface is
+                 allowed.
+                 The third is one level out and is where the real bug would have
+                 been. **`WindowManager.close` is not the whole of closing.**
+                 `register` aims a window's `onClose` at the manager, which is the
+                 whole story for the gallery and half of one in the game:
+                 `UiScreens.close` tells the server to stop sending a vendor's
+                 stock and cancels a live trade. So `registerWindow` re-points
+                 `onClose` at that method, and the X, Escape and the key that
+                 opened the window are one close with one set of consequences --
+                 without it the X would shut the trade window with the trade
+                 still on, which is exactly the state spec 170 closed for Escape.
+                 What this deliberately does **not** reach is anything that is
+                 not a `UiWindow`: the chat log, the action bar, the
+                 selected-unit readout and the dialogue bubble are docked
+                 furniture with no title bar, and the Play tab's six settings
+                 popovers and every `lil-gui` panel in the editor, the sandboxes,
+                 the Studio tab and the SFX tab are not built on this framework
+                 at all.
                  Since spec 198 a `TabPanel` scrolls its **own body**: each
                  tab's content is wrapped in a scroller when it is built, so the
                  strip is that scroller's *sibling* and **a tab strip is never
