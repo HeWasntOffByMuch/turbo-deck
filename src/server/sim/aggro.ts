@@ -47,28 +47,105 @@ export function isFriendly(entity: ServerEntity): boolean {
   return temperamentOf(entity)?.kind === 'friendly';
 }
 
+/**
+ * Whether this body has given up and is walking home (spec 248).
+ *
+ * The same shape {@link isFriendly} has, and here for the same reason: it is
+ * asked by things that are not about a target at all -- `isHostile`, so nothing
+ * can hit it, and `sim/idle.ts`, so the walk heals. Reading the state rather
+ * than the span, because the state is the claim and the span is the arithmetic
+ * that claim needs; `goHome` and `arriveHome` are what keep the two in step.
+ */
+export function isReturning(entity: ServerEntity): boolean {
+  return entity.aggro === AggroValue.Returning;
+}
+
+/**
+ * Give up on everybody and set off home (spec 248).
+ *
+ * **Idempotent**, and that is not a nicety: `monsterIntent` asks every tick a
+ * body is out past its leash with nobody to fight, and a span re-snapshotted
+ * each time is a ramp that always starts from where it has got to -- a body
+ * that walks the whole way home and heals not one point.
+ *
+ * Gated on the anchor, because the span is measured from it and because a body
+ * with no home has nowhere to be walking to. That is what keeps an
+ * admin-conjured monster and every test-seeded fight behaving exactly as they
+ * did: `beyondLeash` gives up on a null anchor too, so neither end of this can
+ * fire for one.
+ */
+export function goHome(entity: ServerEntity): ServerEntity {
+  if (entity.aggro === AggroValue.Returning) return entity;
+  const anchor = entity.anchor;
+  if (!anchor) return entity;
+  const dx = entity.position.x - anchor.x;
+  const dy = entity.position.y - anchor.y;
+  return {
+    ...entity,
+    targetId: null,
+    aggro: AggroValue.Returning,
+    aggroUntilTick: 0,
+    fleeGoal: null,
+    returnStart: { distance: Math.hypot(dx, dy), health: entity.health },
+  };
+}
+
+/**
+ * Home, and available to be fought again.
+ *
+ * `calm` with a different name, so that the one place a walk home ends says so
+ * rather than saying "calm down" -- and so the pairing this file is responsible
+ * for (`Returning` exactly when `returnStart` is set) has both of its edges in
+ * it. What full health has to do with arriving is `sim/idle.ts`'s to say; this
+ * end of it is the mood.
+ */
+export function arriveHome(entity: ServerEntity): ServerEntity {
+  return calm(entity);
+}
+
 /** Nothing to say about anybody: no target, no clock, nowhere it was bolting. */
 function calm(entity: ServerEntity): ServerEntity {
   if (
     entity.targetId === null &&
     entity.aggro === AggroValue.Calm &&
     entity.aggroUntilTick === 0 &&
-    entity.fleeGoal === null
+    entity.fleeGoal === null &&
+    entity.returnStart === null
   ) {
     return entity;
   }
-  return { ...entity, targetId: null, aggro: AggroValue.Calm, aggroUntilTick: 0, fleeGoal: null };
+  return {
+    ...entity,
+    targetId: null,
+    aggro: AggroValue.Calm,
+    aggroUntilTick: 0,
+    fleeGoal: null,
+    returnStart: null,
+  };
 }
 
 /** Committed: chasing and swinging, until the leash or a death takes it away. */
 function engage(entity: ServerEntity, targetId: number): ServerEntity {
-  if (entity.targetId === targetId && entity.aggro === AggroValue.Engaged && entity.fleeGoal === null) {
+  if (
+    entity.targetId === targetId &&
+    entity.aggro === AggroValue.Engaged &&
+    entity.fleeGoal === null &&
+    entity.returnStart === null
+  ) {
     return entity;
   }
-  // The flight's goal goes with the flight. A body that has turned to fight is
-  // not on its way anywhere, and a stale goal left on it would be picked up by
-  // the next flight instead of being measured from the blow that started it.
-  return { ...entity, targetId, aggro: AggroValue.Engaged, aggroUntilTick: 0, fleeGoal: null };
+  // The flight's goal goes with the flight, and the walk home goes with the walk
+  // home. A body that has turned to fight is not on its way anywhere, and a
+  // stale goal left on it would be picked up by the next flight -- or the next
+  // retreat -- instead of being measured from the moment that started it.
+  return {
+    ...entity,
+    targetId,
+    aggro: AggroValue.Engaged,
+    aggroUntilTick: 0,
+    fleeGoal: null,
+    returnStart: null,
+  };
 }
 
 /**
@@ -112,6 +189,11 @@ export function provoke(target: ServerEntity, attacker: ServerEntity, tick: numb
   // also what an admin conjuring damage reaches, and a friendly body that
   // acquired a target would chase and swing with an ability it has not got.
   if (temperament?.kind === 'friendly') return target;
+  // Unreachable through a blow for the same reason and by the same line
+  // (spec 248): `isHostile` refuses a returning body at both ends. Stated here
+  // too, because a walk home that a conjured blow could turn round would be a
+  // body that is invulnerable *and* chasing you.
+  if (isReturning(target)) return target;
   if (!temperament) {
     // The pre-163 rule, untouched: the first thing to hit you is the thing you
     // hold, and later blows do not steal it.
@@ -206,6 +288,20 @@ export function settle(
   // by something that did not set a mood -- an admin conjuring an attacker, a
   // test seeding a fight -- is committed to it, which is what handing it one
   // meant.
+  // A body walking home has already settled, and only arriving unsettles it
+  // (spec 248). First, so the `!target` line below cannot calm it back into
+  // something `notice` will hand a target to two lines later -- which is the
+  // oscillation that meant the leash never took anything home at all.
+  //
+  // It *clears* a target rather than keeping one, for the reason the two lines
+  // below clear one: `Returning` and `targetId === null` are one state seen from
+  // two sides, and a state that holds only while nobody writes the other half is
+  // a convention rather than an invariant. Nothing in the sim can hand a
+  // returning body a target -- `provoke`, `notice` and `rally` each refuse it --
+  // so what this catches is an admin, a test, or the next way in.
+  if (isReturning(monster)) {
+    return monster.targetId === null ? monster : { ...monster, targetId: null };
+  }
   if (!target) return calm(monster);
   if (monster.aggro === AggroValue.Calm) return engage(monster, target.id);
 

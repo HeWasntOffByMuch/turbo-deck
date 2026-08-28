@@ -13,7 +13,7 @@ import { STARTER_EQUIPMENT, starterInventory } from '../../../server/player/play
 import { InputMap } from '../../../ui/input/input-map.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { ScrollView } from '../../../ui/widgets/scroll-view.js';
-import { CHARACTER_MIN_SIZE, UiScreens, WINDOW_CHROME, type UiScreensOptions } from './ui-screens.js';
+import { CHARACTER_MIN_SIZE, SHOP_MIN_SIZE, UiScreens, WINDOW_CHROME, type UiScreensOptions } from './ui-screens.js';
 import { CharacterScreen } from '../../../ui/screens/character.js';
 import { captureLayout, LAYOUT_VERSION, type StoredLayout } from '../../../ui/core/layout-store.js';
 import type { WindowId } from './control-actions.js';
@@ -323,6 +323,75 @@ describe('what a shop tells the server', () => {
     screens.showShopFor('vendor.quartermaster');
     screens.update(viewFixture({ vendor: null, vendorRevision: 0 }), 0);
     expect(screens.isOpen('shop')).toBe(true);
+  });
+
+  /**
+   * The window is sized from a shop that has stock in it (spec 249).
+   *
+   * The one screen whose contents are a **round trip** away rather than a
+   * frame. Placed at the press it is measured from an empty list and comes out
+   * a sliver -- 135x129 in a browser, kept for the session by `placed` and
+   * written to the layout document to be restored just as small next time.
+   *
+   * Two frames apart here rather than one, because one is what a loopback does
+   * and a loopback is exactly what could not see this.
+   */
+  it('sizes the shop from its stock rather than from an empty list', () => {
+    const { screens } = harness();
+    screens.showShopFor('vendor.quartermaster');
+    // The frame the press landed on: asked for, and not yet answered.
+    screens.update(viewFixture({ vendor: null, vendorRevision: 0 }), 0);
+    const empty = windowSize(screens, 'shop');
+
+    // ...and the frame the stock arrives on.
+    screens.update(
+      viewFixture({
+        vendor: {
+          id: 'vendor.quartermaster',
+          name: 'Quartermaster',
+          stock: [
+            { defId: 'potion.minor', price: 9 },
+            { defId: 'sword.worn', price: 15 },
+            { defId: 'bow.hunting', price: 27 },
+          ],
+          buyback: [],
+        },
+        vendorRevision: 1,
+      }),
+      16,
+    );
+    const stocked = windowSize(screens, 'shop');
+    expect(screens.isOpen('shop')).toBe(true);
+    expect(
+      stocked.width,
+      `the shop was placed at ${empty.width}x${empty.height} and stayed there`,
+    ).toBeGreaterThan(empty.width);
+    expect(stocked.height).toBeGreaterThan(empty.height);
+  });
+
+  /**
+   * The half the placement fix cannot reach (spec 249).
+   *
+   * `saveLayout` captures every window whether it is open or not, so a shop
+   * placed from an empty list by the build that had the bug is *written down* --
+   * and restored just as small by the build that fixed it. `SHOP_MIN_SIZE` is
+   * the floor that makes the sliver un-restorable.
+   */
+  it('will not restore a shop small enough to have been the bug', () => {
+    const layout: StoredLayout = {
+      version: LAYOUT_VERSION,
+      order: ['shop'],
+      windows: [
+        { id: 'shop', x: 16, y: 16, width: 135, height: 129, open: false, pinned: false },
+      ],
+    };
+    const { screens } = harness({ layout });
+    screens.update(viewFixture(), 0);
+    screens.showShopFor('vendor.quartermaster');
+    screens.update(viewFixture(), 16);
+    const box = windowSize(screens, 'shop');
+    expect(box.width).toBeGreaterThanOrEqual(SHOP_MIN_SIZE.width);
+    expect(box.height).toBeGreaterThanOrEqual(SHOP_MIN_SIZE.height);
   });
 
   it('shuts the window when the server answers that there is no shop', () => {

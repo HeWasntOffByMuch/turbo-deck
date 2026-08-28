@@ -62,6 +62,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     leashRadius: 0,
     conversationWith: null,
     fleeGoal: null,
+    returnStart: null,
     resource: 0,
     cast: null,
     cooldowns: {},

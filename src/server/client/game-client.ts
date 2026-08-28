@@ -751,8 +751,37 @@ export class GameClient {
    * {@link vendorView} cannot tell "no answer yet" from "answered, and there is
    * no shop". Which is exactly how the shop window used to open and shut itself
    * on the same frame, forever.
+   *
+   * Only answers that have not been **superseded** count (spec 249); see
+   * {@link vendorAsks}.
    */
   private vendorReplies = 0;
+  /**
+   * How many messages this client has sent that the server answers with a
+   * `VendorState` (spec 249).
+   *
+   * Four do, exactly once each: `OpenVendor`, `BuyItem`, `SellItem` and
+   * `BuyBack`. So over an ordered channel the nth reply answers the nth ask,
+   * and a reply arriving while a later ask is still out is one nobody is
+   * waiting for any more.
+   *
+   * It exists because dropping such a reply is not tidiness -- **closing a shop
+   * is itself an ask**, `openVendor('')`, and its answer is an empty
+   * `VendorState` indistinguishable from "there is no shop here". So shutting
+   * the list and pressing the merchant's reply again put two asks in flight,
+   * and the answer to the *close* landed on the window the *open* had just put
+   * up: `vendorView` back to null with the count moved on, which is precisely
+   * the pair `UiScreens.update` reads as "the server refused" and shuts on. The
+   * shop opened and vanished within a frame or two of the press.
+   *
+   * Invisible over a loopback, where both answers arrive in one batch before
+   * the next frame is drawn and the last one wins -- so every test in the tree
+   * and every probe of the in-tab server passed, and only a real socket with
+   * real latency showed it.
+   */
+  private vendorAsks = 0;
+  /** Answers that were not superseded. What {@link ClientView.vendorRevision} is. */
+  private vendorAnswers = 0;
   /** What the server last said about who this player is talking to (spec 246). */
   private conversationEntityId = 0;
   /** The trade this client is in, or null (spec 132). Replaced whole. */
@@ -1269,6 +1298,7 @@ export class GameClient {
 
   openVendor(vendorId: string): void {
     if (!this.connected) return;
+    this.vendorAsks += 1;
     if (vendorId === '') this.vendorView = null;
     this.channel.send(encodeClientMessage({ type: ClientMessageType.OpenVendor, vendorId }));
   }
@@ -1276,6 +1306,9 @@ export class GameClient {
   buyItem(vendorId: string, defId: string, count = 1): number {
     if (!this.connected) return 0;
     this.shopRequests += 1;
+    // Answered with a `VendorState` as well as an `Inventory`, so it is an ask
+    // the reply count has to know about (spec 249).
+    this.vendorAsks += 1;
     this.channel.send(
       encodeClientMessage({
         type: ClientMessageType.BuyItem,
@@ -1291,6 +1324,9 @@ export class GameClient {
   sellItem(vendorId: string, index: number, count = 1): number {
     if (!this.connected) return 0;
     this.shopRequests += 1;
+    // Answered with a `VendorState` as well as an `Inventory`, so it is an ask
+    // the reply count has to know about (spec 249).
+    this.vendorAsks += 1;
     this.channel.send(
       encodeClientMessage({
         type: ClientMessageType.SellItem,
@@ -1306,6 +1342,9 @@ export class GameClient {
   buyBack(vendorId: string, index: number): number {
     if (!this.connected) return 0;
     this.shopRequests += 1;
+    // Answered with a `VendorState` as well as an `Inventory`, so it is an ask
+    // the reply count has to know about (spec 249).
+    this.vendorAsks += 1;
     this.channel.send(
       encodeClientMessage({
         type: ClientMessageType.BuyBack,
@@ -1968,7 +2007,7 @@ export class GameClient {
       coins: this.coins,
       pendingSwap: this.pendingSwap,
       vendor: this.vendorView,
-      vendorRevision: this.vendorReplies,
+      vendorRevision: this.vendorAnswers,
       conversationEntityId: this.conversationEntityId,
       trade: this.tradeView,
       endedTrade: this.lastTrade,
@@ -2351,7 +2390,17 @@ export class GameClient {
         break;
 
       case ServerMessageType.VendorState:
+        // Superseded: a later ask is still out, so this answers a question
+        // nobody is waiting for (spec 249). Dropped whole -- neither the view
+        // nor the count moves -- because the count is what the shop window
+        // reads as "the server has answered *my* ask", and an empty answer with
+        // the count moved on is exactly what it shuts itself on.
+        if (this.vendorReplies + 1 < this.vendorAsks) {
+          this.vendorReplies += 1;
+          break;
+        }
         this.vendorReplies += 1;
+        this.vendorAnswers += 1;
         this.vendorView =
           message.vendorId === ''
             ? null

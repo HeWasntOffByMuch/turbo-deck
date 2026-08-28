@@ -913,9 +913,13 @@ describe('aggro and the leash', () => {
     }
     expect(broke).toBe(true);
 
-    // ...and then comes back, even though the player never stopped hitting it:
-    // the leash is read before the target, so the grudge is taken straight off
-    // again on the tick after it lands.
+    // ...and then comes back, even though a grudge is forced back onto it every
+    // tick. Since spec 248 the leash does not merely drop the target, it puts
+    // the body in `Returning` -- and `settle` clears a target written onto one
+    // of those, which is what makes "`Returning` and `targetId === null` are one
+    // state" an invariant rather than something nothing happens to violate. What
+    // the walk home *is* lives in `leash-return.test.ts`; this is the original
+    // leash claim, unchanged.
     for (let tick = 0; tick < SERVER_TICK_RATE * 40; tick++) {
       const body = state.entities.get(monster.id);
       if (body) state = replaceEntity(state, { ...body, targetId: player.id });
