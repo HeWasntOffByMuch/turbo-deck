@@ -554,16 +554,23 @@ ssh -v ... 2>&1 | grep -i offering    # client side: was the key even sent
 Point an A record at the box — at the rented box's address, or at your static
 one with 80 and 443 forwarded — then as `deploy`:
 
-Both of these fetch from `main`, so **they 404 until this work is merged**.
-Before then, swap `main` for the branch name in the URLs, or paste the two
-files in by hand — they are 80 lines between them.
+These fetch from `main`, so **they 404 until this work is merged** — before
+then, set `REF` to `refs/heads/<branch>` instead.
+
+Note the `-f`. Without it curl writes the server's error body to the file and
+exits 0, so a 404 leaves you holding a `compose.yml` whose contents are the
+words `404: Not Found`. The way that surfaces is not an error at any point: if
+it happens to the *Caddyfile*, Docker mounts it anyway, Caddy falls back to its
+packaged config, TLS still works, and every request — including the WebSocket
+upgrade — answers **404** from a proxy that has no proxy in it.
 
 ```sh
-mkdir ~/turbo-deck && cd ~/turbo-deck
+mkdir -p ~/turbo-deck/deploy && cd ~/turbo-deck
 # compose.yml and deploy/Caddyfile come from this repo; nothing else does.
-curl -O https://raw.githubusercontent.com/HeWasntOffByMuch/turbo-deck/main/compose.yml
-mkdir -p deploy && curl -o deploy/Caddyfile \
-  https://raw.githubusercontent.com/HeWasntOffByMuch/turbo-deck/main/deploy/Caddyfile
+REF=main
+R=https://raw.githubusercontent.com/HeWasntOffByMuch/turbo-deck/$REF
+curl -fO "$R/compose.yml"
+curl -f -o deploy/Caddyfile "$R/deploy/Caddyfile"
 
 cat > .env <<'EOF'
 SERVER_DOMAIN=play.example.com
