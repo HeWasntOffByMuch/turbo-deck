@@ -169,6 +169,17 @@ export const SCALING = {
     /** How long one `flow` stack lives, and how many may be held. */
     flowTicks: seconds(1.2),
     flowMaxStacks: 3,
+    /**
+     * Cooldown one tier of Mobile Offense takes off, per follow-through walked
+     * out of (spec 252).
+     *
+     * Here rather than in the specialization row for the reason everything in
+     * this file is here: what a tier is worth is a balance decision, and this
+     * one is the number the whole mechanic turns on -- one cancel pays it to
+     * *every* active ability that is cooling, so the same edit reaches the
+     * milestone that deepens it and both ends of the balance harness.
+     */
+    mobileOffenseCooldownTicks: seconds(0.4),
   },
 
   intelligence: {

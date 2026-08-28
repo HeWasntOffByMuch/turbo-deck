@@ -134,6 +134,29 @@ which already meant the four **active abilities** a character equips
 (`skill1..skill4`, `activeSkillId`, `SkillSlot`). Those are untouched and remain
 a separate system with a separate UI.
 
+**Current rule — Mobile Offense pays cooldown, not recovery (spec 252).** The
+row and its milestone are the one place a conversion since 244 has changed what
+a tier is *worth*, and the reason is that the loop was a circle: cancel the
+follow-through, gain Flow, have Flow shorten the follow-through. The player has
+already left the recovery by the time the reward lands, and a shorter backswing
+is fewer ticks in which the trigger can be reached at all — a reward that makes
+its own trigger rarer. The trigger is unchanged; each tier now takes
+`SCALING.agility.mobileOffenseCooldownTicks` (0.4s) off **every active ability
+that is cooling**, and the Agility 35 milestone deepens it by one more tier's
+worth. The basic attack's own entry in `cooldowns` is barred, which is what
+keeps spec 144's rule — cancelling buys movement, never attacks per second —
+true by construction rather than by care, and the flask is barred because its
+pacing is charges as well as a timer.
+
+Flow itself is untouched and keeps its backswing reduction, because Mobile
+Offense is no longer a source of it and two purchases still are: the Agility 20
+milestone that introduces Flow, and the **Flow** specialization at 25, whose
+whole payoff it is. With `flowArmorPct`, `flowWeakPoint`, `flowCostPct` and
+`spellbladeHandling` all in the granted-by-nothing list below, removing
+`flowBackswingPct` would leave the Flow status with no live effect at all and
+two purchases buying nothing — so what Flow is *for* past recovery is a design
+question with content behind it, listed there rather than answered here.
+
 ## 6. Explicit pair synergies
 
 **Removed.** `data/synergies.ts` and its fifteen authored two-attribute bonuses

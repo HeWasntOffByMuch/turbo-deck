@@ -767,6 +767,16 @@ export const NO_QUALITIES: KillQualities = {
   abilityKill: false,
 };
 
+/** What one {@link ServerSimEvent} cooldown refund took off one ability. */
+export interface CooldownRefund {
+  readonly abilityId: string;
+  /** Ticks actually removed -- what the clamp allowed, not what was offered. */
+  readonly ticks: number;
+}
+
+/** Who paid for a cooldown refund. One producer today (spec 252). */
+export const COOLDOWN_REFUND_MOBILE_OFFENSE = 'mobileOffense';
+
 export type ServerSimEvent =
   | {
       readonly kind: 'hit';
@@ -923,6 +933,28 @@ export type ServerSimEvent =
       readonly assist: boolean;
       /** What paid, and how much, as fractions of the base. */
       readonly sources: readonly { readonly reason: string; readonly amount: number }[];
+    }
+  | {
+      /**
+       * Cooldown was taken off a body's active abilities (spec 252).
+       *
+       * Pure instrumentation, in the register `restoration` occupies: nothing
+       * in the sim reads it -- the cooldowns have already moved by the time it
+       * is pushed -- and it carries the breakdown because the balance question
+       * this mechanic raises is *which* abilities got the time, not how much
+       * came off in total. One trigger pays every cooling active ability at
+       * once, so a total with no derivation beside it is exactly the number
+       * that gets retuned in the wrong direction.
+       *
+       * `source` names what paid, so a second producer later cannot silently
+       * make a Mobile Offense count wrong.
+       */
+      readonly kind: 'cooldownRefunded';
+      readonly entityId: number;
+      readonly source: string;
+      /** Total ticks removed, across every ability below. */
+      readonly ticks: number;
+      readonly abilities: readonly CooldownRefund[];
     }
   | {
       /** A mote reached somebody, or faded without doing (spec 156). */

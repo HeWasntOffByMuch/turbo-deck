@@ -18,6 +18,7 @@
  * a harness can collect it and the live server can ignore it at zero cost.
  */
 
+import { abilityById } from '../data/abilities.js';
 import type { ServerSimEvent } from './types.js';
 
 export interface BuildMetrics {
@@ -53,6 +54,30 @@ export interface BuildMetrics {
   readonly ticksRooted: number;
   /** Follow-throughs walked out of. Agility's whole loop, counted. */
   readonly backswingsCancelled: number;
+
+  // --- Mobile Offense (spec 252) ------------------------------------------
+  /**
+   * Cancels that actually **paid**, which is not the same as
+   * {@link backswingsCancelled}.
+   *
+   * A trigger with nothing cooling pays nothing, so the gap between the two is
+   * the number that says whether the mechanic is being *used* or merely being
+   * fired: a build cancelling forty follow-throughs and collecting on three has
+   * a rotation problem, and a build collecting on all forty is the balance
+   * concern this instrumentation exists for.
+   */
+  readonly mobileOffenseTriggers: number;
+  /** Ticks of cooldown removed, summed over every trigger and every ability. */
+  readonly cooldownTicksRefunded: number;
+  /**
+   * The same total, split by ability.
+   *
+   * One trigger reduces every cooling active ability at once, so a total on its
+   * own cannot say whether the time went to a 2s dart or a 24s Scorched Earth --
+   * which is the whole difference between a quality-of-life mechanic and one
+   * that removes a long cooldown from the game.
+   */
+  readonly cooldownRefundedByAbility: Readonly<Record<string, number>>;
   readonly kills: number;
   readonly deaths: number;
   /** Per-ability usage, so "what did this build actually press" is answerable. */
@@ -100,6 +125,9 @@ export const EMPTY_METRICS: BuildMetrics = {
   castsWithdrawn: 0,
   ticksRooted: 0,
   backswingsCancelled: 0,
+  mobileOffenseTriggers: 0,
+  cooldownTicksRefunded: 0,
+  cooldownRefundedByAbility: {},
   kills: 0,
   deaths: 0,
   abilityUses: {},
@@ -116,10 +144,14 @@ export const EMPTY_METRICS: BuildMetrics = {
 
 /** Mutable while a fold is running. Frozen into a {@link BuildMetrics} at the end. */
 type Working = {
-  -readonly [K in keyof Omit<BuildMetrics, 'abilityUses' | 'restorationSources'>]: number;
+  -readonly [K in keyof Omit<
+    BuildMetrics,
+    'abilityUses' | 'restorationSources' | 'cooldownRefundedByAbility'
+  >]: number;
 } & {
   abilityUses: Record<string, number>;
   restorationSources: Record<string, number>;
+  cooldownRefundedByAbility: Record<string, number>;
 };
 
 function working(from: BuildMetrics): Working {
@@ -127,6 +159,7 @@ function working(from: BuildMetrics): Working {
     ...from,
     abilityUses: { ...from.abilityUses },
     restorationSources: { ...from.restorationSources },
+    cooldownRefundedByAbility: { ...from.cooldownRefundedByAbility },
   };
 }
 
@@ -212,6 +245,16 @@ export function foldMetrics(
         }
         break;
       }
+      case 'cooldownRefunded': {
+        if (event.entityId !== entityId) break;
+        next.mobileOffenseTriggers += 1;
+        next.cooldownTicksRefunded += event.ticks;
+        for (const refund of event.abilities) {
+          next.cooldownRefundedByAbility[refund.abilityId] =
+            (next.cooldownRefundedByAbility[refund.abilityId] ?? 0) + refund.ticks;
+        }
+        break;
+      }
       case 'mote':
         if (event.ownerId !== entityId) break;
         if (event.collected) {
@@ -227,7 +270,12 @@ export function foldMetrics(
     }
   }
 
-  return { ...next, abilityUses: next.abilityUses, restorationSources: next.restorationSources };
+  return {
+    ...next,
+    abilityUses: next.abilityUses,
+    restorationSources: next.restorationSources,
+    cooldownRefundedByAbility: next.cooldownRefundedByAbility,
+  };
 }
 
 /** One tick of posture: was this body rooted by its own commitment? */
@@ -290,6 +338,21 @@ export interface BuildSummary {
   readonly resourceRatio: number;
   /** Follow-throughs walked out of, per attack committed. */
   readonly cancelRate: number;
+
+  // --- Mobile Offense (spec 252) ------------------------------------------
+  /** Cooldown removed over the whole fight, in seconds. */
+  readonly cooldownSecondsRefunded: number;
+  /**
+   * How often the build actually got to press an active ability.
+   *
+   * The number the mechanic has to be judged on, and the reason it is *uses*
+   * rather than seconds refunded: time taken off a cooldown that was going to
+   * expire before the next opening is worth nothing, and the difference between
+   * "1.2s off everything" and "the rotation runs faster" only shows up here.
+   * Per minute rather than per fight, because two runs of the harness are not
+   * the same length.
+   */
+  readonly activeAbilityUsesPerMinute: number;
   /** Fraction of the fight spent rooted by one's own commitment. Agility's row. */
   readonly rootedFraction: number;
   readonly kills: number;
@@ -315,6 +378,21 @@ export interface BuildSummary {
   readonly fallbackPerKill: number;
 }
 
+/**
+ * Casts of an *active ability*, which is what `skill: true` means (spec 188).
+ *
+ * Read off the table rather than off a list here, so a thirteenth sigil counts
+ * the moment it is in the game -- and so a basic attack, which shares this
+ * counter, never does.
+ */
+function activeAbilityUses(metrics: BuildMetrics): number {
+  let uses = 0;
+  for (const [abilityId, count] of Object.entries(metrics.abilityUses)) {
+    if (abilityById(abilityId)?.skill === true) uses += count;
+  }
+  return uses;
+}
+
 export function summarise(metrics: BuildMetrics, tickRate: number): BuildSummary {
   const seconds = Math.max(1 / tickRate, metrics.ticks / tickRate);
   const kills = Math.max(1, metrics.kills);
@@ -329,6 +407,8 @@ export function summarise(metrics: BuildMetrics, tickRate: number): BuildSummary
     resourceRatio: metrics.resourceSpent > 0 ? metrics.resourceRestored / metrics.resourceSpent : 0,
     cancelRate:
       metrics.castsCommitted > 0 ? metrics.backswingsCancelled / metrics.castsCommitted : 0,
+    cooldownSecondsRefunded: metrics.cooldownTicksRefunded / tickRate,
+    activeAbilityUsesPerMinute: (activeAbilityUses(metrics) / seconds) * 60,
     rootedFraction: metrics.ticks > 0 ? metrics.ticksRooted / metrics.ticks : 0,
     kills: metrics.kills,
     deaths: metrics.deaths,

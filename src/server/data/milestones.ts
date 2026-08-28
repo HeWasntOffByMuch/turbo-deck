@@ -104,8 +104,14 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_2,
     name: 'Mobile Offense',
-    effect: 'Each Flow stack also cuts 6% off your follow-through.',
-    grants: { traits: { flowBackswingPct: 0.06 } },
+    // Deepens what the specialization now grants (spec 252). It used to grant
+    // Flow's backswing reduction, which was the *whole* of the circle that spec
+    // took apart: the reward for leaving a follow-through was a shorter
+    // follow-through. It is worth one more tier's cooldown instead -- the same
+    // constant the tiers are bought in, so "what is Mobile Offense worth" stays
+    // one edit in `data/scaling.ts` rather than two numbers to keep in step.
+    effect: 'Breaking out of a follow-through takes another 0.4s off your cooling abilities.',
+    grants: { traits: { mobileOffenseCooldownTicks: SCALING.agility.mobileOffenseCooldownTicks } },
     deepens: 'agi.mobileOffense',
   },
   {
