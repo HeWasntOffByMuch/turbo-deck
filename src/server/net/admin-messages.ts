@@ -300,13 +300,13 @@ export interface AdminPlayerRow {
    * bare number nobody can read a fraction off.
    */
   readonly experienceToNextLevel: number;
-  readonly unspentSkillPoints: number;
   /**
-   * The second budget a level grants (spec 147). On the row beside the first
-   * because a level grant moves both, and a console that showed one of them would
-   * make half of what the button did invisible.
+   * The one budget a level grants (spec 244). It was two -- attribute points and
+   * skill points, both on this row because a level grant moved both and a console
+   * that showed one of them would make half of what the button did invisible. One
+   * pool makes that a single column again.
    */
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
 }
 
 /** One row of the item table, so the console offers a list rather than ids. */
@@ -386,8 +386,7 @@ export function encodeAdminReply(reply: AdminReply): Uint8Array {
           .bool(row.muted)
           .varuint(row.experience)
           .varuint(row.experienceToNextLevel)
-          .varuint(row.unspentSkillPoints)
-          .varuint(row.unspentAttributePoints);
+          .varuint(row.unspentProgressionPoints);
       }
       break;
     case AdminReplyType.Config:
@@ -450,8 +449,7 @@ export function decodeAdminReply(frame: Uint8Array): AdminReply {
           muted: reader.bool(),
           experience: reader.varuint(),
           experienceToNextLevel: reader.varuint(),
-          unspentSkillPoints: reader.varuint(),
-          unspentAttributePoints: reader.varuint(),
+          unspentProgressionPoints: reader.varuint(),
         });
       }
       return { type: AdminReplyType.PlayerList, players };

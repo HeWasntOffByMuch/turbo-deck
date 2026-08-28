@@ -39,8 +39,19 @@ export interface Migration {
  * rules already exist there -- `player-manager.ts`'s `migrate` has been doing
  * exactly this for the fields it knows about since long before there was a
  * database, and a second set of them in SQL would be a second answer.
+ *
+ * **2 is not an upgrade from 1** (spec 244). The progression rewrite replaced two
+ * point pools with one and thirty-six skill ranks with specialization tiers, and
+ * a save at version 1 describes a character in a shape whose fields no longer
+ * mean anything -- `unspentSkillPoints` against a pool that no longer exists,
+ * ranks against a currency that does not. There is deliberately **no conversion
+ * code**: the game is in development, the only saves at version 1 are local
+ * development characters, and a migration written to preserve a handful of them
+ * is a migration to be maintained forever. `rowToPlayer` refuses such a row by
+ * name so the failure says what to do about it rather than producing a character
+ * with a nonsense budget.
  */
-export const PLAYER_SAVE_VERSION = 1;
+export const PLAYER_SAVE_VERSION = 2;
 
 export const MIGRATIONS: readonly Migration[] = [
   {

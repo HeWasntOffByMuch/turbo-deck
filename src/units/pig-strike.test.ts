@@ -183,7 +183,7 @@ describe('the stance the swing is thrown from', () => {
     // two thirds, because the left foot was sliding the other way underneath it
     // -- so a right leg that barely moved scored as a full step.
     //
-    // The two numbers are spec 244's and are smaller than spec 143's 0.08 and
+    // The two numbers are spec 245's and are smaller than spec 143's 0.08 and
     // 0.22, which were measured with this foot **0.077 above the ground**. On
     // the floor the step is bounded twice over, and neither bound is a taste.
     // Reaching back, the leg cannot put its ankle more than 0.079 from under its
@@ -206,7 +206,7 @@ describe('the stance the swing is thrown from', () => {
 });
 
 describe('the stance has weight on it', () => {
-  // Spec 244. Everything here is sampled every 5ms rather than at the seven
+  // Spec 245. Everything here is sampled every 5ms rather than at the seven
   // keys, because two legal keys can interpolate through an illegal pose --
   // a knee that straightens through the middle of a slerp is exactly the sort
   // of thing a key-by-key check reports as fine.

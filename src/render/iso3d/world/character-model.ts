@@ -6,34 +6,51 @@
  * replicated facts and the content tables into plain rows.
  *
  * The one decision here worth arguing about is that `canSpend` is answered by
- * `validateSkillSpend` -- the server's own function -- rather than by a copy of
- * the tier rules written for the UI. A greyed-out button and a refused request
- * then cannot disagree, and the tooltip that says *why* says what the server
- * would have said.
+ * `validateSpecializationSpend` -- the server's own function -- rather than by a
+ * copy of the milestone rules written for the UI. A greyed-out button and a
+ * refused request then cannot disagree, and the tooltip that says *why* says what
+ * the server would have said.
+ *
+ * What this file builds since spec 244 is **six tracks**, and the shape of a
+ * track comes from `data/tracks.ts` rather than from anything here: which
+ * thresholds exist and what sits on each is content, and this is where a
+ * character is placed on it. Nothing about *layout* is decided here or sent over
+ * the wire -- no coordinates, no ordering beyond the tables' own -- because the
+ * client owns how a track is drawn and the server owns what one is.
  *
  * Pure and headlessly tested.
  */
 
 import { abilityById } from '../../../server/data/abilities.js';
 import { ATTRIBUTES, type AttributeKey } from '../../../server/data/attributes.js';
-import { skillById, skillsFor, type SkillDefinition } from '../../../server/data/skills.js';
-import { describeStatSkill, technicalText } from '../../../server/data/description.js';
+import {
+  specializationById,
+  type SpecializationDefinition,
+} from '../../../server/data/specializations.js';
+import { describeSpecialization, technicalText } from '../../../server/data/description.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
 import { RESPEC_COST, pointsSpent, validateAttributeSpend } from '../../../server/player/attributes.js';
 import { milestoneProgress } from '../../../server/player/progression.js';
-import { levelOf, validateSkillSpend } from '../../../server/player/skills.js';
+import { trackFor } from '../../../server/data/tracks.js';
+import {
+  costOfNextTier,
+  tierOf,
+  totalSpecializationTiers,
+  validateSpecializationSpend,
+} from '../../../server/player/specializations.js';
 import { attackTimingFor } from '../../../server/sim/abilities.js';
 import { resolveAttackTiming, type AttackTiming } from '../../../server/sim/attack-timing.js';
 import type {
   BaseStats,
   EffectiveStats,
-  SkillAllocation,
+  SpecializationAllocation,
 } from '../../../server/state/types.js';
 import type { AbilityView, HudView } from '../../../ui/screens/hud.js';
 import type {
-  AttributeRowView,
-  BranchView,
   CharacterView,
+  SpecializationView,
+  TrackNodeView,
+  TrackView,
 } from '../../../ui/screens/character.js';
 
 /** Ticks per second, for turning a cooldown into the seconds a player reads. */
@@ -287,147 +304,167 @@ export interface CharacterSource {
   readonly name: string;
   readonly level: number;
   readonly experience: number;
-  readonly unspentSkillPoints: number;
-  readonly skills: readonly SkillAllocation[];
+  /** The one pool (spec 244), replicated on the `Stats` message. */
+  readonly unspentProgressionPoints: number;
+  readonly specializations: readonly SpecializationAllocation[];
   readonly stats: EffectiveStats;
   /** The progression half (spec 147), replicated on the `Stats` message. */
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
-  readonly unspentAttributePoints: number;
   readonly coins: number;
 }
 
 /**
- * The six attribute rows.
+ * What a specialization's tooltip says (spec 191).
  *
- * `canAllocate` goes through `validateAttributeSpend` -- the server's own
- * function -- for the reason `canSpend` goes through `validateSkillSpend`: a
- * greyed-out "+" and a refused request must not be able to disagree, and the
- * tooltip that says why should say what the server would have said.
- *
- * `nextEffect` is the milestone's own `effect` string, so the sentence a player
- * reads is the sentence the designer wrote beside the grant rather than a second
- * description of it kept in the UI.
+ * Newline-joined rather than structured, because `SpecializationView.description`
+ * is a string and `SpecializationRow.tooltip` splits it back into the lines the
+ * `Tooltip` widget wraps individually. Keeping it a string is what lets the stat
+ * lines go on answering `hintAt` exactly as they did.
  */
-export function attributeRowsOf(source: CharacterSource): readonly AttributeRowView[] {
-  const stand = {
+function specializationTooltip(
+  specialization: SpecializationDefinition,
+  tier: number,
+): string {
+  const described = describeSpecialization(specialization, tier);
+  const body = technicalText(described);
+  return described.flavor === null ? body : `${body}\n"${described.flavor}"`;
+}
+
+/**
+ * The six tracks.
+ *
+ * `canAdvance` goes through `validateAttributeSpend` and `canSpend` through
+ * `validateSpecializationSpend` -- the server's own functions, against the
+ * client's copy of the record -- so a greyed-out "+" and a refused request cannot
+ * disagree, and the tooltip that says why says what the server would have said.
+ *
+ * `nextEffect` and a milestone's `effect` are the tables' own strings, so the
+ * sentence a player reads is the sentence the designer wrote beside the grant
+ * rather than a second description of it kept in the UI.
+ *
+ * Both validators want a whole `PersistedPlayer` and this side has a fragment of
+ * one, so a stand-in is built from the fields each actually reads. Deliberately a
+ * local shim rather than a looser signature on the server's functions: the rule
+ * belongs to the server and bending it to suit a caller is how a rule stops being
+ * one.
+ */
+export function tracksOf(source: CharacterSource): readonly TrackView[] {
+  const totals = source.attributes as unknown as Record<AttributeKey, number>;
+  const attributeStand = {
     baseStats: source.baseStats,
-    unspentAttributePoints: source.unspentAttributePoints,
+    unspentProgressionPoints: source.unspentProgressionPoints,
   };
-  const progress = milestoneProgress(source.attributes as unknown as Record<AttributeKey, number>);
+  const specializationStand = {
+    specializations: source.specializations,
+    unspentProgressionPoints: source.unspentProgressionPoints,
+  };
+  const progress = milestoneProgress(totals);
+
   return ATTRIBUTES.map((definition) => {
-    const check = validateAttributeSpend(stand, definition.key);
+    const advance = validateAttributeSpend(attributeStand, definition.key);
     const mine = progress.find((entry) => entry.attribute === definition.key);
+    const total = source.attributes[definition.key];
+    const track = trackFor(definition.key);
+
+    const nodes: TrackNodeView[] = track.nodes.map((node) => ({
+      threshold: node.threshold,
+      reached: total >= node.threshold,
+      milestone:
+        node.milestone === null
+          ? null
+          : { name: node.milestone.name, effect: node.milestone.effect },
+      specializations: node.specializations.map((specialization): SpecializationView => {
+        const tier = tierOf(source.specializations, specialization.id);
+        const check = validateSpecializationSpend(specializationStand, totals, specialization.id);
+        return {
+          id: specialization.id,
+          name: specialization.name,
+          tier,
+          maxTier: specialization.maxTier,
+          cost: costOfNextTier(specialization),
+          // Its own threshold rather than the node's, because Mastery lowers a
+          // tier-3 requirement and a specialization a character can actually buy
+          // must not be drawn as locked.
+          unlocked: check.ok || check.reason !== 'attributeTooLow',
+          // The Technical Description, derived (spec 191). It replaces
+          // `description (trigger)`, which was the authored sentence and the
+          // authored trigger and not one number -- so a player could read that
+          // Crushing Blows made their blows "carry more weight" and never that it
+          // was +18% Guard damage a tier.
+          description: specializationTooltip(specialization, tier),
+          canSpend: check.ok,
+          blockedBecause: check.ok ? '' : check.detail,
+        };
+      }),
+    }));
+
+    // The *next* threshold on the track, which is not the same question
+    // `milestoneProgress` answers: that one walks the automatic milestones alone,
+    // and a track's next interesting number can be a specialization threshold
+    // ten points below the next milestone. The sentence still comes from the
+    // milestone where there is one, since a threshold that only unlocks a
+    // purchase has no authored effect line of its own -- the specializations
+    // under it are the answer, and they are drawn right there.
+    const next = nodes.find((node) => !node.reached) ?? null;
     return {
       key: definition.key,
       // The name alone. It used to read "STR  Strength", and on a window this
       // narrow the redundant three letters pushed the value column into it.
       name: definition.name,
       abbrev: definition.abbrev,
+      from: track.from,
       // The verb and what it owns, from the table rather than written here --
       // `owns` is already the reviewed list of what an attribute is the source
       // of, and a second description beside it is a second thing to keep true.
       description: `${definition.verb}. ${sentenceCase(definition.owns.join(', '))}.`,
       allocated: source.baseStats[definition.key],
-      total: source.attributes[definition.key],
-      canAllocate: check.ok,
-      blockedBecause: check.ok ? '' : check.detail,
-      nextEffect: mine?.next ? `${mine.next.name} — ${mine.next.effect}` : '',
-      toNext: mine?.remaining ?? 0,
-      active: (mine?.met ?? []).map((milestone) => milestone.name),
+      total,
+      canAdvance: advance.ok,
+      blockedBecause: advance.ok ? '' : advance.detail,
+      nextThreshold: next?.threshold ?? 0,
+      toNext: next ? Math.max(0, next.threshold - total) : 0,
+      nextEffect: mine?.next ? `${mine.next.name}: ${mine.next.effect}` : '',
+      tiersBought: totalSpecializationTiers(
+        source.specializations.filter(
+          (allocation) =>
+            specializationById(allocation.specializationId)?.attribute === definition.key,
+        ),
+      ),
+      nodes,
     };
   });
 }
 
-/**
- * What a skill row's tooltip says (spec 191).
- *
- * Newline-joined rather than structured, because `SkillView.description` is a
- * string and `SkillRow.tooltip` splits it back into the lines the `Tooltip`
- * widget wraps individually. Keeping it a string is what lets the attribute
- * rows and the stat lines go on answering `hintAt` exactly as they did.
- */
-function skillTooltip(skill: SkillDefinition, level: number): string {
-  const described = describeStatSkill(skill, level);
-  const body = technicalText(described);
-  return described.flavor === null ? body : `${body}\n"${described.flavor}"`;
-}
-
-/** The attuned tree, as one `BranchView` per attribute (spec 147). */
-export function skillBranchesOf(source: CharacterSource): readonly BranchView[] {
-  const totals = source.attributes as unknown as Record<AttributeKey, number>;
-  const stand = { skills: source.skills, unspentSkillPoints: source.unspentSkillPoints };
-  return ATTRIBUTES.map((definition) => ({
-    id: `attr:${definition.key}`,
-    name: definition.abbrev,
-    pointsSpent: source.skills
-      .filter((allocation) => skillById(allocation.skillId)?.attribute === definition.key)
-      .reduce((sum, allocation) => sum + allocation.level, 0),
-    skills: skillsFor(definition.key).map((skill) => {
-      const check = validateSkillSpend(stand, totals, skill.id);
-      return {
-        id: skill.id,
-        name: skill.name,
-        tier: skill.tier,
-        level: levelOf(source.skills, skill.id),
-        maxLevel: skill.maxLevel,
-        // The Technical Description, derived (spec 191). It replaces
-        // `description (trigger)`, which was the authored sentence and the
-        // authored trigger and not one number -- so a player could read that
-        // Crushing Blows made their blows "carry more weight" and never that it
-        // was +18% Guard damage a rank. The flavour is still here and still
-        // last, separated by the quotes rather than run into the mechanics.
-        description: skillTooltip(skill, levelOf(source.skills, skill.id)),
-        canSpend: check.ok,
-        blockedBecause: check.ok ? '' : check.detail,
-      };
-    }),
-  }));
-}
-
-/**
- * The sheet, from what the client was told.
- *
- * `validateSkillSpend` wants a whole `PersistedPlayer` and this side has a
- * fragment of one, so a stand-in is built from the fields it actually reads --
- * skills, level and unspent points. Deliberately a local shim rather than a
- * looser signature on the server's function: the rule belongs to the server and
- * bending it to suit a caller is how a rule stops being one.
- */
+/** The sheet, from what the client was told. */
 export function characterViewOf(source: CharacterSource): CharacterView {
   return {
     name: source.name,
     level: source.level,
     experience: { current: source.experience, toNext: experienceForLevel(source.level + 1) },
-    unspentPoints: source.unspentSkillPoints,
-    unspentAttributePoints: source.unspentAttributePoints,
+    unspentPoints: source.unspentProgressionPoints,
     stats: STAT_ROWS.map((row) => ({
       label: row.label,
       value: row.of(source.stats),
       hint: row.hint,
     })),
-    attributes: attributeRowsOf(source),
-    // No pair list, and deliberately none (spec 147). The fifteen two-attribute
-    // interactions are *live* -- they are in the sim and they are in the derived
-    // traits -- and they are not named on this screen. Printing "Duelist: each
-    // Flow stack grants 4% damage reduction" turns a discovery into a menu, and
-    // the whole premise of the design is that a player asks "how do I want to
-    // solve problems" rather than "which of the fifteen am I building toward".
-    // What a player is told is what their own attributes do next; what a pair
-    // does, they find out by having one.
-    branches: skillBranchesOf(source),
+    tracks: tracksOf(source),
     respec: {
       cost: RESPEC_COST,
       // Both halves of the server's own rule, run against the client's copy:
-      // there has to be something to hand back, and the purse has to cover it.
-      enabled: pointsSpent(source.baseStats) > 0 && source.coins >= RESPEC_COST,
+      // there has to be something to hand back -- attributes or tiers, since spec
+      // 244 refunds both together -- and the purse has to cover it.
+      enabled:
+        (pointsSpent(source.baseStats) > 0 ||
+          totalSpecializationTiers(source.specializations) > 0) &&
+        source.coins >= RESPEC_COST,
     },
   };
 }
 
 /** A skill's definition, for a caller that wants a name without the whole view. */
 export function skillNameOf(id: string): string {
-  return skillById(id)?.name ?? id;
+  return specializationById(id)?.name ?? id;
 }
 
 /**

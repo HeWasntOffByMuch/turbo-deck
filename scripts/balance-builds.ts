@@ -157,10 +157,13 @@ function bareRecordFor(preset: BuildPreset): PersistedPlayer {
     id: preset.id,
     displayName: preset.name,
     baseStats: fullSpreadOf(preset).attributes as unknown as BaseStats,
-    // Deliberately no skills. The comparison is between *attribute spreads*;
-    // adding a hand-picked tree to each build would make the table a comparison
-    // between whoever picked the trees.
-    skills: [],
+    // Whatever the preset's `tierShare` bought out of the same pool (spec 244).
+    // Twelve of the presets spend nothing here and are the *attribute*
+    // comparison, unchanged; the four `spend.*` rows are the new axis. Which
+    // tiers a spending preset takes is derived from the tables -- lowest
+    // threshold first -- rather than hand-picked, so the table stays a
+    // comparison between policies and not between whoever picked the trees.
+    specializations: fullSpreadOf(preset).specializations,
     // The starter kit rather than bare hands (spec 217). Every character in the
     // game begins holding `sword.worn`, and since a weapon now carries the
     // damage a swing does, an empty-handed preset measures a build punching --
@@ -174,8 +177,7 @@ function bareRecordFor(preset: BuildPreset): PersistedPlayer {
     currentZone: 'greenmarch',
     level: preset.level,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 0,
     resource: 0,
     coins: 0,
@@ -547,8 +549,7 @@ for (const row of rows) {
   const record = recordFor(row.preset);
   const progression = resolveProgression(record);
   const reached = progression.milestones.map((m) => m.name);
-  const pairs = progression.synergies.map((s) => s.name);
-  console.log(`  ${pad(row.preset.name, 16)}${[...reached, ...pairs].join(', ') || '(nothing)'}`);
+  console.log(`  ${pad(row.preset.name, 16)}${reached.join(', ') || '(nothing)'}`);
 }
 
 console.log('\n  Nearest unreached milestone, per build:\n');

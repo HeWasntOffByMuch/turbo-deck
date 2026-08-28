@@ -10,12 +10,13 @@
 
 import { describe, expect, it } from 'vitest';
 import { abilityById, ALL_ABILITIES } from '../../../server/data/abilities.js';
-import { ATTRIBUTES } from '../../../server/data/attributes.js';
-import { ALL_SKILLS, skillsFor } from '../../../server/data/skills.js';
-import { ALL_SYNERGIES } from '../../../server/data/synergies.js';
-import { validateSkillSpend } from '../../../server/player/skills.js';
+import { allAttributePairs, ATTRIBUTES } from '../../../server/data/attributes.js';
+import { ALL_MILESTONES } from '../../../server/data/milestones.js';
+import { ALL_SPECIALIZATIONS, specializationsFor } from '../../../server/data/specializations.js';
+import { validateSpecializationSpend } from '../../../server/player/specializations.js';
+import { validateAttributeSpend } from '../../../server/player/attributes.js';
 import { experienceForLevel } from '../../../server/player/player-manager.js';
-import type { BaseStats, EffectiveStats, SkillAllocation } from '../../../server/state/types.js';
+import type { BaseStats, EffectiveStats, SpecializationAllocation } from '../../../server/state/types.js';
 import { bakeAtlas } from '../../../ui/render/atlas.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import {
@@ -62,7 +63,7 @@ const STATS: EffectiveStats = {
 };
 
 function source(
-  skills: readonly SkillAllocation[],
+  specializations: readonly SpecializationAllocation[],
   unspent = 3,
   level = 6,
   overrides: Partial<CharacterSource> = {},
@@ -71,12 +72,11 @@ function source(
     name: 'Kestrel',
     level,
     experience: 40,
-    unspentSkillPoints: unspent,
-    skills,
+    specializations,
     stats: STATS,
     baseStats: startingBaseStats(),
     attributes: startingBaseStats(),
-    unspentAttributePoints: 4,
+    unspentProgressionPoints: unspent,
     coins: 100,
     ...overrides,
   };
@@ -167,17 +167,24 @@ describe('ability art', () => {
 });
 
 describe('the character view', () => {
-  it('shows every branch and every skill in the table', () => {
+  it('shows every track, every node and every specialization in the tables', () => {
     const view = characterViewOf(source([]));
-    const shown = view.branches.flatMap((branch) => branch.skills.map((skill) => skill.id));
-    expect(new Set(shown)).toEqual(new Set(ALL_SKILLS.map((skill) => skill.id)));
+    expect(view.tracks).toHaveLength(6);
+    const shown = view.tracks.flatMap((track) =>
+      track.nodes.flatMap((node) => node.specializations.map((s) => s.id)),
+    );
+    expect(new Set(shown)).toEqual(new Set(ALL_SPECIALIZATIONS.map((s) => s.id)));
+    const milestones = view.tracks.flatMap((track) =>
+      track.nodes.map((node) => node.milestone?.name ?? null).filter((n): n is string => n !== null),
+    );
+    expect(milestones).toHaveLength(ALL_MILESTONES.length);
   });
 
-  it('orders a branch by tier, so a tree reads top to bottom', () => {
+  it('orders a track by threshold, so it reads left to right', () => {
     const view = characterViewOf(source([]));
-    for (const branch of view.branches) {
-      const tiers = branch.skills.map((skill) => skill.tier);
-      expect([...tiers].sort((a, b) => a - b)).toEqual(tiers);
+    for (const track of view.tracks) {
+      const thresholds = track.nodes.map((node) => node.threshold);
+      expect([...thresholds].sort((a, b) => a - b), track.key).toEqual(thresholds);
     }
   });
 
@@ -185,86 +192,125 @@ describe('the character view', () => {
    * The assertion this file exists for. Anything else and a player clicks a
    * button that looks live and gets a refusal.
    */
-  it('enables exactly what the server would accept, over every skill', () => {
-    const cases: readonly { skills: SkillAllocation[]; unspent: number }[] = [
-      { skills: [], unspent: 0 },
-      { skills: [], unspent: 1 },
-      { skills: [{ skillId: 'str.crushingBlows', level: 1 }], unspent: 4 },
-      { skills: [{ skillId: 'str.crushingBlows', level: 3 }], unspent: 4 },
-      { skills: [{ skillId: 'agi.quickRecovery', level: 2 }], unspent: 9 },
-      // An allocation naming a skill the table has dropped -- which is exactly
-      // what every save written before spec 147 holds, since `might.toughness`
-      // and its branch are gone. The sheet still has to answer for every *other*
-      // skill rather than throwing on the way past.
-      { skills: [{ skillId: 'might.toughness', level: 2 }], unspent: 9 },
+  it('enables exactly what the server would accept, over every specialization', () => {
+    const cases: readonly {
+      specializations: SpecializationAllocation[];
+      unspent: number;
+    }[] = [
+      { specializations: [], unspent: 0 },
+      { specializations: [], unspent: 1 },
+      { specializations: [{ specializationId: 'str.crushingBlows', tier: 1 }], unspent: 4 },
+      { specializations: [{ specializationId: 'str.crushingBlows', tier: 3 }], unspent: 4 },
+      { specializations: [{ specializationId: 'agi.quickRecovery', tier: 2 }], unspent: 9 },
+      // An allocation naming a specialization the table has dropped. The sheet
+      // still has to answer for every *other* one rather than throwing past it.
+      { specializations: [{ specializationId: 'might.toughness', tier: 2 }], unspent: 9 },
       {
-        skills: skillsFor('wisdom')
-          .filter((skill) => skill.tier === 1)
-          .map((skill) => ({ skillId: skill.id, level: 1 })),
+        specializations: specializationsFor('wisdom')
+          .filter((s) => s.tier === 1)
+          .map((s) => ({ specializationId: s.id, tier: 1 })),
         unspent: 6,
       },
     ];
 
     for (const item of cases) {
-      const built = source(item.skills, item.unspent);
+      const built = source(item.specializations, item.unspent);
       const view = characterViewOf(built);
-      const stand = { skills: item.skills, unspentSkillPoints: item.unspent };
+      const stand = {
+        specializations: item.specializations,
+        unspentProgressionPoints: item.unspent,
+      };
       const totals = built.attributes as unknown as Record<string, number>;
 
-      for (const branch of view.branches) {
-        for (const skill of branch.skills) {
-          const truth = validateSkillSpend(stand, totals as never, skill.id);
-          expect(skill.canSpend, `${skill.id} with ${JSON.stringify(item)}`).toBe(truth.ok);
-          if (!truth.ok) expect(skill.blockedBecause).toBe(truth.detail);
+      for (const track of view.tracks) {
+        for (const node of track.nodes) {
+          for (const specialization of node.specializations) {
+            const truth = validateSpecializationSpend(stand, totals as never, specialization.id);
+            expect(
+              specialization.canSpend,
+              `${specialization.id} with ${JSON.stringify(item)}`,
+            ).toBe(truth.ok);
+            if (!truth.ok) expect(specialization.blockedBecause).toBe(truth.detail);
+          }
         }
       }
     }
   });
 
-  it('has one column per attribute and no locks anywhere in it', () => {
-    // Spec 056's branch tree locked two of its three columns out of each other.
-    // This one has six columns and nothing forecloses anything: what gates a
-    // skill is the attribute you built, which you can always build more of.
-    const view = characterViewOf(source([]));
-    expect(view.branches).toHaveLength(6);
-    expect(view.branches.map((branch) => branch.id)).toEqual(
-      ATTRIBUTES.map((attribute) => `attr:${attribute.key}`),
-    );
-    for (const branch of view.branches) {
-      expect(branch.skills).toHaveLength(6);
-      expect('locked' in branch).toBe(false);
+  it('enables the track "+" exactly when the server would take the point', () => {
+    for (const unspent of [0, 1, 5]) {
+      const built = source([], unspent);
+      const view = characterViewOf(built);
+      for (const track of view.tracks) {
+        const truth = validateAttributeSpend(
+          { baseStats: built.baseStats, unspentProgressionPoints: unspent },
+          track.key,
+        );
+        expect(track.canAdvance, `${track.key} with ${unspent}`).toBe(truth.ok);
+        if (!truth.ok) expect(track.blockedBecause).toBe(truth.detail);
+      }
     }
   });
 
-  it('never names a two-attribute pair, anywhere in the view', () => {
+  it('spends on a specialization without moving the attribute (spec 244)', () => {
+    // The rule the whole model rests on, checked where a player would see it.
+    const before = characterViewOf(source([], 4));
+    const after = characterViewOf(
+      source([{ specializationId: 'str.crushingBlows', tier: 1 }], 3),
+    );
+    const strengthBefore = before.tracks.find((t) => t.key === 'strength');
+    const strengthAfter = after.tracks.find((t) => t.key === 'strength');
+    expect(strengthAfter?.total).toBe(strengthBefore?.total);
+    expect(strengthAfter?.allocated).toBe(strengthBefore?.allocated);
+    expect(after.unspentPoints).toBe((before.unspentPoints ?? 0) - 1);
+  });
+
+  it('has one track per attribute and no locks anywhere in it', () => {
+    // Spec 056's branch tree locked two of its three columns out of each other.
+    // Nothing forecloses anything here: what gates a specialization is the
+    // attribute you built, which you can always build more of.
+    const view = characterViewOf(source([]));
+    expect(view.tracks.map((track) => track.key)).toEqual(
+      ATTRIBUTES.map((attribute) => attribute.key),
+    );
+    for (const track of view.tracks) {
+      expect('locked' in track, track.key).toBe(false);
+      const specializations = track.nodes.flatMap((node) => node.specializations);
+      expect(specializations, track.key).toHaveLength(6);
+    }
+  });
+
+  it('never names a two-attribute pair, anywhere in the view (spec 244)', () => {
     // The design rule, checked against the whole serialised view rather than
-    // against the field that used to hold the list -- so re-introducing it under
-    // any name fails here (spec 147).
+    // against a field -- so re-introducing it under any name fails here. The
+    // fifteen authored bonuses are gone from the rules too, so this is now a
+    // check that the UI has not grown its own copy.
     const built: BaseStats = {
       strength: 30, agility: 30, intelligence: 30,
       constitution: 30, perception: 30, wisdom: 30,
     };
     const view = characterViewOf(source([], 4, 6, { attributes: built, baseStats: built }));
-    const drawn = JSON.stringify(view);
-    for (const synergy of ALL_SYNERGIES) {
-      expect(drawn.includes(synergy.name), `the view names "${synergy.name}"`).toBe(false);
+    const drawn = JSON.stringify(view).toLowerCase();
+    expect(drawn).not.toContain('synerg');
+    for (const [a, b] of allAttributePairs()) {
+      expect(drawn.includes(`${a}+${b}`), `${a}+${b}`).toBe(false);
     }
   });
 
-  it('describes every attribute whether or not there is a point to spend', () => {
+  it('describes every track whether or not there is a point to spend', () => {
     // The tooltip used to be the *refusal* when a row could not be allocated to,
     // so a character between two level-ups -- which is nearly always -- read "no
-    // unspent attribute points" on all six rows. A budget is not an explanation,
-    // so the description is unconditional and comes off the table's own `owns`.
+    // unspent points" on all six rows. A budget is not an explanation, so the
+    // description is unconditional and comes off the table's own `owns`.
     for (const points of [0, 3]) {
-      const view = characterViewOf(source([], 4, 6, { unspentAttributePoints: points }));
-      expect(view.unspentAttributePoints).toBe(points);
-      for (const [index, row] of view.attributes.entries()) {
+      const view = characterViewOf(source([], points));
+      expect(view.unspentPoints).toBe(points);
+      for (const [index, track] of view.tracks.entries()) {
         const definition = ATTRIBUTES[index];
         if (!definition) throw new Error(`no attribute ${index}`);
-        expect(row.description, row.key).toContain(definition.verb);
+        expect(track.description, track.key).toContain(definition.verb);
         for (const owned of definition.owns) {
-          expect(row.description.toLowerCase(), row.key).toContain(owned.toLowerCase());
+          expect(track.description.toLowerCase(), track.key).toContain(owned.toLowerCase());
         }
       }
     }
@@ -287,9 +333,37 @@ describe('the character view', () => {
     expect(speed?.hint).toContain('weapon');
   });
 
-  it('counts what is in a column, so the investment is legible', () => {
-    const view = characterViewOf(source([{ skillId: 'str.crushingBlows', level: 3 }], 1));
-    expect(view.branches.find((branch) => branch.id === 'attr:strength')?.pointsSpent).toBe(3);
+  it('counts what is in a track, so the investment is legible', () => {
+    const view = characterViewOf(source([{ specializationId: 'str.crushingBlows', tier: 3 }], 1));
+    expect(view.tracks.find((track) => track.key === 'strength')?.tiersBought).toBe(3);
+    expect(view.tracks.find((track) => track.key === 'agility')?.tiersBought).toBe(0);
+  });
+
+  it('says which threshold is next and how far, per track', () => {
+    const built: BaseStats = { ...startingBaseStats(), strength: 18 };
+    const view = characterViewOf(source([], 4, 6, { attributes: built, baseStats: built }));
+    const strength = view.tracks.find((track) => track.key === 'strength');
+    // 18 Strength has passed the 10 node and is two short of the 20 milestone.
+    expect(strength?.nextThreshold).toBe(20);
+    expect(strength?.toNext).toBe(2);
+    expect(strength?.nodes.find((node) => node.threshold === 10)?.reached).toBe(true);
+    expect(strength?.nodes.find((node) => node.threshold === 20)?.reached).toBe(false);
+  });
+
+  it('renders a track whose specializations are all still locked', () => {
+    // A fresh character: every threshold ahead of them, nothing purchasable, and
+    // the track still has to draw rather than come back empty.
+    const view = characterViewOf(source([], 0));
+    for (const track of view.tracks) {
+      expect(track.nodes.length, track.key).toBeGreaterThan(0);
+      for (const node of track.nodes) {
+        for (const specialization of node.specializations) {
+          expect(specialization.tier, specialization.id).toBe(0);
+          expect(specialization.canSpend, specialization.id).toBe(false);
+          expect(specialization.cost, specialization.id).toBeGreaterThan(0);
+        }
+      }
+    }
   });
 
   it('says how far the next level is, from the same curve the server levels on', () => {

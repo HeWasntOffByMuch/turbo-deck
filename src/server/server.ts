@@ -106,6 +106,7 @@ import {
   CorrectionReason,
   EntityField,
   ErrorCode,
+  ProgressionTarget,
   isAdminRequest,
   ServerMessageType,
   SpawnerStateValue,
@@ -1005,30 +1006,35 @@ export class GameServer implements AdminHost {
       // for the same reason: the client says which button was pressed, the
       // manager decides, and `reportAction` sends the refusal or the fresh
       // `Stats`. There is no path here that reads a number off the message.
-      case ClientMessageType.AllocateAttribute: {
+      // One pool, one handler (spec 244). Which of the two things the point buys
+      // is the message's own discriminant, and neither branch reads a *value* off
+      // it -- an ordinal and an id are both names, checked against the tables here
+      // before the manager is asked anything.
+      case ClientMessageType.SpendProgressionPoint: {
         if (connection.playerId === null) return;
-        const attribute = attributeByOrdinal(message.attribute);
-        const result = attribute
-          ? await this.players.allocateAttribute(connection.playerId, attribute.key)
-          : { ok: false as const, reason: `no such attribute: ${message.attribute}` };
-        this.reportAction(connection, result.ok ? null : result.reason);
+        let result: { ok: boolean; reason?: string };
+        if (message.target === ProgressionTarget.Attribute) {
+          const attribute = attributeByOrdinal(message.attribute);
+          result = attribute
+            ? await this.players.allocateAttribute(connection.playerId, attribute.key)
+            : { ok: false as const, reason: `no such attribute: ${message.attribute}` };
+        } else {
+          result = await this.players.buySpecializationTier(
+            connection.playerId,
+            message.specializationId,
+          );
+        }
+        this.reportAction(connection, result.ok ? null : (result.reason ?? 'refused'));
         break;
       }
 
-      case ClientMessageType.RespecAttributes: {
+      case ClientMessageType.RespecProgression: {
         if (connection.playerId === null) return;
         const result = await this.players.respec(connection.playerId);
         this.reportAction(connection, result.ok ? null : result.reason);
         // The purse changed, so the bag view has to be resent -- coins ride on
         // the inventory message (spec 129).
         if (result.ok) this.sendInventory(connection, 0);
-        break;
-      }
-
-      case ClientMessageType.SpendSkillPoint: {
-        if (connection.playerId === null) return;
-        const result = await this.players.spendSkillPoint(connection.playerId, message.skillId);
-        this.reportAction(connection, result.ok ? null : result.reason);
         break;
       }
 
@@ -1757,16 +1763,15 @@ export class GameServer implements AdminHost {
       entityId: session.entityId,
       level: session.record.level,
       experience: session.record.experience,
-      unspentSkillPoints: session.record.unspentSkillPoints,
-      // What has actually been spent (specs 128, 147), not just what is left to
-      // spend: a client told only the remainder cannot draw a tree.
-      skills: session.record.skills,
+      // What has actually been spent (specs 128, 147, 244), not just what is left
+      // to spend: a client told only the remainder cannot draw a track.
+      specializations: session.record.specializations,
       // Allocated and total, both (spec 147). The sheet spends against the
       // first and reads thresholds off the second, and a client sent only one
       // of them has to guess at the other.
       baseStats: session.record.baseStats,
       attributes: resolveProgression(session.record).attributes,
-      unspentAttributePoints: session.record.unspentAttributePoints,
+      unspentProgressionPoints: session.record.unspentProgressionPoints,
       stats: session.stats,
     });
   }
@@ -3177,8 +3182,7 @@ export class GameServer implements AdminHost {
       rows.push({
         experience: session.record.experience,
         experienceToNextLevel: experienceForLevel(session.record.level + 1),
-        unspentSkillPoints: session.record.unspentSkillPoints,
-        unspentAttributePoints: session.record.unspentAttributePoints,
+        unspentProgressionPoints: session.record.unspentProgressionPoints,
         playerId: session.playerId,
         displayName: session.displayName,
         entityId: session.entityId,

@@ -21,21 +21,20 @@
  *     and is not -- grant 5 levels, spend the points, reset the level to 1, and a
  *     delta leaves the points spent and the level gone.
  *  2. **A level that cannot pay for what it is holding gives it back.** You
- *     cannot hold twelve points of skills, or a level-40 attribute spread, at
- *     level 1. The tree is cleared and the attributes go back to their starting
- *     spread, each independently of the other, and the caller is told -- an
- *     operator who silently deleted somebody's build would hear about it from the
- *     player.
+ *     cannot hold a level-40 build at level 1. The specializations are cleared
+ *     *and* the attributes go back to their starting spread -- together, since
+ *     spec 244 they are one budget -- and the caller is told: an operator who
+ *     silently deleted somebody's build would hear about it from the player.
  *  3. **Experience is clamped into its own level's band.** Otherwise `SetLevel 1`
  *     on a level-20 character is a character who re-levels on their next kill.
  *
- * Rule 2 covers *two* currencies since spec 147 gave levelling a second one, and
- * it has to: `reconcileAttributePoints` correctly clamps the unspent count to
- * `earned - spent`, which is zero for a level-1 character holding a level-40
- * spread. Left there, the allocation stands forever and the reset only looked
- * like it worked.
+ * Rule 2 covered *two* currencies from spec 147 to spec 244 and covers one now.
+ * It still has to fire at all: `reconcileProgressionPoints` correctly clamps the
+ * unspent count to `earned - spent`, which is zero for a level-1 character
+ * holding a level-40 build. Left there, the allocation stands forever and the
+ * reset only looked like it worked.
  *
- * That rule points the *opposite* way to the one `reconcileAttributePoints`
+ * That rule points the *opposite* way to the one `reconcileProgressionPoints`
  * applies on login, which keeps an over-budget allocation and hands back zero.
  * Deliberately, because the two have different causes. An over-budget save is
  * somebody else's bug -- a table edit, a schema change -- and the character is
@@ -48,11 +47,11 @@
 import { AdminProgressMode, type AdminProgressModeValue } from '../net/protocol.js';
 import type { PersistedPlayer } from '../state/types.js';
 import {
-  pointsEarned as attributePointsEarned,
+  pointsEarned as progressionPointsEarned,
   pointsSpent as attributePointsSpent,
   startingBaseStats,
 } from './attributes.js';
-import { totalSkillPoints } from './skills.js';
+import { totalSpecializationTiers } from './specializations.js';
 
 /**
  * Experience needed to reach `level` from the one below it.
@@ -65,9 +64,6 @@ export function experienceForLevel(level: number): number {
   return Math.round(50 * Math.pow(Math.max(1, level - 1), 1.5));
 }
 
-/** Skill points granted per level gained. */
-export const SKILL_POINTS_PER_LEVEL = 1;
-
 /**
  * The highest level an edit may reach.
  *
@@ -78,19 +74,6 @@ export const SKILL_POINTS_PER_LEVEL = 1;
  */
 export const MAX_PLAYER_LEVEL = 60;
 
-/**
- * Every skill point a character at this level has been given, spent or not.
- *
- * The `1` is the point `createCharacter` starts a level-1 character with, so this
- * agrees with a character who has never been edited. The attribute budget's
- * equivalent is `attributes.ts`'s own `pointsEarned`, which this file defers to
- * rather than restating -- one place per currency.
- */
-export function earnedSkillPoints(level: number): number {
-  const levels = Math.max(0, Math.floor(level) - 1);
-  return 1 + levels * SKILL_POINTS_PER_LEVEL;
-}
-
 /** The highest experience a character at `level` may hold without owing a level. */
 export function experienceCeiling(level: number): number {
   return Math.max(0, experienceForLevel(level + 1) - 1);
@@ -100,10 +83,11 @@ export interface LevelEditOutcome {
   readonly player: PersistedPlayer;
   /** What changed, for the operator's reply and the audit entry. */
   readonly detail: string;
-  /** True when rule 2 fired on the skill tree. */
-  readonly skillsRefunded: boolean;
-  /** True when rule 2 fired on the attribute spread. */
-  readonly attributesRefunded: boolean;
+  /**
+   * True when rule 2 fired: the level could not pay for the build it was
+   * holding, so attributes and specialization tiers were both handed back.
+   */
+  readonly refunded: boolean;
 }
 
 function clampLevel(level: number): number {
@@ -153,42 +137,42 @@ export function applyLevelEdit(
   // moved may have brought its own ceiling down under the experience already there.
   experience = Math.min(experience, experienceCeiling(level));
 
-  // Rules 1 and 2, once per currency. The two are independent: a level can be low
-  // enough to refund the tree and still high enough to keep the spread.
-  const earnedSkill = earnedSkillPoints(level);
-  const spentSkill = totalSkillPoints(player.skills);
-  const skillsRefunded = spentSkill > earnedSkill;
-  const skills = skillsRefunded ? [] : player.skills;
-  const unspentSkillPoints = skillsRefunded ? earnedSkill : earnedSkill - spentSkill;
+  // Rules 1 and 2, and there is one currency to apply them to now (spec 244).
+  // The old version ran them twice, once per budget, and noted that the two were
+  // independent -- a level could be low enough to refund the tree and still high
+  // enough to keep the spread. With one pool there is one comparison: what the
+  // character is holding, against what the level earned. Over budget refunds
+  // *both*, because a half-refund into a shared pool leaves a character whose
+  // remaining half is affordable only by accident.
+  const earned = progressionPointsEarned(level);
+  const spentAttributes = attributePointsSpent(player.baseStats);
+  const spentTiers = totalSpecializationTiers(player.specializations);
+  const spent = spentAttributes + spentTiers;
+  const refunded = spent > earned;
 
-  const earnedAttribute = attributePointsEarned(level);
-  const spentAttribute = attributePointsSpent(player.baseStats);
-  const attributesRefunded = spentAttribute > earnedAttribute;
-  const baseStats = attributesRefunded ? startingBaseStats() : player.baseStats;
-  const unspentAttributePoints = attributesRefunded
-    ? earnedAttribute
-    : earnedAttribute - spentAttribute;
+  const specializations = refunded ? [] : player.specializations;
+  const baseStats = refunded ? startingBaseStats() : player.baseStats;
+  const unspentProgressionPoints = refunded ? earned : earned - spent;
 
   const parts: string[] = [];
   if (level !== before.level) parts.push(`level ${before.level} -> ${level}`);
   if (experience !== before.experience) parts.push(`xp ${before.experience} -> ${experience}`);
   if (parts.length === 0) parts.push('no change');
-  parts.push(`${unspentSkillPoints} skill / ${unspentAttributePoints} attribute point(s)`);
-  if (skillsRefunded) parts.push(`skill tree cleared (${spentSkill} refunded)`);
-  if (attributesRefunded) parts.push(`attributes reset (${spentAttribute} refunded)`);
+  parts.push(`${unspentProgressionPoints} progression point(s)`);
+  if (refunded) {
+    parts.push(`build reset (${spentAttributes} attribute + ${spentTiers} tier point(s) refunded)`);
+  }
 
   return {
     player: {
       ...player,
       level,
       experience,
-      skills,
-      unspentSkillPoints,
+      specializations,
       baseStats,
-      unspentAttributePoints,
+      unspentProgressionPoints,
     },
     detail: parts.join(', '),
-    skillsRefunded,
-    attributesRefunded,
+    refunded,
   };
 }

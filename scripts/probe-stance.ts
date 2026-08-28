@@ -1,5 +1,5 @@
 /**
- * Is the pig standing on anything? (spec 244)
+ * Is the pig standing on anything? (spec 245)
  *
  *   npx tsx scripts/probe-stance.ts
  *

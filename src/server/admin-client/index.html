@@ -244,7 +244,7 @@
                 <th>player</th>
                 <th class="num">lvl</th>
                 <th class="num">xp</th>
-                <th class="num">sp/ap</th>
+                <th class="num">pts</th>
                 <th class="num">hp</th>
                 <th>zone</th>
                 <th class="num">x</th>
@@ -778,7 +778,7 @@
               health: r.f32(), maxHealth: r.f32(), level: r.varuint(),
               attackDamage: r.f32(), moveSpeed: r.f32(), muted: r.bool(),
               experience: r.varuint(), experienceToNextLevel: r.varuint(),
-              unspentSkillPoints: r.varuint(), unspentAttributePoints: r.varuint(),
+              unspentProgressionPoints: r.varuint(),
             });
           }
           players = rows;
@@ -851,7 +851,7 @@
           const cells = [
             [player.level, true],
             [player.experience + ' / ' + player.experienceToNextLevel, true],
-            [player.unspentSkillPoints + ' / ' + player.unspentAttributePoints, true],
+            [player.unspentProgressionPoints, true],
             [Math.round(player.health) + ' / ' + Math.round(player.maxHealth), true],
             [player.zone, false],
             [Math.round(player.x), true],
@@ -910,8 +910,7 @@
         facts.className = 'facts';
         const rows = [
           ['level', player.level],
-          ['skill points', player.unspentSkillPoints],
-          ['attribute points', player.unspentAttributePoints],
+          ['progression points', player.unspentProgressionPoints],
           ['experience', player.experience + ' / ' + player.experienceToNextLevel],
           ['health', Math.round(player.health) + ' / ' + Math.round(player.maxHealth)],
           ['damage', player.attackDamage.toFixed(1)],

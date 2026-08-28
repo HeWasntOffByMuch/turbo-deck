@@ -83,4 +83,4 @@ export { PlayerAutosave, DEFAULT_AUTOSAVE_MS } from './autosave.js';
 export { SqliteDataStore } from './sqlite-store.js';
 export { openDatabase, type Db } from './sqlite.js';
 export { migrate, schemaVersion, MigrationError, LATEST_SCHEMA_VERSION } from './migrate.js';
-export { CorruptPlayerData } from './player-record.js';
+export { CorruptPlayerData, UnsupportedSaveVersion } from './player-record.js';

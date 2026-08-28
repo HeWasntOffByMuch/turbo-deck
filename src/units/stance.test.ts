@@ -1,6 +1,6 @@
 /**
  * That the stance reading can tell a knee from a knee folded backwards
- * (spec 244).
+ * (spec 245).
  *
  * `pig-strike.test.ts` drives this module against the real rig, which is the
  * assertion that matters about the pig -- and it cannot make this one, because

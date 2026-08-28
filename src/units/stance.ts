@@ -1,5 +1,5 @@
 /**
- * What a stance is, as the four things that can be wrong with one (spec 244).
+ * What a stance is, as the four things that can be wrong with one (spec 245).
  *
  * `plant-foot.ts` solves the pig's combat stance, `probe-stance.ts` reads back
  * what got written, and `pig-strike.test.ts` asserts the properties. Three

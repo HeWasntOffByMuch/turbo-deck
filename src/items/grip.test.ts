@@ -543,7 +543,7 @@ describe('how the pig holds a sword', () => {
     // the right foot was stepping back. Planting the left foot cost this
     // two thirds of its number and none of its motion.
     //
-    // The two margins are deliberately loose, and looser again since spec 244
+    // The two margins are deliberately loose, and looser again since spec 245
     // put the stepping foot on the ground -- which bounded the step at both
     // ends, since a leg that may not leave the floor cannot reach as far back
     // and a body that must stay over its own feet cannot drive as far through.

@@ -146,9 +146,10 @@ export interface UiScreensOptions {
    * front of the body -- so this says which slot it left and how much of it.
    */
   readonly onDropItem: (at: SlotRef, count: number) => void;
-  readonly onSpend: (skillId: string) => void;
-  /** Put one attribute point somewhere, and hand every one of them back (147). */
-  readonly onAllocate: (key: string) => void;
+  /** Spend one progression point on a specialization tier (spec 244). */
+  readonly onSpend: (specializationId: string) => void;
+  /** Spend one on an attribute track, and hand the whole build back (147, 244). */
+  readonly onAdvance: (key: string) => void;
   readonly onRespec: () => void;
   readonly onBuy: (vendorId: string, defId: string) => void;
   readonly onSell: (vendorId: string, index: number) => void;
@@ -472,13 +473,12 @@ export class UiScreens {
   private lastScaling: ScalingGradeModifiers = NO_GRADE_MODIFIERS;
   /** The change in flight last frame, so the frame it ends on is noticed. */
   private lastSwap: SwapProgress | null = null;
-  private lastSkills: ClientView['skills'] | null = null;
+  private lastSpecializations: ClientView['specializations'] | null = null;
   private lastStats: ClientView['stats'] = null;
   private lastSheetLevel = -1;
   private lastExperience = -1;
   private lastPoints = -1;
   private lastBaseStats: unknown = null;
-  private lastStatSkills: unknown = null;
   private lastSheetCoins = -1;
 
   constructor(
@@ -525,15 +525,17 @@ export class UiScreens {
     // by the window next to it. Two widgets rather than one shared, because they
     // are pointed at from two different hit tests.
     this.layers.place('tooltip', this.character.tooltip);
-    this.character.onSpend = (skillId) => {
-      options.onSpend(skillId);
+    // Both spends and the respec, and every one of them is only an ask (specs
+    // 147, 244): the screen sends a request and redraws when the server's answer
+    // arrives. Nothing here updates a number optimistically, because an attribute
+    // that ticked up and then back down is worse than one that ticks up late --
+    // and under one pool an optimistic spend would have to guess which of two
+    // things the point went into.
+    this.character.onSpend = (specializationId) => {
+      options.onSpend(specializationId);
     };
-    // Three more asks, and every one of them is only an ask (spec 147): the
-    // screen sends a request and redraws when the server's answer arrives.
-    // Nothing here updates a number optimistically, because an attribute that
-    // ticked up and then back down is worse than one that ticks up late.
-    this.character.onAllocate = (key) => {
-      options.onAllocate(key);
+    this.character.onAdvance = (key) => {
+      options.onAdvance(key);
     };
     this.character.onRespec = () => {
       options.onRespec();
@@ -918,12 +920,11 @@ export class UiScreens {
           name: 'You',
           level: view.level,
           experience: view.experience,
-          unspentSkillPoints: view.unspentSkillPoints,
-          skills: view.skills,
+          specializations: view.specializations,
           stats: view.stats,
           baseStats: view.baseStats,
           attributes: view.attributes,
-          unspentAttributePoints: view.unspentAttributePoints,
+          unspentProgressionPoints: view.unspentProgressionPoints,
           coins: view.coins,
         }),
       );
@@ -1141,24 +1142,22 @@ export class UiScreens {
 
   private characterChanged(view: ClientView): boolean {
     if (
-      view.skills === this.lastSkills &&
+      view.specializations === this.lastSpecializations &&
       view.stats === this.lastStats &&
       view.level === this.lastSheetLevel &&
       view.experience === this.lastExperience &&
-      view.unspentSkillPoints === this.lastPoints &&
+      view.unspentProgressionPoints === this.lastPoints &&
       view.baseStats === this.lastBaseStats &&
-      view.skills === this.lastStatSkills &&
       view.coins === this.lastSheetCoins
     ) {
       return false;
     }
-    this.lastSkills = view.skills;
+    this.lastSpecializations = view.specializations;
     this.lastStats = view.stats;
     this.lastSheetLevel = view.level;
     this.lastExperience = view.experience;
-    this.lastPoints = view.unspentSkillPoints;
+    this.lastPoints = view.unspentProgressionPoints;
     this.lastBaseStats = view.baseStats;
-    this.lastStatSkills = view.skills;
     this.lastSheetCoins = view.coins;
     return true;
   }

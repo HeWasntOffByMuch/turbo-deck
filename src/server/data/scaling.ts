@@ -101,9 +101,20 @@ export const SCALING = {
   /** What every character starts each attribute at, and the ceiling on one. */
   startingAttribute: 5,
   attributeHardCap: 60,
-  /** Points granted per level, and what a fresh character has to place. */
-  pointsPerLevel: 3,
-  startingPoints: 5,
+  /**
+   * The whole progression award schedule (spec 244): points per level, and what
+   * a fresh character has to place.
+   *
+   * One pool, so one schedule, and it is the two it replaced **summed** rather
+   * than either of them kept: attributes granted 5 + 3/level and the skill tree
+   * 1 + 1/level, so a level-20 character earned 82 points of purchasing power
+   * across two currencies and earns exactly 82 across one. That is deliberately
+   * a conversion and not a rebalance -- whether 4 a level is right for a pool
+   * that now buys two things is a pacing question, and this is the one place to
+   * answer it.
+   */
+  pointsPerLevel: 4,
+  startingPoints: 6,
   /** Coins a full respec costs. Cheap enough to experiment, not free. */
   respecCost: 40,
 
@@ -364,8 +375,13 @@ export const SCALING = {
   },
 } as const;
 
-/** Thresholds the three milestone tiers sit on, and the stat-skill tiers too. */
+/**
+ * The six thresholds on every attribute track (spec 244).
+ *
+ * A specialization threshold is where a mechanic becomes *purchasable*; a
+ * milestone threshold is where one deepens *automatically*. Neither moved when
+ * the two point pools became one -- the conversion is an economy change and not
+ * a content change, and every number a designer tuned still means what it did.
+ */
 export const MILESTONE_THRESHOLDS: readonly number[] = [20, 35, 50];
-export const SKILL_THRESHOLDS: readonly number[] = [10, 25, 40];
-/** Both halves of a pair must reach this for its synergy to be active. */
-export const SYNERGY_THRESHOLD = 25;
+export const SPECIALIZATION_THRESHOLDS: readonly number[] = [10, 25, 40];

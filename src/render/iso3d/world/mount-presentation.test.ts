@@ -57,20 +57,20 @@ function stateOf(view: ClientView): string {
     .sort(([a], [b]) => (a < b ? -1 : 1))
     .map(([slot, id]) => `${slot}=${id ?? '-'}`)
     .join(',');
-  const skills = [...view.skills]
-    .sort((a, b) => (a.skillId < b.skillId ? -1 : 1))
-    .map((entry) => `${entry.skillId}:${entry.level}`)
+  const specializations = [...view.specializations]
+    .sort((a, b) => (a.specializationId < b.specializationId ? -1 : 1))
+    .map((entry) => `${entry.specializationId}:${entry.tier}`)
     .join(',');
   return [
     `t${view.tick}`,
     bodies.join(','),
     bag,
     worn,
-    skills,
+    specializations,
     `coins${view.coins}`,
     `lvl${view.level}`,
     `xp${view.experience}`,
-    `pts${view.unspentSkillPoints}`,
+    `pts${view.unspentProgressionPoints}`,
   ].join('|');
 }
 
@@ -133,7 +133,7 @@ async function play(drive: boolean): Promise<RunResult> {
       onMove: (from, to, count) => requests.push(`move:${from.container}${from.index}->${to.container}${to.index}x${count}`),
       onDropItem: (at, count) => requests.push(`drop:${at.container}${at.index}x${count}`),
       onSpend: (skillId) => requests.push(`spend:${skillId}`),
-      onAllocate: (key) => requests.push(`allocate:${key}`),
+      onAdvance: (key) => requests.push(`allocate:${key}`),
       onRespec: () => requests.push('respec'),
       onBuy: (vendorId, defId) => requests.push(`buy:${vendorId}:${defId}`),
       onSell: (vendorId, index) => requests.push(`sell:${vendorId}:${index}`),

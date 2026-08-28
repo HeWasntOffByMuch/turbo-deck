@@ -61,9 +61,13 @@ for everyone"* and the Weak-Point Study milestone as *"everything takes 15% more
 damage against it"* — a party-wide debuff that no party member can see. The same
 goes for `exposedTeamResource`.
 
-Scale of the gap: 36 skills in `data/skills.ts`, of which **28 name a trigger**
-rather than being passive; 18 milestones; 15 synergies. The great majority
-resolve into one of the statuses above.
+Scale of the gap: 36 specializations in `data/specializations.ts` (renamed from
+`data/skills.ts` by spec 244), of which **28 name a trigger** rather than being
+passive; 18 milestones. The great majority resolve into one of the statuses
+above. The 15 synergies this note also counted are gone with spec 244, which
+took `exposedTeamResource` with them -- it is one of the twenty-two trait fields
+nothing grants now, so that half of the gap closed by the mechanic leaving
+rather than by anything being drawn.
 
 ## 2. The aura system is built, tested, and mounted by nothing
 

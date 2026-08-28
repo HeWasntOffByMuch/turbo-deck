@@ -18,7 +18,7 @@ import {
   type EquipSlot,
   type Inventory,
   type ItemStack,
-  type SkillAllocation,
+  type SpecializationAllocation,
   type SlotAddress,
   type TraitStats,
   type Vec3,
@@ -30,7 +30,7 @@ import {
   type WeaponScaling,
 } from '../data/weapon-scaling.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
-import { ClientMessageType, ServerMessageType } from './protocol.js';
+import { ClientMessageType, ProgressionTarget, ServerMessageType } from './protocol.js';
 import {
   decodeChunkDenied,
   decodeMapChunk,
@@ -236,25 +236,34 @@ export interface BuyBackMessage {
 }
 
 /**
- * Put one attribute point somewhere (spec 147).
+ * Spend one progression point (spec 244).
  *
- * The whole payload is one ordinal into `BASE_STAT_KEYS`. There is no amount and
- * no derived value -- the client says *which button was pressed*, and reads the
- * consequences back off the `Stats` message that follows.
+ * A discriminated union rather than one shape with two optional fields, because
+ * the two targets carry different payloads and a message that can name both is a
+ * message a handler has to decide between. The wire is the discriminant and then
+ * exactly the payload that target needs.
+ *
+ * **It names a target, never a result.** There is no attribute value here, no
+ * tier number and no amount -- the client says *which button was pressed*, and
+ * reads the consequences back off the `Stats` message that follows. That is what
+ * makes a forged progression state unrepresentable rather than merely refused:
+ * there is no field on this message a client could lie in.
  */
-export interface AllocateAttributeMessage {
-  readonly type: typeof ClientMessageType.AllocateAttribute;
-  readonly attribute: number;
-}
+export type SpendProgressionPointMessage =
+  | {
+      readonly type: typeof ClientMessageType.SpendProgressionPoint;
+      readonly target: typeof ProgressionTarget.Attribute;
+      /** An ordinal into `BASE_STAT_KEYS`; out of range is a rejection. */
+      readonly attribute: number;
+    }
+  | {
+      readonly type: typeof ClientMessageType.SpendProgressionPoint;
+      readonly target: typeof ProgressionTarget.Specialization;
+      readonly specializationId: string;
+    };
 
-export interface RespecAttributesMessage {
-  readonly type: typeof ClientMessageType.RespecAttributes;
-}
-
-/** Rank up one attribute-attuned skill (spec 147). */
-export interface SpendSkillPointMessage {
-  readonly type: typeof ClientMessageType.SpendSkillPoint;
-  readonly skillId: string;
+export interface RespecProgressionMessage {
+  readonly type: typeof ClientMessageType.RespecProgression;
 }
 
 export interface ChatMessage {
@@ -388,9 +397,8 @@ export type ClientMessage =
   | TradeOfferMessage
   | TradeAcceptMessage
   | TradeCancelMessage
-  | SpendSkillPointMessage
-  | AllocateAttributeMessage
-  | RespecAttributesMessage
+  | SpendProgressionPointMessage
+  | RespecProgressionMessage
   | ChatMessage
   | UseAbilityMessage
   | CancelCastMessage
@@ -563,13 +571,12 @@ export function encodeClientMessage(message: ClientMessage): Uint8Array {
       break;
     case ClientMessageType.TradeCancel:
       break;
-    case ClientMessageType.SpendSkillPoint:
-      writer.str(message.skillId);
+    case ClientMessageType.SpendProgressionPoint:
+      writer.u8(message.target);
+      if (message.target === ProgressionTarget.Attribute) writer.u8(message.attribute);
+      else writer.str(message.specializationId);
       break;
-    case ClientMessageType.AllocateAttribute:
-      writer.u8(message.attribute);
-      break;
-    case ClientMessageType.RespecAttributes:
+    case ClientMessageType.RespecProgression:
       break;
     case ClientMessageType.Chat:
       writer.str(message.text);
@@ -696,12 +703,25 @@ export function decodeClientMessage(frame: Uint8Array): ClientMessage {
       return { type: ClientMessageType.TradeAccept, revision: reader.varint() };
     case ClientMessageType.TradeCancel:
       return { type: ClientMessageType.TradeCancel };
-    case ClientMessageType.SpendSkillPoint:
-      return { type: ClientMessageType.SpendSkillPoint, skillId: reader.str() };
-    case ClientMessageType.AllocateAttribute:
-      return { type: ClientMessageType.AllocateAttribute, attribute: reader.u8() };
-    case ClientMessageType.RespecAttributes:
-      return { type: ClientMessageType.RespecAttributes };
+    case ClientMessageType.SpendProgressionPoint: {
+      // An unknown target is decoded as `Specialization` with whatever string
+      // follows, which `buySpecializationTier` then refuses by id. Reading it as
+      // an attribute ordinal instead would hand a garbage byte to a table lookup.
+      const target = reader.u8();
+      return target === ProgressionTarget.Attribute
+        ? {
+            type: ClientMessageType.SpendProgressionPoint,
+            target: ProgressionTarget.Attribute,
+            attribute: reader.u8(),
+          }
+        : {
+            type: ClientMessageType.SpendProgressionPoint,
+            target: ProgressionTarget.Specialization,
+            specializationId: reader.str(),
+          };
+    }
+    case ClientMessageType.RespecProgression:
+      return { type: ClientMessageType.RespecProgression };
     case ClientMessageType.Chat:
       return { type: ClientMessageType.Chat, text: reader.str() };
     case ClientMessageType.UseAbility:
@@ -885,20 +905,22 @@ export interface StatsMessage {
   readonly entityId: number;
   readonly level: number;
   readonly experience: number;
-  readonly unspentSkillPoints: number;
   /**
-   * Every point this character has spent (spec 128). Whole, never a delta.
+   * Every tier this character has bought (spec 147, 244). Whole, never a delta.
    *
    * On this message rather than one of its own because it changes at exactly the
    * moments `Stats` is already sent -- login, equip, unequip, spend, level -- and
    * a second message on the same trigger is a second thing to keep in step.
    *
-   * Without it a client can spend a point and is never told what it owns, so a
-   * skill tree cannot be drawn at all; the same hole spec 126 closed for
-   * equipment, and with the same answer.
+   * Without it a client can spend a point and is never told what it owns, so the
+   * tracks cannot be drawn at all; the same hole spec 126 closed for equipment,
+   * and with the same answer.
+   *
+   * What does **not** ride is the track structure -- which milestones exist, what
+   * they unlock, what a tier costs. That is content, both ends import the tables,
+   * and sending it would be replicating a constant. What rides is state.
    */
-  /** Every point spent in the attuned tree (spec 147). Whole, never a delta. */
-  readonly skills: readonly SkillAllocation[];
+  readonly specializations: readonly SpecializationAllocation[];
   /**
    * The six attributes as *allocated* (spec 147), plus what is left to place.
    *
@@ -910,7 +932,7 @@ export interface StatsMessage {
    */
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
   readonly stats: EffectiveStats;
 }
 
@@ -1432,16 +1454,19 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   };
 }
 
-function writeSkills(writer: BufferWriter, skills: readonly SkillAllocation[]): void {
-  writer.varuint(skills.length);
-  for (const allocation of skills) writer.str(allocation.skillId).varuint(allocation.level);
+function writeSpecializations(
+  writer: BufferWriter,
+  held: readonly SpecializationAllocation[],
+): void {
+  writer.varuint(held.length);
+  for (const allocation of held) writer.str(allocation.specializationId).varuint(allocation.tier);
 }
 
 /**
  * The six attributes, in {@link BASE_STAT_KEYS} order (spec 147).
  *
  * By position rather than by name, which is the same decision
- * `ClientMessageType.AllocateAttribute` makes about its ordinal and for the same
+ * `ProgressionTarget.Attribute` makes about its ordinal and for the same
  * reason: the order is already canonical and already load-bearing, so spelling
  * the names out would be six strings restating a constant both ends import.
  */
@@ -1462,11 +1487,13 @@ function readStringList(reader: BufferReader): readonly string[] {
   return ids;
 }
 
-function readSkills(reader: BufferReader): readonly SkillAllocation[] {
+function readSpecializations(reader: BufferReader): readonly SpecializationAllocation[] {
   const count = reader.count();
-  const skills: SkillAllocation[] = new Array<SkillAllocation>(count);
-  for (let i = 0; i < count; i++) skills[i] = { skillId: reader.str(), level: reader.varuint() };
-  return skills;
+  const held: SpecializationAllocation[] = new Array<SpecializationAllocation>(count);
+  for (let i = 0; i < count; i++) {
+    held[i] = { specializationId: reader.str(), tier: reader.varuint() };
+  }
+  return held;
 }
 
 function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
@@ -1708,12 +1735,11 @@ export function encodeServerMessage(message: ServerMessage): Uint8Array {
       writer
         .varuint(message.entityId)
         .varuint(message.level)
-        .varuint(message.experience)
-        .varuint(message.unspentSkillPoints);
-      writeSkills(writer, message.skills);
+        .varuint(message.experience);
+      writeSpecializations(writer, message.specializations);
       writeAttributes(writer, message.baseStats);
       writeAttributes(writer, message.attributes);
-      writer.varuint(message.unspentAttributePoints);
+      writer.varuint(message.unspentProgressionPoints);
       writeStats(writer, message.stats);
       break;
     case ServerMessageType.Inventory: {
@@ -1894,11 +1920,10 @@ export function decodeServerMessage(frame: Uint8Array): ServerMessage {
         entityId: reader.varuint(),
         level: reader.varuint(),
         experience: reader.varuint(),
-        unspentSkillPoints: reader.varuint(),
-        skills: readSkills(reader),
+        specializations: readSpecializations(reader),
         baseStats: readAttributes(reader),
         attributes: readAttributes(reader),
-        unspentAttributePoints: reader.varuint(),
+        unspentProgressionPoints: reader.varuint(),
         stats: readStats(reader),
       };
     case ServerMessageType.Inventory: {

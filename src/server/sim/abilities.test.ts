@@ -35,7 +35,7 @@ const RECORD: PersistedPlayer = {
   id: 'p1',
   displayName: 'P1',
   baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-  skills: [],
+  specializations: [],
   // Sigils, because since spec 237 every ability that is not the weapon's own
   // swing is `skill: true` and `startCast` refuses one that is not in a slot.
   // The rows these tests used to reach for -- `melee.heavy`, `ground.quake`,
@@ -61,8 +61,7 @@ const RECORD: PersistedPlayer = {
   // `windupTicks + cooldownTicks` exactly.
   level: 1,
   experience: 0,
-  unspentSkillPoints: 0,
-  unspentAttributePoints: 0,
+  unspentProgressionPoints: 0,
   health: 100,
   resource: 100,
 };

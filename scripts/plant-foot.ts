@@ -1,5 +1,5 @@
 /**
- * Solve the pig's combat stance, rather than author it (specs 143, 244).
+ * Solve the pig's combat stance, rather than author it (specs 143, 245).
  *
  *   npx tsx scripts/plant-foot.ts
  *
@@ -13,7 +13,7 @@
  * documented as a brace. A foot that does not slide is not the same claim as a
  * foot that is standing on something.
  *
- * So spec 244 states the stance in world terms instead: where each foot is on
+ * So spec 245 states the stance in world terms instead: where each foot is on
  * the floor, and how far the heel is off it. The guard is solved with everything
  * else rather than being the reference everything else is solved against, which
  * is what makes the answer a function of the brief and the rig alone -- the old

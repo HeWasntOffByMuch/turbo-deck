@@ -114,10 +114,10 @@ export const STRIKE_KEY_MS = {
  * linkage and an unpenalised solve holds the foot perfectly still by snapping the
  * knee straight.
  *
- * ## What spec 244 changed, and why every number here moved
+ * ## What spec 245 changed, and why every number here moved
  *
  * A foot that does not slide is not the same claim as a foot standing on
- * something, and until spec 244 only the first was made. Every target was
+ * something, and until spec 245 only the first was made. Every target was
  * measured *from the guard key's own feet*, so wherever the hand-authored guard
  * put them was correct by construction -- and it put them behind the pig and in
  * the air. Measured: the pelvis at **157%** of its own support span, past the
@@ -162,7 +162,7 @@ export const STRIKE_KEY_MS = {
  * does the same; all three are entered from the idle across a short cross-fade,
  * so the legs they start from have to be the same legs or one of them snaps the
  * knees on the way in. Exported rather than copied so the three cannot drift
- * apart, which also means the balance and the ground contact fixed in spec 244
+ * apart, which also means the balance and the ground contact fixed in spec 245
  * are fixed in all three at once.
  */
 export const STRIKE_GUARD_LEGS = {

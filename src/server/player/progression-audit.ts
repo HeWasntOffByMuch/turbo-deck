@@ -4,19 +4,19 @@
  * `npm run balance` fights twelve *attribute* presets through the real sim and
  * prints what each one did. It is the right instrument for "is Strength worth
  * taking" and the wrong one for the question this file asks, which is one level
- * down: **for every skill, at every rank, at every attribute value where that
- * rank can legally be bought -- does the purchase reach the simulation at all?**
+ * down: **for every specialization, at every tier, at every attribute value where that
+ * tier can legally be bought -- does the purchase reach the simulation at all?**
  *
  * Spec 239 closed eight faults that were each invisible to every test in the
- * tree, and six of them were this question answered wrongly: three skills that
- * granted an improvement to a mechanic their own milestone introduced, two ranks
+ * tree, and six of them were this question answered wrongly: three specializations
+ * that granted an improvement to a mechanic their own milestone introduced, two tiers
  * bought into a number a milestone had already filled to its cap, and a capstone
  * that made its own mechanic more expensive. Every one of them would have been a
  * line of this report. That is the whole justification for the file: those were
- * found by reading, and reading does not scale to thirty-six skills times three
- * ranks times four contexts.
+ * found by reading, and reading does not scale to thirty-six specializations times
+ * three tiers times four contexts.
  *
- * **What counts as an effect.** A rank must move a value on `EffectiveStats` or
+ * **What counts as an effect.** A tier must move a value on `EffectiveStats` or
  * `TraitStats` -- the two objects the sim actually reads. A modifier that only
  * moves a `ModifierTotals` field is explicitly *not* enough, which is the case
  * `grantsPrepared` existed to fix: the totals moved, `deriveTraits` gated on a
@@ -26,9 +26,9 @@
  * report worth reading rather than a list of complaints:
  *
  *  - `ACTIVE`     -- something the sim reads moved.
- *  - `REDUNDANT`  -- nothing moved *here*, but the same rank moves something at
+ *  - `REDUNDANT`  -- nothing moved *here*, but the same tier moves something at
  *                    another legal attribute value. A cap somebody else filled.
- *  - `INERT`      -- nothing moved at any legal attribute value. The rank does
+ *  - `INERT`      -- nothing moved at any legal attribute value. The tier does
  *                    nothing, anywhere, ever.
  *  - `BACKWARDS`  -- something moved the wrong way, judged against
  *                    {@link TRAIT_DIRECTION}.
@@ -39,13 +39,14 @@
 import { ATTRIBUTE_KEYS, type AttributeKey } from '../data/attributes.js';
 import { ALL_MILESTONES, type MilestoneDefinition } from '../data/milestones.js';
 import { MILESTONE_THRESHOLDS, SCALING } from '../data/scaling.js';
-import { ALL_SKILLS, type SkillDefinition } from '../data/skills.js';
+import { ALL_SPECIALIZATIONS, type SpecializationDefinition } from '../data/specializations.js';
 import {
   EMPTY_EQUIPMENT,
   emptyInventory,
   type BaseStats,
   type EffectiveStats,
   type PersistedPlayer,
+  type SpecializationAllocation,
   type TraitStats,
 } from '../state/types.js';
 import { startingBaseStats } from './attributes.js';
@@ -173,7 +174,7 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   adaptationCap: 'up',
   adaptationTicks: 'up',
   conversionCap: 'up',
-  // A count that *lowers* a skill's attribute requirement.
+  // A count that *lowers* a specialization's attribute requirement.
   masteryRelief: 'up',
 
   // --- the health economy ---
@@ -204,7 +205,7 @@ export const ABSENT_AT_ZERO: ReadonlySet<string> = new Set<string>([
   'overflowHealthPerResource',
 ]);
 
-/** The `EffectiveStats` numbers a rank can move, and which way is better. */
+/** The `EffectiveStats` numbers a tier can move, and which way is better. */
 export const STAT_DIRECTION: Readonly<Record<string, Direction>> = {
   maxHealth: 'up',
   moveSpeed: 'up',
@@ -246,9 +247,9 @@ export interface AuditContext {
   readonly reason: string;
 }
 
-export interface RankAudit {
-  readonly skillId: string;
-  readonly skillName: string;
+export interface TierAudit {
+  readonly specializationId: string;
+  readonly specializationName: string;
   readonly attribute: AttributeKey;
   readonly from: number;
   readonly to: number;
@@ -268,24 +269,21 @@ export interface MilestoneAudit {
 }
 
 export interface AuditReport {
-  readonly ranks: readonly RankAudit[];
+  readonly tiers: readonly TierAudit[];
   readonly milestones: readonly MilestoneAudit[];
   readonly growth: readonly GrowthAudit[];
 }
 
 // --- the machinery --------------------------------------------------------
 
-interface Rank {
-  readonly skillId: string;
-  readonly level: number;
-}
+type Tier = SpecializationAllocation;
 
-function record(baseStats: Partial<BaseStats>, skills: readonly Rank[]): PersistedPlayer {
+function record(baseStats: Partial<BaseStats>, tiers: readonly Tier[]): PersistedPlayer {
   return {
     id: 'audit',
     displayName: 'audit',
     baseStats: { ...startingBaseStats(), ...baseStats },
-    skills: [...skills],
+    specializations: [...tiers],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -293,16 +291,15 @@ function record(baseStats: Partial<BaseStats>, skills: readonly Rank[]): Persist
     currentZone: 'wilds',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 10,
     coins: 0,
   };
 }
 
-function statsAt(attribute: AttributeKey, value: number, skills: readonly Rank[]): EffectiveStats {
-  return computeEffectiveStats(record({ [attribute]: value }, skills));
+function statsAt(attribute: AttributeKey, value: number, tiers: readonly Tier[]): EffectiveStats {
+  return computeEffectiveStats(record({ [attribute]: value }, tiers));
 }
 
 /** Two derivations, differenced field by field. Only real movement is kept. */
@@ -342,16 +339,16 @@ function diff(before: EffectiveStats, after: EffectiveStats): ValueDelta[] {
 }
 
 /**
- * The attribute values one skill is evaluated at.
+ * The attribute values one specialization is evaluated at.
  *
- * Derived from the skill and the tables rather than authored, so a retuned
+ * Derived from the specialization and the tables rather than authored, so a retuned
  * threshold moves the contexts with it. Four kinds, and the brief names three
- * of them: the value at which the rank first becomes purchasable, each
+ * of them: the value at which the tier first becomes purchasable, each
  * milestone threshold of the same attribute at or above it, and the hard cap.
- * A duplicate value is dropped, which is why a skill requiring exactly a
+ * A duplicate value is dropped, which is why a specialization requiring exactly a
  * milestone value produces three contexts rather than four.
  */
-export function contextsFor(skill: SkillDefinition): readonly AuditContext[] {
+export function contextsFor(skill: SpecializationDefinition): readonly AuditContext[] {
   const values = new Map<number, string>();
   values.set(skill.requires, 'purchasable');
   for (const threshold of MILESTONE_THRESHOLDS) {
@@ -366,26 +363,26 @@ export function contextsFor(skill: SkillDefinition): readonly AuditContext[] {
 }
 
 /**
- * Every rank transition of every skill, at every context.
+ * Every tier transition of every specialization, at every context.
  *
  * The two-pass shape is what makes `REDUNDANT` and `INERT` different answers:
  * the first pass measures each `(transition, context)` cell, and the second
  * looks *across* a transition's row to decide whether "nothing moved here"
- * means a cap somebody else filled or a rank that does nothing anywhere.
+ * means a cap somebody else filled or a tier that does nothing anywhere.
  */
-export function auditSkills(skills: readonly SkillDefinition[] = ALL_SKILLS): readonly RankAudit[] {
-  const out: RankAudit[] = [];
+export function auditSpecializations(skills: readonly SpecializationDefinition[] = ALL_SPECIALIZATIONS): readonly TierAudit[] {
+  const out: TierAudit[] = [];
   for (const skill of skills) {
     const contexts = contextsFor(skill);
-    for (let to = 1; to <= skill.maxLevel; to++) {
+    for (let to = 1; to <= skill.maxTier; to++) {
       const from = to - 1;
       const cells = contexts.map((context) => {
         const before = statsAt(
           context.attribute,
           context.value,
-          from > 0 ? [{ skillId: skill.id, level: from }] : [],
+          from > 0 ? [{ specializationId: skill.id, tier: from }] : [],
         );
-        const after = statsAt(context.attribute, context.value, [{ skillId: skill.id, level: to }]);
+        const after = statsAt(context.attribute, context.value, [{ specializationId: skill.id, tier: to }]);
         return { context, deltas: diff(before, after) };
       });
       const movesSomewhere = cells.some((cell) => cell.deltas.length > 0);
@@ -402,14 +399,14 @@ export function auditSkills(skills: readonly SkillDefinition[] = ALL_SKILLS): re
           note = cell.deltas.map((d) => d.field).join(', ');
         } else if (movesSomewhere) {
           verdict = 'REDUNDANT';
-          note = 'nothing the sim reads moved here, though this rank moves something elsewhere';
+          note = 'nothing the sim reads moved here, though this tier moves something elsewhere';
         } else {
           verdict = 'INERT';
           note = 'nothing the sim reads moved at any legal attribute value';
         }
         out.push({
-          skillId: skill.id,
-          skillName: skill.name,
+          specializationId: skill.id,
+          specializationName: skill.name,
           attribute: skill.attribute,
           from,
           to,
@@ -427,14 +424,14 @@ export function auditSkills(skills: readonly SkillDefinition[] = ALL_SKILLS): re
 /**
  * What crossing a milestone threshold does, and whether any of it is a loss.
  *
- * One point of an attribute, either side of the threshold, with no skills held
+ * One point of an attribute, either side of the threshold, with no tiers held
  * -- so what moves is the milestone's own grant plus one point of whatever that
  * attribute smoothly scales. Both are progression, and neither is allowed to
  * make a thing worse.
  *
  * This is the audit that would have caught spec 239's headline fault on its own:
  * reaching Intelligence 50 **doubled** the health an overflow cast costs,
- * because the skill and the milestone both granted the rate and the two summed.
+ * because the specialization and the milestone both granted the rate and the two summed.
  */
 export function auditMilestones(
   milestones: readonly MilestoneDefinition[] = ALL_MILESTONES,
@@ -452,7 +449,7 @@ export function auditMilestones(
 }
 
 /**
- * Crossing a milestone while **holding the skills of the same attribute**.
+ * Crossing a milestone while **holding the specializations of the same attribute**.
  *
  * The other half of the same question, and the half that actually bit: a
  * milestone's grant is not evaluated in isolation by a real character, it lands
@@ -465,10 +462,10 @@ export function auditMilestonesWithSkills(
 ): readonly MilestoneAudit[] {
   return milestones.map((milestone) => {
     // Everything of that attribute the character could legally be holding below
-    // the threshold, at full rank.
-    const held = ALL_SKILLS.filter(
+    // the threshold, at full tier.
+    const held = ALL_SPECIALIZATIONS.filter(
       (skill) => skill.attribute === milestone.attribute && skill.requires < milestone.threshold,
-    ).map((skill) => ({ skillId: skill.id, level: skill.maxLevel }));
+    ).map((skill) => ({ specializationId: skill.id, tier: skill.maxTier }));
     const below = statsAt(milestone.attribute, milestone.threshold - 1, held);
     const at = statsAt(milestone.attribute, milestone.threshold, held);
     return {
@@ -521,20 +518,20 @@ export function auditAttributeGrowth(): readonly GrowthAudit[] {
 /** The whole audit. */
 export function auditProgression(): AuditReport {
   return {
-    ranks: auditSkills(),
+    tiers: auditSpecializations(),
     milestones: [...auditMilestones(), ...auditMilestonesWithSkills()],
     growth: auditAttributeGrowth(),
   };
 }
 
-/** Every rank whose verdict is not `ACTIVE`, which is what a gate checks. */
-export function findings(report: AuditReport): readonly RankAudit[] {
-  return report.ranks.filter((row) => row.verdict !== 'ACTIVE');
+/** Every tier whose verdict is not `ACTIVE`, which is what a gate checks. */
+export function findings(report: AuditReport): readonly TierAudit[] {
+  return report.tiers.filter((row) => row.verdict !== 'ACTIVE');
 }
 
 /** `str.committedSwing 2->3 @ strength 50` -- the key an allowlist entry names. */
-export function findingKey(row: RankAudit): string {
-  return `${row.skillId} ${String(row.from)}->${String(row.to)} @ ${row.attribute} ${String(row.context.value)}`;
+export function findingKey(row: TierAudit): string {
+  return `${row.specializationId} ${String(row.from)}->${String(row.to)} @ ${row.attribute} ${String(row.context.value)}`;
 }
 
 /**

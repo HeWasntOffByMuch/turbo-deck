@@ -62,8 +62,7 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
     endedTrade: null,
     level: 3,
     experience: 40,
-    unspentSkillPoints: 1,
-    skills: [],
+    specializations: [],
     stats: null,
     ...overrides,
   } as unknown as ClientView;
@@ -86,7 +85,7 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
       onMove: (from, to, count) => requests.push(`move:${from.index}->${to.index}x${count}`),
       onDropItem: (at, count) => requests.push(`drop:${at.container}${at.index}x${count}`),
       onSpend: (id) => requests.push(`spend:${id}`),
-      onAllocate: (key) => requests.push(`allocate:${key}`),
+      onAdvance: (key) => requests.push(`allocate:${key}`),
       onRespec: () => requests.push('respec'),
       onBuy: (vendorId, defId) => requests.push(`buy:${vendorId}:${defId}`),
       onSell: (vendorId, index) => requests.push(`sell:${vendorId}:${index}`),
@@ -1437,7 +1436,7 @@ describe('the character window scrolls under its tabs', () => {
       stats: STATS,
       baseStats: startingBaseStats(),
       attributes: startingBaseStats(),
-      unspentAttributePoints: 4,
+      unspentProgressionPoints: 4,
     });
   }
 
@@ -1493,7 +1492,7 @@ describe('the character window scrolls under its tabs', () => {
     const screens = opened();
     const sheet = sheetOf(screens);
     const band = sheet.tabs.bodyViewport().y - sheet.rect.y;
-    const row = sheet.skillRows[0]?.rect.height ?? 0;
+    const row = sheet.specializationRowList[0]?.rect.height ?? 0;
     expect(band).toBeGreaterThan(0);
     expect(row).toBeGreaterThan(0);
     expect(CHARACTER_MIN_SIZE.height).toBeGreaterThanOrEqual(band + row + WINDOW_CHROME.height);

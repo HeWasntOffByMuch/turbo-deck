@@ -65,9 +65,9 @@ change a game outcome.
 | `npm run audio:report` | Which sound hooks exist, which are silent, and which baked clips nothing references (spec 229). `--strict` for an exit code |
 | `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet. Runs twice, `probe-map-editor.ts`'s shape: once over `dist/`, where Save must *say* there is no dev server, and once against a real `npx vite`, where a file chosen in the tab has to reach `assets/audio/raw/`, be encoded, be offered by the picker, be assigned, and land in the catalog on disk |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
-| `npm run audit:progression` | Every skill rank at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (spec 241). `--all` lists the working ones too |
-| `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 244). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
-| `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 244): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
+| `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too |
+| `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 245). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
+| `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
@@ -134,11 +134,20 @@ merge time.
 ```
 specs/           spec markdown, one file per system, written before its code
 docs/            durable direction that outlives one spec.
+                 progression-model.md (spec 244) is the progression **economy and
+                 structure**: one pool spent on either an attribute point or a
+                 specialization tier, six tracks with six thresholds each, what is
+                 automatic and what is bought, the whole conversion table for the
+                 thirty-six old skills, why the fifteen authored pair synergies
+                 were removed and what replaced them, and what a fresh local save
+                 now holds. Read it before touching progression; it is the
+                 companion to the next one, which is about what a *number* may do
+                 rather than about what a *point* buys.
                  progression-and-scaling.md (specs 238-242) is the rules
                  progression and combat-scaling work is decided against: what an
                  ability is allowed to scale with and in what order the three
                  addends of a blow are summed, the two progression rules (**every
-                 purchased rank does something where it can be bought**, and
+                 purchased tier does something where it can be bought**, and
                  **progression does not move backwards**), the status taxonomy
                  the sim reads, and Second Wind's consumed state with its reset
                  rule. The parts worth knowing before touching any of it: damage
@@ -868,7 +877,7 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  multiples of 50, and the first cut of the strip had neither of
                  them in it.
                  stance.ts is what a stance *is*, as the four things that can be
-                 wrong with one (spec 244): where the pelvis sits along the
+                 wrong with one (spec 245): where the pelvis sits along the
                  support span from rear ankle to leading toe, and per leg the
                  bend, how far the knee sits off the straight line from hip to
                  ankle, and how much of that offset points **forward**. One
@@ -3507,16 +3516,52 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  `lootRevealScale` are the developer path, so a presentation is
                  tuned without farming for one -- and none of the three can
                  change what the item is.
-                 Since spec 147 `skills.ts` is the *attuned* tree -- six columns
-                 of six, gated on the attribute you actually built -- and spec
-                 056's branch-locked Might/Finesse/Arcane tree is gone: a system
-                 whose premise is that unusual combinations should be
-                 discoverable cannot also have three columns that permanently
-                 foreclose each other, and keeping both meant two skill systems
-                 where one would do. A save holding the old rows loads with them
-                 dropped and the points handed back. Beside it are the rest of
-                 the progression tables -- six attributes, eighteen milestones,
-                 fifteen pairs -- and `scaling.ts`, which is every coefficient
+                 Since spec 244 progression is **one pool and six tracks**, and
+                 `docs/progression-model.md` is the standing description of it.
+                 `specializations.ts` is the thirty-six mechanics a milestone
+                 makes purchasable -- six per attribute, gated on the attribute
+                 you actually built, bought a *tier* at a time out of the same
+                 `unspentProgressionPoints` an attribute point comes from. That
+                 shared pool is the whole design: a point pushes a track further
+                 or deepens something the track already unlocked, and **spending
+                 on a specialization never raises the attribute**, so reaching
+                 the next milestone always costs points spent on the track. It
+                 was two currencies until 244, and the comment on
+                 `PersistedPlayer` defended the split -- a point that can be
+                 either makes every specialization compete with a stat -- which
+                 is a real hazard whose price was that the player never made the
+                 decision the system is about. The award schedule is the two
+                 summed rather than either kept (6 + 4/level against 5 + 3 and
+                 1 + 1), so a level-20 character holds the same 82 points they
+                 always did: a conversion, deliberately not a rebalance.
+                 They were "skills" and the rename is not tidiness -- that word
+                 already meant the four **active abilities** a character equips
+                 (`skill1..skill4`, `activeSkillId`, `SkillSlot`), which are a
+                 different system with a different UI and are untouched.
+                 `tracks.ts` is the assembler both the sheet and the audit read:
+                 six nodes per attribute at 10/20/25/35/40/50, each carrying
+                 either an automatic milestone or the specializations it unlocks.
+                 No threshold moved and no mechanic was invented. All eighteen
+                 milestones share a name with a specialization the track unlocked
+                 earlier and *deepen* it, which `MilestoneDefinition.deepens`
+                 records rather than leaving the sheet to print one name twice.
+                 What is **gone** is `synergies.ts` and its fifteen authored
+                 two-attribute bonuses. They were content nobody asked to be
+                 surprised by, present because a test required all fifteen to
+                 exist, and whether the mechanics already compose was untestable
+                 while the authored layer was in the way. Three tests assert the
+                 absence now -- in the tables, in the resolution over all fifteen
+                 pairs, and in the client view. The systemic interactions are
+                 untouched and are the point: Strength pressures Guard,
+                 Perception reads openings, Wisdom stretches the pool. If
+                 playtesting says that is not enough, synergies come back
+                 deliberately, with content behind them, in a spec of their own.
+                 Spec 056's branch-locked Might/Finesse/Arcane tree went at 147,
+                 for a related reason: a system whose premise is that unusual
+                 combinations should be discoverable cannot also have three
+                 columns that permanently foreclose each other. Beside these are
+                 the rest of the progression tables -- six attributes, eighteen
+                 milestones -- and `scaling.ts`, which is every coefficient
                  the six scale by in one object, so a balance pass is a diff of
                  one file. Three curve shapes and only three, because a number
                  should be understandable from its shape: `linear` for the
@@ -3535,16 +3580,18 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  "slightly more" asks the player *how much* rather than *how*.
                  The rule the design is reviewed against, and the one the tests
                  in `progression-tables.test.ts` enforce rather than trust: every
-                 attribute viable when heavily invested in, and every one of the
-                 fifteen pairs producing an interaction that is not "both numbers
-                 are big". A pair with no row fails CI.
-                 The pairs are also **never named on the character sheet**, and
-                 that is a rule with a test behind it in two places: naming them
-                 would turn fifteen things to discover into fifteen things to
-                 build toward, and the question the sheet exists to ask is "how
-                 do I want to solve problems" rather than "which of the fifteen
-                 am I". They are live in the sim; a player finds out by having
-                 one. What the sheet *does* say is what each attribute changes
+                 attribute viable when heavily invested in. The fifteen pairs
+                 used to have a rule of their own -- each producing an authored
+                 interaction, with a pair missing a row failing CI -- and spec
+                 244 inverted it: what fails CI now is a pair contributing a
+                 modifier that neither half contributes alone. The design rule
+                 became *every pair should be capable of an interesting build
+                 through the systems, and no pair needs a bespoke bonus.*
+                 They are still **never named on the character sheet**, and that
+                 is still a rule with a test behind it: naming them would turn
+                 things to discover into things to build toward, and the question
+                 the sheet exists to ask is "how do I want to solve problems".
+                 What the sheet *does* say is what each attribute changes
                  next, and one short line per stat row -- and where something is
                  a socket with nothing plugged into it yet, that line says so in
                  as many words rather than describing a number that never moves.
@@ -3557,14 +3604,15 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  rather than a number somebody keeps retuning.
                  The derivation runs one way and stops (`player/progression.ts`,
                  `player/derived.ts`): allocation plus held grants settles the
-                 attributes, those decide which milestones and pairs are met, and
-                 only then do their grants feed the traits. A milestone therefore
+                 attributes, those decide which milestones are met, and only
+                 then do their grants feed the traits. A milestone therefore
                  cannot unlock a milestone -- the graph is acyclic *by
                  construction* rather than by nobody having yet written the loop,
                  and it costs one thing, which is that an item granting +5
-                 Strength can open a Strength milestone while a synergy granting
-                 the same could not. No synergy grants an attribute and a test
-                 says so.
+                 Strength can open a Strength milestone while a *milestone*
+                 granting the same could not. No milestone grants an attribute
+                 and a test says so. Hop 2 is milestones and nothing else since
+                 spec 244.
                  `sim/poise.ts` is the mechanic Strength spends and Constitution
                  resists, and the number that keeps it a mechanic rather than a
                  removal is the two-second immunity after a break: without it two
