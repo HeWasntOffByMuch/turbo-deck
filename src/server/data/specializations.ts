@@ -115,7 +115,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('agi.quickRecovery', 'agility', 'Quick Recovery', T1, 3, 'passive',
     { traits: { backswingReduction: 0.1 } },
     'You are rooted for less of every attack. You do not attack more often.'),
-  // Cooldown, not recovery (spec 252). This used to grant Flow and a slice of
+  // Cooldown, not recovery (spec 253). This used to grant Flow and a slice of
   // Flow's own backswing reduction, which made the loop a circle: cancel the
   // follow-through, gain Flow, have the follow-through shortened. The player
   // has already left the recovery by the time the reward lands, so the payout

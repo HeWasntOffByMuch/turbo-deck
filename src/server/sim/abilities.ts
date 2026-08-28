@@ -1016,7 +1016,7 @@ function grantFlow(
 const NO_REFUNDS: readonly CooldownRefund[] = [];
 
 /**
- * Mobile Offense (spec 252): time off every *active ability* that is cooling.
+ * Mobile Offense (spec 253): time off every *active ability* that is cooling.
  *
  * **What is reduced, and what is deliberately not.** An entry in `cooldowns`
  * whose ability is `skill: true` -- the four equipped active abilities, which is
@@ -1067,7 +1067,7 @@ function refundActiveCooldowns(
  * and flying under its own rules, the cost is spent, and the interval stamped at
  * the attack point is untouched. What is given back is the root -- and, for a
  * body that bought Mobile Offense, time off the *active abilities* it has
- * cooling (spec 252).
+ * cooling (spec 253).
  *
  * That asymmetry is the point of the feature. Cancelling a backswing reduces how
  * long a player is animation-locked and can never raise their attacks per
@@ -1099,7 +1099,7 @@ function cancelBackswing(
 
   // Agility's Flow (spec 147), where the body has any.
   const statuses = deliberate ? grantFlow(entity.statuses, entity, tick, 1) : entity.statuses;
-  // And Mobile Offense (spec 252), which is what the *specialization* pays now.
+  // And Mobile Offense (spec 253), which is what the *specialization* pays now.
   // The trigger has not moved an inch; only what it hands over.
   const refunded = deliberate
     ? refundActiveCooldowns(entity, tick)

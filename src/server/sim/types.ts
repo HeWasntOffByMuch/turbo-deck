@@ -774,7 +774,7 @@ export interface CooldownRefund {
   readonly ticks: number;
 }
 
-/** Who paid for a cooldown refund. One producer today (spec 252). */
+/** Who paid for a cooldown refund. One producer today (spec 253). */
 export const COOLDOWN_REFUND_MOBILE_OFFENSE = 'mobileOffense';
 
 export type ServerSimEvent =
@@ -936,7 +936,7 @@ export type ServerSimEvent =
     }
   | {
       /**
-       * Cooldown was taken off a body's active abilities (spec 252).
+       * Cooldown was taken off a body's active abilities (spec 253).
        *
        * Pure instrumentation, in the register `restoration` occupies: nothing
        * in the sim reads it -- the cooldowns have already moved by the time it

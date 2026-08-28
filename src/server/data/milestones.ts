@@ -104,7 +104,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_2,
     name: 'Mobile Offense',
-    // Deepens what the specialization now grants (spec 252). It used to grant
+    // Deepens what the specialization now grants (spec 253). It used to grant
     // Flow's backswing reduction, which was the *whole* of the circle that spec
     // took apart: the reward for leaving a follow-through was a shorter
     // follow-through. It is worth one more tier's cooldown instead -- the same

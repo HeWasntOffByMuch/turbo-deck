@@ -171,7 +171,7 @@ export const SCALING = {
     flowMaxStacks: 3,
     /**
      * Cooldown one tier of Mobile Offense takes off, per follow-through walked
-     * out of (spec 252).
+     * out of (spec 253).
      *
      * Here rather than in the specialization row for the reason everything in
      * this file is here: what a tier is worth is a balance decision, and this

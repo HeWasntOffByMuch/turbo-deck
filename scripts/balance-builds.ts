@@ -200,7 +200,7 @@ interface Row extends Fight {
  * `still` is what every row of the twelve-build table does and has always done:
  * stand there and swing. `cancelling` walks out of each follow-through the tick
  * after the attack point, which is the *only* way Mobile Offense fires at all
- * (spec 252) -- a body that never asks to move never reaches `cancelBackswing`,
+ * (spec 253) -- a body that never asks to move never reaches `cancelBackswing`,
  * so the table above this one measures the mechanic at exactly zero whatever
  * tiers are held.
  */
@@ -595,7 +595,7 @@ for (const row of rows) {
   );
 }
 
-// --- Mobile Offense, ranks 0 to 3 (spec 252) -------------------------------
+// --- Mobile Offense, ranks 0 to 3 (spec 253) -------------------------------
 //
 // A section of its own rather than four more presets, because it is the only
 // thing in this file that measures a *behaviour* rather than a spread: the

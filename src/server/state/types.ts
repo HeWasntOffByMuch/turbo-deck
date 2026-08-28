@@ -383,7 +383,7 @@ export interface TraitStats {
   /** A backswing cancel makes the next non-basic cast use `handlingScale`. */
   readonly spellbladeHandling: number;
   /**
-   * Mobile Offense (spec 252): ticks taken off every *active ability* that is
+   * Mobile Offense (spec 253): ticks taken off every *active ability* that is
    * cooling, each time this body walks out of a follow-through.
    *
    * Deliberately **not** a multiplier and deliberately not read anywhere near

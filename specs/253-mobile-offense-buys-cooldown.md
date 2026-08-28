@@ -1,4 +1,4 @@
-# 252 — Mobile Offense buys cooldown, not less follow-through
+# 253 — Mobile Offense buys cooldown, not less follow-through
 
 ## Problem
 

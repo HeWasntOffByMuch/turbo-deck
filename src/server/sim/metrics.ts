@@ -55,7 +55,7 @@ export interface BuildMetrics {
   /** Follow-throughs walked out of. Agility's whole loop, counted. */
   readonly backswingsCancelled: number;
 
-  // --- Mobile Offense (spec 252) ------------------------------------------
+  // --- Mobile Offense (spec 253) ------------------------------------------
   /**
    * Cancels that actually **paid**, which is not the same as
    * {@link backswingsCancelled}.
@@ -339,7 +339,7 @@ export interface BuildSummary {
   /** Follow-throughs walked out of, per attack committed. */
   readonly cancelRate: number;
 
-  // --- Mobile Offense (spec 252) ------------------------------------------
+  // --- Mobile Offense (spec 253) ------------------------------------------
   /** Cooldown removed over the whole fight, in seconds. */
   readonly cooldownSecondsRefunded: number;
   /**
