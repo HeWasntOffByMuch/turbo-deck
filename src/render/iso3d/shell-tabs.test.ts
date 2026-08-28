@@ -1,9 +1,10 @@
 /**
- * Which tabs a device is offered (spec 140).
+ * Which tabs a page is offered (specs 140, 252).
  *
  * `main.ts` is DOM from its first line and cannot be reached from Vitest, which
  * is exactly why this one decision was lifted out of it: a seventh workbench
- * added without a `game` flag should fail here rather than turn up on a phone.
+ * added without a `game` flag should fail here rather than turn up on a phone --
+ * or, since spec 252, in front of a player.
  */
 
 import type { ViewHandle } from './view-handle.js';
@@ -21,13 +22,24 @@ const TABS: readonly ShellTab[] = [
   { label: 'SFX' },
 ];
 
-describe('the tabs a device is offered', () => {
-  it('offers every tab on a mouse', () => {
+describe('the tabs a page is offered', () => {
+  it('offers every tab on a mouse, at a bench', () => {
     expect(visibleTabs(TABS, false)).toEqual(TABS);
   });
 
-  it('offers only the game on a finger', () => {
+  it('offers only the game on a finger, and in the shipped client', () => {
+    // One filter over both reasons (spec 252). The argument is `gameOnly`
+    // rather than `compact` precisely so that there is no second rule here to
+    // disagree with this one about which tabs are the game.
     expect(visibleTabs(TABS, true).map((tab) => tab.label)).toEqual(['Play']);
+  });
+
+  it('leaves not one bench in the shipped client', () => {
+    // The list this asserts against is the tab array in `main.ts`, and the
+    // point of naming all six is that adding a seventh without a `game` flag
+    // has to keep being caught here.
+    expect(visibleTabs(TABS, true).some((tab) => tab.game !== true)).toBe(false);
+    expect(visibleTabs(TABS, true)).toHaveLength(1);
   });
 
   it('keeps every tab marked as the game, rather than just the first', () => {
@@ -45,6 +57,8 @@ describe('the tabs a device is offered', () => {
   });
 
   it('draws no tab buttons when there is only one tab to be on', () => {
+    // Which is what takes the strip off the top of the world in the game build
+    // (spec 252): the buttons are not hidden, there is nothing left to draw.
     expect(showsTabButtons(visibleTabs(TABS, true))).toBe(false);
     expect(showsTabButtons(visibleTabs(TABS, false))).toBe(true);
   });

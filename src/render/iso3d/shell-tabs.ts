@@ -1,5 +1,5 @@
 /**
- * Which tabs a device is offered (spec 140).
+ * Which tabs a page is offered (specs 140, 252).
  *
  * The tab bar has grown to six entries and five of them are workbenches: the map
  * editor is a three-button drag model (spec 049), and the two sandboxes and the
@@ -11,6 +11,11 @@
  * tab rather than an index or a label match, for the same reason `fullscreen` is
  * a property of the tab: which tabs are the game is a fact about the tabs, not
  * about their order in the bar.
+ *
+ * Since spec 252 the shipped client asks the same thing for a second reason --
+ * a bench is not something a player has any use for -- and the flag was already
+ * the whole answer, which is what makes that spec a filter argument rather than
+ * a new rule here.
  *
  * Pure, and separate from `main.ts`, because `main.ts` is DOM from its first line
  * and this is the one decision in it worth failing a test over -- the day a
@@ -29,12 +34,20 @@ export interface ShellTab {
 /**
  * The tabs to build buttons for.
  *
- * Everything on a mouse; only the game on a finger. Never empty on a list that
- * has a game in it, because the alternative -- a shell with no tab at all -- is
- * a black page rather than a smaller one.
+ * Two reasons to be offered the game alone, and deliberately one filter over
+ * both: a finger cannot drive a bench (spec 140), and the shipped client does
+ * not carry one (spec 252). `gameOnly` rather than `compact` because the rule
+ * stopped being about the device -- two filters could disagree about which tabs
+ * are the game, and there is nothing here that has to know *why* it was asked.
+ *
+ * Never empty on a list that has a game in it, because the alternative -- a
+ * shell with no tab at all -- is a black page rather than a smaller one.
  */
-export function visibleTabs<T extends ShellTab>(tabs: readonly T[], compact: boolean): readonly T[] {
-  if (!compact) return tabs;
+export function visibleTabs<T extends ShellTab>(
+  tabs: readonly T[],
+  gameOnly: boolean,
+): readonly T[] {
+  if (!gameOnly) return tabs;
   const game = tabs.filter((tab) => tab.game === true);
   // A list with no game in it is not a case this can improve on, and hiding
   // every tab would leave a shell that mounts nothing at all.

@@ -104,11 +104,23 @@ describe('what the store refuses', () => {
   });
 });
 
-describe('the frame-rate preference (spec 165)', () => {
-  it('is on unless somebody turned it off', () => {
-    // It shipped off, behind a checkbox two pages in, and the first thing
-    // anybody asked was where it was.
-    expect(loadShowFps(storage())).toBe(true);
+describe('the frame-rate preference (specs 165, 252)', () => {
+  it('is off unless somebody turned it on', () => {
+    // Spec 165 defaulted this on, because it shipped behind a checkbox two
+    // pages in and the first thing anybody asked was where it was. Spec 252
+    // turns it back off: "anybody" there was a developer, and on the page a
+    // player opens it is a frame-time graph and a draw-call counter over the
+    // world before the first frame is drawn.
+    expect(loadShowFps(storage())).toBe(false);
+  });
+
+  it('still reads back an explicit yes, so the meter is a click away in either build', () => {
+    // The half that makes the default safe to move: what changes is only what
+    // an *unwritten* profile means, and the Display page's own row is what
+    // either kind of user presses.
+    const store = storage();
+    saveShowFps(store, true);
+    expect(loadShowFps(store)).toBe(true);
   });
 
   it('reads back what was written', () => {

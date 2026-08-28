@@ -37,6 +37,17 @@ interface ImportMeta {
      * root-relative URLs have to be resolved against or every clip 404s.
      */
     readonly BASE_URL?: string;
+    /**
+     * Whether this is a production bundle (spec 252) -- true under
+     * `vite build`, false under `vite`, and *absent* in Node, where nothing
+     * ever replaced it. Which client the page is keys off this, so that the
+     * thing CI builds is the thing that ships.
+     *
+     * Vite declares this itself in `vite/client`, which `tsconfig.json`
+     * deliberately does not reference; declared here for the reason the two
+     * above it are, and narrowed to the one field that is read.
+     */
+    readonly PROD?: boolean;
   };
 
   glob(pattern: string, options: { eager: true }): Record<string, unknown>;

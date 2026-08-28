@@ -18,8 +18,23 @@
 
 import type { StorageLike } from '../core/layout-store.js';
 
-/** See {@link StoredDisplay.showFps}. */
-export const DEFAULT_SHOW_FPS = true;
+/**
+ * What an unwritten profile means for the frame-time meter (spec 252).
+ *
+ * `false`, so nothing opens with a frame-time graph and a draw-call counter
+ * over the world. It was `true`, which made spec 165's developer instrumentation
+ * the single most visible thing a real player met -- no key, no query switch and
+ * no device check behind it, just a checkbox already ticked.
+ *
+ * A constant rather than something the *build* decides, which was tried and is
+ * wrong twice over: `writeField` re-serialises the whole document, so a player
+ * who changed the interface scale would have this stamped into their profile at
+ * the bench's default and get the meter in the shipped client ever after -- and
+ * a build that could overrule the box would be a setting that does not stick.
+ * One meaning, both builds, and *Show frame rate* on the Display page is what
+ * either kind of user presses.
+ */
+export const DEFAULT_SHOW_FPS = false;
 
 /** `'auto'` defers to `autoUiScale`; a number overrides it. */
 export type ScaleChoice = 'auto' | 1 | 2 | 3 | 4;

@@ -537,3 +537,21 @@ export function bottomEdge(layout: HudLayout): number {
 export function readoutShown(layout: HudLayout, enabled: boolean): boolean {
   return layout.showsReadout && enabled;
 }
+
+/**
+ * Whether the tuning popovers in the top-right corner are built (specs 140, 252).
+ *
+ * Two decisions answered together, exactly as {@link readoutShown} answers its
+ * two: what the layout allows, and whether this page carries the benches at all.
+ * A function rather than an `&&` at the call site because both halves are rules,
+ * and this is the file where the first one is already written down.
+ *
+ * They are separate questions and stay separate. The compact layout hides them
+ * because eight panels twenty rows deep do not fit on a 390px frame; the game
+ * build hides them because they are workbench controls, and what a player is
+ * offered instead is the options window (spec 135). The day a phone wants the
+ * retro filter switch back, only one of the two moves.
+ */
+export function tuningMenusShown(layout: HudLayout, workbenches: boolean): boolean {
+  return layout.showsTuningMenus && workbenches;
+}

@@ -120,8 +120,9 @@ import {
   sameBar,
   type ActionSlot,
 } from './action-bar.js';
-import { hudLayout } from './hud-layout.js';
+import { hudLayout, tuningMenusShown } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
+import { showsWorkbenches } from '../client-build.js';
 import { isFriendlyMonster } from '../../../server/data/monsters.js';
 import { DialogueDriver, SpeechSink } from './dialogue-driver.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
@@ -1555,14 +1556,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
   // gets the defaults and the options window (spec 135) instead.
-  const showsTuningMenus = hudLayout(isHandheldDevice()).showsTuningMenus;
+  //
+  // Nor in the shipped client (spec 252), for a second reason: they are
+  // workbench controls, and the options window is what a player is offered
+  // instead. `?client=workbench` on a built page brings them back, which is
+  // what every harness that clicks one of these buttons passes.
+  const showsTuningMenus = tuningMenusShown(hudLayout(isHandheldDevice()), showsWorkbenches());
   /**
    * How much blood the effects panel is currently asking for (spec 182).
    *
-   * Held out here because the panel is not built on a handheld and
-   * `onCombatResult` is registered whatever the device -- a phone keeps
-   * `VFX_DEFAULTS`, which is the same answer spec 140 gives for every other
-   * setting in this corner. It is the *blow* this feeds, not the decal field:
+   * Held out here because the panel is not built on a handheld -- nor in the
+   * shipped client since spec 252 -- and `onCombatResult` is registered either
+   * way, so both keep `VFX_DEFAULTS`, which is the same answer spec 140 gives
+   * for every other setting in this corner. It is the *blow* this feeds, not the decal field:
    * that half was already wired and was never the half anybody could see.
    */
   let gore: GoreLevel = VFX_DEFAULTS.gore;
@@ -4041,12 +4047,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     hud.setAccount({ signedInAs: authState.signedInAs });
 
     // Last, so what it reports is a whole frame's work rather than the part of
-    // one that happens before the world is drawn (spec 165). `stats()` is only
-    // computed when somebody is looking -- the sort over the window is cheap but
-    // it is not free, and a meter that costs frame time misreports the frame
-    // time it costs.
+    // one that happens before the world is drawn (spec 165).
+    //
+    // `stats()` is computed whether or not the meter is drawn (spec 252), which
+    // reverses spec 165's "only when somebody is looking": the probes that read
+    // `data-fps-*` are somebody looking, and they cannot tick a checkbox. The
+    // sort over the window is not free, but it ran on every frame of every
+    // session while the meter defaulted on, so what this costs is the sessions
+    // that had turned it off.
     fpsOverlay.set(
-      showFps ? frames.stats() : null,
+      frames.stats(),
+      showFps,
       worstIngestMs,
       worstStage,
       worstStageMs,

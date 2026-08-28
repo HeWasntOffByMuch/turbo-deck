@@ -110,6 +110,18 @@ the write unconditional fixes that as well as making the default safe to move.
 - The overlay publishes `data-fps-value`, `data-fps-draw-calls` and
   `data-fps-triangles` on a frame it was told not to show.
 
+Everything above is a rule, and this repo's recurring failure is a rule that is
+green in Node beside a `main.ts` and a `view.ts` that call none of it — spec 176
+found the editor saving into a world nothing could load with every rule about
+saving a marker passing, and `layout-store.ts` passed its whole test file while
+nothing in the shipped build imported it. So
+`npx tsx scripts/probe-production-client.ts` drives the built page twice,
+`probe-map-editor.ts`'s shape: once with no query, where every bench, popover
+and readout must be gone, and once with `?client=workbench`, where all of them
+must come back. The second pass is what makes the first mean anything, because
+every check in the first is an *absence* — a page that failed to mount, or a tab
+label misspelled in the probe's own list, passes all of them.
+
 ## Out of scope
 
 - **Removing the benches from the bundle.** The tabs are hidden, not code-split:
