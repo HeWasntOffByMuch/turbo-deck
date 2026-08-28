@@ -13,7 +13,7 @@ import {
 } from './dialogue-voice.js';
 
 /**
- * The procedural dialogue voice (spec 244).
+ * The procedural dialogue voice (spec 246).
  *
  * Every one of the handoff spec's acceptance criteria that is a claim about
  * arithmetic is asserted here, because the alternative is somebody listening --

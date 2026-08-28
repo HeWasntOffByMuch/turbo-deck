@@ -84,7 +84,7 @@ change a game outcome.
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
 | `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
-| `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 244, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
+| `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -1514,7 +1514,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that took it whenever the cursor happened to be bottom-left
                  would break zoom in one corner of the screen with nothing drawn
                  there to explain why.
-                 dialogue.ts is the bubble (spec 244), furniture in the same
+                 dialogue.ts is the bubble (spec 246), furniture in the same
                  register as those two -- no title bar, never dragged, nothing in
                  the layout store, because it is not something the player opened.
                  What makes it different is that it is **anchored to a body**, so
@@ -1891,7 +1891,7 @@ src/render/audio/  the audio framework (spec 229), and the one place in this rep
                  first ten seconds never take that path: a hit that arrives 200ms
                  after the blow is worse than one that did not arrive.
                  `dialogue-voice.ts` and `dialogue-sound.ts` are the procedural
-                 speech (spec 244), and they are the one thing in this directory
+                 speech (spec 246), and they are the one thing in this directory
                  that is **generated rather than fetched** -- so they sit either
                  side of the same line every other pair here does. *Which* letter
                  makes a noise, at what pitch, after what pause is arithmetic and
@@ -2700,7 +2700,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
-                 Since spec 244 a body can be **friendly**, and that is one line
+                 Since spec 246 a body can be **friendly**, and that is one line
                  rather than a system: a fifth `Temperament` with no numbers on
                  it, and a refusal in `isHostile` -- which is the only thing in
                  the sim that answers "may this body damage that one", so nothing
@@ -2727,7 +2727,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  nothing to unwind. An entity id rather than a boolean, because
                  "is somebody talking to it" and "is it *you*" are two questions
                  and only the second can refuse a second player.
-                 `Talk`/`Conversation` are one message each (spec 244) and an id
+                 `Talk`/`Conversation` are one message each (spec 246) and an id
                  of 0 ends one, `OpenVendor`'s own convention -- so a client
                  leaving cannot be a client that forgot to say so. The release is
                  **reconciled rather than announced**: `sweepConversations` asks
@@ -2752,7 +2752,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  asserts the worst case off the shipped map rather than leaving
                  it a comment. That reach is derived (`talkRadius + wander radius
                  + a margin`) rather than chosen.
-                 Since spec 245 **every** shop is one of these, and the removal
+                 Since spec 247 **every** shop is one of these, and the removal
                  is the more interesting half of that spec. `vendor.quartermaster`
                  and `vendor.armourer` were invisible coordinates near the spawn
                  that a player walked onto and pressed `KeyV` at -- which was the
@@ -2761,7 +2761,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  ways to open a shop is two answers to *whose* stock is on
                  screen, and the proximity one got worse as the world filled up:
                  those two stand 89 units apart so their circles already
-                 overlapped, and spec 244 had to add a `byProximity` flag purely
+                 overlapped, and spec 246 had to add a `byProximity` flag purely
                  to keep Rell's four-times-wider reach from swallowing both. A
                  flag whose whole job is to hide a row from a search is the
                  search asking to be deleted.
@@ -4602,7 +4602,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
-                 dialogue.ts and dialogue-driver.ts (a conversation, spec 244).
+                 dialogue.ts and dialogue-driver.ts (a conversation, spec 246).
                  The first is the controller the handoff spec recommends and the
                  fences here require: `src/ui/` may not import `render/audio/`,
                  so a bubble cannot be the thing scheduling sounds, and a sound
@@ -5011,7 +5011,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  The **small** one -- a centre dot and the four arm tips -- says
                  a click would act on the body under the pointer; the **full**
                  one says a skill is armed and the next click places it. The
-                 **bubble** (spec 244) says the body under the pointer can be
+                 **bubble** (spec 246) says the body under the pointer can be
                  talked to, and it is the one of the three that is a *picture
                  rather than a reticle*: the other two say where the click lands
                  and this says what it does, which is not something four arms

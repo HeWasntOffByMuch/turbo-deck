@@ -1,5 +1,5 @@
 /**
- * Spec 244. A body that will not fight, and one that has been stopped to talk.
+ * Spec 246. A body that will not fight, and one that has been stopped to talk.
  *
  * Two independent claims, tested apart because they fail apart: the temperament
  * is about `isHostile` and the aggro functions, and the conversation claim is

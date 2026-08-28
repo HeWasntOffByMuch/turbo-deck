@@ -1,5 +1,5 @@
 /**
- * The dialogue bubble (spec 244).
+ * The dialogue bubble (spec 246).
  *
  * HUD furniture in the register `chat.ts` and `selected-unit.ts` are: no title
  * bar, never dragged, nothing in the layout store, because it is not something

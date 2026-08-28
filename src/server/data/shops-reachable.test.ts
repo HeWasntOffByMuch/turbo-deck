@@ -1,5 +1,5 @@
 /**
- * Spec 245. Every shop can be opened by somebody.
+ * Spec 247. Every shop can be opened by somebody.
  *
  * Spec 237's rule, one table over: *"every ability in that table is reachable by
  * somebody"*, and it found nine rows that were not. This is the same question

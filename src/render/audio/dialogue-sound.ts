@@ -1,5 +1,5 @@
 /**
- * The four voices, as Web Audio (spec 244).
+ * The four voices, as Web Audio (spec 246).
  *
  * The impure half. Everything that *decides* -- which letter speaks, at what
  * pitch, after what pause -- happened in `dialogue-voice.ts` and arrives here as

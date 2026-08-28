@@ -83,7 +83,7 @@ const SMALL: readonly string[] = [
 ];
 
 /**
- * The speech bubble: what sits over a body you can talk to (spec 244).
+ * The speech bubble: what sits over a body you can talk to (spec 246).
  *
  * The one mark of the three that is a **picture rather than a reticle**, and
  * deliberately so: the other two say *where* the click lands, and this says
@@ -236,7 +236,7 @@ export interface WorldPointerInput {
    */
   readonly overDrop: boolean;
   /**
-   * True while the cursor is over a body that can be talked to (spec 244) --
+   * True while the cursor is over a body that can be talked to (spec 246) --
    * `talkable`'s answer, the same way `overEnemy` is `attackable`'s.
    *
    * Its own field rather than folded into `overEnemy`, because the two can never

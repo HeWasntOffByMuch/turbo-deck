@@ -360,7 +360,7 @@ interface Connection {
   /** The shop this connection has open, or '' (spec 129). */
   openVendorId: string;
   /**
-   * The NPC this connection is talking to, or 0 (spec 244).
+   * The NPC this connection is talking to, or 0 (spec 246).
    *
    * The claim itself lives on the *entity*, in the sim, because that is what
    * stops the body wandering and what a replay has to reproduce. This is the
@@ -1486,7 +1486,7 @@ export class GameServer implements AdminHost {
       if (ended) this.endTrade(ended);
     }
     connection.openVendorId = '';
-    // And the conversation, which is a claim on somebody else's body (spec 244).
+    // And the conversation, which is a claim on somebody else's body (spec 246).
     // Left behind, it is a merchant standing still forever facing where a
     // player used to be -- the one release path that cannot be a range check,
     // because there is no longer a player to measure a range to.
@@ -2390,7 +2390,7 @@ export class GameServer implements AdminHost {
     });
   }
 
-  // --- conversation (spec 244) -------------------------------------------
+  // --- conversation (spec 246) -------------------------------------------
 
   /**
    * Start, move or end this connection's conversation.
@@ -3233,7 +3233,7 @@ export class GameServer implements AdminHost {
   private broadcastDeltas(): void {
     // Before the deltas rather than after, so a conversation that ended this
     // broadcast is released on the same frame the client is told about it
-    // (spec 244) -- and so the body's claim is gone before the delta that
+    // (spec 246) -- and so the body's claim is gone before the delta that
     // reports it standing still goes out.
     this.sweepConversations();
     for (const connection of this.connections) {

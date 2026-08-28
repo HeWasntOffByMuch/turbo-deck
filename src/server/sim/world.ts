@@ -496,7 +496,7 @@ export function isHostile(
   // nothing.
   if (attacker.kind === EntityKindValue.Drop) return false;
   if (target.kind === EntityKindValue.Drop) return false;
-  // A friendly body (spec 244), refused at both ends for the reason the four
+  // A friendly body (spec 246), refused at both ends for the reason the four
   // above are: nothing swings at it, no blast catches it, nothing aggros onto
   // it, and it never turns up in `nearestQuarry`. This one line is the whole of
   // its non-hostility -- there is no branch anywhere else asking whether a body
@@ -2134,7 +2134,7 @@ function monsterIntent(
   approaches: ApproachBoard,
 ): MonsterDecision {
   // Being talked to outranks everything below it, including the leash and the
-  // idle plan (spec 244), because a shopkeeper that wandered off mid-sentence is
+  // idle plan (spec 246), because a shopkeeper that wandered off mid-sentence is
   // the one thing this feature cannot do. Asked first rather than folded into
   // `idleDecision`, so it is a claim on the body rather than a mood: the plan
   // underneath is untouched and resumes at the epoch it would have reached
@@ -2375,7 +2375,7 @@ function beyondLeash(monster: ServerEntity): boolean {
  * on it, move on" with nothing counting the hanging out.
  */
 /**
- * A body being talked to: stands still, and turns to the player (spec 244).
+ * A body being talked to: stands still, and turns to the player (spec 246).
  *
  * Nothing new steers. The pose is the one `monsterIntent` already has for an
  * alert body -- "stopped, facing you" -- expressed the way that one is, as an

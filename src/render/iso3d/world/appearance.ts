@@ -194,7 +194,7 @@ export function appearanceOf(entity: AppearanceInput): Appearance {
         rig: 'monster',
         typeId: entity.typeId || 'monster',
         radius: monster?.radius ?? DEFAULT_MONSTER_RADIUS,
-        // A friendly body has no bar (spec 244). Nothing can take its health, so
+        // A friendly body has no bar (spec 246). Nothing can take its health, so
         // a bar over it would be a full one forever -- and a health bar is the
         // clearest thing this game draws to say "you may fight this".
         showsHealth: !isFriendlyMonster(entity.typeId),

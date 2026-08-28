@@ -199,7 +199,7 @@ Anticipation is never a lock on the player's hands.
 ### `0x1c Talk`
 `varuint entityId`
 
-Start or end a conversation with a friendly NPC (spec 244). `entityId` of `0`
+Start or end a conversation with a friendly NPC (spec 246). `entityId` of `0`
 ends whatever is in progress rather than naming a body — one message rather
 than two, the same convention `OpenVendor`'s empty id already uses, so a client
 leaving cannot be a client that forgot to say it was leaving.
@@ -689,7 +689,7 @@ Equipment slot order is the wire contract: a new slot is appended to
 ### `0x57 Conversation`
 `varuint entityId`
 
-Which NPC this client is talking to, or `0` for none (spec 244). The answer to a
+Which NPC this client is talking to, or `0` for none (spec 246). The answer to a
 `Talk`, and also what arrives **unasked** when the server ends one: the player
 walked past `talkRadius`, either body died, the NPC despawned, or the connection
 dropped and came back. So a client never has to infer the end of a conversation

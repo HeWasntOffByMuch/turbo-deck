@@ -38,7 +38,7 @@ export type WindowId = 'inventory' | 'character' | 'shop' | 'trade' | 'options' 
  *
  * A table rather than a switch, so adding a screen is a row -- and so removing
  * one is deleting a row. There is deliberately no entry for the shop: since
- * spec 245 it is opened by a reply in a conversation and by nothing else, so
+ * spec 247 it is opened by a reply in a conversation and by nothing else, so
  * there is no control that could open it and no action id left to name.
  */
 const UI_WINDOWS: Readonly<Record<string, WindowId | undefined>> = {

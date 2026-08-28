@@ -95,7 +95,7 @@ export type Temperament =
    */
   | { readonly kind: 'ferocious'; readonly noticeRange: number; readonly assistRange: number }
   /**
-   * Will not fight, and cannot be fought (spec 244).
+   * Will not fight, and cannot be fought (spec 246).
    *
    * The only member with no number on it, and that is the authoring rule
    * holding rather than an omission: it notices nothing, waits for nothing and
@@ -211,7 +211,7 @@ export function noticeRangeOf(temperament: Temperament): number {
  * name should not also be walking about.
  */
 /**
- * Whether a body of this type will not fight and cannot be fought (spec 244).
+ * Whether a body of this type will not fight and cannot be fought (spec 246).
  *
  * The one answer, because three places need it and they are in three different
  * trees: `sim/aggro.ts`'s `isFriendly` wraps it for an entity, the renderer's
@@ -283,14 +283,14 @@ function seconds(value: number): number {
 }
 
 /**
- * A body that is not an enemy (spec 244).
+ * A body that is not an enemy (spec 246).
  *
  * A row here rather than a table of its own because everything about it except
  * the fighting is a monster: it comes off a `spawner` marker, wanders through
  * `sim/idle.ts`, is moved by `resolveMovement`, replicates and is drawn. What it
  * *says* lives in `data/npcs.ts`, keyed by this id.
  *
- * A factory rather than three literal rows, because since spec 245 there are
+ * A factory rather than three literal rows, because since spec 247 there are
  * three of them and every field but the id and the name is the same -- and the
  * fields are the same for reasons, written out below, that would then be
  * written out three times or (worse) once, beside whichever row happened to be
@@ -601,7 +601,7 @@ const AUTHORED: readonly AuthoredMonster[] = [
   },
   shopkeeper('npc.merchant', 'Rell'),
   // The two shops that used to be invisible coordinates near the spawn
-  // (spec 245). They were reached by standing on the spot and pressing a key,
+  // (spec 247). They were reached by standing on the spot and pressing a key,
   // which is what "there is no map that says where a town is" bought in spec
   // 129; there is a town now, and the key is gone, so they are bodies like
   // Rell -- same row shape, same wander, same voice machinery, different

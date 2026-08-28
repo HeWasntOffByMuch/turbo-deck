@@ -166,7 +166,7 @@ const CAMERA_SMOOTH = 0.15;
 
 /**
  * How much clear world sits around the pair while a conversation is framed
- * (spec 244).
+ * (spec 246).
  *
  * Generous, and it has to be: the frustum's half-*width* is a screen axis and
  * the two bodies are separated in *world* space at an orbited 45 degrees, so
@@ -667,7 +667,7 @@ export class WorldScene {
   private readonly target = new THREE.Vector3();
   private targetPlaced = false;
   /**
-   * Where the other end of a framed conversation is, or null (spec 244).
+   * Where the other end of a framed conversation is, or null (spec 246).
    *
    * Pushed by the mount while a conversation is live and cleared when it ends.
    * Deliberately *not* written into `ViewControls`: those sliders are the
@@ -2975,7 +2975,7 @@ export class WorldScene {
   }
 
   /**
-   * Frame a conversation with the body at this point, or clear it (spec 244).
+   * Frame a conversation with the body at this point, or clear it (spec 246).
    *
    * A point rather than an entity id, because the scene should not have to look
    * one up -- and because the mount already has the body it is drawing a bubble
@@ -2999,7 +2999,7 @@ export class WorldScene {
 
   /**
    * Where the camera looks: the player, or between the player and whoever they
-   * are talking to (spec 244).
+   * are talking to (spec 246).
    *
    * Applied *here* rather than by writing into the controls, which is the whole
    * of "do not permanently modify the player's camera". Nothing is stored: the

@@ -608,7 +608,7 @@ export class AudioEngine implements Audio {
   }
 
   /**
-   * The context and bus a procedural voice is built on (spec 244).
+   * The context and bus a procedural voice is built on (spec 246).
    *
    * Answers null until `resume` has made a context, and never makes one itself.
    * That is the same rule `play` follows and the reason is the same: a browser

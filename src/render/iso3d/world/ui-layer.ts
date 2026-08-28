@@ -422,13 +422,13 @@ export class UiLayer {
     this.screens.toggle(id);
   }
 
-  /** Open the shop at this vendor rather than at the nearest one (spec 244). */
+  /** Open the shop at this vendor rather than at the nearest one (spec 246). */
   showShopFor(vendorId: string): void {
     this.screens.showShopFor(vendorId);
   }
 
   /**
-   * What the dialogue bubble shows, and where it points (spec 244).
+   * What the dialogue bubble shows, and where it points (spec 246).
    *
    * `anchor` arrives in **CSS pixels** -- it is a projected world point, and
    * that is the space the projector answers in -- and is converted here, because

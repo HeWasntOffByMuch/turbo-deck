@@ -162,7 +162,7 @@ export interface UiScreensOptions {
   /** Ask the server to open a shop, or to shut the one that is open (`''`). */
   readonly onVendor: (vendorId: string) => void;
   /**
-   * A reply was pressed, by index (spec 244). The mount decides what it means:
+   * A reply was pressed, by index (spec 246). The mount decides what it means:
    * the conversation is not this layer's to advance.
    */
   readonly onDialogueChoice: (index: number) => void;
@@ -724,7 +724,7 @@ export class UiScreens {
     this.selectionDock.place(this.selectedUnit, 'topRight');
     this.layers.place('hud', this.selectionDock);
 
-    // The dialogue bubble (spec 244), the `hud` layer's fourth occupant and the
+    // The dialogue bubble (spec 246), the `hud` layer's fourth occupant and the
     // second that is *pressable*: its dock passes the pointer through and the
     // bubble does not, which is what stops a click on a reply also being a click
     // on the world behind it.
@@ -916,7 +916,7 @@ export class UiScreens {
    * `sameItem` guards sixty times a second. It was 2.7ms of a 1.5ms budget.
    */
   /**
-   * What the bubble shows and where it points (spec 244).
+   * What the bubble shows and where it points (spec 246).
    *
    * Pushed rather than derived from `ClientView`, because neither half is on the
    * wire: what is being said is a content table walked by a controller that owns
@@ -1696,7 +1696,7 @@ export class UiScreens {
   }
 
   /**
-   * Open the shop at a **named** vendor (spec 244), which since spec 245 is the
+   * Open the shop at a **named** vendor (spec 246), which since spec 247 is the
    * only way a shop opens at all.
    *
    * The alternative was proximity, and it was wrong for a merchant's own stock
@@ -1722,7 +1722,7 @@ export class UiScreens {
   /**
    * Open a window that a control can ask for.
    *
-   * Deliberately **not** how the shop opens (spec 245). It used to special-case
+   * Deliberately **not** how the shop opens (spec 247). It used to special-case
    * `'shop'` and ask a `nearestVendor` callback -- proximity, which is the only
    * answer available to a key press with no context, and which the shop key was
    * the sole caller of. With the key gone there is no context-free press left,
@@ -2025,7 +2025,7 @@ export class UiScreens {
         // before it reaches the bag behind it.
         () => this.escapeChat(),
         () => this.closeTopmost(),
-        // Last, behind every window (spec 244). Escape backs out of the
+        // Last, behind every window (spec 246). Escape backs out of the
         // innermost thing first, and a shop opened *from* a conversation is
         // inside it -- so the first press puts the stock list away and the
         // second leaves the merchant, rather than one press doing both and

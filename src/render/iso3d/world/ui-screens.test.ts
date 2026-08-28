@@ -281,7 +281,7 @@ describe('what a shop tells the server', () => {
   });
 
   /**
-   * The removal spec 245 is (`show` used to special-case the shop and ask a
+   * The removal spec 247 is (`show` used to special-case the shop and ask a
    * proximity callback, whose only caller was the key press). A `show('shop')`
    * would now open a window with no vendor asked for, so the property worth
    * pinning is that the generic path no longer speaks to the server at all --

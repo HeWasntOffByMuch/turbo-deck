@@ -162,7 +162,7 @@ const ui = new UiLayer(app, {
   onSell: nothing,
   onBuyBack: nothing,
   onVendor: nothing,
-  // Spec 244. This rig fabricates a view to photograph the bottom band; it
+  // Spec 246. This rig fabricates a view to photograph the bottom band; it
   // never holds a conversation, so there is nothing for a reply to mean.
   onDialogueChoice: nothing,
   onDialogueAdvance: nothing,

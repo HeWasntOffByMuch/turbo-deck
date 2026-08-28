@@ -12,7 +12,7 @@
  * a marker kind and the positions move into the document; nothing else here has
  * to change, because the rest of the system only ever asks for a vendor by id.
  *
- * Since spec 245 every row's `x`/`y` is a *body's* spawner rather than a spot
+ * Since spec 247 every row's `x`/`y` is a *body's* spawner rather than a spot
  * chosen here, which is half of that migration already done by hand: the
  * positions are in the map document, and these three constants are what has to
  * agree with them. `world/npc-placement.test.ts` is what says they do.
@@ -23,7 +23,7 @@ import { idlePlanOf } from './monsters.js';
 import { npcById } from './npcs.js';
 
 /**
- * Where each shopkeeper's spawner is, in world units (spec 244, spec 245).
+ * Where each shopkeeper's spawner is, in world units (spec 246, spec 247).
  *
  * The numbers in this file that have to agree with something outside it. A
  * vendor's reach is measured from a fixed point and the bodies that own these
@@ -85,7 +85,7 @@ export interface VendorDefinition {
 }
 
 /**
- * Three shops, each with a body standing in it (spec 245).
+ * Three shops, each with a body standing in it (spec 247).
  *
  * They used to be coordinates near the spawn that a player walked onto and
  * pressed a key at, which was the honest answer while there was no map that
@@ -128,7 +128,7 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     sellFraction: 0.3,
   },
   {
-    // The first shop that had a body standing in it (spec 244), and for one
+    // The first shop that had a body standing in it (spec 246), and for one
     // spec the only one.
     id: 'vendor.rell',
     name: "Rell's Pack",

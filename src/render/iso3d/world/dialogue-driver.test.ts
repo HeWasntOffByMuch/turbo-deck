@@ -8,7 +8,7 @@ import { DialogueDriver, type DialogueBody } from './dialogue-driver.js';
 import type { DialogueSpeech } from './dialogue.js';
 
 /**
- * Spec 244. The four things a conversation is joined to, with none of them real.
+ * Spec 246. The four things a conversation is joined to, with none of them real.
  *
  * The claim this file makes is the one no unit test of `dialogue.ts` can: that
  * the *server* decides whether a conversation exists, and that every way one can

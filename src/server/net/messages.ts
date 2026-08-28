@@ -334,7 +334,7 @@ export interface WatchSpawnersMessage {
  * There is no "and reveal it first". A drop mid-reveal is picked up now.
  */
 /**
- * Start or end a conversation with an NPC (spec 244).
+ * Start or end a conversation with an NPC (spec 246).
  *
  * `entityId` of 0 ends whatever is in progress rather than naming a body, which
  * is the same convention `OpenVendor`'s empty id uses -- one message rather than
@@ -1284,7 +1284,7 @@ export interface SpawnerStatesMessage {
  * who walked up halfway through it.
  */
 /**
- * Which NPC this client is talking to, or 0 (spec 244).
+ * Which NPC this client is talking to, or 0 (spec 246).
  *
  * The answer to a `Talk` and also what arrives unasked when the server ends one
  * -- walking out of range, either body dying, the NPC despawning -- so a client

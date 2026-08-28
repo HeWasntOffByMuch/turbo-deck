@@ -1,5 +1,5 @@
 /**
- * A conversation over the wire (spec 244): a real client, a real server, the
+ * A conversation over the wire (spec 246): a real client, a real server, the
  * shipped map, and the merchant standing on it.
  *
  * Three things are only true end to end, and each is the reason this file exists

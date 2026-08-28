@@ -400,7 +400,7 @@ export interface ClientView {
    */
   readonly vendorRevision: number;
   /**
-   * The NPC this player is talking to, or 0 (spec 244).
+   * The NPC this player is talking to, or 0 (spec 246).
    *
    * Authoritative, and the client never decides it for itself -- the same rule
    * `vendor` above lives by, and for a stronger reason: the claim on the body is
@@ -753,7 +753,7 @@ export class GameClient {
    * on the same frame, forever.
    */
   private vendorReplies = 0;
-  /** What the server last said about who this player is talking to (spec 244). */
+  /** What the server last said about who this player is talking to (spec 246). */
   private conversationEntityId = 0;
   /** The trade this client is in, or null (spec 132). Replaced whole. */
   private tradeView: TradeView | null = null;
@@ -928,7 +928,7 @@ export class GameClient {
     channel.onMessage((bytes) => this.receive(bytes));
     channel.onClose(() => {
       this.connected = false;
-      // A conversation cannot outlive the socket it was held over (spec 244).
+      // A conversation cannot outlive the socket it was held over (spec 246).
       // The server drops the claim on its side when the connection goes, so a
       // client that kept believing in one would draw a bubble over a merchant
       // that had already gone back to wandering.
@@ -1255,7 +1255,7 @@ export class GameClient {
   }
 
   /**
-   * Ask to talk to `entityId`, or 0 to end the conversation (spec 244).
+   * Ask to talk to `entityId`, or 0 to end the conversation (spec 246).
    *
    * Not predicted, and deliberately: the answer decides whether a body stops
    * walking, so a client that opened a bubble on the press would show a

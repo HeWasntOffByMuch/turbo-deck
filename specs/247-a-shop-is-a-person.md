@@ -1,8 +1,8 @@
-# 245 — A shop is a person
+# 247 — A shop is a person
 
 ## Problem
 
-Spec 244 gave the game a merchant you can walk up to, talk to and buy from. It
+Spec 246 gave the game a merchant you can walk up to, talk to and buy from. It
 did not remove the way shopping worked before, and the two do not sit together.
 
 Since spec 129 a shop has been an invisible pair of coordinates near the spawn
@@ -13,7 +13,7 @@ so, *"there is no map yet that says where a town is"* -- and there is one now.
 Leaving both in place is worse than either alone. Two ways to open a shop is two
 answers to *whose* stock is on screen, and the proximity one gets sharper as the
 world fills up: `vendor.quartermaster` and `vendor.armourer` stand 89 units
-apart, so their circles already overlap, and spec 244 had to add a
+apart, so their circles already overlap, and spec 246 had to add a
 `byProximity` flag purely to keep Rell's much wider reach from swallowing both
 of them. A flag whose entire job is to hide one row from a search is a sign the
 search should not be there.
@@ -26,7 +26,7 @@ deleting the binding orphans both rows, and with them the only way to buy
 no loot table anywhere. A removal that quietly takes four items out of the game
 is not the removal that was asked for.
 
-So the two shops get bodies, which is what spec 244 built the machinery for.
+So the two shops get bodies, which is what spec 246 built the machinery for.
 
 ## Shape
 
@@ -89,7 +89,7 @@ place. That is a test rather than a table in a document.
 
 ## Out of scope
 
-- **Selling, reputation, restock, vendor progression.** Spec 244's exclusions
+- **Selling, reputation, restock, vendor progression.** Spec 246's exclusions
   stand; nothing here touches what a shop *does*.
 - **A second friendly model.** All three shopkeepers are drawn from
   `fox_a_pose`, which is a statement about the roster (the fox and the pig are

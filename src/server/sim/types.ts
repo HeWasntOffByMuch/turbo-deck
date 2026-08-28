@@ -556,7 +556,7 @@ export interface ServerEntity {
    */
   readonly leashRadius: number;
   /**
-   * The player this body is talking to, or null (spec 244).
+   * The player this body is talking to, or null (spec 246).
    *
    * A claim on the body, in the register `activity` already has for a swap: it
    * is what makes a conversation cost something visible rather than being a

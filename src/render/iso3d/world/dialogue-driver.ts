@@ -1,5 +1,5 @@
 /**
- * What holds a conversation together in the Play tab (spec 244).
+ * What holds a conversation together in the Play tab (spec 246).
  *
  * The impure half of the dialogue: `dialogue.ts` is the conversation and knows
  * nothing about anything, and this is the four things it has to be joined to --

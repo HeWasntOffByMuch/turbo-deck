@@ -1,5 +1,5 @@
 /**
- * What a line of dialogue *is*, as a schedule (spec 244).
+ * What a line of dialogue *is*, as a schedule (spec 246).
  *
  * The pure half of the procedural voice: given the text and a character's
  * voice, it answers when every letter appears, which of them make a noise, and

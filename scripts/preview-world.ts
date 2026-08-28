@@ -889,7 +889,7 @@ async function main(): Promise<void> {
  * pressed by anything but a unit test.
  *
  * There were five. `KeyV` opened the shop and, when this first pressed it,
- * turned out not to work at all; spec 245 removed it outright, because a shop
+ * turned out not to work at all; spec 247 removed it outright, because a shop
  * is opened by talking to whoever owns it and a key press has no merchant to
  * name. So the shop window has no browser coverage here any more -- reaching it
  * means walking to a shopkeeper and pressing a reply, which is a probe of its

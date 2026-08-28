@@ -182,7 +182,7 @@ describe('which mark the world draws', () => {
     expect(worldMark({ ...NOTHING, overEnemy: true })).toBe('small');
   });
 
-  it('is the bubble over a body that can be talked to (spec 244)', () => {
+  it('is the bubble over a body that can be talked to (spec 246)', () => {
     // The one mark of the three that says what the click *does* rather than
     // where it lands, because a friendly body is the one case where the button
     // means something other than "act on this".

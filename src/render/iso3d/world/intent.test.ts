@@ -473,7 +473,7 @@ describe('a body faces what it was told to attack (spec 090)', () => {
 });
 
 /**
- * Spec 244. Turning to face somebody you have just started talking to.
+ * Spec 246. Turning to face somebody you have just started talking to.
  *
  * The same slot the mark above sits in, and for the same reason -- a walk
  * outranks it -- with one difference that is the whole of what makes it a
@@ -482,7 +482,7 @@ describe('a body faces what it was told to attack (spec 090)', () => {
  * holds nothing between calls; what is asserted here is that the aim does what
  * it says while it is set.
  */
-describe('a body faces whoever it has just spoken to (spec 244)', () => {
+describe('a body faces whoever it has just spoken to (spec 246)', () => {
   const self = { x: 600, y: 450 };
   const merchant = { x: self.x - 300, y: self.y };
 

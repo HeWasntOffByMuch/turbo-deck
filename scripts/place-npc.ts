@@ -1,5 +1,5 @@
 /**
- * Put a friendly NPC's spawner into the shipped map (spec 244).
+ * Put a friendly NPC's spawner into the shipped map (spec 246).
  *
  * A one-marker edit, done through the repo's own `loadMapFile` / `splitMap` /
  * `writeSplit` rather than by hand, for the reason `dev-map-write.ts` and

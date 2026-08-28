@@ -1,5 +1,5 @@
 /**
- * A conversation in progress (spec 244).
+ * A conversation in progress (spec 246).
  *
  * The controller the handoff spec recommends: *"the actual implementation may
  * instead let one central dialogue controller own both text reveal and sound

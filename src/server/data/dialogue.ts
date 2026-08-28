@@ -1,5 +1,5 @@
 /**
- * What a body says, and in what voice (spec 244).
+ * What a body says, and in what voice (spec 246).
  *
  * Content, so it is a table like ABILITIES and ITEMS and MONSTERS, and the same
  * contract holds: a conversation stores line **ids** and every word it shows is

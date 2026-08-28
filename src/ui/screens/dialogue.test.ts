@@ -6,7 +6,7 @@ import { THEME } from '../theme/theme.js';
 import { BUBBLE_LIFT, BUBBLE_WIDTH, DialogueDock, DialogueScreen } from './dialogue.js';
 
 /**
- * Spec 244. The dialogue bubble.
+ * Spec 246. The dialogue bubble.
  *
  * What is asserted here is the half a golden image cannot state: that nothing is
  * drawn when nobody is speaking, that the box stays put while the text grows,

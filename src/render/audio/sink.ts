@@ -95,7 +95,7 @@ export interface AudioStats {
 }
 
 /**
- * Somewhere to build a procedural voice (spec 244).
+ * Somewhere to build a procedural voice (spec 246).
  *
  * The one hole in this otherwise closed surface, and it is deliberately shaped
  * so that it is not a hole in the *mix*: `into` is a bus gain node, so a

@@ -196,7 +196,7 @@ const PURE_RENDER = [
   // hold -- and, more to the point, the file that makes the corner panel and
   // the mark over the same body two readings of one list rather than two.
   'src/render/iso3d/world/selection.ts',
-  // A conversation in progress (spec 244). The controller that owns both the
+  // A conversation in progress (spec 246). The controller that owns both the
   // text reveal and the vocal events it triggers -- so which letter appears
   // when, which of them speak, and what skipping does to the ones that have not
   // yet, are all answerable in Node against a recording sink. Every acceptance
@@ -205,7 +205,7 @@ const PURE_RENDER = [
   // is somebody listening.
   'src/render/iso3d/world/dialogue.ts',
   // What joins a conversation to the server's answer, the audio, the bubble and
-  // the camera (spec 244). Pure of three.js and of the DOM -- it is handed the
+  // the camera (spec 246). Pure of three.js and of the DOM -- it is handed the
   // bodies and answers what to draw -- which is what lets "every way a
   // conversation can end arrives as one event" be a test rather than a claim.
   'src/render/iso3d/world/dialogue-driver.ts',

@@ -1,5 +1,5 @@
 /**
- * Specs 244 and 245. The shipped map's NPCs, against the tables that describe
+ * Specs 246 and 245. The shipped map's NPCs, against the tables that describe
  * them.
  *
  * Here rather than in `data/` because it reads the map off disk, and the data
@@ -57,7 +57,7 @@ describe('the shipped map', () => {
   });
 
   /**
-   * No two of them can end up standing in the same place (spec 245).
+   * No two of them can end up standing in the same place (spec 247).
    *
    * The failure this catches is not a crash: three bodies whose wander discs
    * overlap spend the fight-free half of their lives shoving each other around

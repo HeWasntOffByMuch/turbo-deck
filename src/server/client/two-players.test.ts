@@ -176,7 +176,7 @@ describe('two players in one world', () => {
             e.kind === EntityKind.Monster &&
             e.health > 0 &&
             theirs.has(e.id) &&
-            // Not a friendly body (spec 244). `Monster` is the kind an NPC has
+            // Not a friendly body (spec 246). `Monster` is the kind an NPC has
             // -- everything about a merchant except the fighting is a monster --
             // so without this the nearest shared body is the one standing in the
             // town square, and the whole budget goes on swinging at something

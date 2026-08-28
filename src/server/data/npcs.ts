@@ -1,5 +1,5 @@
 /**
- * The NPC table (spec 244): which bodies can be talked to, and what happens when
+ * The NPC table (spec 246): which bodies can be talked to, and what happens when
  * they are.
  *
  * Keyed by the MONSTERS row id, so a body and the thing it says are one lookup

@@ -111,7 +111,7 @@ class RecordingAudio implements Audio {
   }
 
   speech(): null {
-    // Procedural dialogue (spec 244) builds its own nodes and never reaches
+    // Procedural dialogue (spec 246) builds its own nodes and never reaches
     // this driver. Null is what a recorder can honestly offer: there is no
     // context here to hang an oscillator off.
     return null;

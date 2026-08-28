@@ -15,7 +15,7 @@ describe('appearanceOf', () => {
   });
 
   it('draws a bar over everything that can be fought, and nothing over what cannot', () => {
-    // Spec 244. A friendly body's health can never move, so a bar over it would
+    // Spec 246. A friendly body's health can never move, so a bar over it would
     // be a full one forever -- and a health bar is the clearest thing this game
     // draws to say "you may fight this".
     //

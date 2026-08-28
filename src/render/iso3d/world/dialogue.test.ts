@@ -7,7 +7,7 @@ import { planLine } from '../../audio/dialogue-voice.js';
 import { DialogueSession, type DialogueSpeech } from './dialogue.js';
 
 /**
- * A conversation in progress (spec 244).
+ * A conversation in progress (spec 246).
  *
  * The whole feature driven with no `AudioContext` and no canvas: the sink is a
  * recorder, so "what was spoken" is a list and "nothing survived the bubble" is

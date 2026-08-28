@@ -35,7 +35,7 @@ export function temperamentOf(entity: ServerEntity): Temperament | null {
 }
 
 /**
- * Whether this body will not fight and cannot be fought (spec 244).
+ * Whether this body will not fight and cannot be fought (spec 246).
  *
  * Here rather than inside `isHostile` because three questions want it and only
  * one of them is about damage: whether a blow may land, whether a scan may

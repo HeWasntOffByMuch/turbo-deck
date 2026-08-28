@@ -146,7 +146,7 @@ export const ClientMessageType = {
    */
   DropItem: 0x1b,
   /**
-   * Start or end a conversation with a friendly NPC (spec 244).
+   * Start or end a conversation with a friendly NPC (spec 246).
    *
    * An entity id of 0 ends whatever is in progress, the same convention
    * `OpenVendor`'s empty id already uses -- so there is one message rather than
@@ -249,7 +249,7 @@ export const ServerMessageType = {
    */
   LootDrop: 0x56,
   /**
-   * Which NPC this client is talking to, or 0 for none (spec 244).
+   * Which NPC this client is talking to, or 0 for none (spec 246).
    *
    * The answer to a `Talk`, and also what arrives unasked when the server ends
    * one: walking out of range, either body dying, the NPC despawning. So a

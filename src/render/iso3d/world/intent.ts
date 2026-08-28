@@ -137,7 +137,7 @@ export interface IntentInput {
    */
   readonly targetAim?: Point | null;
   /**
-   * Somebody a conversation has just started with (spec 244), or null.
+   * Somebody a conversation has just started with (spec 246), or null.
    *
    * A **one-shot**, and that is the whole difference from {@link targetAim}
    * beside it: this is set at the moment a conversation opens and dropped the
@@ -267,7 +267,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // already aligned rather than paying for the turn once the clock has run
   // (spec 090). The server turns the body from this at its own rate, so it is
   // the same turn every other player sees.
-  // Coming round to face somebody you have just spoken to (spec 244). Beside
+  // Coming round to face somebody you have just spoken to (spec 246). Beside
   // `targetAim` rather than above or below it because the two cannot both be
   // set: a friendly body is never an attack target.
   const standingAim = input.targetAim ?? input.talkAim;
@@ -302,7 +302,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
  * How close two headings have to be before a turn counts as finished.
  *
  * Deliberately loose. What reads this is a one-shot aim being let go of
- * (spec 244), and the cost of being a degree out is nothing at all, where the
+ * (spec 246), and the cost of being a degree out is nothing at all, where the
  * cost of a threshold too tight is an aim that never clears -- `turnToward`
  * approaches its goal and a body whose turn rate is scaled by a modifier can
  * sit a hair short of it for a long time.

@@ -186,7 +186,7 @@ describe('what a control press means to the Play tab', () => {
   });
 
   /**
-   * No control opens a shop (spec 245).
+   * No control opens a shop (spec 247).
    *
    * Asserted over every action in the table rather than over `KeyV`, because
    * what was removed is not a key -- it is the idea that a shop can be opened

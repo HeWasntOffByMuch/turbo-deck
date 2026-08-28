@@ -1,4 +1,4 @@
-# 244 — a body that is not an enemy
+# 246 — a body that is not an enemy
 
 ## Problem
 
@@ -203,7 +203,7 @@ pressing the shop key near the square opened a merchant's stock with no word
 exchanged. `VendorDefinition.byProximity` is the fix and the better design: this
 shop is reached by talking, which is what its reach was sized for.
 
-*(Spec 245 deleted the flag along with the search it was hiding from. A field
+*(Spec 247 deleted the flag along with the search it was hiding from. A field
 whose only job is to keep one row out of a lookup is that lookup asking to be
 removed, and the two older shops have bodies now.)*
 
