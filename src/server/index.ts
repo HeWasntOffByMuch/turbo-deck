@@ -163,6 +163,32 @@ const authHttp = createAuthHttp({
 });
 
 const http = createServer((request, response) => {
+  /**
+   * The liveness check (spec 153).
+   *
+   * Answered before anything else and without touching the filesystem or the
+   * studio, because the two things asking are a container healthcheck and an
+   * uptime monitor, and both of them want the cheapest true answer available.
+   *
+   * It reports the **tick**, not just a 200. A process whose loop has stopped
+   * still accepts connections and still serves this page, so an endpoint that
+   * only proved the socket was open would call a frozen world healthy -- which
+   * is exactly the failure worth restarting for. Two samples a minute apart
+   * with the same tick is a dead server.
+   *
+   * `server` is declared below and read here on purpose: this closure cannot
+   * run before `http.listen`, which is after it.
+   */
+  if ((request.url ?? '/') === '/healthz') {
+    const body = JSON.stringify({
+      ok: true,
+      tick: server.world.tick,
+      players: server.listPlayers().length,
+    });
+    response.writeHead(200, { 'content-type': 'application/json' }).end(body);
+    return;
+  }
+
   // The studio router answers first and reports whether the request was its
   // own, so neither half has to know the other's paths. Auth is the same
   // contract, chained behind it.
