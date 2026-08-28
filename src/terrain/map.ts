@@ -124,7 +124,7 @@ export interface MapProp {
   /** Draw it in one flat colour per material rather than varied (spec 061). */
   readonly uniform?: boolean;
   /**
-   * What a light fixture burns at, overriding its kind's row (spec 248).
+   * What a light fixture burns at, overriding its kind's row (spec 250).
    *
    * Optional, and absent by default, which is what keeps this a change nobody's
    * map noticed: no committed document gains a key, so no region file's bytes
@@ -133,7 +133,7 @@ export interface MapProp {
   readonly light?: MapPropLight;
 }
 
-/** A fixture's two authored numbers, as the document stores them (spec 248). */
+/** A fixture's two authored numbers, as the document stores them (spec 250). */
 export interface MapPropLight {
   readonly brightness: number;
   readonly radius: number;
@@ -834,7 +834,7 @@ function withKey<K extends string, V>(key: K, value: V | undefined): Partial<Rec
 }
 
 /**
- * A fixture's light block, or undefined (spec 248).
+ * A fixture's light block, or undefined (spec 250).
  *
  * Both numbers are required once the block is there. A half-written light is a
  * fixture whose reach came from the table and whose brightness came from a

@@ -20,7 +20,7 @@ import {
 } from './vegetation.js';
 
 /**
- * Spec 248. A fixture is a prop that emits, and these are the two halves of
+ * Spec 250. A fixture is a prop that emits, and these are the two halves of
  * that: what the light resolves to, and that the document carries it without
  * changing what a document without one looks like.
  */
@@ -55,7 +55,7 @@ function reload(doc: MapDocument): readonly Prop[] {
   return loadMap(parseMap(serializeMap(doc))).store.props('ground');
 }
 
-describe('what a fixture burns at (spec 248)', () => {
+describe('what a fixture burns at (spec 250)', () => {
   it('answers nothing for every kind that is not a fixture', () => {
     for (const kind of ['tree', 'bush', 'fence-wood', ...STRUCTURE_KINDS] as PropKind[]) {
       expect(fixtureLight(prop(kind)), kind).toBeNull();
@@ -113,7 +113,7 @@ describe('what a fixture burns at (spec 248)', () => {
   });
 });
 
-describe('a fixture in the map document (spec 248)', () => {
+describe('a fixture in the map document (spec 250)', () => {
   it('round-trips an override', () => {
     const doc = bake([prop('campfire', { light: { brightness: 1.25, radius: 250 } })]);
     const back = reload(doc);

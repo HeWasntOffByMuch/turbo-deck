@@ -84,9 +84,9 @@ change a game outcome.
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
 | `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
-| `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 248). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
-| `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 248). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
-| `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 248), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
+| `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
+| `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
+| `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
 | `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -402,7 +402,7 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  a flat wall and a body that can stand in a corner, and erring
                  wide is the fence's own answer to the same question. A well is
                  already a circle, so that one is exact.
-                 Since spec 248 it also holds the **light fixtures**: a campfire,
+                 Since spec 250 it also holds the **light fixtures**: a campfire,
                  a street lamp on a stake, and a standing torch. The same
                  argument one system further along -- a fixture is written into
                  the map document, streamed, collided against, batched per region
@@ -420,6 +420,25 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  feature a change nobody's map noticed, since a fixture at its
                  defaults writes no key, so no committed region file's bytes
                  moved and no `mapId` did.
+                 **All three cast shadows**, and that is affordable only
+                 because of what `world-lights.ts` does with the map: it is
+                 rendered on the frame the light is assigned a slot and never
+                 again, so a casting fixture costs one cube lookup per lit
+                 fragment and no draw calls after that. The first cut had the
+                 lamp and the torch dark on a budget argument that is true of a
+                 *live* shadow map and false of a frozen one -- and it cost the
+                 two whose shadows say the most, since a light three
+                 body-heights up is the one that throws a figure's shadow out
+                 across the ground rather than under its own feet.
+                 A campfire's **fire is paint rather than geometry** (spec 250):
+                 the prop is a ring of stones, four charred logs and a bed of
+                 embers, and `fire_camp` in `vfx/brush.ts` is played at the
+                 middle of it by `world/fire-vfx.ts`. The cone that used to
+                 stand there was the honest first answer and is the wrong one
+                 for one reason -- a fire is the only prop in this file whose
+                 subject *moves*, so a static solid can only ever be a picture
+                 of one instant of it -- and it fought the paint rather than
+                 sitting under it.
                  `fixtureLight` is the one answer to "does this glow, and how",
                  with three callers -- the worker composing a region, the editor
                  drawing its ghost, the panel offering the sliders -- for the
@@ -4787,7 +4806,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  between the bow and the keen sword, because since 217 that
                  range **is** what an Ember Shot hits for)
                  carried-light.ts (what the player is holding, and what that
-                 means for the two lights the scene already owns, spec 248).
+                 means for the two lights the scene already owns, spec 250).
                  Pure, and worth being a module because **two things now decide
                  one light**: the tuning panel spec 047 built, and the game. The
                  rule is one sentence -- *the panel wins where it is asking for
@@ -5807,8 +5826,51 @@ src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 142).
                  from: the wire for our own, the monster table for a monster, the
                  fastest base in `CHARACTERS` for a remote player, and nothing at all
                  for a projectile, whose facing is its path.
+src/render/iso3d/vfx/brush.ts's brushFire  a fire that stands somewhere and keeps
+                 burning (spec 250), and the first painted effect in this file
+                 authored to be *watched* rather than glanced at.
+                 Every other fire here is an event -- a shot crossing the frame,
+                 a blast, a body that caught. This one is what a campfire prop is
+                 made of, now that the prop is stones and charred timber and
+                 nothing that moves, and two things follow. **It has to loop
+                 invisibly**, so its three layers run at unrelated rates over
+                 unrelated lifetimes and nothing in it is phased off anything
+                 else. And **it has to cost nothing at distance**: what says
+                 "there is a fire there" from across the arena is the fixture's
+                 light, so this is `priority: 1` -- the first thing to yield
+                 under instance pressure -- and culls well inside the light's own
+                 reach.
+                 Flames rise on an updraft and die young; **embers are the one
+                 layer with gravity on them**, thrown up and falling back,
+                 because an arc is the shape an eye reads as heat coming off
+                 something and everything else here rises steadily; smoke is born
+                 *above* the flame, drifts, spreads and goes dark.
+                 Three of its numbers were paid for by
+                 `preview-brush-vfx.ts`'s fire rows rather than chosen. The first
+                 cut's flames rose about eighteen units and its marks were
+                 fifteen long, so the "column" was one mark tall and read as a
+                 puddle of fire; there was as much smoke as flame, which is
+                 `brushShot`'s own finding one effect along, because against a
+                 mid-green field a grey mark is a hole and an orange one is a
+                 highlight; and the embers were **additive**, which is right for
+                 a lick inside a fireball and wrong over open grass, where it is
+                 not a warm spark but a yellow-green speck. The alpha version
+                 both reads better and reuses a batch the table already has, so
+                 the registry's draw-call ceiling never moved.
+                 `world/fire-vfx.ts` is what plays it, built to
+                 `affliction-vfx.ts`'s three handle rules for that file's stated
+                 reasons -- `play` returns 0 on refusal, a full pool evicts
+                 rather than refusing, and nothing stops itself. What is new is
+                 the fourth thing, and it is why the driver exists: **a fire
+                 stops because the ground it stands on stopped being drawn**, and
+                 there is no event for that, so the whole list of fixtures on
+                 held ground is reconciled every frame and an absence is the
+                 signal. `FIXTURE_ART` says which kinds burn, in the register
+                 `shot-vfx.ts`'s `SHOT_ART` is in: which effect a fixture carries
+                 is art direction, so it lives beside the art rather than in the
+                 map format.
 src/render/iso3d/light-residency.ts, world-lights.ts  the lights standing in the
-                 world, and the shadow maps they build **once** (spec 248).
+                 world, and the shadow maps they build **once** (spec 250).
                  The pair `player-lights.ts` and `player-lighting.ts` already
                  are: a decision that is arithmetic, and the three.js that acts
                  on it. Spec 047 built a torch and a magic orb, spec 118 built
@@ -5828,7 +5890,15 @@ src/render/iso3d/light-residency.ts, world-lights.ts  the lights standing in the
                  intensity 0 with a small reach. `castShadow` is in that key too,
                  so the casting slots are a fixed **prefix** and never a flag
                  toggled per assignment -- which is why `light-residency.ts` has
-                 two sub-pools rather than a boolean on a request.
+                 two sub-pools rather than a boolean on a request. Four of the
+                 six slots cast, and the split is decided by two different things
+                 rather than by one budget: the casting four are cheap *because*
+                 their maps are frozen, so the question stops being "how many can
+                 we draw" and becomes "how many samplers can the shader have";
+                 the plain two exist because a conjured light must never cast,
+                 since it moves every frame and a casting slot would either draw
+                 six faces a frame for it or hand it somebody else's frozen
+                 shadows.
                  **A shadow-casting point light re-renders the scene into six
                  cube faces every frame.** three already exposes the fix and this
                  scene has driven shadows by hand since spec 045: `autoUpdate`

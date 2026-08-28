@@ -261,6 +261,21 @@ only way the number this spec is asked for means anything: it restores what
 - A bake is queued exactly once per (slot, request, revision) and at most one
   per frame.
 
+**The fire**
+
+- A campfire on drawn ground burns; a lamp post and a torch stand do not, and a
+  fixture kind with no `FIXTURE_ART` row is silence rather than a fallback.
+- A fire is played at the **ground**, not at the height its light hangs at, and
+  sized inside the ring of stones rather than across it.
+- Its seed is a function of where it stands, so two clients watching one campfire
+  watch the same fire.
+- It stops when its fixture leaves the list — which is what a region's ground no
+  longer being drawn looks like — and comes back when the ground does.
+- The three handle rules hold: a refusal is asked again, an eviction is
+  restarted, and a handle that was never got is never stopped.
+- The registry still compiles to 25 batches, and one fire on screen is two draw
+  calls.
+
 **Carried and conjured**
 
 - With the panel untouched, `carriedLights` answers exactly what
@@ -281,6 +296,67 @@ only way the number this spec is asked for means anything: it restores what
   every ability on a bar still has an icon.
 - `presentation-only.test.ts` still holds: driving the light layer changes no
   authoritative state.
+
+## Follow-up, in the same spec
+
+Two things the first pass got wrong, both found by looking at it.
+
+### Every fixture casts
+
+The first cut had only the campfire casting, on a budget argument that is true
+of a *live* shadow map and false of a frozen one. Since a fixture's map is
+rendered on the frame it is assigned and never again, what a casting light costs
+after that is a `samplerCube` and one lookup per lit fragment — so the question
+is not "how many can we draw" but "how many samplers can the shader have". With
+the sun and the panel torch that is five point-shadow cubes and one directional
+against the sixteen texture units WebGL2 guarantees.
+
+So all three cast, and the pool's casting prefix goes from two slots to four.
+The plain two stay, and they are the reason the prefix is not the whole pool: a
+conjured light moves every frame, so there is nothing about it that could be
+baked, and a casting slot would either draw six faces a frame for it or hand it
+somebody else's frozen shadows.
+
+The carried torch and the conjured orb also stop being *hidden* when they are
+off. An invisible light is not collected by `projectObject`, so hiding one
+changes `NUM_POINT_LIGHTS` — which is a full material recompile the moment
+somebody equips a torch, the exact hitch the fixed pool exists to avoid. They sit
+at intensity 0 instead, with `castShadow` off, because an intensity of 0 says
+nothing at all about a shadow map.
+
+### A campfire's fire is paint
+
+The cone is gone. What is left of the prop is a ring of stones, four charred logs
+and a bed of embers — everything that does not move — and the fire is
+`brushFire` in `vfx/brush.ts`, played at the middle of the ring by
+`world/fire-vfx.ts`.
+
+A fire is the only prop in this game whose subject moves, so a static solid can
+only ever be a picture of one instant of it; and a five-sided cream cone inside a
+cloud of brush marks reads as a cone somebody put in a fire.
+
+`brushFire` is three layers: **flames** rising on an updraft and dying young,
+**embers** with gravity on them, thrown up and falling back, and **smoke** born
+above the flame that drifts, spreads and thins. The embers are the layer the
+brief names — an arc is the shape an eye reads as heat coming off something, and
+everything else in a fire rises steadily.
+
+The driver is `affliction-vfx.ts`'s, with one thing of its own: a fire stops
+because the ground it stands on stopped being drawn, and there is no event for
+that, so the whole list is reconciled every frame and an absence is the signal.
+
+**Three of its numbers were measured rather than chosen**, through
+`preview-brush-vfx.ts`'s new fire rows:
+
+- the first cut's flames rose ~18 units with 15-unit marks, so the column was one
+  mark tall and read as a puddle of fire;
+- there was as much smoke as flame, which is `brushShot`'s own finding one effect
+  along — against a mid-green field a grey mark is a hole and an orange one is a
+  highlight, so equal counts photograph as smoke with a fire somewhere in it;
+- the embers were **additive**, which is right for a lick inside a fireball and
+  wrong over open grass, where it is a yellow-green speck rather than a warm
+  spark. The alpha version reads better *and* reuses a batch the registry
+  already has, so the draw-call ceiling moved to 26 and then back to 25.
 
 ## What building it found
 
