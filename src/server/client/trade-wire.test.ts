@@ -17,6 +17,7 @@ import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
 import { TradeStageValue } from '../net/protocol.js';
 import { TRADE_RANGE } from '../player/trades.js';
+import { QUARTERMASTER_HOME } from '../data/vendors.js';
 import type { Inventory } from '../state/types.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -27,6 +28,8 @@ interface Harness {
   readonly ben: GameClient;
   /** Walk Ana east until the two of them are further apart than `apart`. */
   readonly walkApart: (apart: number) => Promise<number>;
+  /** Put both players at the quartermaster's counter, a pace apart. */
+  readonly standAtTheCounter: () => Promise<void>;
 }
 
 async function harness(): Promise<Harness> {
@@ -65,7 +68,30 @@ async function harness(): Promise<Harness> {
     }
     return 0;
   };
-  return { server, ana, ben, walkApart };
+  /**
+   * Two of these tests use a sale to take something out of a bag, and a sale is
+   * refused out of the shop's reach. The arrival point used to be inside all
+   * three shops' reach; since the spawn was gated and the town moved off it, it
+   * is inside none of them -- so the counter is somewhere to be taken to rather
+   * than somewhere players happen to start.
+   *
+   * *Both* are moved, not just the seller: leaving the other behind is a trade
+   * cancelled for distance, which is a different test's subject.
+   *
+   * Teleported rather than walked, and that does not contradict `walkApart`'s
+   * rule -- that one is against writing the *record*, which the next tick
+   * mirrors the authoritative position back over, and this goes through the
+   * sim's own teleport. Walking is the other honest option and is three hundred
+   * units of pathing around trees in a test about a table.
+   */
+  const standAtTheCounter = async (): Promise<void> => {
+    server.teleport('ana', QUARTERMASTER_HOME.x, QUARTERMASTER_HOME.y);
+    server.teleport('ben', QUARTERMASTER_HOME.x + 10, QUARTERMASTER_HOME.y);
+    server.tick();
+    await settle();
+  };
+
+  return { server, ana, ben, walkApart, standAtTheCounter };
 }
 
 function entityOf(server: GameServer, playerId: string): number {
@@ -349,6 +375,7 @@ describe('a trade over the wire', () => {
    */
   it('warns each side about the bag that has no room, in their own terms', async () => {
     const h = await harness();
+    await h.standAtTheCounter();
     await open(h);
     // Filled through the real path rather than by writing the record, so the
     // bag this is measured against is a bag the game could actually produce.
@@ -469,6 +496,7 @@ describe('a trade over the wire', () => {
    */
   it('refuses a trade whose goods were sold out from under it', async () => {
     const h = await harness();
+    await h.standAtTheCounter();
     await open(h);
     const index = slotOf(bagOf(h.server, 'ana'), 'bow.hunting');
     const bows = heldBy(h.server, 'bow.hunting');
