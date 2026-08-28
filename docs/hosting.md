@@ -478,39 +478,64 @@ ufw enable
 `unattended-upgrades` is the whole OS-patching story; it is the one piece of
 owning a box that cannot be skipped.
 
-Then give `deploy` both public keys, and shut the door behind them:
+Then give `deploy` your key. If you already used `ssh-copy-id` against the
+vendor's account, copy it across rather than retyping it — the working key is
+the one worth keeping:
 
 ```sh
 # still as root
 install -d -m 700 -o deploy -g deploy ~deploy/.ssh
-cat > ~deploy/.ssh/authorized_keys <<'EOF'
-ssh-ed25519 AAAA...your-personal-key... me@laptop
-restrict ssh-ed25519 AAAA...your-ci-key... github-actions
-EOF
+cp ~ubuntu/.ssh/authorized_keys ~deploy/.ssh/authorized_keys
 chown deploy:deploy ~deploy/.ssh/authorized_keys
 chmod 600 ~deploy/.ssh/authorized_keys
+```
 
-# Keys only, from here on.
+**Verify that before adding anything else**, from your laptop, with the root
+session still open:
+
+```sh
+ssh -i ~/.ssh/turbo-deck deploy@play.example.com 'echo in'
+```
+
+Only then the CI key, **appended** with the real contents of
+`~/.ssh/turbo-deck-ci.pub`:
+
+```sh
+printf 'restrict %s\n' 'ssh-ed25519 AAAA<the real key> github-actions' \
+  >> ~deploy/.ssh/authorized_keys
+```
+
+`>>` and not `>`, which is worth stating because a truncating write here
+destroys the key you are currently logged in with, and the symptom is a
+password prompt on the next connection rather than an error at the time. A
+prompt at all is itself diagnostic: it means the key was refused *and* password
+login is still on, so `PasswordAuthentication no` has not taken effect yet.
+
+The `restrict` prefix is worth the eleven characters: it turns off port
+forwarding, agent forwarding, X11 and pty allocation, none of which a
+`docker compose pull` needs, all of which are useful to somebody who has the
+key and should not have the box. Running a command over SSH still works —
+that is the one thing it leaves.
+
+Last, and only once a key login has actually worked:
+
+```sh
 cat > /etc/ssh/sshd_config.d/99-hardening.conf <<'EOF'
 PasswordAuthentication no
 KbdInteractiveAuthentication no
 PermitRootLogin prohibit-password
 EOF
 systemctl restart ssh
+sshd -T | grep -i passwordauth   # confirm it took: sshd is socket-activated on
+                                 # 24.04+, and a restart does not always reload
 ```
 
-The `restrict` prefix on the CI key is worth the eleven characters: it turns
-off port forwarding, agent forwarding, X11 and pty allocation, none of which a
-`docker compose pull` needs, all of which are useful to somebody who has the
-key and should not have the box. Running a command over SSH still works —
-that is the one thing it leaves.
-
-Verify from your laptop *before* closing the browser-based console, since a
-mistake in `sshd_config` locks you out of a box you can otherwise only reach
-through the vendor's KVM:
+Verify again from a second terminal *before* closing the first, since a mistake
+here leaves only the vendor's KVM. When a key is refused, the box says why:
 
 ```sh
-ssh -i ~/.ssh/turbo-deck deploy@play.example.com 'docker ps'
+journalctl -u ssh -n 20 --no-pager    # "bad ownership or modes" and friends
+ssh -v ... 2>&1 | grep -i offering    # client side: was the key even sent
 ```
 
 Point an A record at the box — at the rented box's address, or at your static
