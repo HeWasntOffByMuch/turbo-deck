@@ -186,7 +186,11 @@ server you wanted to forget about into an annual reinstall.
   Docker from Ubuntu's own repository; a preinstalled one may come from a
   different source at a different version, and then there are two answers to
   "where did docker come from" on a box that should have one.
-- Ubuntu Server, not Desktop. Nothing here draws anything.
+- A VPS panel will list a bare **"Ubuntu 26.04"** with no Server/Desktop
+  choice, and that is correct — cloud images are headless already. That
+  distinction only appears when installing from an ISO, which is the
+  self-hosting path further down. Pick the highest LTS version number in the
+  plain distribution list and ignore the "apps" or "ready-to-go" tab entirely.
 
 Expect the vendor's image to create a non-root `ubuntu` user holding your SSH
 key, with root login disabled. So the steps below marked "as root" start with
