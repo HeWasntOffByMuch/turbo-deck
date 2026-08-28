@@ -147,16 +147,22 @@ jobs:
         if: ${{ vars.DEPLOY_RUNNER == '' }}
         run: |
           set -euo pipefail
-          install -m 600 /dev/null key known_hosts
+          # One call each. `install` with more than one source treats the last
+          # argument as a destination *directory*, so the two-file form tried to
+          # install `/dev/null` and `key` into a directory named `known_hosts`
+          # and failed before anything else ran.
+          install -m 600 /dev/null key
+          install -m 600 /dev/null known_hosts
           printf '%s\n' "$DEPLOY_SSH_KEY" > key
           # Pin the host key rather than accepting whatever answers. Without it
           # the deploy trusts DNS, and this step hands a registry token to
-          # whatever it reaches.
+          # whatever it reaches. BatchMode so an unknown host fails immediately
+          # instead of blocking on a prompt nobody can answer.
           printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > known_hosts
-          ssh -i key -o UserKnownHostsFile=known_hosts \
+          ssh -i key -o UserKnownHostsFile=known_hosts -o BatchMode=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "set -e
-             cd ~/turbo-deck
+             cd $DEPLOY_DIR
              echo '$REGISTRY_TOKEN' | docker login ghcr.io -u '$REGISTRY_USER' --password-stdin
              export SERVER_IMAGE='$IMAGE'
              docker compose pull server
