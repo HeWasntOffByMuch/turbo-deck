@@ -3398,28 +3398,20 @@ export class WorldScene {
    * thing to keep in step with it.
    */
   private applyWorldLights(): void {
-    const pool = this.worldLights;
-    if (!pool) return;
-    this.lightRequests.length = 0;
-    // The map's churn counter (spec 208): one up per chunk inserted *and* one
-    // per chunk let go, so it only ever grows. A fixture's baked shadow map is
-    // stamped with it, and a bake taken over ground that had not arrived yet is
-    // re-taken when it does. In a settled world this number never moves.
-    const revision = this.map?.revision ?? 0;
-    for (const light of this.propField?.lights() ?? []) {
-      this.lightRequests.push({ ...light, revision });
-    }
-    for (const light of this.conjuredLights) this.lightRequests.push(light);
-    // The paint, from the same list and on the same terms (spec 250). A fixture
-    // is here because the region it stands in is being drawn, so a fire that is
-    // no longer in it is one whose ground has gone -- which is exactly when it
+    const fixtures = this.propField?.lights() ?? [];
+
+    // The paint first, and outside the pool's own guard (spec 250). A fixture is
+    // in this list because the region it stands in is being drawn, so one that
+    // has left it is one whose ground has gone -- which is exactly when a fire
     // should stop burning.
     //
     // Every fixture, not only the ones that won a pool slot: a campfire past the
     // pool's reach still has a fire in it, and tying the paint to the light
-    // would make fires wink out in a village with more of them than slots.
+    // would make fires wink out in a village with more of them than slots. Which
+    // is also why this is not inside the `pool` check below -- whether the fires
+    // burn is not a question about the light pool at all.
     this.fireSites.length = 0;
-    for (const light of this.propField?.lights() ?? []) {
+    for (const light of fixtures) {
       this.fireSites.push({
         key: light.key,
         kind: light.kind,
@@ -3430,6 +3422,17 @@ export class WorldScene {
       });
     }
     this.fires.step(this.fireSites);
+
+    const pool = this.worldLights;
+    if (!pool) return;
+    this.lightRequests.length = 0;
+    // The map's churn counter (spec 208): one up per chunk inserted *and* one
+    // per chunk let go, so it only ever grows. A fixture's baked shadow map is
+    // stamped with it, and a bake taken over ground that had not arrived yet is
+    // re-taken when it does. In a settled world this number never moves.
+    const revision = this.map?.revision ?? 0;
+    for (const light of fixtures) this.lightRequests.push({ ...light, revision });
+    for (const light of this.conjuredLights) this.lightRequests.push(light);
     // The point the camera is framing rather than where the camera is: it parks
     // a constant 6,000 units back, so its own position says nothing about which
     // corner of the world is on screen.
