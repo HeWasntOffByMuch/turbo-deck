@@ -42,8 +42,8 @@ export interface StructureSettings {
    * where one differs, so a lamp put down without touching either slider costs
    * the document no bytes and follows `FIXTURE_LIGHTS` for the rest of its life.
    */
-  readonly fixtureBrightness?: number | null;
-  readonly fixtureRadius?: number | null;
+  readonly fixtureBrightness?: number;
+  readonly fixtureRadius?: number;
   /**
    * Where the front faces, in **degrees**.
    *

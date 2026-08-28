@@ -2231,7 +2231,25 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  one in the tab; so the plugin swallows the reload for its own
                  writes only, invalidating the module without announcing it so a
                  later reload by hand still reads the new bytes.
-                 tools.ts holds the one thing 176 and 177 both missed, because
+                 tools.ts is the settings object every lil-gui row is bound to,
+                 and the one rule it has is a hard one: **every field holds a
+                 real value, because `gui.add` refuses one that is not.** It
+                 logs `gui.add failed`, hands back `undefined`, and the
+                 `.name()` on the end of the chain throws -- so panel
+                 construction stops where it stands and the editor never gets a
+                 frame. Spec 250 shipped exactly that: the two fixture-light
+                 sliders were seeded `null` for "the kind's own row", the
+                 default armed structure is a hut, a hut has no light, and the
+                 Map editor tab opened black on every boot with a half-built
+                 panel beside it. `null` was buying nothing --
+                 `fixtureOverride` already writes no override for a number equal
+                 to the kind's row -- so the fields are numbers. What catches
+                 the next one is a test over **every** field rather than those
+                 two, because nothing under `editor/` builds a panel outside a
+                 browser: this class of bug is silent in Node and fatal in the
+                 tab.
+                 tools.ts also holds the one thing 176 and 177 both missed,
+                 because
                  neither was about the panel (spec 178): of the five marker
                  kinds only `spawner` has a reader anywhere, and the strip
                  presented all five identically with an always-live monster
@@ -2375,7 +2393,17 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  that calls none of them -- which is exactly what spec 176 found
                  for markers. It drives the shipped build, arms the tool, presses
                  three times and checks the **file that came out**, because a
-                 building the editor draws and does not save is the bug. What it
+                 building the editor draws and does not save is the bug. Since
+                 spec 250 it counts what it *added* rather than asserting the map
+                 had none to begin with: that was true while the arena was empty
+                 ground and stopped being true the moment spec 247 gave the
+                 shopkeepers a village to stand in -- three huts and a well, none
+                 of them anything to do with this probe, and four checks failing
+                 to say so. Its size tolerance is derived from
+                 `STRUCTURE_SCALE_STEP` for a related reason: it was 0.06 against
+                 a step of 0.05, so a drag that reached exactly one step above
+                 the default matched every hut on the map and reported a working
+                 feature as broken. What it
                  got wrong first is worth keeping: panel rows are **not uniquely
                  named** -- the fence's tile size and a building's size are both
                  `Size`, correctly, since neither is on screen while the other is
@@ -2578,6 +2606,15 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  from the select tool's, since only the armed mode's folder is
                  shown -- and is what that helper should have been doing all
                  along, a hidden row being one nobody can use.
+                 Spec 250 extended that first rule to the two reads that were
+                 still constants -- the marker count and the readout after a
+                 placement -- because the flake had got worse than a wrong
+                 answer: two consecutive runs failed on *different* checks and
+                 passed the other, which is the worst version of the bug, since a
+                 green run is not evidence of anything if a red one is not
+                 either. `markerCountUntil` and `readoutUntil` are the polls, and
+                 both return what they last saw rather than throwing, so a
+                 genuine failure is still reported as the number that was there.
                  `npx tsx scripts/preview-paint.ts` is the same for the material
                  brush, and everything in it is measured off the **pixels**,
                  because the way this feature fails is "the store changed and the

@@ -346,8 +346,30 @@ that, so the whole list is reconciled every frame and an absence is the signal.
 
 ## What building it found
 
-Three things that were already wrong, and none of them could have been found by
-reading:
+Four things, and none of them could have been found by reading:
+
+**A lil-gui row cannot bind to `null`, and the editor went black.** The two
+light sliders were seeded `null`, meaning "the kind's own row" — a perfectly
+good encoding everywhere except in the one object a slider is bound to, and the
+default armed structure is a hut, which has no light to seed from. So it was
+`null` on every boot: `gui.add` logged `gui.add failed` and returned
+`undefined`, the `.name()` on the end of the chain threw, panel construction
+stopped where it stood, and the Map editor tab opened to a black screen with a
+half-built panel.
+
+It needed no encoding at all. `fixtureOverride` already compares against the
+kind's row and writes no override when they are equal, so a number that *is* the
+row's is worth nothing in the document — which is exactly what `null` meant. The
+fields are plain numbers now, seeded from the first fixture kind.
+
+Two tests, at the level the bug lives at rather than the level it showed up at:
+`createEditorSettings()` holds no `null`, no `undefined` and no non-finite number
+in **any** field, and the two light fields are the first fixture's numbers. The
+general one is the point — the next one will be a different field, and nothing
+under `editor/` builds a panel outside a browser, so this class of bug is silent
+in Node and fatal in the tab.
+
+Three more that were already wrong:
 
 **three unrolls the point-light loop.** `player-lighting.ts`'s shader patch
 declares two locals in the body of that loop, and `#pragma unroll_loop_start`
