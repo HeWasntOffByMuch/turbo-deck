@@ -29,9 +29,10 @@ import { InventoryScreen, type ContainerView, type ItemDetail, type ItemView, ty
 import { HudScreen, type HudView } from '../screens/hud.js';
 import {
   CharacterScreen,
-  type AttributeRowView,
   type CharacterView,
-  type SkillView,
+  type SpecializationView,
+  type TrackNodeView,
+  type TrackView,
 } from '../screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../screens/chat.js';
 import { ActionBarScreen, actionBarInsets, type SlotHighlight } from '../screens/action-bar.js';
@@ -468,47 +469,58 @@ export function demoHud(options: PlayRenderOptions = {}): HudView {
 }
 
 /**
- * A character sheet to photograph.
+ * One demo track (spec 244).
  *
- * Written out here rather than run through the game's adapter, for two reasons.
- * `src/ui/` may not import the game's renderer at all -- lint refuses it, and it
- * refused this on the first attempt -- and a golden built from the live skill
- * table would move every time somebody retuned a branch. The *adapter* is tested
- * against the real rules in `character-model.test.ts`; this is a picture.
+ * A picture, not a fixture: a plausible spread with a milestone node and a
+ * purchasable node on each, so the golden shows both kinds of row and the
+ * difference between them.
  */
-function attribute(
+function track(
   key: string,
   name: string,
   abbrev: string,
   allocated: number,
   total: number,
+  nextThreshold: number,
   nextEffect: string,
-  toNext: number,
-): AttributeRowView {
+  nodes: readonly TrackNodeView[],
+): TrackView {
   return {
     key,
     name,
     abbrev,
     description: `What ${name} is for.`,
+    from: 5,
     allocated,
     total,
-    canAllocate: true,
+    canAdvance: true,
     blockedBecause: '',
+    nextThreshold,
+    toNext: Math.max(0, nextThreshold - total),
     nextEffect,
-    toNext,
-    active: [],
+    tiersBought: nodes.reduce(
+      (sum, node) => sum + node.specializations.reduce((inner, s) => inner + s.tier, 0),
+      0,
+    ),
+    nodes,
   };
 }
 
 export function demoCharacter(spend: readonly string[] = []): CharacterView {
   const taken = new Set(spend);
-  const points = Math.max(0, 3 - spend.length);
-  const skill = (id: string, name: string, tier: number, blocked: string): SkillView => ({
+  const points = Math.max(0, 4 - spend.length);
+  const specialization = (
+    id: string,
+    name: string,
+    unlocked: boolean,
+    blocked: string,
+  ): SpecializationView => ({
     id,
     name,
-    tier,
-    level: taken.has(id) ? 1 : 0,
-    maxLevel: 3,
+    tier: taken.has(id) ? 1 : 0,
+    maxTier: 3,
+    cost: 1,
+    unlocked,
     description: `${name}: what it does, in a sentence long enough to wrap.`,
     canSpend: points > 0 && blocked === '',
     blockedBecause: blocked,
@@ -519,7 +531,6 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
     level: 6,
     experience: { current: 180, toNext: 400 },
     unspentPoints: points,
-    unspentAttributePoints: 4,
     stats: [
       { label: 'Health', value: '138', hint: 'what Health does, in one line' },
       { label: 'Damage', value: '12', hint: 'what Damage does, in one line' },
@@ -530,40 +541,54 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
       { label: 'Guard', value: '84', hint: 'what Guard does, in one line' },
       { label: 'Stagger', value: '22', hint: 'what Stagger does, in one line' },
     ],
-    // The gallery is a picture, not a fixture (spec 147): a plausible spread,
-    // and no pair list, because the sheet does not have one.
-    attributes: [
-      attribute('strength', 'Strength', 'STR', 21, 21, 'Committed Swing — while winding up an attack you ignore 60% of incoming poise damage.', 14),
-      attribute('agility', 'Agility', 'AGI', 26, 28, 'Mobile Offense — each Flow stack also cuts 6% off your follow-through.', 9),
-      attribute('intelligence', 'Intelligence', 'INT', 8, 8, 'Spell Shaping — your abilities gain radius and range with Intelligence.', 12),
-      attribute('constitution', 'Constitution', 'CON', 25, 25, 'Hard to Kill — below 30% health you cannot be staggered and take 20% less damage.', 10),
-      attribute('perception', 'Perception', 'PER', 24, 24, 'Opening Read — an enemy that has just committed an attack is Vulnerable for 0.75s.', 11),
-      attribute('wisdom', 'Wisdom', 'WIS', 5, 5, 'Resource Discipline — an ability that connects grants Attuned.', 15),
+    // No pair list, because the sheet does not have one and the rules no longer
+    // have the content it would name (spec 244).
+    tracks: [
+      track('strength', 'Strength', 'STR', 21, 21, 25, 'Committed Swing: while winding up an attack you ignore 60% of incoming poise damage.', [
+        {
+          threshold: 10,
+          reached: true,
+          milestone: null,
+          specializations: [specialization('str.crushingBlows', 'Crushing Blows', true, '')],
+        },
+        {
+          threshold: 20,
+          reached: true,
+          milestone: { name: 'Crushing Blows', effect: 'Blows carry 25% more poise damage.' },
+          specializations: [],
+        },
+        {
+          threshold: 25,
+          reached: false,
+          milestone: null,
+          specializations: [
+            specialization('str.overkill', 'Overkill', false, 'Overkill needs 25 Strength, you have 21'),
+          ],
+        },
+      ]),
+      track('agility', 'Agility', 'AGI', 26, 28, 35, 'Mobile Offense: each Flow stack also cuts 6% off your follow-through.', [
+        {
+          threshold: 10,
+          reached: true,
+          milestone: null,
+          specializations: [specialization('agi.quickRecovery', 'Quick Recovery', true, '')],
+        },
+      ]),
+      track('intelligence', 'Intelligence', 'INT', 8, 8, 10, 'Spell Shaping: your abilities gain radius and range with Intelligence.', []),
+      track('constitution', 'Constitution', 'CON', 25, 25, 35, 'Hard to Kill: below 30% health you cannot be staggered and take 20% less damage.', []),
+      track('perception', 'Perception', 'PER', 24, 24, 25, 'Opening Read: an enemy that has just committed an attack is Vulnerable for 0.75s.', []),
+      track('wisdom', 'Wisdom', 'WIS', 5, 5, 10, 'Resource Discipline: an ability that connects grants Attuned.', [
+        {
+          threshold: 10,
+          reached: false,
+          milestone: null,
+          specializations: [
+            specialization('wis.discipline', 'Resource Discipline', false, 'Resource Discipline needs 10 Wisdom, you have 5'),
+          ],
+        },
+      ]),
     ],
     respec: { cost: 40, enabled: true },
-    branches: [
-      {
-        id: 'attr:strength',
-        name: 'STR',
-        pointsSpent: spend.filter((id) => id.startsWith('str.')).length,
-        skills: [
-          skill('str.crushingBlows', 'Crushing Blows', 1, ''),
-          skill('str.unstoppable', 'Unstoppable', 3, 'Unstoppable needs 40 Strength, you have 21'),
-        ],
-      },
-      {
-        id: 'attr:agility',
-        name: 'AGI',
-        pointsSpent: 0,
-        skills: [skill('agi.quickRecovery', 'Quick Recovery', 1, '')],
-      },
-      {
-        id: 'attr:wisdom',
-        name: 'WIS',
-        pointsSpent: 0,
-        skills: [skill('wis.discipline', 'Resource Discipline', 1, 'Resource Discipline needs 10 Wisdom, you have 5')],
-      },
-    ],
   };
 }
 

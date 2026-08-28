@@ -67,11 +67,11 @@ function fastCharacter(agility: number, skilled: boolean): PersistedPlayer {
     // the branch tree; these are the rows that actually shorten an animation,
     // and none of them touches the interval -- which is the point the probe
     // exists to show.
-    skills: skilled
+    specializations: skilled
       ? [
-          { skillId: 'agi.quickRecovery', level: 3 },
-          { skillId: 'agi.rapidHandling', level: 3 },
-          { skillId: 'agi.lightfoot', level: 3 },
+          { specializationId: 'agi.quickRecovery', tier: 3 },
+          { specializationId: 'agi.rapidHandling', tier: 3 },
+          { specializationId: 'agi.lightfoot', tier: 3 },
         ]
       : [],
     equipment: { ...EMPTY_EQUIPMENT, mainHand: 'stars.weighted' },
@@ -82,8 +82,7 @@ function fastCharacter(agility: number, skilled: boolean): PersistedPlayer {
     currentZone: 'hub',
     level: 20,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 10,
   };

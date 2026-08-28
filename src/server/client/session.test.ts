@@ -279,10 +279,10 @@ describe('loopback session', () => {
     client.onError((_code, message) => errors.push(message));
 
     // A skill whose attribute gate a fresh character does not meet (spec 147).
-    client.spendSkillPoint('str.unstoppable');
+    client.spendOnSpecialization('str.unstoppable');
     await settle();
     expect(errors).toHaveLength(1);
-    expect(test.server.playerManager.get('alice')?.record.skills).toEqual([]);
+    expect(test.server.playerManager.get('alice')?.record.specializations).toEqual([]);
   });
 
   it('surfaces combat results, and moves nobody (spec 065)', async () => {

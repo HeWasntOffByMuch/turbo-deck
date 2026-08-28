@@ -295,7 +295,7 @@ function ticksFor(weapon: string | null): number {
     id: 'p',
     displayName: 'P',
     baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-    skills: [],
+    specializations: [],
     equipment: { ...EMPTY_EQUIPMENT, ...(weapon ? { mainHand: weapon } : {}) },
     inventory: emptyInventory(),
     coins: 0,
@@ -304,8 +304,7 @@ function ticksFor(weapon: string | null): number {
     currentZone: 'greenmarch',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 20,
   });

@@ -40,7 +40,7 @@ export type BaseStatKey = keyof BaseStats;
 
 /**
  * Canonical order. **Load-bearing**: it is the wire order of the six varuints on
- * the `Stats` message and the ordinal an `AllocateAttribute` names, so reordering
+ * the `Stats` message and the ordinal a `SpendProgressionPoint` names, so reordering
  * this array is a protocol change rather than a cosmetic one.
  */
 export const BASE_STAT_KEYS: readonly BaseStatKey[] = [
@@ -134,10 +134,16 @@ export function isEquipSlot(value: string): value is EquipSlot {
   return (EQUIP_SLOTS as readonly string[]).includes(value);
 }
 
-/** A point spent in the tree. Only the id and the level are ever stored. */
-export interface SkillAllocation {
-  readonly skillId: string;
-  readonly level: number;
+/**
+ * Tiers bought in one milestone specialization (spec 244).
+ *
+ * Only the id and the tier are ever stored: what a tier is *worth* lives in
+ * `data/specializations.ts` and is re-read on every recalculation, so a retune
+ * reaches every character at their next login with no migration.
+ */
+export interface SpecializationAllocation {
+  readonly specializationId: string;
+  readonly tier: number;
 }
 
 export type Equipment = Readonly<Record<EquipSlot, string | null>>;
@@ -224,7 +230,7 @@ export interface PersistedPlayer {
    * discoverable cannot also have three columns that permanently foreclose each
    * other, and keeping both meant two skill systems where one would do.
    */
-  readonly skills: readonly SkillAllocation[];
+  readonly specializations: readonly SpecializationAllocation[];
   readonly equipment: Equipment;
   /**
    * What the player is carrying (spec 126). Exactly {@link INVENTORY_SLOTS}
@@ -238,17 +244,20 @@ export interface PersistedPlayer {
   readonly currentZone: string;
   readonly level: number;
   readonly experience: number;
-  /** Skill points earned by levelling and not yet spent. */
-  readonly unspentSkillPoints: number;
   /**
-   * Attribute points earned by levelling and not yet spent (spec 147).
+   * Progression points earned by levelling and not yet spent (spec 244).
    *
-   * Its own budget, deliberately: a system where a point can be either a stat or
-   * a skill makes every skill compete with a stat, and the stat always wins
-   * early and never wins late. Two budgets means the two trees are tuned
-   * against themselves rather than against each other.
+   * **One pool, two things to spend it on.** It was two budgets, and the comment
+   * here defended the split: a point that can be either a stat or a specialization
+   * makes every specialization compete with a stat. That hazard is real and the
+   * price paid to avoid it was that the player never made the decision -- a skill
+   * point had exactly one thing it could buy, so spending it was bookkeeping.
+   *
+   * The two schedules are summed rather than halved, so a level-20 character holds
+   * the same purchasing power they always did; see `SCALING.startingPoints` and
+   * `SCALING.pointsPerLevel`, which are now the whole award schedule.
    */
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
   /** Live resource, clamped to derived maxHealth whenever stats are recomputed. */
   readonly health: number;
   /** Ability resource, clamped the same way. Live, not derived. */

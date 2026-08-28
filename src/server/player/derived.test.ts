@@ -20,12 +20,13 @@ import { ATTRIBUTE_KEYS, type AttributeKey } from '../data/attributes.js';
 import { ALL_MILESTONES } from '../data/milestones.js';
 import { BUILD_PRESETS, fullSpreadOf, spreadOf } from '../data/presets.js';
 import { above, reciprocal, SCALING, softCap } from '../data/scaling.js';
-import { ALL_SYNERGIES } from '../data/synergies.js';
 import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type BaseStats, type PersistedPlayer } from '../state/types.js';
 import { startingBaseStats } from './attributes.js';
 import { NEUTRAL_TRAITS } from './derived.js';
-import { milestoneProgress, resolveProgression } from './progression.js';
+import { heldModifiers, milestoneProgress, resolveProgression } from './progression.js';
+import { sumModifiers } from '../data/modifiers.js';
+import { allAttributePairs } from '../data/attributes.js';
 import { computeEffectiveStats, MAX_CRIT_CHANCE } from './stats.js';
 
 function player(baseStats: Partial<BaseStats> = {}, overrides: Partial<PersistedPlayer> = {}): PersistedPlayer {
@@ -33,7 +34,7 @@ function player(baseStats: Partial<BaseStats> = {}, overrides: Partial<Persisted
     id: 'p1',
     displayName: 'P1',
     baseStats: { ...startingBaseStats(), ...baseStats },
-    skills: [],
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -41,8 +42,7 @@ function player(baseStats: Partial<BaseStats> = {}, overrides: Partial<Persisted
     currentZone: 'wilds',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 20,
     coins: 0,
@@ -92,10 +92,9 @@ describe('a fresh character', () => {
     expect(traits.cooldownScale).toBe(1);
   });
 
-  it('has no milestone, no synergy, and no qualitative behaviour at all', () => {
+  it('has no milestone and no qualitative behaviour at all', () => {
     const progression = resolveProgression(player());
     expect(progression.milestones).toEqual([]);
-    expect(progression.synergies).toEqual([]);
     const traits = computeEffectiveStats(player()).traits;
     expect(traits.windupPoiseArmor).toBe(0);
     expect(traits.overflowHealthPerResource).toBe(0);
@@ -110,7 +109,7 @@ describe('a fresh character', () => {
 
 describe('determinism', () => {
   it('is a pure function of the record', () => {
-    const record = player({ strength: 33, wisdom: 21 }, { skills: [{ skillId: 'str.crushingBlows', level: 3 }] });
+    const record = player({ strength: 33, wisdom: 21 }, { specializations: [{ specializationId: 'str.crushingBlows', tier: 3 }] });
     expect(computeEffectiveStats(record)).toEqual(computeEffectiveStats(record));
     // And of a *copy* of the record, so nothing is memoised on identity.
     expect(computeEffectiveStats(record)).toEqual(
@@ -119,13 +118,13 @@ describe('determinism', () => {
   });
 
   it('never depends on the order allocations appear in', () => {
-    const forwards = player({}, { skills: [
-      { skillId: 'str.crushingBlows', level: 2 },
-      { skillId: 'agi.quickRecovery', level: 1 },
+    const forwards = player({}, { specializations: [
+      { specializationId: 'str.crushingBlows', tier: 2 },
+      { specializationId: 'agi.quickRecovery', tier: 1 },
     ] });
-    const backwards = player({}, { skills: [
-      { skillId: 'agi.quickRecovery', level: 1 },
-      { skillId: 'str.crushingBlows', level: 2 },
+    const backwards = player({}, { specializations: [
+      { specializationId: 'agi.quickRecovery', tier: 1 },
+      { specializationId: 'str.crushingBlows', tier: 2 },
     ] });
     expect(computeEffectiveStats(forwards)).toEqual(computeEffectiveStats(backwards));
   });
@@ -154,9 +153,9 @@ describe('bounds', () => {
     // readable commitment this game is built on unanswerable.
     const maxed = computeEffectiveStats(
       player(ALL_AT(SCALING.attributeHardCap), {
-        skills: [
-          { skillId: 'str.committedSwing', level: 3 },
-          { skillId: 'str.unstoppable', level: 1 },
+        specializations: [
+          { specializationId: 'str.committedSwing', tier: 3 },
+          { specializationId: 'str.unstoppable', tier: 1 },
         ],
       }),
     );
@@ -167,7 +166,7 @@ describe('bounds', () => {
   it('never lets a cost or a cooldown scale reach zero', () => {
     const maxed = computeEffectiveStats(
       player(ALL_AT(SCALING.attributeHardCap), {
-        skills: [{ skillId: 'wis.discipline', level: 3 }],
+        specializations: [{ specializationId: 'wis.discipline', tier: 3 }],
       }),
     );
     expect(maxed.traits.resourceCostScale).toBeGreaterThan(0);
@@ -192,11 +191,11 @@ describe('ordering', () => {
     // distinguishes them. Deep Reserves is the flat half (+25 health a level)
     // and the bloodstone is the percentage half (+12%).
     const built = { constitution: 10 };
-    const skills = [{ skillId: 'con.deepReserves', level: 3 }];
-    const flatOnly = computeEffectiveStats(player(built, { skills }));
+    const specializations = [{ specializationId: 'con.deepReserves', tier: 3 }];
+    const flatOnly = computeEffectiveStats(player(built, { specializations }));
     const both = computeEffectiveStats(
       player(built, {
-        skills,
+        specializations,
         equipment: { ...EMPTY_EQUIPMENT, trinket: 'trinket.bloodstone' },
       }),
     );
@@ -221,7 +220,7 @@ describe('ordering', () => {
     // Lightfoot grants move speed and armour, not strength -- so this stays off,
     // which is the control for the case below.
     const withGrant = player({ strength: 19, agility: 25 }, {
-      skills: [{ skillId: 'agi.lightfoot', level: 1 }],
+      specializations: [{ specializationId: 'agi.lightfoot', tier: 1 }],
     });
     expect(resolveProgression(withGrant).milestones.map((m) => m.id)).not.toContain('str.crushing');
     const pushed = { ...bare, baseStats: { ...bare.baseStats, strength: 20 } };
@@ -229,19 +228,23 @@ describe('ordering', () => {
   });
 });
 
-describe('the twelve presets', () => {
+describe('the build presets', () => {
   it('conserves the budget and stays inside the cap', () => {
     for (const preset of BUILD_PRESETS) {
-      const { attributes, unspent } = fullSpreadOf(preset);
-      const spent = ATTRIBUTE_KEYS.reduce(
+      const { attributes, specializations, unspent } = fullSpreadOf(preset);
+      const onAttributes = ATTRIBUTE_KEYS.reduce(
         (sum, key) => sum + (attributes[key] - SCALING.startingAttribute),
         0,
       );
+      // Tiers come out of the same pool since spec 244, so conservation is over
+      // both kinds of spend. Twelve of the presets buy none and are the
+      // attribute comparison unchanged; the four `spend.*` rows are the axis.
+      const onTiers = specializations.reduce((sum, held) => sum + held.tier, 0);
       const budget = SCALING.startingPoints + SCALING.pointsPerLevel * (preset.level - 1);
       // Conservation rather than "spends it all": a pure build at this level has
       // more points than one attribute can hold, which is exactly what the hard
       // cap is for. What must never happen is a point going missing.
-      expect(spent + unspent, preset.id).toBe(budget);
+      expect(onAttributes + onTiers + unspent, preset.id).toBe(budget);
       for (const key of ATTRIBUTE_KEYS) {
         expect(attributes[key], `${preset.id}.${key}`).toBeLessThanOrEqual(SCALING.attributeHardCap);
       }
@@ -257,6 +260,20 @@ describe('the twelve presets', () => {
     if (pure) {
       expect(fullSpreadOf(pure).attributes.strength).toBe(SCALING.attributeHardCap);
       expect(fullSpreadOf(pure).unspent).toBeGreaterThan(0);
+    }
+  });
+
+  it('keeps the twelve attribute presets free of tiers (spec 244)', () => {
+    // The comparison between attribute spreads is only a comparison between
+    // spreads while none of them carries a tree. The four `spend.*` presets are
+    // the ones that buy tiers, and they exist so that axis is measured somewhere
+    // rather than measured everywhere.
+    for (const preset of BUILD_PRESETS.filter((p) => !p.id.startsWith('spend.'))) {
+      expect(preset.tierShare, preset.id).toBe(0);
+      expect(fullSpreadOf(preset).specializations, preset.id).toEqual([]);
+    }
+    for (const preset of BUILD_PRESETS.filter((p) => p.id.startsWith('spend.'))) {
+      expect(fullSpreadOf(preset).specializations.length, preset.id).toBeGreaterThan(0);
     }
   });
 
@@ -292,7 +309,6 @@ describe('the twelve presets', () => {
       const record = player(spreadOf(preset) as unknown as BaseStats, { level: preset.level });
       const progression = resolveProgression(record);
       const [a, b] = preset.into;
-      expect(progression.synergies.length, preset.id).toBe(1);
       const reached = new Set(progression.milestones.map((m) => m.attribute));
       expect(reached.has(a as AttributeKey), `${preset.id} has no ${a} identity`).toBe(true);
       expect(reached.has(b as AttributeKey), `${preset.id} has no ${b} identity`).toBe(true);
@@ -318,17 +334,40 @@ describe('the twelve presets', () => {
   });
 });
 
-describe('every pair is reachable', () => {
-  it('turns each of the fifteen on with a spread a player could actually build', () => {
-    for (const synergy of ALL_SYNERGIES) {
-      const record = player({ [synergy.a]: synergy.threshold, [synergy.b]: synergy.threshold });
+describe('no pair carries a bonus of its own (spec 244)', () => {
+  /**
+   * The fifteen authored pair synergies are gone, and this is the assertion that
+   * says so mechanically rather than by the table being absent.
+   *
+   * It is not "the traits of a both-at-25 character equal the traits of each
+   * half combined" -- traits do not compose that way, since `softCap` and
+   * `reciprocal` are not additive -- so what is checked is the *source* of them:
+   * every modifier a character has comes from something they hold or a milestone
+   * they met, and nothing is contributed by the pairing itself. Re-introduce a
+   * hop-2 grant keyed on two attributes and this fails on the pair that gets it.
+   */
+  it('adds nothing to the totals beyond what is held and what each milestone grants', () => {
+    for (const [a, b] of allAttributePairs()) {
+      const record = player({ [a]: 25, [b]: 25 });
       const progression = resolveProgression(record);
-      expect(progression.synergies.map((s) => s.id), synergy.id).toContain(synergy.id);
-      // And the derived traits actually changed because of it -- a synergy whose
-      // grants summed to nothing would pass every table test and do nothing.
-      const without = computeEffectiveStats(player({ [synergy.a]: synergy.threshold }));
-      const with_ = computeEffectiveStats(record);
-      expect(JSON.stringify(with_.traits), synergy.id).not.toBe(JSON.stringify(without.traits));
+      const accounted = sumModifiers([
+        ...heldModifiers(record),
+        ...progression.milestones.map((milestone) => milestone.grants),
+      ]);
+      expect(progression.totals, `${a}+${b}`).toEqual(accounted);
+    }
+  });
+
+  it('still lets both halves of a pair reach their own milestones', () => {
+    // Removing the authored bonuses must not have removed the *interaction*: a
+    // character at 25/25 still has both identities, and what they do together is
+    // the mechanics' business rather than a row's.
+    for (const [a, b] of allAttributePairs()) {
+      const reached = new Set(
+        resolveProgression(player({ [a]: 25, [b]: 25 })).milestones.map((m) => m.attribute),
+      );
+      expect(reached.has(a), `${a}+${b}`).toBe(true);
+      expect(reached.has(b), `${a}+${b}`).toBe(true);
     }
   });
 });

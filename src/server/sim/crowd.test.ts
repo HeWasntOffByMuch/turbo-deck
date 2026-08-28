@@ -201,7 +201,7 @@ describe('a player in a crowd', () => {
     id: 'p1',
     displayName: 'P1',
     baseStats: { strength: 5, agility: 5, intelligence: 5, constitution: 5, perception: 5, wisdom: 5 },
-    skills: [],
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     coins: 0,
@@ -210,8 +210,7 @@ describe('a player in a crowd', () => {
     currentZone: 'greenmarch',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 20,
   };
