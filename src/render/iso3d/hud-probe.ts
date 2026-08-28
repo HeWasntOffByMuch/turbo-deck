@@ -167,7 +167,6 @@ const ui = new UiLayer(app, {
   onDialogueChoice: nothing,
   onDialogueAdvance: nothing,
   onDialogueLeave: nothing,
-  nearestVendor: () => null,
   onTradeOffer: nothing,
   onTradeAccept: nothing,
   onTradeRespond: nothing,

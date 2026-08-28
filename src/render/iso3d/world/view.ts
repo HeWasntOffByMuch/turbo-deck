@@ -145,7 +145,6 @@ import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
 import { pointerCode, wheelCode } from '../../../ui/input/actions.js';
 import { UiLayer } from './ui-layer.js';
-import { nearestVendorTo } from './shop-model.js';
 import { InputMap, type Modifiers } from '../../../ui/input/input-map.js';
 import { loadBindings, saveBindings } from '../../../ui/input/binding-store.js';
 import {
@@ -1893,9 +1892,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   const dialogue = new DialogueDriver({
     speech: new SpeechSink(audioEngine),
     onShop: (vendorId) => {
-      // The NPC's own shop, named by the reply rather than found by proximity:
-      // `nearestVendorTo` is the right answer for a key press with no context
-      // and the wrong one for "this merchant's stock" (spec 244).
+      // The NPC's own shop, named by the reply. Since spec 245 it is the only
+      // way a shop opens: the proximity answer went with the key press that was
+      // its only caller.
       ui.showShopFor(vendorId);
     },
     onLeave: () => client.talk(0),
@@ -2183,13 +2182,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     layout: loadLayout(bindingStorage),
     onLayoutChanged: (layout) => {
       saveLayout(bindingStorage, layout);
-    },
-    // Where the *player* is, not where the camera is looking: the server checks
-    // the same distance from the same position, and asking about a shop the
-    // server will refuse is how a window opens empty.
-    nearestVendor: () => {
-      const me = client.view().self;
-      return me ? nearestVendorTo(me.x, me.y) : null;
     },
     // A request like every other one here (spec 189). The server truncates,
     // refuses a muted player and broadcasts to everyone including the sender --

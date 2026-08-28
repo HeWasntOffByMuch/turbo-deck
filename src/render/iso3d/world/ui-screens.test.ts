@@ -113,7 +113,6 @@ function harness(options: Partial<UiScreensOptions> = {}, viewport = VIEWPORT): 
         saved.push(layout);
         requests.push('layout');
       },
-      nearestVendor: () => 'vendor.quartermaster',
       ...options,
     },
     viewport,
@@ -276,23 +275,29 @@ describe('what is mounted', () => {
 });
 
 describe('what a shop tells the server', () => {
-  it('asks for the nearest vendor when it opens', () => {
+  it('asks for the vendor it was named', () => {
     const { screens, requests } = harness();
-    screens.show('shop');
-    expect(requests).toEqual(['vendor.quartermaster'].map((id) => `vendor:${id}`));
+    screens.showShopFor('vendor.quartermaster');
+    expect(requests).toEqual(['vendor:vendor.quartermaster']);
   });
 
-  it('asks for nothing when there is no vendor in reach', () => {
-    const { screens, requests } = harness({ nearestVendor: () => null });
-    screens.show('shop');
-    // Sent anyway, empty: the server's answer is what shuts the window, and a
-    // request that was never made gets no answer at all.
-    expect(requests).toEqual(['vendor:']);
+  /**
+   * The removal spec 245 is (`show` used to special-case the shop and ask a
+   * proximity callback, whose only caller was the key press). A `show('shop')`
+   * would now open a window with no vendor asked for, so the property worth
+   * pinning is that the generic path no longer speaks to the server at all --
+   * every shop goes through `showShopFor` and therefore names its merchant.
+   */
+  it('says nothing to the server when a window is opened generically', () => {
+    const { screens, requests } = harness();
+    screens.show('inventory');
+    screens.show('character');
+    expect(requests).toEqual([]);
   });
 
   it('tells the server to stop when the window closes', () => {
     const { screens, requests } = harness();
-    screens.show('shop');
+    screens.showShopFor('vendor.quartermaster');
     screens.close('shop');
     expect(requests).toEqual(['vendor:vendor.quartermaster', 'vendor:']);
   });
@@ -303,7 +308,7 @@ describe('what a shop tells the server', () => {
    */
   it('tells the server to stop when Escape closes it', () => {
     const { screens, requests } = harness();
-    screens.show('shop');
+    screens.showShopFor('vendor.quartermaster');
     expect(screens.handleKey('Escape', 'down', NONE)).toBe(true);
     expect(screens.isOpen('shop')).toBe(false);
     expect(requests).toEqual(['vendor:vendor.quartermaster', 'vendor:']);
@@ -312,18 +317,18 @@ describe('what a shop tells the server', () => {
   /**
    * "Not asked yet" and "asked, and the answer was no" are different states, and
    * conflating them closed the shop on the frame it opened -- every time, so the
-   * key that opens it did nothing at all.
+   * reply that opens it did nothing at all.
    */
   it('stays open while the server has not answered yet', () => {
     const { screens } = harness();
-    screens.show('shop');
+    screens.showShopFor('vendor.quartermaster');
     screens.update(viewFixture({ vendor: null, vendorRevision: 0 }), 0);
     expect(screens.isOpen('shop')).toBe(true);
   });
 
   it('shuts the window when the server answers that there is no shop', () => {
     const { screens } = harness();
-    screens.show('shop');
+    screens.showShopFor('vendor.quartermaster');
     // The answer arrived -- walked out of range, or refused -- and it is empty.
     screens.update(viewFixture({ vendor: null, vendorRevision: 1 }), 0);
     expect(screens.isOpen('shop')).toBe(false);

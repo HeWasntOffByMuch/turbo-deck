@@ -160,8 +160,6 @@ export interface UiScreensOptions {
   readonly onBuyBack: (vendorId: string, index: number) => void;
   /** Ask the server to open a shop, or to shut the one that is open (`''`). */
   readonly onVendor: (vendorId: string) => void;
-  /** Which shop to ask for. Answered from where the player is standing. */
-  readonly nearestVendor: () => string | null;
   /**
    * A reply was pressed, by index (spec 244). The mount decides what it means:
    * the conversation is not this layer's to advance.
@@ -474,8 +472,8 @@ export class UiScreens {
    * The shop window is the one screen whose contents have to arrive before it
    * has anything to show, and "the server refused" is what closes it -- so
    * without this it closed itself on the frame it opened, every time, because
-   * the answer had not come back yet. `KeyV` therefore did nothing at all, which
-   * is precisely the failure the whole mount was written to end.
+   * the answer had not come back yet. The shop therefore did nothing at all,
+   * which is precisely the failure the whole mount was written to end.
    */
   private shopAskedAt = -1;
   /** The last answer count seen, so {@link show} can stamp against it. */
@@ -1699,13 +1697,14 @@ export class UiScreens {
   }
 
   /**
-   * Open the shop at a **named** vendor (spec 244).
+   * Open the shop at a **named** vendor (spec 244), which since spec 245 is the
+   * only way a shop opens at all.
    *
-   * `show('shop')` asks `nearestVendor`, which is the right answer for a key
-   * press with no context and the wrong one for a merchant's own stock: two
-   * shops already stand within a hundred units of each other near the spawn, so
-   * proximity would visibly pick the wrong one. A reply that opens a shop knows
-   * exactly which, so it says so.
+   * The alternative was proximity, and it was wrong for a merchant's own stock
+   * for a reason that got sharper the moment shops had bodies: three now stand
+   * within a couple of hundred units of each other, two of them wandering, so
+   * "the nearest one" would visibly pick somebody the player was not talking
+   * to. A reply that opens a shop knows exactly which, so it says so.
    *
    * Re-asks even when the window is already open, which is the case a plain
    * `show` gets wrong: talking to a second merchant while the first one's list
@@ -1721,16 +1720,20 @@ export class UiScreens {
     this.openWindow('shop');
   }
 
+  /**
+   * Open a window that a control can ask for.
+   *
+   * Deliberately **not** how the shop opens (spec 245). It used to special-case
+   * `'shop'` and ask a `nearestVendor` callback -- proximity, which is the only
+   * answer available to a key press with no context, and which the shop key was
+   * the sole caller of. With the key gone there is no context-free press left,
+   * so the shop is {@link showShopFor} and a `show('shop')` would open a window
+   * with no vendor asked for at all.
+   */
   show(id: WindowId): void {
     if (this.isOpen(id)) {
       this.windows.focus(id);
       return;
-    }
-    // Asked for before the window appears, so the first frame it is drawn on is
-    // already the answer rather than an empty shop that fills in a moment later.
-    if (id === 'shop') {
-      this.shopAskedAt = this.lastVendorRevision;
-      this.options.onVendor(this.options.nearestVendor() ?? '');
     }
     this.openWindow(id);
   }

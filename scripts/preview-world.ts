@@ -883,11 +883,18 @@ async function main(): Promise<void> {
 /**
  * Every key that opens a window, one at a time, opened and shut again.
  *
- * All five rather than the two this used to press. A binding that reaches
- * nothing is exactly the state spec 131 was written to end -- `KeyI` did nothing
- * for three phases while the keybinding screen cheerfully offered to rebind it
- * -- and four of these five had never been pressed by anything but a unit test.
- * The fifth, `KeyV`, turned out not to work at all.
+ * A binding that reaches nothing is exactly the state spec 131 was written to
+ * end -- `KeyI` did nothing for three phases while the keybinding screen
+ * cheerfully offered to rebind it -- and all four of these had never been
+ * pressed by anything but a unit test.
+ *
+ * There were five. `KeyV` opened the shop and, when this first pressed it,
+ * turned out not to work at all; spec 245 removed it outright, because a shop
+ * is opened by talking to whoever owns it and a key press has no merchant to
+ * name. So the shop window has no browser coverage here any more -- reaching it
+ * means walking to a shopkeeper and pressing a reply, which is a probe of its
+ * own and is the stated follow-up. `.claude/screenshots/world-shop.png` is the
+ * last picture this took of it.
  */
 async function windowKeys(page: Page, problems: string[]): Promise<void> {
   for (const [code, id] of [
@@ -895,7 +902,6 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     ['KeyB', 'inventory'],
     ['KeyC', 'character'],
     ['KeyK', 'options'],
-    ['KeyV', 'shop'],
   ] as const) {
     const got = await pressAndWait(page, code, id);
     if (got !== id) {
@@ -905,7 +911,6 @@ async function windowKeys(page: Page, problems: string[]): Promise<void> {
     const painted = (await paintedBox(page))?.painted ?? 0;
     if (painted === 0) problems.push(`the ${id} opened on ${code} and drew nothing`);
     console.log(`  ${code} opens the ${id} (${painted} pixels)`);
-    if (id === 'shop') await shoot(page, 'world-shop');
     // Shut again, so the next key is measured on its own.
     const shut = await pressAndWait(page, code, '');
     if (shut !== '') problems.push(`${code} would not close the ${id}, leaving "${shut}"`);

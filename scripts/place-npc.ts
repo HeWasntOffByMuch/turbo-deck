@@ -9,7 +9,7 @@
  * is a way to hand-edit a map into one that will not load.
  *
  * The map editor is the tool for placing markers and this is not a replacement
- * for it: it exists because the merchant's spot has to agree with a constant in
+ * for it: it exists because a shopkeeper's spot has to agree with a constant in
  * `data/vendors.ts`, so "put it exactly there" is the operation, and a script
  * that says so is reviewable where a dragged marker is not.
  *
@@ -25,7 +25,7 @@ import { mkdirSync } from 'node:fs';
 import { loadMapFile, DEFAULT_MAP_PATH } from '../src/server/world/map-file.js';
 import { monsterById } from '../src/server/data/monsters.js';
 import { ALL_NPCS, npcById } from '../src/server/data/npcs.js';
-import { RELL_HOME } from '../src/server/data/vendors.js';
+import { ARMOURER_HOME, QUARTERMASTER_HOME, RELL_HOME } from '../src/server/data/vendors.js';
 import { parseMap, type MapDocument, type MapMarker } from '../src/terrain/map.js';
 import { splitMap } from '../src/terrain/regions.js';
 
@@ -33,7 +33,11 @@ import { writeSplit } from './split-map.js';
 
 /** Which NPC goes where. One row per NPC that should be on the shipped map. */
 const PLACEMENTS: readonly { readonly npcId: string; readonly markerId: string; readonly at: { x: number; y: number } }[] =
-  [{ npcId: 'npc.merchant', markerId: 'npc-merchant', at: RELL_HOME }];
+  [
+    { npcId: 'npc.merchant', markerId: 'npc-merchant', at: RELL_HOME },
+    { npcId: 'npc.quartermaster', markerId: 'npc-quartermaster', at: QUARTERMASTER_HOME },
+    { npcId: 'npc.armourer', markerId: 'npc-armourer', at: ARMOURER_HOME },
+  ];
 
 interface Placed {
   readonly markerId: string;

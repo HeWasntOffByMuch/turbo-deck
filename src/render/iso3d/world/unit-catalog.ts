@@ -54,6 +54,13 @@ export const DEFAULT_AUTHORED_UNITS: Readonly<Record<string, AuthoredUnitId>> = 
   // which is the whole of what this body ever does. Its swing came across with
   // it and reaches nothing, since a friendly row has no attack to trigger one.
   'npc.merchant': 'fox_a_pose',
+  // The other two shopkeepers (spec 245), on the same rig. Three bodies drawn
+  // from one authored unit is a statement about the roster rather than about
+  // the format: the fox and the pig are what the Studio has produced, and a
+  // second friendly model is a generation rather than a code change -- the row
+  // it would need is this one, edited.
+  'npc.quartermaster': 'fox_a_pose',
+  'npc.armourer': 'fox_a_pose',
 };
 
 const authored = new Map<string, AuthoredUnitId>(Object.entries(DEFAULT_AUTHORED_UNITS));

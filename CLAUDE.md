@@ -82,7 +82,7 @@ change a game outcome.
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
 | `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
-| `npx tsx scripts/place-npc.ts` | Put a friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (spec 244). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because the merchant's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
+| `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 244, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
@@ -2701,19 +2701,44 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  -- because a name authored in two places is a name that
                  disagrees with itself. Where an NPC *stands* is deliberately not
                  in it: a body comes off a spawner marker like every other body,
-                 so moving the merchant is a map edit. What that costs is the one
+                 so moving a shopkeeper is a map edit. What that costs is the one
                  coupling this feature has: a vendor's reach is measured from a
-                 **fixed point** and its owner walks, so `RELL_HOME` in
-                 `data/vendors.ts` has to agree with a marker in a document it
-                 cannot see -- and `world/npc-placement.test.ts` asserts the
-                 worst case off the shipped map rather than leaving it a comment.
-                 That reach is derived (`talkRadius + wander radius + a margin`)
-                 rather than chosen, and it is four times a walk-up shop's, which
-                 is why `VendorDefinition.byProximity` exists: left in
-                 `nearestVendorTo` it would swallow both of the older shops, and
-                 pressing the shop key near the square would open a merchant's
-                 stock with no word exchanged. That shop is reached by talking,
-                 which is what its reach was sized for.
+                 **fixed point** and its owner walks, so the three `*_HOME`
+                 constants in `data/vendors.ts` have to agree with markers in a
+                 document they cannot see -- and `world/npc-placement.test.ts`
+                 asserts the worst case off the shipped map rather than leaving
+                 it a comment. That reach is derived (`talkRadius + wander radius
+                 + a margin`) rather than chosen.
+                 Since spec 245 **every** shop is one of these, and the removal
+                 is the more interesting half of that spec. `vendor.quartermaster`
+                 and `vendor.armourer` were invisible coordinates near the spawn
+                 that a player walked onto and pressed `KeyV` at -- which was the
+                 honest answer while `data/vendors.ts`'s own header was still
+                 true that "there is no map yet that says where a town is". Two
+                 ways to open a shop is two answers to *whose* stock is on
+                 screen, and the proximity one got worse as the world filled up:
+                 those two stand 89 units apart so their circles already
+                 overlapped, and spec 244 had to add a `byProximity` flag purely
+                 to keep Rell's four-times-wider reach from swallowing both. A
+                 flag whose whole job is to hide a row from a search is the
+                 search asking to be deleted.
+                 What decided the shape is that **removing the key alone would
+                 have taken four items out of the game**: `KeyV` is the only
+                 caller of `nearestVendorTo` and that is the only thing that ever
+                 names those two rows, so deleting the binding orphans them --
+                 and `staff.emberwood`, `helm.plated`, `chest.scale` and
+                 `shield.oak` are in no loot table anywhere. So the two shops got
+                 bodies, which is what 244 built the machinery for and what
+                 `shopkeeper(id, name)` in `data/monsters.ts` is: three rows that
+                 differ in an id and a name, because everything a shopkeeper's
+                 body *is* is the same and everything it *sells* lives elsewhere.
+                 Their stock, markups and sell fractions did not move. Where they
+                 stand was **measured** rather than chosen -- every candidate
+                 scored for prop collisions and walkable slope over its whole
+                 wander disc -- and they sit 210 to 220 apart against two wander
+                 radii of 180, which is a test rather than a number in a comment.
+                 `showShopFor(vendorId)` is now the only way a shop opens, and
+                 `UiScreens.show` no longer special-cases one.
                  net/transport-ws.ts pings (spec 197), and the reason is the one
                  thing spec 157 could not have known: it moved the heartbeat off
                  `requestAnimationFrame` onto a wall-clock `setInterval` because

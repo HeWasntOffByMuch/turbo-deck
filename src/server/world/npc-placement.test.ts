@@ -1,5 +1,6 @@
 /**
- * Spec 244. The shipped map's NPCs, against the tables that describe them.
+ * Specs 244 and 245. The shipped map's NPCs, against the tables that describe
+ * them.
  *
  * Here rather than in `data/` because it reads the map off disk, and the data
  * tables are deterministic core. What it is for is the one coupling this
@@ -42,14 +43,47 @@ describe('the shipped map', () => {
     }
   });
 
-  it('puts the merchant exactly where its shop thinks it is', () => {
-    const point = points.find((each) => each.monsterId === 'npc.merchant');
-    expect(point, 'the merchant has no spawner').toBeDefined();
-    const vendor = vendorById('vendor.rell');
-    expect(vendor, 'the merchant has no vendor row').not.toBeNull();
-    if (point === undefined || vendor === null) return;
-    expect(point.x).toBeCloseTo(vendor.x, 3);
-    expect(point.y).toBeCloseTo(vendor.y, 3);
+  it('puts every shopkeeper exactly where its shop thinks it is', () => {
+    for (const npc of ALL_NPCS) {
+      if (npc.vendorId === null) continue;
+      const point = points.find((each) => each.monsterId === npc.id);
+      expect(point, `${npc.id} has no spawner`).toBeDefined();
+      const vendor = vendorById(npc.vendorId);
+      expect(vendor, `${npc.id} has no vendor row`).not.toBeNull();
+      if (point === undefined || vendor === null) continue;
+      expect(point.x, npc.id).toBeCloseTo(vendor.x, 3);
+      expect(point.y, npc.id).toBeCloseTo(vendor.y, 3);
+    }
+  });
+
+  /**
+   * No two of them can end up standing in the same place (spec 245).
+   *
+   * The failure this catches is not a crash: three bodies whose wander discs
+   * overlap spend the fight-free half of their lives shoving each other around
+   * through `resolveCrowding`, and a player right-clicking the middle of the
+   * pile gets whichever one the pick happened to land on. Measured between
+   * *discs* rather than between anchors, because the anchors being far apart is
+   * not the claim -- the claim is that the bodies cannot meet.
+   */
+  it("keeps the shopkeepers' wander discs apart", () => {
+    const placed = ALL_NPCS.map((npc) => ({
+      npc,
+      point: points.find((each) => each.monsterId === npc.id),
+    })).filter((each): each is { npc: (typeof ALL_NPCS)[number]; point: NonNullable<typeof each.point> } =>
+      each.point !== undefined,
+    );
+    expect(placed.length).toBe(ALL_NPCS.length);
+    for (let i = 0; i < placed.length; i += 1) {
+      for (let j = i + 1; j < placed.length; j += 1) {
+        const a = placed[i];
+        const b = placed[j];
+        if (a === undefined || b === undefined) continue;
+        const gap = Math.hypot(a.point.x - b.point.x, a.point.y - b.point.y);
+        const discs = roamOf(a.npc.id) + roamOf(b.npc.id);
+        expect(gap, `${a.npc.id} and ${b.npc.id} are ${gap.toFixed(0)} apart`).toBeGreaterThan(discs);
+      }
+    }
   });
 
   it('keeps every shop reachable from anywhere its owner can wander to', () => {
@@ -86,8 +120,9 @@ describe('the shipped map', () => {
   });
 
   it('leaves the ordinary spawners alone', () => {
-    // A control on the edit that placed the merchant: adding one marker must
-    // not have moved, renamed or dropped any of the twelve that were there.
+    // A control on the edits that placed the shopkeepers: adding three markers
+    // must not have moved, renamed or dropped any of the twelve that were
+    // there.
     const monsters = points.filter((point) => npcById(point.monsterId) === null);
     expect(monsters.length).toBeGreaterThanOrEqual(12);
     for (const point of monsters) {

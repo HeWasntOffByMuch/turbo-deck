@@ -3819,6 +3819,18 @@
           "monsterId": "npc.merchant",
           "x": 650,
           "z": 520
+        },
+        {
+          "id": "npc-quartermaster",
+          "monsterId": "npc.quartermaster",
+          "x": 440,
+          "z": 520
+        },
+        {
+          "id": "npc-armourer",
+          "monsterId": "npc.armourer",
+          "x": 550,
+          "z": 330
         }
       ],
       "regions": [
@@ -4359,7 +4371,7 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "743a8749",
+          "hash": "be19bfcd",
           "cells": 3136
         },
         {
@@ -4821,5 +4833,5 @@
       ]
     }
   ],
-  "mapId": "06f4dfeb"
+  "mapId": "737901ea"
 }

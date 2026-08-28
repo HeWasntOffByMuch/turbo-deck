@@ -98,6 +98,80 @@ const MERCHANT_DIALOGUE: DialogueScript = {
   ],
 };
 
+/**
+ * The quartermaster's script.
+ *
+ * Same three-line shape as Rell's, and that is the point rather than a lack of
+ * imagination: what a second NPC costs is a row, and a row is a script this
+ * size. What makes them different characters is the voice, the stock and four
+ * sentences -- not a second dialogue system.
+ */
+const QUARTERMASTER_DIALOGUE: DialogueScript = {
+  start: 'greet',
+  lines: [
+    {
+      id: 'greet',
+      text: 'Kit and provisions. What do you need?',
+      choices: [
+        { text: 'Let me see the kit.', go: 'browse', opens: 'shop' },
+        { text: 'What is this place?', go: 'who' },
+        { text: 'Nothing today.', go: null },
+      ],
+    },
+    {
+      id: 'who',
+      text: 'Hearthstead. The last stores before the road stops being a road.',
+      choices: [
+        { text: 'Let me see the kit.', go: 'browse', opens: 'shop' },
+        { text: 'Good to know.', go: null },
+      ],
+    },
+    {
+      id: 'browse',
+      text: 'Standard issue. It will not impress anyone, and it will not fail you.',
+      choices: [
+        { text: 'That will do.', go: null },
+        { text: 'Where am I again?', go: 'who' },
+      ],
+    },
+  ],
+};
+
+/** The armourer's. Better goods, worse rates -- and it says so. */
+const ARMOURER_DIALOGUE: DialogueScript = {
+  start: 'greet',
+  lines: [
+    {
+      id: 'greet',
+      text: 'Steel, then. Mind, I do not sell cheap.',
+      choices: [
+        { text: 'Show me the steel.', go: 'browse', opens: 'shop' },
+        { text: 'Why so dear?', go: 'who' },
+        { text: 'Another time.', go: null },
+      ],
+    },
+    {
+      id: 'who',
+      // The one line in either script that says something mechanical, because
+      // the two shops' markups *are* the choice they exist to offer and a
+      // player who never opens both would otherwise never find out.
+      text: 'Because it is better. Buy a blade off the quartermaster and you will be back here for a real one.',
+      choices: [
+        { text: 'Show me the steel.', go: 'browse', opens: 'shop' },
+        { text: 'We will see.', go: null },
+      ],
+    },
+    {
+      id: 'browse',
+      text: 'Take your time. It will outlast the argument.',
+      choices: [
+        { text: 'Fair enough.', go: null },
+        { text: 'Remind me why it costs so much.', go: 'who' },
+      ],
+    },
+  ],
+};
+
 const DEFINITIONS: readonly NpcDefinition[] = [
   {
     id: 'npc.merchant',
@@ -117,6 +191,31 @@ const DEFINITIONS: readonly NpcDefinition[] = [
     voice: { voice: 'nasal', pitchMultiplier: 0.96, speed: 0.95 },
     vendorId: 'vendor.rell',
     dialogue: MERCHANT_DIALOGUE,
+  },
+  {
+    id: 'npc.quartermaster',
+    name: 'Quartermaster',
+    talkRadius: 130,
+    // Warm Murmur: "friendly, calm, grounded, mature". The steady one of the
+    // four, which is what a person handing out standard issue sounds like --
+    // and the deliberate opposite of Rell's nasal patter standing two hundred
+    // units away, since the first thing that tells two shopkeepers apart at a
+    // distance is the noise they make.
+    voice: { voice: 'warm', pitchMultiplier: 1.02 },
+    vendorId: 'vendor.quartermaster',
+    dialogue: QUARTERMASTER_DIALOGUE,
+  },
+  {
+    id: 'npc.armourer',
+    name: 'Armourer',
+    talkRadius: 130,
+    // Soft Mumble at a lower pitch and a slower pace: the handoff spec's
+    // default engine, which is the right one for the character with the least
+    // to prove. Three NPCs, three engines -- the fourth is unspoken for, which
+    // is the honest state of a roster this size rather than a gap.
+    voice: { voice: 'soft', pitchMultiplier: 0.88, speed: 0.92 },
+    vendorId: 'vendor.armourer',
+    dialogue: ARMOURER_DIALOGUE,
   },
 ];
 
