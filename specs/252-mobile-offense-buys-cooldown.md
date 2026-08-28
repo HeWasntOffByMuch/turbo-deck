@@ -108,6 +108,35 @@ twelve-build table stands still and never cancels anything.
 - Flow is still granted by the same cancel where the character has `flowTicks`,
   and Flow's backswing reduction still works from its remaining sources.
 
+## Measured
+
+`npm run balance`, one Agility-25 spread at ranks 0/1/2/3, walking out of every
+follow-through, 30s against a ravager, four sigils on 8-12s cooldowns:
+
+```
+  RANK   PER CX  CANCELS  TRIGGERS  CD SEC  USES/MIN  KILLS  DPS
+  x0     0.00    20       0         0.0     28.00     4      5.5
+  x1     1.52    20       20        30.3    32.00     5      6.6
+  x2     2.93    20       20        58.5    40.00     5      6.9
+  x3     4.46    20       20        89.2    46.00     6      8.1
+```
+
+**Flagged as strong, and deliberately not retuned here.** Rank 3 removes 89
+seconds of cooldown from a 30-second fight — three times real time — and presses
+an active ability **1.64x** as often as rank 0, for three points. The reason the
+figure is that large is structural rather than a mis-set constant: one trigger
+pays *every* cooling active ability, so the value of a tier is multiplied by how
+many actives the character is carrying, and four is the maximum the game allows.
+Read `PER CX` for the honest per-trigger figure (4.46s of 4.8s offered, the rest
+clamped away) and `USES/MIN` for what any of it was worth.
+
+The three obvious levers, in the order they should be considered, are all
+deliberately left for a spec with playtesting behind it: an internal cooldown on
+the trigger, paying only the *longest*-cooling ability rather than all of them,
+or a smaller constant. None is a correctness fix — the mechanic clamps, cannot
+go negative, and cannot touch the cadence — so changing the number now would be
+tuning against a harness rather than against a game.
+
 ## Out of scope
 
 - **No replacement Flow mechanic.** Flow keeps the backswing reduction it has,
