@@ -82,7 +82,11 @@ export interface VoicePreset {
   readonly questionLift: number;
   /** Fraction of hashed pitch wobble, either way. */
   readonly pitchVariation: number;
-  /** The engine's own gain, before the character's volume and the bus. */
+  /**
+   * The engine's own gain, before {@link DIALOGUE_GAIN}, the character's volume
+   * and the bus. The reference file's numbers, so the four stay in the balance
+   * they were tuned in.
+   */
   readonly level: number;
   /** How long one vocal event lasts, seconds. Drives the envelope. */
   readonly durationSec: number;
@@ -144,6 +148,24 @@ export const VOICE_PRESETS: Readonly<Record<DialogueVoiceId, VoicePreset>> = {
   },
 };
 
+/**
+ * What every voice's level is multiplied by.
+ *
+ * One number rather than four, so the balance between the engines stays exactly
+ * the one `procedural_mumble_4voices.html` was tuned at and "louder" is a single
+ * edit. The levels below are that file's verbatim; this is the only thing that
+ * moves them.
+ *
+ * 2.5 rather than 1, because the reference plays straight into
+ * `context.destination` at its own volume slider (0.72 by default) and this
+ * plays into a **bus**: the chain is `level x bus(0.8) x master(0.7)`, which is
+ * 0.56 before anything else, so matching the reference's loudness needs about
+ * 1.8 and being audibly louder than it needs more. At 2.5 the nasal voice peaks
+ * at 0.077 against the reference's 0.040, and four of them at once -- the cap --
+ * still land well under a full-scale sample.
+ */
+export const DIALOGUE_GAIN = 2.5;
+
 /** How far ahead a `?` starts lifting the pitch, in characters. */
 export const QUESTION_LOOKAHEAD = 9;
 
@@ -156,7 +178,7 @@ export interface SpeakEvent {
   readonly char: string;
   /** Hz, with the profile, the character's multiplier, the wobble and any question lift already in it. */
   readonly pitch: number;
-  /** 0..1, the engine's level times the character's volume. */
+  /** 0..1: the engine's level, {@link DIALOGUE_GAIN} and the character's volume. */
   readonly gain: number;
   readonly durationSec: number;
   readonly profile: FormantProfile;
@@ -284,7 +306,7 @@ export function planLine(text: string, voice: DialogueVoice, seedText: string): 
           questionLiftAt(text, i, lift) *
           emphasis *
           (1 + wobble),
-        gain: preset.level * volume,
+        gain: preset.level * DIALOGUE_GAIN * volume,
         durationSec: preset.durationSec,
         profile,
       };

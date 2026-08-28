@@ -164,7 +164,7 @@ describe('the drawn mark', () => {
 });
 
 describe('which mark the world draws', () => {
-  const NOTHING = { aiming: false, overEnemy: false, overDrop: false };
+  const NOTHING = { aiming: false, overEnemy: false, overDrop: false, overNpc: false };
 
   it('is the full crosshair while an aim is pending', () => {
     expect(worldMark({ ...NOTHING, aiming: true })).toBe('full');
@@ -173,12 +173,20 @@ describe('which mark the world draws', () => {
   it('is the full crosshair over anything at all, once a skill is armed', () => {
     // A left click places the aim, so neither a pointing hand nor the small
     // mark may promise something the click is not going to perform.
-    expect(worldMark({ aiming: true, overEnemy: true, overDrop: false })).toBe('full');
-    expect(worldMark({ aiming: true, overEnemy: false, overDrop: true })).toBe('full');
+    expect(worldMark({ ...NOTHING, aiming: true, overEnemy: true })).toBe('full');
+    expect(worldMark({ ...NOTHING, aiming: true, overDrop: true })).toBe('full');
+    expect(worldMark({ ...NOTHING, aiming: true, overNpc: true })).toBe('full');
   });
 
   it('is the small mark over a body a click would act on', () => {
     expect(worldMark({ ...NOTHING, overEnemy: true })).toBe('small');
+  });
+
+  it('is the bubble over a body that can be talked to (spec 244)', () => {
+    // The one mark of the three that says what the click *does* rather than
+    // where it lands, because a friendly body is the one case where the button
+    // means something other than "act on this".
+    expect(worldMark({ ...NOTHING, overNpc: true })).toBe('bubble');
   });
 
   it('is nothing over a drop, or over open ground', () => {
@@ -192,7 +200,8 @@ describe('which mark the world draws', () => {
     for (const input of [
       { ...NOTHING, aiming: true },
       { ...NOTHING, overEnemy: true },
-      { aiming: true, overEnemy: true, overDrop: true },
+      { ...NOTHING, overNpc: true },
+      { ...NOTHING, aiming: true, overEnemy: true, overDrop: true, overNpc: true },
       NOTHING,
       { ...NOTHING, overDrop: true },
     ]) {
@@ -213,12 +222,18 @@ describe('which mark the world draws', () => {
     const armed = boxFor(at);
     expect(armed).toEqual(hovering);
     expect(worldMark({ ...NOTHING, overEnemy: true })).not.toBe(
-      worldMark({ aiming: true, overEnemy: true, overDrop: false }),
+      worldMark({ ...NOTHING, aiming: true, overEnemy: true }),
     );
   });
 
-  it('declares both marks at the same size', () => {
-    for (const svg of [crosshairSvg({ art: 'full' }), crosshairSvg({ art: 'small' })]) {
+  it('declares every mark at the same size', () => {
+    // All three swap under the pointer without the box changing, which is what
+    // lets `hud.ts` hold one holder per art and show exactly one of them.
+    for (const svg of [
+      crosshairSvg({ art: 'full' }),
+      crosshairSvg({ art: 'small' }),
+      crosshairSvg({ art: 'bubble' }),
+    ]) {
       expect(svg).toContain(`width="${CROSSHAIR_BOX}"`);
       expect(svg).toContain(`height="${CROSSHAIR_BOX}"`);
     }

@@ -674,8 +674,9 @@ export function createHud(project: Projector): HudHandle {
   const crosshairArt: Record<CrosshairArt, HTMLElement> = {
     full: document.createElement('div'),
     small: document.createElement('div'),
+    bubble: document.createElement('div'),
   };
-  for (const art of ['full', 'small'] as const) {
+  for (const art of ['full', 'small', 'bubble'] as const) {
     const holder = crosshairArt[art];
     holder.style.cssText = 'position:absolute;left:0;top:0;display:none;';
     holder.innerHTML = crosshairSvg({ art });

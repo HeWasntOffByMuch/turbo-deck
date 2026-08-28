@@ -109,11 +109,12 @@ const DEFINITIONS: readonly NpcDefinition[] = [
     // `world/npc-placement.test.ts` that measures the worst case off the
     // shipped map.
     talkRadius: 130,
-    // Soft Mumble, the handoff spec's own recommendation for a default NPC --
-    // "gentle, rounded, neutral, friendly ... probably the safest default". A
-    // touch above the preset's pitch and a touch under its pace, which is the
-    // whole of what makes this a particular person rather than the engine.
-    voice: { voice: 'soft', pitchMultiplier: 1.04, speed: 0.95 },
+    // Nasal Babble: "cartoonish, quirky, odd, exaggerated", and the one of the
+    // four with the strongest question intonation -- which the opening line
+    // ("Looking for something useful?") is built around. A touch under the
+    // preset's pitch and a touch under its pace, so it reads as a person
+    // talking rather than as the engine demonstrating itself.
+    voice: { voice: 'nasal', pitchMultiplier: 0.96, speed: 0.95 },
     vendorId: 'vendor.rell',
     dialogue: MERCHANT_DIALOGUE,
   },

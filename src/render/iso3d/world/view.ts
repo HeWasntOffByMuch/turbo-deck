@@ -139,7 +139,7 @@ import { TradeStageValue } from '../../../server/net/protocol.js';
 import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
-import { moveIntent, RoutePlanner } from './intent.js';
+import { aligned, moveIntent, RoutePlanner } from './intent.js';
 import { pickupLead, pickupOrderFor } from './loot-drop.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
@@ -1875,6 +1875,21 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * and the window manager to open a shop on. What it does *not* need is the
    * scene or the DOM, which is why it is a module rather than a closure.
    */
+  /**
+   * Somebody to turn and face, because a conversation has just started
+   * (spec 244).
+   *
+   * A **one-shot**: armed when a conversation opens and dropped the instant the
+   * body has come round or the player walks off. Holding it for the length of
+   * the conversation would be a different feature -- the player would snap back
+   * to facing the merchant every time they stopped moving, which is not what
+   * "turn toward them when you start talking" means and would fight anybody who
+   * wanted to look at something else mid-sentence.
+   */
+  let talkAim: { x: number; y: number } | null = null;
+  /** Which body `talkAim` was armed for, so a second conversation re-arms it. */
+  let talkAimFor = 0;
+
   const dialogue = new DialogueDriver({
     speech: new SpeechSink(audioEngine),
     onShop: (vendorId) => {
@@ -3016,6 +3031,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       aiming: pendingAim !== null,
       overEnemy: hovered !== undefined && attackable(hovered, view.selfEntityId),
       overDrop: hovered !== undefined && collectable(hovered),
+      // The same predicate `issueOrder` branches on (spec 244), so the mark
+      // under the pointer and what the button does cannot disagree -- which is
+      // the rule `overEnemy` already lives by one line up.
+      overNpc: hovered !== undefined && talkable(hovered),
     };
     // The mark and the cursor under it are one decision read twice, so "we hid
     // the pointer" and "we drew a mark" cannot come apart.
@@ -3517,6 +3536,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // whole attack delay, and only turned once the blow committed -- so the
       // turn was paid for *after* the wait instead of during it.
       targetAim: aimedMark(view),
+      // And face somebody you have just started talking to (spec 244), once.
+      // Beside `targetAim` rather than fighting it: a friendly body is never an
+      // attack target, so the two are never both set.
+      talkAim,
       // A poise break holds the legs *and* the heading (spec 173). The heading
       // is the half that matters here: a correction carries a position, so a
       // predicted step is pulled back, and it carries no facing at all -- so a
@@ -3538,6 +3561,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Turn toward what was asked for at our own rate, so the drawn heading is
     // the one the server is about to arrive at rather than the one it left.
     facing = turnToward(facing, intent.facing, view.stats?.turnRate ?? 0, SERVER_TICK_RATE);
+    // And let the conversation's one-shot go, now that the turn it asked for has
+    // either happened or been overruled (spec 244). Here rather than inside
+    // `moveIntent`, which is pure and holds nothing between calls -- and after
+    // the turn rather than before it, so the aim survives the tick it arrives
+    // on instead of being dropped a frame early.
+    if (talkAim !== null && (intent.moveX !== 0 || intent.moveY !== 0 || aligned(facing, intent.facing))) {
+      talkAim = null;
+    }
     client.sendInput({ moveX: intent.moveX, moveY: intent.moveY, facing: intent.facing, buttons: 0 });
   }
 
@@ -3637,6 +3668,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // back on its own when it is not: both are the same ease the camera has
     // always used to follow a body, so there is nothing to restore.
     scene.setDialogueFraming(speaker ? { x: speaker.x, y: speaker.y } : null);
+
+    // Armed on the *edge* rather than held (spec 244): the player turns to face
+    // whoever they have just spoken to, and is then free to look anywhere. Keyed
+    // on the body, so walking from one merchant to another turns you again.
+    if (speakerId !== talkAimFor) {
+      talkAimFor = speakerId;
+      talkAim = speaker ? { x: speaker.x, y: speaker.y } : null;
+    }
 
     const bubble = dialogue.view();
     if (bubble === null || speaker === undefined) {

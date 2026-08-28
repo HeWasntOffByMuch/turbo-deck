@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { REVEAL_TIMING, type DialogueVoice, type DialogueVoiceId } from '../../server/data/dialogue.js';
 import {
   DEFAULT_DENSITY,
+  DIALOGUE_GAIN,
   QUESTION_LOOKAHEAD,
   VOICE_PRESETS,
   planLine,
@@ -263,6 +264,30 @@ describe('the four presets', () => {
 
   it('leaves the density default where the handoff spec puts it', () => {
     expect(DEFAULT_DENSITY).toBe(3);
+  });
+
+  it('lifts every voice by one shared gain, so the balance between them holds', () => {
+    // The reason `DIALOGUE_GAIN` is one number rather than four edited levels:
+    // the four were tuned against each other by ear in the reference file, and
+    // "make dialogue louder" must not quietly become "make the chirp relatively
+    // quieter than the murmur".
+    const gains = VOICES.map((id) => {
+      const plan = planLine('aaa', { voice: id }, 's:l');
+      const spoke = plan.steps.flatMap((step) => (step.speak ? [step.speak] : []));
+      return must(spoke[0], `${id} spoke nothing`).gain;
+    });
+    for (let i = 0; i < VOICES.length; i++) {
+      const id = must(VOICES[i], `voice ${i}`);
+      expect(must(gains[i], id), id).toBeCloseTo(VOICE_PRESETS[id].level * DIALOGUE_GAIN, 9);
+    }
+  });
+
+  it('stays inside a full-scale sample with every voice the cap allows', () => {
+    // Four at once is `MAX_SPEECH_VOICES`, and they are summed into one bus:
+    // a gain that clipped there would be audible as a crackle on exactly the
+    // busiest line rather than on a quiet one.
+    const loudest = Math.max(...VOICES.map((id) => VOICE_PRESETS[id].level)) * DIALOGUE_GAIN;
+    expect(loudest * 4).toBeLessThan(1);
   });
 });
 

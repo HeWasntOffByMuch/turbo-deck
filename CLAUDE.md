@@ -1900,6 +1900,14 @@ src/render/audio/  the audio framework (spec 229), and the one place in this rep
                  skipping a line cannot produce a burst because there is nothing
                  queued to release -- and the token is kept for the sounds that
                  have already started.
+                 `DIALOGUE_GAIN` is why "make dialogue louder" is one edit
+                 rather than four: the levels in `VOICE_PRESETS` are the
+                 reference file's verbatim, tuned against *each other* by ear, so
+                 a lift applied per engine would quietly re-balance the four. It
+                 is 2.5 because the reference plays into `context.destination`
+                 and this plays into a **bus** -- `level x bus(0.8) x
+                 master(0.7)` is 0.56 before anything else, so merely matching
+                 the reference takes about 1.8.
                  `sink.ts`'s `speech(bus)` is the one hole in that otherwise
                  closed surface, and it is shaped so it is not a hole in the
                  *mix*: what comes back is a **bus gain node**, never
@@ -4890,13 +4898,20 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
                  crosshair.ts (what the pointer *is* over the world, spec 200:
-                 two marks that are the same mark at two lengths, authored as a
-                 9x9 table of `#` in `pixel-font.ts`'s register and rendered as
-                 crisp rects -- which is why the art is odd-sided, since what a
+                 three marks, authored as a 9x9 table of `#` in `pixel-font.ts`'s
+                 register and rendered as crisp rects -- which is why the art is odd-sided, since what a
                  crosshair marks is its centre pixel and an even box has none.
                  The **small** one -- a centre dot and the four arm tips -- says
                  a click would act on the body under the pointer; the **full**
-                 one says a skill is armed and the next click places it.
+                 one says a skill is armed and the next click places it. The
+                 **bubble** (spec 244) says the body under the pointer can be
+                 talked to, and it is the one of the three that is a *picture
+                 rather than a reticle*: the other two say where the click lands
+                 and this says what it does, which is not something four arms
+                 can encode. Its blank top and bottom row are not padding --
+                 the mark is centred on the pointer like the other two, so what
+                 has to sit on the box's middle is the bubble's body rather than
+                 the whole drawing including its tail.
                  Everywhere else the page's own arrow stands, because a mark that
                  is always on says nothing by being on.
                  They are **drawn in the page** rather than handed to CSS as

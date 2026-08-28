@@ -546,18 +546,31 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // you walk up to and talk to should still be roughly where you last saw it,
     // and its shop's reach is measured from the *anchor* rather than from the
     // body (`withinReach` in `data/vendors.ts`), so how far it strays is a
-    // number `VENDOR_REACH` has to cover. Nine seconds against 90 units leaves
-    // it standing for most of the cycle, which is what a shopkeeper does.
+    // number `reachFor` has to cover.
+    //
+    // Nine seconds against 90 units leaves it standing for most of the cycle,
+    // and at a person's walking speed that is *most* of it: `IDLE_PACE` of 155
+    // crosses the disc in a second or so, so what a player sees is a few
+    // unhurried steps and then a long wait. Which is what a shopkeeper does --
+    // and it is the ratio that would need re-tuning, not the radius, if this
+    // ever wants to look busier.
     idle: { kind: 'wander', radius: 90, cycleTicks: seconds(9) },
     stats: {
       // It cannot be hit -- `isHostile` refuses a friendly body at both ends --
       // so this is the number that keeps it a live body rather than a corpse,
       // and nothing ever subtracts from it.
       maxHealth: 100,
-      // An amble. Fast enough not to look broken, slow enough that a player
-      // walking over to it always arrives.
-      moveSpeed: 55,
-      turnRate: 180,
+      // A person's walk rather than an animal's: the same speed a fresh
+      // character has, since this is a body that walks the same roads. It only
+      // ever *uses* `IDLE_PACE` of it (0.45), so what a player sees is an
+      // unhurried amble that still covers ground -- and a merchant that moved
+      // visibly slower than everything else in the world reads as wounded.
+      moveSpeed: 155,
+      // Faster than it walks needs, and deliberately: the one turn anybody
+      // watches this body make is the one where it comes round to face them,
+      // and a shopkeeper that swings round slowly reads as reluctant. Above the
+      // fresh character's own 390, so it is always the one that finishes first.
+      turnRate: 420,
       attackDamage: 0,
       attackRange: 0,
       baseAttackTimeTicks: 1,

@@ -137,6 +137,20 @@ export interface IntentInput {
    */
   readonly targetAim?: Point | null;
   /**
+   * Somebody a conversation has just started with (spec 244), or null.
+   *
+   * A **one-shot**, and that is the whole difference from {@link targetAim}
+   * beside it: this is set at the moment a conversation opens and dropped the
+   * instant the body has come round, so it turns you to face the merchant and
+   * then lets go. The player is free to walk off mid-sentence -- which is also
+   * how a conversation ends -- and a version of this that held the heading for
+   * the duration would fight them every time they stopped moving.
+   *
+   * In `targetAim`'s slot in the order below, and for its reason: a held key
+   * outranks it, because walking decides its own heading.
+   */
+  readonly talkAim?: Point | null;
+  /**
    * True while a poise break holds this body (spec 173).
    *
    * Outranks every other branch below, including {@link castAim} and a held
@@ -253,9 +267,13 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // already aligned rather than paying for the turn once the clock has run
   // (spec 090). The server turns the body from this at its own rate, so it is
   // the same turn every other player sees.
-  if (!direction && input.targetAim) {
-    const dx = input.targetAim.x - input.self.x;
-    const dy = input.targetAim.y - input.self.y;
+  // Coming round to face somebody you have just spoken to (spec 244). Beside
+  // `targetAim` rather than above or below it because the two cannot both be
+  // set: a friendly body is never an attack target.
+  const standingAim = input.targetAim ?? input.talkAim;
+  if (!direction && standingAim) {
+    const dx = standingAim.x - input.self.x;
+    const dy = standingAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);
     return { moveX: 0, moveY: 0, facing, arrived };
   }
@@ -278,6 +296,25 @@ export function moveIntent(input: IntentInput): MoveIntent {
     // standing forever.
     arrived,
   };
+}
+
+/**
+ * How close two headings have to be before a turn counts as finished.
+ *
+ * Deliberately loose. What reads this is a one-shot aim being let go of
+ * (spec 244), and the cost of being a degree out is nothing at all, where the
+ * cost of a threshold too tight is an aim that never clears -- `turnToward`
+ * approaches its goal and a body whose turn rate is scaled by a modifier can
+ * sit a hair short of it for a long time.
+ */
+const ALIGNED_RADIANS = 0.05;
+
+/** Whether a body pointing `facing` has arrived at `wanted`. */
+export function aligned(facing: number, wanted: number): boolean {
+  // Through sin/cos rather than by subtracting, so the wrap at pi is not a
+  // special case: two headings either side of it are close, and the difference
+  // of the numbers is not.
+  return Math.abs(Math.atan2(Math.sin(facing - wanted), Math.cos(facing - wanted))) <= ALIGNED_RADIANS;
 }
 
 /** The normalised direction the held keys ask for, or null when they cancel out. */
