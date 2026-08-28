@@ -36,6 +36,20 @@ export interface MilestoneDefinition {
   /** What mechanically changes, in the words the sheet shows. */
   readonly effect: string;
   readonly grants: StatModifier;
+  /**
+   * The specialization on the same track this milestone deepens (spec 244).
+   *
+   * Every one of the eighteen has one, and always has: each milestone shares its
+   * name with a specialization the track unlocked earlier, and grants more of the
+   * same mechanic. Recording the link rather than leaving it implicit is what
+   * lets the sheet draw one mechanic that grows along a track instead of the same
+   * name printed twice with nothing saying they are related.
+   *
+   * Optional because a milestone that introduces something genuinely new is a
+   * legitimate row -- absent means "this is its own thing". A test asserts every
+   * id present names a real specialization on the same attribute.
+   */
+  readonly deepens?: string;
 }
 
 const [TIER_1, TIER_2, TIER_3] = MILESTONE_THRESHOLDS as [number, number, number];
@@ -49,6 +63,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Crushing Blows',
     effect: 'Your blows carry 25% more poise damage, and a break you cause interrupts whatever it was doing.',
     grants: { traits: { poiseDamagePct: 0.25 } },
+    deepens: 'str.crushingBlows',
   },
   {
     id: 'str.committed',
@@ -57,6 +72,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Committed Swing',
     effect: 'While winding up an attack you ignore a further 36% of incoming poise damage.',
     grants: { traits: { windupPoiseArmor: 0.36 } },
+    deepens: 'str.committedSwing',
   },
   {
     id: 'str.unstoppable',
@@ -70,6 +86,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     // 90% they always did, and every purchase on the way there moves it.
     effect: 'That protection reaches 90% and lasts through the follow-through -- but only while you are committed to a blow.',
     grants: { traits: { windupPoiseArmor: 0.18, poiseArmorInBackswing: 1 } },
+    deepens: 'str.unstoppable',
   },
 
   // --- Agility ------------------------------------------------------------
@@ -80,6 +97,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Quick Recovery',
     effect: 'Walking out of a follow-through grants Flow for 1.2s, up to three stacks.',
     grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowBackswingPct: 0.03 } },
+    deepens: 'agi.quickRecovery',
   },
   {
     id: 'agi.mobile',
@@ -88,6 +106,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Mobile Offense',
     effect: 'Each Flow stack also cuts 6% off your follow-through.',
     grants: { traits: { flowBackswingPct: 0.06 } },
+    deepens: 'agi.mobileOffense',
   },
   {
     id: 'agi.perfectExit',
@@ -101,6 +120,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
         perfectExitWindowTicks: Math.round(SCALING.agility.flowTicks / 6),
       },
     },
+    deepens: 'agi.perfectExit',
   },
 
   // --- Intelligence -------------------------------------------------------
@@ -111,6 +131,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Spell Shaping',
     effect: 'Your abilities gain radius and range with Intelligence, at a cost premium Efficient Construction can pay off.',
     grants: { traits: { spellRadiusPct: 0, spellRangePct: 0, shapingCostPct: 0.1 } },
+    deepens: 'int.shaping',
   },
   {
     id: 'int.prepared',
@@ -131,6 +152,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
         preparedWindupScale: -0.1,
       },
     },
+    deepens: 'int.prepared',
   },
   {
     id: 'int.overflow',
@@ -149,6 +171,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
         overflowCostReduction: 0.25,
       },
     },
+    deepens: 'int.overflow',
   },
 
   // --- Constitution -------------------------------------------------------
@@ -159,6 +182,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Steady Frame',
     effect: 'Your poise recovers twice as fast whenever you are not committed to a cast.',
     grants: { traits: { poiseRegenCalm: 1 } },
+    deepens: 'con.steadyFrame',
   },
   {
     id: 'con.hardToKill',
@@ -171,6 +195,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     // half of this milestone as well.
     effect: 'Below 30% health you cannot be staggered and take 20% less damage.',
     grants: { traits: { resoluteBelow: 0.3, resoluteReduction: 0.2, staggerImmuneBelow: 0.3 } },
+    deepens: 'con.hardToKill',
   },
   {
     id: 'con.overflowVitality',
@@ -179,6 +204,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Overflow Vitality',
     effect: 'Healing past full becomes a shield, up to a quarter of your health, for 8s.',
     grants: { traits: { overhealShieldTicks: SCALING.constitution.shieldTicks } },
+    deepens: 'con.overflowVitality',
   },
 
   // --- Perception ---------------------------------------------------------
@@ -189,6 +215,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Weak-Point Study',
     effect: 'A weak-point hit leaves the target Exposed: everything takes 15% more damage against it.',
     grants: { traits: { exposedDamagePct: SCALING.perception.exposedDamagePct } },
+    deepens: 'per.weakPointStudy',
   },
   {
     id: 'per.openingRead',
@@ -208,6 +235,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
         vulnerableWeakPointFactor: SCALING.perception.vulnerableWeakPointBonus,
       },
     },
+    deepens: 'per.openingRead',
   },
   {
     id: 'per.resourceSense',
@@ -216,6 +244,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Resource Sense',
     effect: 'Weak points return 3 resource, and a weak-point kill returns 6% of your health.',
     grants: { traits: { weakPointResource: 3, weakPointKillHeal: 0.06 } },
+    deepens: 'per.resourceSense',
   },
 
   // --- Wisdom -------------------------------------------------------------
@@ -235,6 +264,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
         attunedCostPct: 0.08,
       },
     },
+    deepens: 'wis.discipline',
   },
   {
     id: 'wis.adaptation',
@@ -257,6 +287,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
         adaptationPerStack: 0.06,
       },
     },
+    deepens: 'wis.adaptation',
   },
   {
     id: 'wis.conversion',
@@ -265,6 +296,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     name: 'Conversion',
     effect: 'Healing you cannot use becomes resource instead, up to 15 at a time.',
     grants: { traits: { conversionCap: SCALING.wisdom.conversionCap } },
+    deepens: 'wis.conversion',
   },
 ];
 

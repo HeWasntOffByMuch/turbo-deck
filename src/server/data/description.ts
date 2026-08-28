@@ -43,7 +43,7 @@
 import { SERVER_TICK_RATE } from '../config.js';
 import type { AbilityDefinition } from './abilities.js';
 import type { StatModifier } from './modifiers.js';
-import type { SkillDefinition } from './skills.js';
+import type { SpecializationDefinition } from './specializations.js';
 import { ATTRIBUTES } from './attributes.js';
 import { subjectOf, type SkillArea, type SkillEffect } from './skill-effects.js';
 import { visualFor, type StatusVisual } from './status-visuals.js';
@@ -781,8 +781,8 @@ export interface Grant {
   /**
    * A whole sentence already, carrying no number.
    *
-   * A caller must not scale it, total it or append "per level" to it -- a flag
-   * is on or off, and "Guard protection covers every cast per level" is what
+   * A caller must not scale it, total it or append "per tier" to it -- a flag
+   * is on or off, and "Guard protection covers every cast per tier" is what
    * happens when that is forgotten.
    */
   readonly whole?: boolean;
@@ -810,7 +810,7 @@ function signed(value: number, form: GrantLabel['form']): string {
  * `vulnerableWeakPointFactor: 0` are inert and a line about either would claim
  * an effect the row does not have.
  *
- * `times` multiplies every value, which is how a skill at rank 2 states its
+ * `times` multiplies every value, which is how a specialization at tier 2 states its
  * total rather than its per-level rate.
  */
 export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
@@ -831,7 +831,7 @@ export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
     });
     // After the quantity, because the number is what the row grants and this is
     // a rule about what the number brings with it. `times` does not reach it:
-    // a rule is the same rule at rank 1 and at rank 3.
+    // a rule is the same rule at tier 1 and at tier 3.
     if (label.note !== undefined) out.push({ text: label.note, good: true, whole: true });
   }
   return out;
@@ -846,7 +846,7 @@ export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
  * largest body of unexplained mechanics in the game: thirty-six rows granting
  * fifty-odd trait fields, of which a player could read only an authored sentence
  * and a trigger. "Your blows carry more weight against an enemy's guard" is a
- * true thing to say about +18% Guard damage per level and it is not the same
+ * true thing to say about +18% Guard damage per tier and it is not the same
  * thing, and nothing on the sheet was the number.
  *
  * `level` is what the character actually holds. At zero the lines are the row's
@@ -854,7 +854,7 @@ export function grantsOf(modifier: StatModifier, times = 1): readonly Grant[] {
  * at an unspent skill has. Above zero they are the total, with the rate beside
  * it, because that is the question somebody looking at their own build has.
  */
-export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalDescription {
+export function describeSpecialization(skill: SpecializationDefinition, level = 0): TechnicalDescription {
   const lines: TechnicalLine[] = [];
   const attribute = ATTRIBUTES.find((entry) => entry.key === skill.attribute);
 
@@ -864,7 +864,7 @@ export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalD
   });
 
   // The trigger is authored, and it is the one part of a stat skill that could
-  // not be derived from anything: `perLevel` says what the row grants and
+  // not be derived from anything: `perTier` says what the row grants and
   // nothing in it says when. Labelled rather than run into the sentence, the
   // same way `Target:` labels an ability's.
   lines.push({
@@ -872,9 +872,9 @@ export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalD
     text: skill.trigger === 'passive' ? 'Always active.' : `Trigger: ${skill.trigger}.`,
   });
 
-  const held = Math.max(0, Math.min(skill.maxLevel, Math.floor(level)));
-  const perLevel = grantsOf(skill.perLevel);
-  const total = held > 0 ? grantsOf(skill.perLevel, held) : perLevel;
+  const held = Math.max(0, Math.min(skill.maxTier, Math.floor(level)));
+  const perTier = grantsOf(skill.perTier);
+  const total = held > 0 ? grantsOf(skill.perTier, held) : perTier;
 
   for (const [index, grant] of total.entries()) {
     if (grant.whole === true) {
@@ -884,8 +884,8 @@ export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalD
     if (held === 0) {
       // A comma where the name already contains a "per", or a trait scoped to
       // something else reads as two rates run together: "+1% Backswing
-      // reduction per Flow stack per level".
-      const joiner = grant.text.includes(' per ') ? ', per level.' : ' per level.';
+      // reduction per Flow stack per tier".
+      const joiner = grant.text.includes(' per ') ? ', per tier.' : ' per tier.';
       lines.push({ tone: 'effect', text: `${trimStop(grant.text)}${joiner}` });
       continue;
     }
@@ -893,8 +893,8 @@ export function describeStatSkill(skill: SkillDefinition, level = 0): TechnicalD
     // now; the rate after it, because that is what one more point buys. The
     // rate is the *value* alone -- repeating the name inside its own
     // parenthesis is how the first cut read, and it doubled every line.
-    const rate = perLevel[index];
-    const suffix = rate === undefined || held === 1 ? '' : ` (${rateOf(rate.text)} per level)`;
+    const rate = perTier[index];
+    const suffix = rate === undefined || held === 1 ? '' : ` (${rateOf(rate.text)} per tier)`;
     lines.push({ tone: 'effect', text: `${trimStop(grant.text)}${suffix}.` });
   }
 

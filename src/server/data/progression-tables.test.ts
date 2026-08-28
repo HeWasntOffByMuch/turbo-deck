@@ -24,6 +24,7 @@ function readdirDeep(dir: string): string[] {
 }
 import {
   ATTRIBUTES,
+  allAttributePairs,
   ATTRIBUTE_KEYS,
   attributeByOrdinal,
   ordinalOfAttribute,
@@ -36,9 +37,9 @@ import {
   sumModifiers,
   type TraitModifier,
 } from './modifiers.js';
-import { MILESTONE_THRESHOLDS, SCALING, SKILL_THRESHOLDS, SYNERGY_THRESHOLD } from './scaling.js';
-import { ALL_SKILLS, skillsFor } from './skills.js';
-import { ALL_SYNERGIES, allAttributePairs, metSynergies, synergyForPair } from './synergies.js';
+import { MILESTONE_THRESHOLDS, SCALING, SPECIALIZATION_THRESHOLDS } from './scaling.js';
+import { ALL_SPECIALIZATIONS, specializationById, specializationsFor } from './specializations.js';
+import { ALL_TRACKS } from './tracks.js';
 import { BASE_STAT_KEYS, TRAIT_WIRE_ORDER } from '../state/types.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 
@@ -52,7 +53,7 @@ describe('the six attributes', () => {
   });
 
   it('agrees with BASE_STAT_KEYS on order, which is the wire ordinal', () => {
-    // Not a style point. `AllocateAttribute` names an attribute by its index
+    // Not a style point. a `SpendProgressionPoint` naming an attribute does so by its index
     // here, and `writeAttributes` writes six varuints in this order, so the two
     // arrays disagreeing would silently put points in the wrong stat.
     expect([...ATTRIBUTE_KEYS]).toEqual([...BASE_STAT_KEYS]);
@@ -133,98 +134,122 @@ describe('milestones', () => {
   });
 });
 
-describe('the fifteen pairs', () => {
-  it('has an entry for every unordered pair, and no more', () => {
-    // The brief's rule, as a test. A pair with no row fails here rather than
-    // being discovered later as a combination nobody thought about.
-    const pairs = allAttributePairs();
-    expect(pairs).toHaveLength(15);
-    expect(ALL_SYNERGIES).toHaveLength(15);
-    for (const [a, b] of pairs) {
-      expect(synergyForPair(a, b), `${a}+${b}`).not.toBeNull();
-      // Order-insensitive, because a player does not think in a canonical order.
-      expect(synergyForPair(b, a)?.id).toBe(synergyForPair(a, b)?.id);
-    }
+describe('attribute pairs carry no authored content (spec 244)', () => {
+  /**
+   * This block used to require an entry for every one of the fifteen unordered
+   * pairs, and a pair with no row failed CI. That rule produced fifteen bespoke
+   * bonuses whose only justification was the rule, and it made the question
+   * worth asking -- *do these mechanics already compose?* -- untestable, because
+   * the authored layer was always in the way.
+   *
+   * What is asserted now is the absence, in the one place it could come back:
+   * the tables. `progression-interactions.test.ts` asserts it in the resolution,
+   * and `derived.test.ts` over all fifteen pairs at once.
+   */
+  it('has fifteen of them, and no table keyed on one', () => {
+    expect(allAttributePairs()).toHaveLength(15);
   });
 
   it('never pairs an attribute with itself, and never repeats a pair', () => {
     const seen = new Set<string>();
-    for (const synergy of ALL_SYNERGIES) {
-      expect(synergy.a).not.toBe(synergy.b);
-      const key = [synergy.a, synergy.b].sort().join('+');
+    for (const [a, b] of allAttributePairs()) {
+      expect(a, `${a}+${b}`).not.toBe(b);
+      const key = [a, b].sort().join('+');
       expect(seen.has(key), key).toBe(false);
       seen.add(key);
     }
   });
 
-  it('needs both halves, and turns on at exactly the threshold', () => {
-    for (const synergy of ALL_SYNERGIES) {
-      const onlyA = { ...ALL_AT(0), [synergy.a]: 99 };
-      const both = { ...ALL_AT(0), [synergy.a]: SYNERGY_THRESHOLD, [synergy.b]: SYNERGY_THRESHOLD };
-      const nearly = { ...both, [synergy.b]: SYNERGY_THRESHOLD - 1 };
-      expect(metSynergies(onlyA).map((s) => s.id)).not.toContain(synergy.id);
-      expect(metSynergies(nearly).map((s) => s.id)).not.toContain(synergy.id);
-      expect(metSynergies(both).map((s) => s.id)).toContain(synergy.id);
+  it('leaves every progression grant keyed on one attribute alone', () => {
+    // A milestone names one attribute and a specialization names one attribute.
+    // Those are the only two shapes a grant has, so there is nowhere a two-stat
+    // condition could be authored without a new table -- which is the guarantee
+    // that replaced the fifteen rows.
+    for (const milestone of ALL_MILESTONES) {
+      expect(ATTRIBUTE_KEYS, milestone.id).toContain(milestone.attribute);
     }
-  });
-
-  it('sits below the second milestone, so a pair adds to two identities', () => {
-    // Ordering that matters to the design: reaching a pair means both halves
-    // already crossed their first milestone, so a synergy is never a substitute
-    // for having an identity.
-    expect(SYNERGY_THRESHOLD).toBeGreaterThan(MILESTONE_THRESHOLDS[0] ?? 0);
-    expect(SYNERGY_THRESHOLD).toBeLessThan(MILESTONE_THRESHOLDS[1] ?? 0);
-  });
-
-  it('grants a trigger or an eligibility change, never a bare attribute', () => {
-    for (const synergy of ALL_SYNERGIES) {
-      for (const key of ATTRIBUTE_KEYS) {
-        expect(synergy.grants[key], `${synergy.id} grants ${key}`).toBeUndefined();
-      }
-      // Everything a pair does goes through the trait bundle. A pair that
-      // granted `attackDamagePct` would be exactly the "+X% because both are
-      // high" the brief forbids, and this is where that would be caught.
-      expect(Object.keys(synergy.grants), synergy.id).toEqual(['traits']);
-      expect(Object.keys(synergy.grants.traits ?? {}).length, synergy.id).toBeGreaterThan(0);
-    }
-  });
-
-  it('records why each is a mechanic rather than a multiplier', () => {
-    for (const synergy of ALL_SYNERGIES) {
-      expect(synergy.effect.length, synergy.id).toBeGreaterThan(30);
-      expect(synergy.why.length, synergy.id).toBeGreaterThan(40);
+    for (const specialization of ALL_SPECIALIZATIONS) {
+      expect(ATTRIBUTE_KEYS, specialization.id).toContain(specialization.attribute);
     }
   });
 });
 
-describe('the thirty-six skills', () => {
+describe('the six tracks (spec 244)', () => {
+  it('gives every attribute a track spanning the whole range', () => {
+    expect(ALL_TRACKS).toHaveLength(ATTRIBUTE_KEYS.length);
+    for (const track of ALL_TRACKS) {
+      expect(track.from).toBe(SCALING.startingAttribute);
+      expect(track.to).toBe(SCALING.attributeHardCap);
+    }
+  });
+
+  it('puts the nodes in threshold order, with no threshold twice', () => {
+    for (const track of ALL_TRACKS) {
+      const thresholds = track.nodes.map((node) => node.threshold);
+      expect(thresholds, track.attribute).toEqual([...thresholds].sort((a, b) => a - b));
+      expect(new Set(thresholds).size, track.attribute).toBe(thresholds.length);
+    }
+  });
+
+  it('carries every milestone and every specialization exactly once', () => {
+    const milestones = ALL_TRACKS.flatMap((t) => t.nodes.map((n) => n.milestone?.id ?? null))
+      .filter((id): id is string => id !== null);
+    const specializations = ALL_TRACKS.flatMap((t) =>
+      t.nodes.flatMap((n) => n.specializations.map((s) => s.id)),
+    );
+    expect(milestones.slice().sort()).toEqual(ALL_MILESTONES.map((m) => m.id).slice().sort());
+    expect(specializations.slice().sort()).toEqual(
+      ALL_SPECIALIZATIONS.map((s) => s.id).slice().sort(),
+    );
+  });
+
+  it('links every milestone to a specialization on its own track', () => {
+    // All eighteen have one and always have: each milestone shares its name with
+    // a specialization the track unlocked earlier and grants more of the same
+    // mechanic. A `deepens` naming something on another track, or nothing at all,
+    // would draw as one mechanic that is two.
+    for (const milestone of ALL_MILESTONES) {
+      const target = milestone.deepens;
+      expect(target, milestone.id).toBeDefined();
+      const specialization = specializationById(target ?? '');
+      expect(specialization, `${milestone.id} -> ${String(target)}`).not.toBeNull();
+      expect(specialization?.attribute, milestone.id).toBe(milestone.attribute);
+      expect(specialization?.name, milestone.id).toBe(milestone.name);
+      // And it is unlocked *before* the milestone that deepens it, or the sheet
+      // would draw a boost to something a player cannot have yet.
+      expect(specialization?.requires ?? 0, milestone.id).toBeLessThan(milestone.threshold);
+    }
+  });
+});
+
+describe('the thirty-six specializations', () => {
   it('is six per attribute, at the three thresholds', () => {
-    expect(ALL_SKILLS).toHaveLength(36);
+    expect(ALL_SPECIALIZATIONS).toHaveLength(36);
     for (const key of ATTRIBUTE_KEYS) {
-      const mine = skillsFor(key);
+      const mine = specializationsFor(key);
       expect(mine, key).toHaveLength(6);
       expect(mine.map((s) => s.requires)).toEqual([
-        SKILL_THRESHOLDS[0],
-        SKILL_THRESHOLDS[0],
-        SKILL_THRESHOLDS[1],
-        SKILL_THRESHOLDS[1],
-        SKILL_THRESHOLDS[1],
-        SKILL_THRESHOLDS[2],
+        SPECIALIZATION_THRESHOLDS[0],
+        SPECIALIZATION_THRESHOLDS[0],
+        SPECIALIZATION_THRESHOLDS[1],
+        SPECIALIZATION_THRESHOLDS[1],
+        SPECIALIZATION_THRESHOLDS[1],
+        SPECIALIZATION_THRESHOLDS[2],
       ]);
     }
   });
 
   it('is reachable: every threshold is inside the hard cap', () => {
-    for (const skill of ALL_SKILLS) {
+    for (const skill of ALL_SPECIALIZATIONS) {
       expect(skill.requires, skill.id).toBeLessThanOrEqual(SCALING.attributeHardCap);
-      expect(skill.maxLevel, skill.id).toBeGreaterThan(0);
+      expect(skill.maxTier, skill.id).toBeGreaterThan(0);
     }
   });
 
   it('has unique ids, namespaced by their attribute', () => {
-    const ids = ALL_SKILLS.map((s) => s.id);
+    const ids = ALL_SPECIALIZATIONS.map((s) => s.id);
     expect(new Set(ids).size).toBe(ids.length);
-    for (const skill of ALL_SKILLS) {
+    for (const skill of ALL_SPECIALIZATIONS) {
       expect(skill.id.startsWith(`${skill.attribute.slice(0, 3)}.`), skill.id).toBe(true);
     }
   });
@@ -232,18 +257,18 @@ describe('the thirty-six skills', () => {
   it('names a trigger on every row, and is mostly not "passive"', () => {
     // The review criterion, as an assertion. A tree of passives is a tree of
     // coefficients, which is the thing this whole spec exists to replace.
-    const passive = ALL_SKILLS.filter((s) => s.trigger === 'passive');
+    const passive = ALL_SPECIALIZATIONS.filter((s) => s.trigger === 'passive');
     expect(passive.length).toBeLessThanOrEqual(9);
-    for (const skill of ALL_SKILLS) {
+    for (const skill of ALL_SPECIALIZATIONS) {
       expect(skill.trigger.length, skill.id).toBeGreaterThan(4);
       expect(skill.description.length, skill.id).toBeGreaterThan(20);
     }
   });
 
   it('scales linearly with level, through the shared scaler', () => {
-    for (const skill of ALL_SKILLS) {
-      const one = sumModifiers([scaleModifier(skill.perLevel, 1)]);
-      const three = sumModifiers([scaleModifier(skill.perLevel, 3)]);
+    for (const skill of ALL_SPECIALIZATIONS) {
+      const one = sumModifiers([scaleModifier(skill.perTier, 1)]);
+      const three = sumModifiers([scaleModifier(skill.perTier, 3)]);
       for (const key of Object.keys(one.traits) as (keyof typeof one.traits)[]) {
         expect(three.traits[key], `${skill.id}.${key}`).toBeCloseTo(one.traits[key] * 3, 9);
       }

@@ -18,8 +18,8 @@ import { rollBetween } from './blow.js';
 import { monsterById } from '../data/monsters.js';
 import { Rng } from '../../shared/prng.js';
 import { abilityById, type AbilityDefinition } from '../data/abilities.js';
-import { ALL_SKILLS } from '../data/skills.js';
-import { describeStatSkill } from '../data/description.js';
+import { ALL_SPECIALIZATIONS } from '../data/specializations.js';
+import { describeSpecialization } from '../data/description.js';
 import { SCALING } from '../data/scaling.js';
 import { startingBaseStats } from '../player/attributes.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
@@ -40,7 +40,7 @@ import {
   resourceCostFor,
   windupScaleFor,
 } from './abilities.js';
-import { resolveBlow, SUNDER_TICKS } from './blow.js';
+import { resolveBlow } from './blow.js';
 import { applyEffects } from './skill-effects.js';
 import { applyPoiseDamage, isResolute, poiseArmorOf, poiseDamageOf, regenPoise, STAGGER_IMMUNE_TICKS } from './poise.js';
 import {
@@ -61,7 +61,7 @@ function record(baseStats: Partial<BaseStats> = {}, overrides: Partial<Persisted
     id: 'p',
     displayName: 'p',
     baseStats: { ...startingBaseStats(), ...baseStats },
-    skills: [],
+    specializations: [],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -69,8 +69,7 @@ function record(baseStats: Partial<BaseStats> = {}, overrides: Partial<Persisted
     currentZone: 'wilds',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 1000,
     resource: 100,
     coins: 0,
@@ -213,7 +212,7 @@ describe('Agility shortens the animation and never the interval', () => {
   });
 
   it('lets Flow shorten the follow-through further, and nothing else', () => {
-    const stats = statsFor({ agility: 30 }, { skills: [{ skillId: 'agi.flow', level: 3 }] });
+    const stats = statsFor({ agility: 30 }, { specializations: [{ specializationId: 'agi.flow', tier: 3 }] });
     const still = backswingScaleFor({ stats, statuses: NO_STATUSES }, 0);
     const flowing = backswingScaleFor(
       { stats, statuses: applyStatus(NO_STATUSES, StatusId.Flow, 0, 100, { maxStacks: 3 }) },
@@ -368,17 +367,22 @@ describe('poise', () => {
     expect(poiseArmorOf(unstoppable, true)).toBeGreaterThan(0);
   });
 
-  it('protects a basic attack but not a spell, until the Juggernaut pair', () => {
+  it('protects a basic attack but not a spell, until Unstoppable', () => {
+    // This used to reach the mechanic through the STR/CON Juggernaut pair, which
+    // spec 244 removed. `poiseArmorAllCasts` and `juggernautBelow` have another
+    // source and always did -- the Strength 40 specialization -- so the mechanic
+    // survives the removal and this is the same claim through what is left.
     const strong = body(statsFor({ strength: 40 }), { cast: casting('skill.blight', CastPhase.Windup) });
+    expect(strong.stats.traits.poiseArmorAllCasts).toBe(0);
     expect(poiseArmorOf(strong, false)).toBe(0);
 
-    // STR/CON at the pair threshold, and *below half health*, which is the
-    // condition the pair is about.
-    const juggernaut = statsFor({ strength: 40, constitution: 25 });
-    const healthy = body(juggernaut, { cast: casting('skill.blight', CastPhase.Windup) });
-    expect(poiseArmorOf(healthy, false)).toBe(0);
-    const hurt = { ...healthy, health: juggernaut.maxHealth * 0.4 };
-    expect(poiseArmorOf(hurt, false)).toBeGreaterThan(0);
+    const unstoppable = statsFor(
+      { strength: 40 },
+      { specializations: [{ specializationId: 'str.unstoppable', tier: 1 }] },
+    );
+    expect(unstoppable.traits.poiseArmorAllCasts).toBe(1);
+    const covered = body(unstoppable, { cast: casting('skill.blight', CastPhase.Windup) });
+    expect(poiseArmorOf(covered, false)).toBeGreaterThan(0);
   });
 
   it('regenerates faster when the body is not committed', () => {
@@ -411,9 +415,9 @@ describe('a blow', () => {
     // Perception's payoff is a two-step play: the hit that finds the seam is the
     // one that marks it, and the mark is what the *next* hit cashes in.
     const sniper = statsFor({ perception: SCALING.attributeHardCap }, {
-      skills: [
-        { skillId: 'per.weakPointStudy', level: 3 },
-        { skillId: 'per.exploit', level: 3 },
+      specializations: [
+        { specializationId: 'per.weakPointStudy', tier: 3 },
+        { specializationId: 'per.exploit', tier: 3 },
       ],
     });
     expect(sniper.traits.weakPointChance).toBeGreaterThan(0.4);
@@ -520,14 +524,23 @@ describe('a blow', () => {
     expect(JSON.stringify(a.events)).toBe(JSON.stringify(b.events));
   });
 
-  it('sunders on a basic attack for a body with the pair, and not otherwise', () => {
-    const impact = statsFor({ strength: 25, intelligence: 25 });
-    expect(impact.traits.appliesSundered).toBe(1);
-    const marked = resolveBlow(SLASH, body(impact), body(statsFor(), { id: 2 }), 0, rng);
-    expect(statusOf(marked.target.statuses, StatusId.Sundered, 0)?.expiresAtTick).toBe(SUNDER_TICKS);
-
-    const plain = resolveBlow(SLASH, body(statsFor()), body(statsFor(), { id: 2 }), 0, rng);
-    expect(statusOf(plain.target.statuses, StatusId.Sundered, 0)).toBeNull();
+  it('sunders on a basic attack only for a body granted it, and nothing grants it', () => {
+    // The positive half of this case reached `appliesSundered` through the
+    // STR/INT Impact Casting pair, and spec 244 removed the pair. Nothing else
+    // in any table grants the flag, so the mechanic is live in `blow.ts` and
+    // unreachable from content -- one of twenty-two trait fields the synergy
+    // removal orphaned, recorded in `docs/progression-model.md` rather than
+    // deleted, because taking a field out of `TraitStats` is a protocol change.
+    //
+    // What is still worth asserting is the gate: a blow does *not* sunder
+    // unless something granted it, which is what would break if the flag ever
+    // acquired a default.
+    for (const attribute of [{}, { strength: 25, intelligence: 25 }, { strength: 60 }]) {
+      const stats = statsFor(attribute);
+      expect(stats.traits.appliesSundered, JSON.stringify(attribute)).toBe(0);
+      const plain = resolveBlow(SLASH, body(stats), body(statsFor(), { id: 2 }), 0, rng);
+      expect(statusOf(plain.target.statuses, StatusId.Sundered, 0)).toBeNull();
+    }
   });
 });
 
@@ -550,11 +563,11 @@ describe('the resource economy', () => {
   });
 
   it('charges the shaping premium, and lets Efficient Construction pay it off', () => {
-    const shaper = statsFor({ intelligence: 25 }, { skills: [{ skillId: 'int.shaping', level: 3 }] });
+    const shaper = statsFor({ intelligence: 25 }, { specializations: [{ specializationId: 'int.shaping', tier: 3 }] });
     const efficient = statsFor({ intelligence: 25 }, {
-      skills: [
-        { skillId: 'int.shaping', level: 3 },
-        { skillId: 'int.efficientConstruction', level: 3 },
+      specializations: [
+        { specializationId: 'int.shaping', tier: 3 },
+        { specializationId: 'int.efficientConstruction', tier: 3 },
       ],
     });
     // Below the shaping milestone, so this one is paying no premium at all.
@@ -612,11 +625,20 @@ describe('arcane overflow', () => {
     expect(affordable).toBeLessThan(1000);
   });
 
-  it('is halved by the Battlemage pair', () => {
-    const alone = statsFor({ intelligence: SCALING.attributeHardCap });
-    const paired = statsFor({ intelligence: SCALING.attributeHardCap, constitution: 25 });
-    expect(paired.traits.overflowHealthPerResource).toBeLessThan(
-      alone.traits.overflowHealthPerResource,
+  it('is relieved by Arcane Overflow itself, never made dearer', () => {
+    // Reached through the INT/CON Battlemage pair until spec 244 removed it.
+    // `overflowCostReduction` has two other sources -- the Intelligence 40
+    // specialization and the Intelligence 50 milestone -- and spec 239's rule
+    // that a price may only ever be *relieved* is what makes them compose in
+    // either order. This is that rule through what is left.
+    const enabled = statsFor({ intelligence: 50 });
+    const relieved = statsFor(
+      { intelligence: 50 },
+      { specializations: [{ specializationId: 'int.overflow', tier: 1 }] },
+    );
+    expect(enabled.traits.overflowHealthPerResource).toBeGreaterThan(0);
+    expect(relieved.traits.overflowHealthPerResource).toBeLessThan(
+      enabled.traits.overflowHealthPerResource,
     );
   });
 });
@@ -625,7 +647,7 @@ describe('Second Wind', () => {
   // The one thing in this system that restores health without a heal. It is
   // driven from the timers pass rather than from a blow, so it is tested there.
   const conStats = (): EffectiveStats =>
-    statsFor({ constitution: 25 }, { skills: [{ skillId: 'con.secondWind', level: 3 }] });
+    statsFor({ constitution: 25 }, { specializations: [{ specializationId: 'con.secondWind', tier: 3 }] });
 
   it('does nothing while the body is healthy', () => {
     const stats = conStats();
@@ -711,10 +733,10 @@ describe('Second Wind', () => {
     // So the claim and the behaviour are asserted together, off the same skill
     // row. A future change to either side that leaves the other alone fails
     // here.
-    const skill = ALL_SKILLS.find((row) => row.id === 'con.secondWind');
+    const skill = ALL_SPECIALIZATIONS.find((row) => row.id === 'con.secondWind');
     expect(skill).toBeDefined();
     if (!skill) return;
-    const said = describeStatSkill(skill).lines.map((line) => line.text).join(' ');
+    const said = describeSpecialization(skill).lines.map((line) => line.text).join(' ');
 
     const stats = conStats();
     const hurt = { ...body(stats), health: stats.maxHealth * 0.2 };
@@ -776,18 +798,20 @@ describe('prepared casting', () => {
     );
   });
 
-  it('refunds part of the cooldown for the Archmage pair, and nobody else', () => {
+  it('never refunds a cooldown, because nothing grants preparedMastery', () => {
+    // The refund reached `preparedMastery` through the INT/WIS Archmage pair,
+    // which spec 244 removed; nothing else grants it, so this is the second of
+    // the orphaned twenty-two. Kept as the negative case rather than deleted:
+    // being Prepared must not start refunding cooldowns by accident, and the
+    // flag acquiring a default is exactly how it would.
     const primed = applyStatus(NO_STATUSES, StatusId.Prepared, 0, 9999);
-    const mage = statsFor({ intelligence: 35 });
-    expect(cooldownScaleFor(SPELL, { stats: mage, statuses: primed }, 0)).toBe(
-      cooldownScaleFor(SPELL, { stats: mage, statuses: NO_STATUSES }, 0),
-    );
-
-    const archmage = statsFor({ intelligence: 35, wisdom: 25 });
-    expect(archmage.traits.preparedMastery).toBe(1);
-    expect(cooldownScaleFor(SPELL, { stats: archmage, statuses: primed }, 0)).toBeLessThan(
-      cooldownScaleFor(SPELL, { stats: archmage, statuses: NO_STATUSES }, 0),
-    );
+    for (const attribute of [{ intelligence: 35 }, { intelligence: 35, wisdom: 25 }]) {
+      const stats = statsFor(attribute);
+      expect(stats.traits.preparedMastery, JSON.stringify(attribute)).toBe(0);
+      expect(cooldownScaleFor(SPELL, { stats, statuses: primed }, 0)).toBe(
+        cooldownScaleFor(SPELL, { stats, statuses: NO_STATUSES }, 0),
+      );
+    }
   });
 });
 

@@ -20,7 +20,16 @@ export const ClientMessageType = {
   Ping: 0x03,
   Equip: 0x04,
   Unequip: 0x05,
-  SpendSkillPoint: 0x06,
+  /**
+   * Spend one progression point (spec 244).
+   *
+   * One message for one economy. It replaced `SpendSkillPoint` at this opcode and
+   * `AllocateAttribute` at 0x17, which were two requests for two currencies; with
+   * one pool, two requests would be the split surviving in the one place a client
+   * can see it. The payload names a *target*, never a result -- see
+   * `SpendProgressionPointMessage`.
+   */
+  SpendProgressionPoint: 0x06,
   Chat: 0x07,
   /** Commit to an ability this tick (spec 062). */
   UseAbility: 0x08,
@@ -84,10 +93,13 @@ export const ClientMessageType = {
    * range is a rejection with nothing to parse. There is deliberately no "how
    * many" -- one message is one point, so a client cannot ask for a hundred and
    * hope the budget check has an off-by-one in it.
+   *
+   * 0x17 is retired rather than reused (spec 244): it carried `AllocateAttribute`,
+   * and an old client sending one would otherwise be answered by whatever took its
+   * number.
    */
-  AllocateAttribute: 0x17,
-  /** Hand every allocated point back, for coins. Priced and checked server-side. */
-  RespecAttributes: 0x18,
+  /** Hand the whole build back, for coins. Priced and checked server-side. */
+  RespecProgression: 0x18,
   /**
    * Take a drop off the ground (spec 158).
    *
@@ -336,6 +348,24 @@ export const AdminMessageType = {
  * which is what keeps it from being a third code path with its own idea of what
  * a consistent record looks like.
  */
+/**
+ * What a progression point is being spent on (spec 244).
+ *
+ * The two things one pool buys, and the distinction the whole model rests on:
+ * `Attribute` raises the attribute and advances the track, `Specialization`
+ * deepens a mechanic a milestone unlocked and leaves the attribute where it is.
+ */
+export const ProgressionTarget = {
+  Attribute: 0,
+  Specialization: 1,
+} as const;
+
+export type ProgressionTargetValue = (typeof ProgressionTarget)[keyof typeof ProgressionTarget];
+
+export function isProgressionTarget(value: number): value is ProgressionTargetValue {
+  return (Object.values(ProgressionTarget) as readonly number[]).includes(value);
+}
+
 export const AdminProgressMode = {
   AddLevels: 0,
   SetLevel: 1,

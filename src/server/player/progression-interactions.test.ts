@@ -19,8 +19,7 @@
 import { describe, expect, it } from 'vitest';
 import { ALL_MILESTONES } from '../data/milestones.js';
 import { SCALING } from '../data/scaling.js';
-import { ALL_SKILLS, skillById } from '../data/skills.js';
-import { ALL_SYNERGIES } from '../data/synergies.js';
+import { ALL_SPECIALIZATIONS, specializationById } from '../data/specializations.js';
 import { startingBaseStats } from './attributes.js';
 import { computeEffectiveStats } from './stats.js';
 import {
@@ -28,20 +27,18 @@ import {
   emptyInventory,
   type BaseStats,
   type PersistedPlayer,
+  type SpecializationAllocation,
   type TraitStats,
 } from '../state/types.js';
 
-interface Rank {
-  readonly skillId: string;
-  readonly level: number;
-}
+type Tier = SpecializationAllocation;
 
-function record(baseStats: Partial<BaseStats>, skills: readonly Rank[] = []): PersistedPlayer {
+function record(baseStats: Partial<BaseStats>, specializations: readonly Tier[] = []): PersistedPlayer {
   return {
     id: 'p',
     displayName: 'p',
     baseStats: { ...startingBaseStats(), ...baseStats },
-    skills: [...skills],
+    specializations: [...specializations],
     equipment: EMPTY_EQUIPMENT,
     inventory: emptyInventory(),
     position: { x: 0, y: 0, z: 0 },
@@ -49,8 +46,7 @@ function record(baseStats: Partial<BaseStats>, skills: readonly Rank[] = []): Pe
     currentZone: 'wilds',
     level: 1,
     experience: 0,
-    unspentSkillPoints: 0,
-    unspentAttributePoints: 0,
+    unspentProgressionPoints: 0,
     health: 100,
     resource: 10,
     coins: 0,
@@ -58,21 +54,21 @@ function record(baseStats: Partial<BaseStats>, skills: readonly Rank[] = []): Pe
 }
 
 /** The traits of a character with this spread and these ranks. */
-function traits(baseStats: Partial<BaseStats>, skills: readonly Rank[] = []): TraitStats {
+function traits(baseStats: Partial<BaseStats>, skills: readonly Tier[] = []): TraitStats {
   return computeEffectiveStats(record(baseStats, skills)).traits;
 }
 
 /** Every rank of one skill, 0..max, at one attribute value. */
 function ladder(
   baseStats: Partial<BaseStats>,
-  skillId: string,
+  specializationId: string,
   read: (t: TraitStats) => number,
 ): number[] {
-  const definition = skillById(skillId);
-  if (!definition) throw new Error(`no ${skillId}`);
+  const definition = specializationById(specializationId);
+  if (!definition) throw new Error(`no ${specializationId}`);
   const out: number[] = [];
-  for (let level = 0; level <= definition.maxLevel; level++) {
-    out.push(read(traits(baseStats, level > 0 ? [{ skillId, level }] : [])));
+  for (let tier = 0; tier <= definition.maxTier; tier++) {
+    out.push(read(traits(baseStats, tier > 0 ? [{ specializationId, tier }] : [])));
   }
   return out;
 }
@@ -107,7 +103,7 @@ describe('Second Wind (spec 239)', () => {
   // The lifecycle half is driven through the sim in `progression-combat.test.ts`,
   // because it is a rule about ticks. What belongs here is the derivation.
   it('grants the heal without granting a threshold nobody authored', () => {
-    const spent = traits({ constitution: 25 }, [{ skillId: 'con.secondWind', level: 1 }]);
+    const spent = traits({ constitution: 25 }, [{ specializationId: 'con.secondWind', tier: 1 }]);
     expect(spent.secondWindHeal).toBeGreaterThan(0);
     expect(spent.secondWindBelow).toBeGreaterThan(0);
   });
@@ -130,10 +126,10 @@ describe('Arcane Overflow cannot get more expensive (spec 239)', () => {
   // the two summed, so reaching Intelligence 50 doubled the health an overflow
   // cast costs. Every combination is checked, because the fault was only
   // visible in one of them.
-  const rate = (baseStats: Partial<BaseStats>, skills: readonly Rank[] = []): number =>
+  const rate = (baseStats: Partial<BaseStats>, skills: readonly Tier[] = []): number =>
     traits(baseStats, skills).overflowHealthPerResource;
 
-  const OVERFLOW: Rank = { skillId: 'int.overflow', level: 1 };
+  const OVERFLOW: Tier = { specializationId: 'int.overflow', tier: 1 };
 
   it('is nothing at all without either layer', () => {
     expect(rate({ intelligence: 40 })).toBe(0);
@@ -166,10 +162,14 @@ describe('Arcane Overflow cannot get more expensive (spec 239)', () => {
     }
   });
 
-  it('gets cheaper again with the Battlemage pair, and never dearer', () => {
+  it('is cheaper with the specialization than with the milestone alone', () => {
+    // The INT/CON Battlemage pair was the third source of `overflowCostReduction`
+    // and spec 244 removed it. The two that are left still compose the way spec
+    // 239 required -- a price may only be relieved -- which is what this asserts
+    // through the sources that survive.
+    const milestoneOnly = rate({ intelligence: 50 }, []);
     const both = rate({ intelligence: 50 }, [OVERFLOW]);
-    const paired = rate({ intelligence: 50, constitution: 50 }, [OVERFLOW]);
-    expect(paired).toBeLessThan(both);
+    expect(both).toBeLessThan(milestoneOnly);
   });
 });
 
@@ -190,8 +190,8 @@ describe('a rank is never swallowed by a cap it shares (spec 239)', () => {
     // endpoint is unchanged -- a fully-invested Strength character still reaches
     // 90% -- and what moved is that the steps on the way there are reachable.
     const full = traits({ strength: 50 }, [
-      { skillId: 'str.committedSwing', level: 3 },
-      { skillId: 'str.unstoppable', level: 1 },
+      { specializationId: 'str.committedSwing', tier: 3 },
+      { specializationId: 'str.unstoppable', tier: 1 },
     ]);
     expect(full.windupPoiseArmor).toBeCloseTo(0.9, 6);
   });
@@ -223,9 +223,9 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
   // question is not whether the skill eventually works but whether it works when
   // the tree first lets you buy it.
   it('gives Prepared Casting a mechanic to improve', () => {
-    const skill = skillById('int.prepared');
+    const skill = specializationById('int.prepared');
     if (!skill) throw new Error('no int.prepared');
-    const bought = traits({ intelligence: skill.requires }, [{ skillId: skill.id, level: 1 }]);
+    const bought = traits({ intelligence: skill.requires }, [{ specializationId: skill.id, tier: 1 }]);
     // Both halves: there is a stillness window at all, and spending it is worth
     // something. Before spec 239 the first was 0 and the second was 1.
     expect(bought.prepareTicks).toBeGreaterThan(0);
@@ -252,9 +252,9 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
   });
 
   it('gives Opening Read a Vulnerable window and a reason to want one', () => {
-    const skill = skillById('per.openingRead');
+    const skill = specializationById('per.openingRead');
     if (!skill) throw new Error('no per.openingRead');
-    const bought = traits({ perception: skill.requires }, [{ skillId: skill.id, level: 1 }]);
+    const bought = traits({ perception: skill.requires }, [{ specializationId: skill.id, tier: 1 }]);
     expect(bought.openingReadTicks).toBeGreaterThan(0);
     // The window is worth nothing without a payoff to read it -- which is
     // exactly what the skill used to grant: a longer window at factor 1.
@@ -268,9 +268,9 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
   });
 
   it('gives Adaptation a window to record a stack and a cap to read one', () => {
-    const skill = skillById('wis.adaptation');
+    const skill = specializationById('wis.adaptation');
     if (!skill) throw new Error('no wis.adaptation');
-    const bought = traits({ wisdom: skill.requires }, [{ skillId: skill.id, level: 1 }]);
+    const bought = traits({ wisdom: skill.requires }, [{ specializationId: skill.id, tier: 1 }]);
     // All three, because `markTarget` needs the window and `adaptationAgainst`
     // needs the cap, and the skill used to grant neither.
     expect(bought.adaptationPerStack).toBeGreaterThan(0);
@@ -284,17 +284,22 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
     );
   });
 
-  it('still reaches the Enduring pair’s promised 45% cap', () => {
-    // The number the pair's own effect line states, and the thing that could
-    // have broken when the base cap moved out of the milestone into `SCALING`.
-    const paired = traits({ constitution: 50, wisdom: 50 });
-    expect(paired.adaptationCap).toBeCloseTo(SCALING.wisdom.adaptationCap + 0.15, 6);
+  it('reaches the cap `SCALING` states, and nothing raises it any further', () => {
+    // The CON/WIS Enduring pair used to add 0.15 on top, and spec 244 removed
+    // it; `adaptationCap` is one of the twenty-two trait fields left with no
+    // source, so the cap is now exactly the table's. Asserted at the top of both
+    // attributes, which is where a second source would show up if one returned.
+    expect(traits({ wisdom: 50 }).adaptationCap).toBeCloseTo(SCALING.wisdom.adaptationCap, 6);
+    expect(traits({ constitution: 50, wisdom: 50 }).adaptationCap).toBeCloseTo(
+      SCALING.wisdom.adaptationCap,
+      6,
+    );
   });
 });
 
 describe('Hard to Kill grants what it says and nothing else (spec 239)', () => {
   it('gives the skill a damage reduction and no stagger immunity', () => {
-    const bought = traits({ constitution: 25 }, [{ skillId: 'con.hardToKill', level: 3 }]);
+    const bought = traits({ constitution: 25 }, [{ specializationId: 'con.hardToKill', tier: 3 }]);
     expect(bought.resoluteReduction).toBeGreaterThan(0);
     // The silent grant this spec removed. A skill whose whole description is
     // about taking damage should not confer immunity to guard breaks.
@@ -311,15 +316,17 @@ describe('Hard to Kill grants what it says and nothing else (spec 239)', () => {
     // The immunity is qualitative, so what grants it should be findable. One
     // row, and a test that says which.
     const granting: string[] = [];
-    for (const skill of ALL_SKILLS) {
-      if ((skill.perLevel.traits?.staggerImmuneBelow ?? 0) > 0) granting.push(`skill:${skill.id}`);
+    for (const specialization of ALL_SPECIALIZATIONS) {
+      if ((specialization.perTier.traits?.staggerImmuneBelow ?? 0) > 0) {
+        granting.push(`specialization:${specialization.id}`);
+      }
     }
     for (const milestone of ALL_MILESTONES) {
       if ((milestone.grants.traits?.staggerImmuneBelow ?? 0) > 0) granting.push(`milestone:${milestone.id}`);
     }
-    for (const synergy of ALL_SYNERGIES) {
-      if ((synergy.grants.traits?.staggerImmuneBelow ?? 0) > 0) granting.push(`synergy:${synergy.id}`);
-    }
+    // The third loop was over `ALL_SYNERGIES` and there is no such table since
+    // spec 244. The sweep is complete without it: milestones and specializations
+    // are the only two things that grant anything progression-side now.
     expect(granting).toEqual(['milestone:con.hardToKill']);
   });
 });

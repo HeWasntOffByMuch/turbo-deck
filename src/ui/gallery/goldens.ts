@@ -387,13 +387,17 @@ export const PLAY_GOLDEN_CASES: readonly PlayGoldenCase[] = [
   },
   {
     name: 'play-gated',
-    options: { tab: 'skills', spend: ['str.crushingBlows'] },
-    covers: 'a skill whose attribute gate is not met, greyed out beside one that is',
+    // Scrolled to the detail, because that is where the two states are: the six
+    // track rows above it say where a build *is*, and a locked specialization is
+    // a fact about one node on one track.
+    options: { tab: 'progression', scrollBody: 268, spend: ['str.crushingBlows'] },
+    covers:
+      'a specialization whose milestone is not reached, greyed out beside one bought into (spec 244)',
   },
   {
     name: 'play-scrolled',
-    options: { tab: 'skills', scrollBody: 9999 },
-    covers: 'the skill tree scrolled to its end with the tab strip still above it (spec 198)',
+    options: { tab: 'progression', scrollBody: 9999 },
+    covers: 'a track scrolled to its end with the tab strip still above it (spec 198)',
   },
   {
     name: 'play-small',

@@ -3,10 +3,10 @@
  *
  * `npm run audit:progression`. The instrument for the question `npm run
  * balance` is the wrong shape for: that one fights twelve attribute presets
- * through the real sim, and this one asks, per skill and per rank and per legal
+ * through the real sim, and this one asks, per specialization and per tier and per legal
  * attribute value, whether the purchase reaches anything the simulation reads.
  *
- * The report is grouped by verdict rather than by skill, because what a reader
+ * The report is grouped by verdict rather than by specialization, because what a reader
  * wants first is the list of things that are wrong -- and a table of two hundred
  * `ACTIVE` rows buries it. `--all` prints every row.
  *
@@ -22,14 +22,14 @@ import {
   isUnscaled,
 } from '../src/server/data/ability-scaling.js';
 import { SCALING } from '../src/server/data/scaling.js';
-import { ALL_SKILLS } from '../src/server/data/skills.js';
+import { ALL_SPECIALIZATIONS } from '../src/server/data/specializations.js';
 import { coefficientOf, SCALING_ATTRIBUTES } from '../src/server/data/weapon-scaling.js';
 import {
   auditProgression,
   findingKey,
   findings,
   regressionKeys,
-  type RankAudit,
+  type TierAudit,
   type Verdict,
 } from '../src/server/player/progression-audit.js';
 
@@ -44,28 +44,28 @@ function num(value: number): string {
   return String(rounded);
 }
 
-function line(row: RankAudit): string {
+function line(row: TierAudit): string {
   const where = `${row.attribute} ${String(row.context.value)} (${row.context.reason})`;
   const moved = row.deltas
     .map((d) => `${d.field} ${num(d.before)} -> ${num(d.after)}`)
     .join('; ');
   return (
-    `  ${pad(row.skillId, 26)} ${String(row.from)}->${String(row.to)}  ${pad(where, 34)} ` +
+    `  ${pad(row.specializationId, 26)} ${String(row.from)}->${String(row.to)}  ${pad(where, 34)} ` +
     `${moved.length > 0 ? moved : row.note}`
   );
 }
 
 const report = auditProgression();
 
-console.log('=== progression audit (spec 241) ===\n');
+console.log('=== progression audit (specs 241, 244) ===\n');
 console.log(
-  `${String(ALL_SKILLS.length)} skills, ` +
-    `${String(ALL_SKILLS.reduce((sum, s) => sum + s.maxLevel, 0))} ranks, ` +
-    `${String(report.ranks.length)} rank/context cells checked\n`,
+  `${String(ALL_SPECIALIZATIONS.length)} specializations, ` +
+    `${String(ALL_SPECIALIZATIONS.reduce((sum, s) => sum + s.maxTier, 0))} tiers, ` +
+    `${String(report.tiers.length)} tier/context cells checked\n`,
 );
 
-const byVerdict = new Map<Verdict, RankAudit[]>();
-for (const row of report.ranks) {
+const byVerdict = new Map<Verdict, TierAudit[]>();
+for (const row of report.tiers) {
   const list = byVerdict.get(row.verdict) ?? [];
   list.push(row);
   byVerdict.set(row.verdict, list);

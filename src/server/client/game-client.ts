@@ -39,6 +39,7 @@ import {
   ChunkDeniedReason,
   ClientMessageType,
   CorrectionReason,
+  ProgressionTarget,
   ServerMessageType,
   TradeStageValue,
 } from '../net/protocol.js';
@@ -126,7 +127,7 @@ import {
   type EffectiveStats,
   type Equipment,
   type Inventory,
-  type SkillAllocation,
+  type SpecializationAllocation,
   type SlotAddress,
 } from '../state/types.js';
 import { ordinalOfAttribute } from '../data/attributes.js';
@@ -430,7 +431,6 @@ export interface ClientView {
   readonly endedTrade: TradeView | null;
   readonly level: number;
   readonly experience: number;
-  readonly unspentSkillPoints: number;
   /**
    * Every point this character has spent in the attuned tree (specs 128, 147).
    *
@@ -439,7 +439,7 @@ export interface ClientView {
    * which is the same reason equipment had to be replicated rather than
    * inferred.
    */
-  readonly skills: readonly SkillAllocation[];
+  readonly specializations: readonly SpecializationAllocation[];
   /**
    * The progression half of the sheet (spec 147).
    *
@@ -452,7 +452,7 @@ export interface ClientView {
    */
   readonly baseStats: BaseStats;
   readonly attributes: BaseStats;
-  readonly unspentAttributePoints: number;
+  readonly unspentProgressionPoints: number;
   readonly connected: boolean;
   /** Casts in progress, keyed by caster -- what to draw a wind-up bar over. */
   readonly casts: readonly KnownCast[];
@@ -788,11 +788,10 @@ export class GameClient {
   private shopRequests = 0;
   private level = 1;
   private experience = 0;
-  private unspentSkillPoints = 0;
-  private skills: readonly SkillAllocation[] = [];
+  private specializations: readonly SpecializationAllocation[] = [];
   private baseStats: BaseStats = startingBaseStats();
   private attributes: BaseStats = startingBaseStats();
-  private unspentAttributePoints = 0;
+  private unspentProgressionPoints = 0;
   private seq = 0;
   private connected = false;
   private resolveWelcome: ((info: WelcomeInfo) => void) | null = null;
@@ -1318,28 +1317,45 @@ export class GameClient {
     return this.shopRequests;
   }
 
-  spendSkillPoint(skillId: string): void {
-    this.channel.send(encodeClientMessage({ type: ClientMessageType.SpendSkillPoint, skillId }));
-  }
-
   /**
-   * Ask for one attribute point (spec 147).
+   * Spend one progression point on an attribute track (spec 147, 244).
    *
    * Sends an *ordinal*, and nothing else. There is no amount, no derived value
    * and no optimistic local update: the answer is the `Stats` message that
    * follows, or a refusal in the corner. A client that guessed here would draw
    * a stat it does not have for a round trip.
    */
-  allocateAttribute(key: BaseStatKey): void {
+  spendOnAttribute(key: BaseStatKey): void {
     const ordinal = ordinalOfAttribute(key);
     if (ordinal < 0) return;
     this.channel.send(
-      encodeClientMessage({ type: ClientMessageType.AllocateAttribute, attribute: ordinal }),
+      encodeClientMessage({
+        type: ClientMessageType.SpendProgressionPoint,
+        target: ProgressionTarget.Attribute,
+        attribute: ordinal,
+      }),
     );
   }
 
-  respecAttributes(): void {
-    this.channel.send(encodeClientMessage({ type: ClientMessageType.RespecAttributes }));
+  /**
+   * Spend one progression point on a milestone specialization (spec 244).
+   *
+   * The same pool and the same posture as {@link spendOnAttribute}: an id, no
+   * tier number, and the consequences read back off `Stats`. What differs is
+   * only what the point buys -- this one leaves the attribute where it is.
+   */
+  spendOnSpecialization(specializationId: string): void {
+    this.channel.send(
+      encodeClientMessage({
+        type: ClientMessageType.SpendProgressionPoint,
+        target: ProgressionTarget.Specialization,
+        specializationId,
+      }),
+    );
+  }
+
+  respecProgression(): void {
+    this.channel.send(encodeClientMessage({ type: ClientMessageType.RespecProgression }));
   }
 
 
@@ -1958,11 +1974,10 @@ export class GameClient {
       endedTrade: this.lastTrade,
       level: this.level,
       experience: this.experience,
-      unspentSkillPoints: this.unspentSkillPoints,
-      skills: this.skills,
+      specializations: this.specializations,
       baseStats: this.baseStats,
       attributes: this.attributes,
-      unspentAttributePoints: this.unspentAttributePoints,
+      unspentProgressionPoints: this.unspentProgressionPoints,
       connected: this.connected,
       casts: this.visibleCasts(),
       requestedAbilityId: this.requestedAbilityId,
@@ -2352,11 +2367,10 @@ export class GameClient {
         this.stats = message.stats;
         this.level = message.level;
         this.experience = message.experience;
-        this.unspentSkillPoints = message.unspentSkillPoints;
-        this.skills = message.skills;
+        this.specializations = message.specializations;
         this.baseStats = message.baseStats;
         this.attributes = message.attributes;
-        this.unspentAttributePoints = message.unspentAttributePoints;
+        this.unspentProgressionPoints = message.unspentProgressionPoints;
         // The recalculation reaching the *prediction* rather than only the
         // sheet. The step closes over the derived speed, so a client told it
         // now walks at 155 rather than 161 has to be walked at 155 -- otherwise

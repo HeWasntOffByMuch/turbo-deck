@@ -2051,15 +2051,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // when the points are not available -- `character-model.ts` runs the
     // server's own rule, so a refusal here is rare and has `ui.error` of its
     // own when it happens (spec 229).
-    onSpend: (skillId) => {
+    onSpend: (specializationId) => {
       audioDriver.flat('player.skillUp');
-      client.spendSkillPoint(skillId);
+      client.spendOnSpecialization(specializationId);
     },
-    onAllocate: (key) => {
+    onAdvance: (key) => {
       audioDriver.flat('player.attributeUp');
-      client.allocateAttribute(key as BaseStatKey);
+      client.spendOnAttribute(key as BaseStatKey);
     },
-    onRespec: () => client.respecAttributes(),
+    onRespec: () => client.respecProgression(),
     // Money changing hands, in all three directions.
     onBuy: (vendorId, defId) => {
       audioDriver.flat('ui.coin');

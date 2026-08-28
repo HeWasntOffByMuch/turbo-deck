@@ -15,11 +15,11 @@ import { ALL_ITEMS } from './items.js';
 import { STATUS_VISUALS } from './status-visuals.js';
 import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
 import { ALL_AURA_FIELDS, auraFieldById } from './aura-fields.js';
-import { ALL_SKILLS } from './skills.js';
+import { ALL_SPECIALIZATIONS } from './specializations.js';
 import {
   GRANT_LABELS,
   describeAbility,
-  describeStatSkill,
+  describeSpecialization,
   describeStatus,
   formatSeconds,
   grantsOf,
@@ -41,13 +41,13 @@ function everyDescription(): readonly { readonly what: string; readonly text: st
     })),
     // Both readings of every stat skill: the rate a fresh row states, and the
     // total a held one does. They are different strings and both are shown.
-    ...ALL_SKILLS.map((skill) => ({
+    ...ALL_SPECIALIZATIONS.map((skill) => ({
       what: `${skill.id}@0`,
-      text: technicalText(describeStatSkill(skill, 0)),
+      text: technicalText(describeSpecialization(skill, 0)),
     })),
-    ...ALL_SKILLS.map((skill) => ({
+    ...ALL_SPECIALIZATIONS.map((skill) => ({
       what: `${skill.id}@max`,
-      text: technicalText(describeStatSkill(skill, skill.maxLevel)),
+      text: technicalText(describeSpecialization(skill, skill.maxTier)),
     })),
   ];
 }
@@ -426,8 +426,8 @@ describe('sigils', () => {
 
 describe('the passive skill tree (spec 191)', () => {
   it('describes every row with at least its requirement and its trigger', () => {
-    for (const skill of ALL_SKILLS) {
-      const lines = describeStatSkill(skill, 0).lines;
+    for (const skill of ALL_SPECIALIZATIONS) {
+      const lines = describeSpecialization(skill, 0).lines;
       expect(lines.length, skill.id).toBeGreaterThanOrEqual(2);
       const text = lines.map((line) => line.text).join('\n');
       expect(text, skill.id).toContain('Requires ');
@@ -439,76 +439,76 @@ describe('the passive skill tree (spec 191)', () => {
     // The gap this closes. Before it, the sheet showed the authored sentence
     // and the trigger, and a player could not read a single figure off any of
     // the thirty-six rows.
-    for (const skill of ALL_SKILLS) {
-      if (grantsOf(skill.perLevel).length === 0) continue;
-      const text = technicalText(describeStatSkill(skill, 0));
+    for (const skill of ALL_SPECIALIZATIONS) {
+      if (grantsOf(skill.perTier).length === 0) continue;
+      const text = technicalText(describeSpecialization(skill, 0));
       expect(text, skill.id).toMatch(/[+-]\d/);
     }
   });
 
   it('scales the total with the level held, and keeps the rate beside it', () => {
-    const crushing = ALL_SKILLS.find((skill) => skill.id === 'str.crushingBlows');
+    const crushing = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'str.crushingBlows');
     expect(crushing).toBeDefined();
     if (!crushing) return;
-    expect(technicalText(describeStatSkill(crushing, 0))).toContain('+18% Guard damage per level.');
-    expect(technicalText(describeStatSkill(crushing, 2))).toContain(
-      '+36% Guard damage (+18% per level).',
+    expect(technicalText(describeSpecialization(crushing, 0))).toContain('+18% Guard damage per tier.');
+    expect(technicalText(describeSpecialization(crushing, 2))).toContain(
+      '+36% Guard damage (+18% per tier).',
     );
     // One rank is the rate, so the parenthesis would say the same thing twice.
-    expect(technicalText(describeStatSkill(crushing, 1))).toContain('+18% Guard damage.');
-    expect(technicalText(describeStatSkill(crushing, 1))).not.toContain('per level');
+    expect(technicalText(describeSpecialization(crushing, 1))).toContain('+18% Guard damage.');
+    expect(technicalText(describeSpecialization(crushing, 1))).not.toContain('per tier');
   });
 
   it('clamps the level to what the row can actually hold', () => {
-    const crushing = ALL_SKILLS.find((skill) => skill.id === 'str.crushingBlows');
+    const crushing = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'str.crushingBlows');
     expect(crushing).toBeDefined();
     if (!crushing) return;
-    expect(technicalText(describeStatSkill(crushing, 99))).toBe(
-      technicalText(describeStatSkill(crushing, crushing.maxLevel)),
+    expect(technicalText(describeSpecialization(crushing, 99))).toBe(
+      technicalText(describeSpecialization(crushing, crushing.maxTier)),
     );
   });
 
   it('skips a socket rather than claiming an effect', () => {
-    // A zero in `perLevel` is a documented "this row is about that trait" whose
+    // A zero in `perTier` is a documented "this row is about that trait" whose
     // magnitude comes from a milestone or a synergy. Catalysis authors
     // `appliesSundered: 0`, which reaches nothing, and Opening Read authors
     // `vulnerableWeakPointFactor: 0`. Neither may produce a line.
-    for (const skill of ALL_SKILLS) {
-      expect(technicalText(describeStatSkill(skill, 0)), skill.id).not.toMatch(/[+-]0[^.\d]/);
+    for (const skill of ALL_SPECIALIZATIONS) {
+      expect(technicalText(describeSpecialization(skill, 0)), skill.id).not.toMatch(/[+-]0[^.\d]/);
     }
-    const catalysis = ALL_SKILLS.find((skill) => skill.id === 'int.catalysis');
+    const catalysis = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'int.catalysis');
     expect(catalysis).toBeDefined();
     if (!catalysis) return;
-    expect(grantsOf(catalysis.perLevel)).toHaveLength(1);
+    expect(grantsOf(catalysis.perTier)).toHaveLength(1);
   });
 
   it('never appends a rate to a flag', () => {
     // Unstoppable grants `poiseArmorAllCasts: 1`, which is on or off. "Guard
-    // protection covers every cast per level" is what happens when a flag is
+    // protection covers every cast per tier" is what happens when a flag is
     // run through the same path as a quantity.
-    const unstoppable = ALL_SKILLS.find((skill) => skill.id === 'str.unstoppable');
+    const unstoppable = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'str.unstoppable');
     expect(unstoppable).toBeDefined();
     if (!unstoppable) return;
-    const text = technicalText(describeStatSkill(unstoppable, 1));
+    const text = technicalText(describeSpecialization(unstoppable, 1));
     expect(text).toContain('Guard protection covers every cast, not only attacks.');
-    expect(text).not.toContain('attacks per level');
+    expect(text).not.toContain('attacks per tier');
   });
 
   it('reads a reduction as a reduction', () => {
     // `backswingReduction: 0.1` is a positive number meaning *less* backswing.
     // Named as the quantity rather than as the reduction, the line said the
     // opposite of what the trait does.
-    const quick = ALL_SKILLS.find((skill) => skill.id === 'agi.quickRecovery');
+    const quick = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'agi.quickRecovery');
     expect(quick).toBeDefined();
     if (!quick) return;
-    expect(technicalText(describeStatSkill(quick, 0))).toContain('+10% Backswing reduction');
+    expect(technicalText(describeSpecialization(quick, 0))).toContain('+10% Backswing reduction');
   });
 
   it('marks a premium as bad and a benefit as good', () => {
-    const shaping = ALL_SKILLS.find((skill) => skill.id === 'int.shaping');
+    const shaping = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'int.shaping');
     expect(shaping).toBeDefined();
     if (!shaping) return;
-    const grants = grantsOf(shaping.perLevel);
+    const grants = grantsOf(shaping.perTier);
     const cost = grants.find((grant) => grant.text.includes('Cost of shaped abilities'));
     const radius = grants.find((grant) => grant.text.includes('radius'));
     expect(cost?.good).toBe(false);
@@ -516,8 +516,8 @@ describe('the passive skill tree (spec 191)', () => {
   });
 
   it('keeps the flavour out of the mechanical lines', () => {
-    for (const skill of ALL_SKILLS) {
-      const described = describeStatSkill(skill, 1);
+    for (const skill of ALL_SPECIALIZATIONS) {
+      const described = describeSpecialization(skill, 1);
       expect(described.flavor, skill.id).toBe(skill.description);
       expect(technicalText(described), skill.id).not.toContain(skill.description);
     }
@@ -529,8 +529,8 @@ describe('the passive skill tree (spec 191)', () => {
     // this is the thing that stops it staying silent.
     const labelled = new Set(GRANT_LABELS.map((label) => `${label.where}:${label.key}`));
     const missing = new Set<string>();
-    for (const skill of ALL_SKILLS) {
-      const modifier = skill.perLevel as unknown as Record<string, unknown>;
+    for (const skill of ALL_SPECIALIZATIONS) {
+      const modifier = skill.perTier as unknown as Record<string, unknown>;
       for (const [key, value] of Object.entries(modifier)) {
         if (key === 'traits' || value === 0) continue;
         if (!labelled.has(`stat:${key}`)) missing.add(`stat:${key}`);

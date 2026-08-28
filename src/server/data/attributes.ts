@@ -149,3 +149,22 @@ export function attributeByOrdinal(ordinal: number): AttributeDefinition | null 
 export function ordinalOfAttribute(key: AttributeKey): number {
   return ATTRIBUTE_KEYS.indexOf(key);
 }
+
+/**
+ * Every unordered pair of attributes, in a stable order. Fifteen of them.
+ *
+ * It lived in `data/synergies.ts` until spec 244 deleted that file, and it
+ * survives because the *pairs* were never the thing being removed -- the
+ * authored bonus hanging off each one was. What asks for them now is the test
+ * that no pair contributes a modifier of its own, which is the guarantee that
+ * replaced the table.
+ */
+export function allAttributePairs(): readonly (readonly [AttributeKey, AttributeKey])[] {
+  const pairs: (readonly [AttributeKey, AttributeKey])[] = [];
+  for (let i = 0; i < ATTRIBUTE_KEYS.length; i++) {
+    for (let j = i + 1; j < ATTRIBUTE_KEYS.length; j++) {
+      pairs.push([ATTRIBUTE_KEYS[i] as AttributeKey, ATTRIBUTE_KEYS[j] as AttributeKey]);
+    }
+  }
+  return pairs;
+}
