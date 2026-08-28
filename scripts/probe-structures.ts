@@ -32,6 +32,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
 import { STRUCTURE_KINDS } from '../src/terrain/vegetation.js';
+import { STRUCTURE_SCALE_STEP } from '../src/render/iso3d/editor/structure.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -280,6 +281,17 @@ async function save(page: Page): Promise<MapFile> {
 }
 
 /** Every prop in a saved document whose species is a building. */
+/**
+ * What one saved prop is, as a string.
+ *
+ * So the probe can tell the buildings it pressed from the ones the map already
+ * had. Coordinates are quantized on the way into the document, so two saves of
+ * an untouched prop give the same key exactly rather than nearly.
+ */
+function propKey(p: SavedProp): string {
+  return `${p.species}|${String(p.x)}|${String(p.z)}|${String(p.rotation ?? 0)}|${String(p.scale ?? 1)}`;
+}
+
 function structuresIn(doc: MapFile): SavedProp[] {
   const kinds: readonly string[] = STRUCTURE_KINDS;
   return (doc.layers ?? []).flatMap((layer) =>
@@ -310,8 +322,16 @@ async function main(): Promise<void> {
 
     await openEditor(page);
 
+    // What the map already holds, so every count below is of what this probe
+    // *added*.
+    //
+    // This used to assert the map had none, which was true when the arena was
+    // empty ground and stopped being true the moment spec 247 gave the
+    // shopkeepers a village to stand in -- three huts and a well, none of them
+    // anything to do with this probe, and four checks failing to say so.
     const before = structuresIn(await save(page));
-    check('the shipped map has no buildings to begin with', before.length === 0, `${before.length} found`);
+    const existing = new Set(before.map(propKey));
+    console.log(`  --   the map already holds ${String(before.length)} building(s); counting from there`);
 
     // The tool has to be reachable from the mode strip at all: one more entry in
     // an array is exactly the kind of thing that typechecks and is wired to
@@ -320,8 +340,8 @@ async function main(): Promise<void> {
     await page.waitForTimeout(400);
     check(
       'arming it shows the buildings panel',
-      (await panelRow(page, 'Buildings', 'Facing'))?.shown === true &&
-        (await panelRow(page, 'Buildings', 'Size'))?.shown === true,
+      (await panelRow(page, 'Structures', 'Facing'))?.shown === true &&
+        (await panelRow(page, 'Structures', 'Size'))?.shown === true,
       'Facing and Size on screen',
     );
     check(
@@ -336,10 +356,10 @@ async function main(): Promise<void> {
     check('a press puts a building down', await clickGround(page, 400, 330), await placed(page));
     check('and says what it placed', /placed house facing 0/.test(await readout(page)), await placed(page));
 
-    await setNumber(page, 'Buildings', 'Facing', 90);
+    await setNumber(page, 'Structures', 'Facing', 90);
     check(
       'the facing takes the value it was set to',
-      (await panelRow(page, 'Buildings', 'Facing'))?.value === '90',
+      (await panelRow(page, 'Structures', 'Facing'))?.value === '90',
       'Facing = 90',
     );
     check('a second press lands too', await clickGround(page, 760, 300), await placed(page));
@@ -392,15 +412,15 @@ async function main(): Promise<void> {
     await page.waitForTimeout(400);
 
     // --- the drag (spec 225) ------------------------------------------------
-    const sizeBefore = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
+    const sizeBefore = Number((await panelRow(page, 'Structures', 'Size'))?.value ?? Number.NaN);
     const reached = await dragOut(page, 300, 560, 150, 40);
     check(
       'dragging out grows the preview past the size the panel was set to',
       Number.isFinite(reached) && reached > sizeBefore,
       `${sizeBefore} -> ${reached.toFixed(2)} mid-drag`,
     );
-    const sizeAfter = Number((await panelRow(page, 'Buildings', 'Size'))?.value ?? Number.NaN);
-    const shown = (await panelRow(page, 'Buildings', 'Size'))?.value ?? '';
+    const sizeAfter = Number((await panelRow(page, 'Structures', 'Size'))?.value ?? Number.NaN);
+    const shown = (await panelRow(page, 'Structures', 'Size'))?.value ?? '';
     check(
       'and the panel is told, so the next building is the size of the last',
       Math.abs(sizeAfter - reached) < 1e-9,
@@ -416,15 +436,21 @@ async function main(): Promise<void> {
 
     // The file is the deliverable. Everything above could be true of an editor
     // that draws buildings and saves none of them.
-    const after = structuresIn(await save(page));
+    const after = structuresIn(await save(page)).filter((p) => !existing.has(propKey(p)));
     const houses = after.filter((p) => p.species === 'house');
     const wells = after.filter((p) => p.species === 'well');
     check(
-      'the saved map has every hut and the well',
+      'the saved map has every hut and the well this probe put down',
       houses.length === 3 && wells.length === 1,
       `${houses.length} houses, ${wells.length} wells`,
     );
-    const dragged = houses.filter((h) => Math.abs((h.scale ?? 1) - reached) < 0.06);
+    // Half a step, **derived rather than typed**: a size is snapped to
+    // `STRUCTURE_SCALE_STEP`, so any two distinct sizes are one step apart and a
+    // tolerance wider than one cannot tell them apart. It was 0.06 against a
+    // step of 0.05, so a drag that reached exactly one step above the default
+    // matched all three huts and reported the feature working as broken.
+    const sizeSlack = STRUCTURE_SCALE_STEP / 2;
+    const dragged = houses.filter((h) => Math.abs((h.scale ?? 1) - reached) < sizeSlack);
     check(
       'the dragged hut was saved at the size the drag reached',
       dragged.length === 1,

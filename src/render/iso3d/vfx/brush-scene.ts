@@ -127,6 +127,19 @@ export interface SwingTrigger {
   readonly facing?: number;
 }
 
+/** A continuous effect that stands somewhere (spec 250). See {@link BrushScene.standing}. */
+export interface StandingTrigger {
+  readonly seed: number;
+  /**
+   * What the effect's own lengths are multiplied by.
+   *
+   * Required rather than defaulted, unlike {@link AfflictionTrigger.scale}: an
+   * affliction has an obvious default because it is worn on a body and the rig
+   * has one, and a thing standing on the ground has no size the rig can guess.
+   */
+  readonly scale: number;
+}
+
 export interface AfflictionTrigger {
   readonly seed: number;
   /**
@@ -182,6 +195,16 @@ declare global {
        * effect table is a second answer to a question `SWING_ART` answers.
        */
       swing: (id: string, input: SwingTrigger) => number;
+      /**
+       * Play a continuous effect standing on the ground at the origin
+       * (spec 250).
+       *
+       * The shape neither of its neighbours has: `swing` is world space with no
+       * scale, `affliction` has a scale and rides the dummy, and a campfire
+       * stands still at a size of its own. Held, so `stopAffliction` takes it
+       * down with everything else the rig owes a stop.
+       */
+      standing: (id: string, input: StandingTrigger) => number;
       /**
        * Play any registry effect attached to the dummy. Returns the handle.
        *
@@ -574,6 +597,24 @@ class BrushScene {
   }
 
   /**
+   * Play a continuous effect standing on the ground at the origin (spec 250).
+   *
+   * The fire's shape, and the one the rig could not express: {@link swing} plays
+   * in world space and has no scale, {@link affliction} has a scale and attaches
+   * to the dummy. A campfire is neither -- it stands still, it burns until it is
+   * stopped, and every length in `brushFire` is a multiple of the fire's own
+   * radius.
+   *
+   * Held like an affliction is, and for the same reason: `durationTicks: 0`
+   * means nothing stops it, so the rig owes the stop.
+   */
+  standing(id: string, input: StandingTrigger): number {
+    const handle = this.layer.play(id, { x: 0, y: 0, z: 0, seed: input.seed, scale: input.scale });
+    if (handle !== 0) this.held.push(handle);
+    return handle;
+  }
+
+  /**
    * Play an effect attached to the dummy.
    *
    * The scale defaults to the dummy's own radius because every length in
@@ -870,6 +911,7 @@ function main(): void {
     blood: (input) => scene.blood(input),
     explosion: (input) => scene.explosion(input),
     swing: (id, input) => scene.swing(id, input),
+    standing: (id, input) => scene.standing(id, input),
     affliction: (id, input) => scene.affliction(id, input),
     shot: (id, input) => scene.shot(id, input),
     stopAffliction: () => scene.stopAffliction(),

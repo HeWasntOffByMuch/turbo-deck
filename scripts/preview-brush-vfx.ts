@@ -6,10 +6,11 @@
 //
 //   .claude/screenshots/brush-blood.png       the hit: lifecycle, bearings, seeds
 //   .claude/screenshots/brush-explosion.png   the blast: lifecycle, bearings, seeds
-//   .claude/screenshots/brush-shot.png        the ember shot in flight, and where
-//                                             it lands (spec 218)
+//   .claude/screenshots/brush-shot.png        the ember shot in flight, where it
+//                                             lands (spec 218), and the campfire
+//                                             standing still and burning (spec 250)
 //
-// ## Why the shot is on this sheet rather than one of its own
+// ## Why the shot and the fire are on this sheet rather than ones of their own
 //
 // Because it is judged on the same two questions. `shot_ember` is a state played
 // on a moving body -- the affliction's shape, which is what argued
@@ -19,6 +20,12 @@
 // one artist. The one thing it needs that neither of the others does is
 // *motion*, and that is one call into the rig rather than a second definition of
 // crisp.
+//
+// The campfire is there on the same argument and needs the opposite thing:
+// **time**. A shot is over in twenty ticks and a fire is meant to be looked at,
+// so its lifecycle row runs to two seconds -- past the point where the flames,
+// the embers and the smoke have each turned over and the loop has to be
+// invisible. Everything else about it is judged the way a hit is.
 //
 // ## Why this replaced the old harness
 //
@@ -284,7 +291,7 @@ async function main(): Promise<void> {
 
     interface Shot {
       readonly label: string;
-      readonly kind: 'blood' | 'explosion' | 'shot' | 'swing';
+      readonly kind: 'blood' | 'explosion' | 'shot' | 'swing' | 'standing';
       readonly seed: number;
       readonly ticks: number;
       /**
@@ -303,6 +310,8 @@ async function main(): Promise<void> {
       readonly from?: number;
       /** `swing` only: which way the body is facing. */
       readonly facing?: number;
+      /** `standing` only: what the effect's own lengths are multiplied by. */
+      readonly scale?: number;
       readonly radius?: number;
       readonly intensity?: number;
       readonly dissipates?: boolean;
@@ -359,6 +368,11 @@ async function main(): Promise<void> {
             ...(input.from === undefined ? {} : { from: input.from }),
             ...(input.intensity === undefined ? {} : { intensity: input.intensity }),
             ...(input.dissipates === undefined ? {} : { dissipates: input.dissipates }),
+          });
+        } else if (input.kind === 'standing') {
+          api.standing(input.effectId ?? 'fire_camp', {
+            seed: input.seed,
+            scale: input.scale ?? 24,
           });
         } else if (input.kind === 'swing') {
           api.swing(input.effectId ?? 'swing_arc', {
@@ -723,6 +737,63 @@ async function main(): Promise<void> {
       ),
     });
 
+
+    // --- the campfire's fire (spec 250) -----------------------------------
+    //
+    // On this sheet rather than one of its own because it is judged on this
+    // sheet's two questions: whether the paint is silhouettes or stipple, and
+    // whether two seeds are two paintings by one artist. What it needs that
+    // nothing else here does is *time* -- a shot is over in twenty ticks and a
+    // fire is meant to be watched -- so the lifecycle row runs out to two
+    // seconds, which is past the point where the flames, the embers and the
+    // smoke have each turned over and the loop has to be invisible.
+    //
+    // Framed like the shot rather than like a blast: a campfire is about fifty
+    // units across at the ring and its smoke reaches perhaps a hundred and
+    // twenty up, so a blast's camera would make it a smudge and every
+    // measurement below a measurement of grass.
+    const FIRE_FRAME = 96;
+    const FIRE_SITE = 24;
+    shotRows.push({
+      title: 'the fire settling in (ticks; flames turn over every ~20, smoke every ~115)',
+      tiles: await series(
+        [6, 16, 34, 60, 90, 120].map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'standing' as const,
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          scale: FIRE_SITE,
+          halfHeight: FIRE_FRAME,
+        })),
+      ),
+    });
+    shotRows.push({
+      title: 'six seeds, one fire, settled',
+      check: 'seeds',
+      tiles: await series(
+        SEEDS.map((seed, i) => ({
+          label: `#${i}`,
+          kind: 'standing' as const,
+          seed,
+          ticks: 90,
+          scale: FIRE_SITE,
+          halfHeight: FIRE_FRAME,
+        })),
+      ),
+    });
+    shotRows.push({
+      title: 'a fire is the size it is placed at, and reads from every seat',
+      tiles: await series([
+        { label: 'scale 12', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: 12, halfHeight: 54 },
+        { label: 'scale 24', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: 24, halfHeight: FIRE_FRAME },
+        { label: 'scale 48', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: 48, halfHeight: 180 },
+        { label: 'cam 90deg', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: FIRE_SITE, azimuth: Math.PI / 2, halfHeight: FIRE_FRAME },
+        { label: 'cam 210deg', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: FIRE_SITE, azimuth: (7 * Math.PI) / 6, halfHeight: FIRE_FRAME },
+        // Low, which is the seat the game actually plays at and the one a
+        // column of smoke is hardest to keep upright in.
+        { label: 'low seat', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: FIRE_SITE, elevation: 0.42, halfHeight: FIRE_FRAME },
+      ]),
+    });
 
     const shaderProblems = logs.filter((line) => /error|could not compile|shader/i.test(line) && !/favicon|404/i.test(line));
     if (shaderProblems.length > 0) problems.push(...shaderProblems);

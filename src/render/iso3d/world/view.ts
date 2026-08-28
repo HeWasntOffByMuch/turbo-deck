@@ -1215,10 +1215,20 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // than from the statuses that asked for one -- so a ring refused by the
     // effect budget or evicted by the instance pool reads as absent.
     const aurasDrawn = scene.heldAuras().length;
+    // The light pool (spec 250), on the same terms: what each slot is actually
+    // holding against how many lights asked for one. A fixture offered and never
+    // lit is the failure worth seeing, and a count of the offers alone could not
+    // show it.
+    const lightsHeld = scene.heldWorldLights().filter((key) => key !== null).length;
+    const lightsOffered = scene.worldLightsOffered();
+    // And the fires burning in them (spec 250), on the same terms again: from
+    // the driver's own held set, so one refused by the effect budget or evicted
+    // by the instance pool reads as absent.
+    const firesLit = scene.heldFires().length;
     const meshState =
       `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
       `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}` +
-      `:${aurasDrawn}`;
+      `:${aurasDrawn}:${lightsHeld}:${lightsOffered}:${firesLit}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
@@ -1228,6 +1238,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       root.dataset['propDirty'] = String(ingest.dirtyRegionCount);
       root.dataset['propRefused'] = String(propsRefused);
       root.dataset['auras'] = String(aurasDrawn);
+      root.dataset['worldLights'] =
+        `lit=${String(lightsHeld)} offered=${String(lightsOffered)} fires=${String(firesLit)}`;
       root.dataset['nav'] =
         `gen=${String(navGeneration)} asked=${String(navAsked)}` +
         ` adopted=${String(navAdopted)} refused=${String(navStale)}`;

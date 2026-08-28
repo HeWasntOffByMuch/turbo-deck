@@ -121,6 +121,19 @@ export const PALETTE = {
   // simply dark, because both are holes: what says "you could go in there" is
   // that nothing is lit inside, and a merely dark brown reads as another plank.
   hollow: 0x241d18,
+  // The light fixtures (spec 250). A fire is charred logs in a stone ring; a
+  // lamp is iron round a pale mantle; a torch stand is a stake with a pitch head
+  // on it. Four tones and no more, because everything else they are made of is
+  // already here -- the ring is drystone, the stakes are posts, and the flame is
+  // the one `player-lights.ts` already burns at.
+  //
+  // `charred` is *darker than the hollow it is not*: a burnt log is a solid
+  // thing that has stopped being brown, where `hollow` is an absence, so they
+  // are close on purpose and the log is the one with a little warmth left in it.
+  charred: 0x2e2620,
+  emberBed: 0xd2582a,
+  ironDark: 0x4a4a52,
+  lampMantle: 0xffe6b4,
 } as const;
 
 /**

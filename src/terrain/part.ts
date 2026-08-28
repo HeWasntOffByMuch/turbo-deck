@@ -329,6 +329,9 @@ function readChunkCells(
       tint: quantize(p.tint),
       ...(p.alignToNormal ? { align: true } : {}),
       ...(p.uniform ? { uniform: true } : {}),
+      ...(p.light
+        ? { light: { brightness: quantize(p.light.brightness), radius: quantize(p.light.radius) } }
+        : {}),
     })),
     markers: snapshot.markers.map((m) => ({ ...m, x: quantize(m.x - baseX), z: quantize(m.z - baseZ) })),
   };
@@ -543,6 +546,9 @@ function plant(chunks: readonly MapChunk[], ctx: PlantContext): MapChunk[] {
           tint: quantize(p.tint),
           ...(p.alignToNormal ? { align: true } : {}),
           ...(p.uniform ? { uniform: true } : {}),
+          ...(p.light
+            ? { light: { brightness: quantize(p.light.brightness), radius: quantize(p.light.radius) } }
+            : {}),
         })),
       ],
     };

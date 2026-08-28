@@ -927,6 +927,40 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     ],
     description: 'The ground remembers. Make somewhere they cannot follow you.',
   },
+  {
+    id: 'skill.conjureLight',
+    name: 'Conjure Light',
+    kind: 'self',
+    targeting: 'self',
+    castLook: 'focus',
+    skill: true,
+    // Short. There is nobody to read this wind-up -- it lands on the caster and
+    // does nothing to anybody -- so a long one would be a delay rather than a
+    // commitment, which is the distinction spec 188's costs are built around.
+    windupTicks: seconds(0.5),
+    // Sixty seconds of light against twenty of waiting, so letting it go out is
+    // a lapse rather than a rotation: a third of the time it is up, you could
+    // have had it back and did not. Both numbers only mean anything because
+    // spec 250 stopped `resolveAttackTiming` clamping a spell's cooldown to a
+    // Base Attack Time's ceiling -- authored here before that, this row would
+    // have come back on five.
+    cooldownTicks: seconds(20),
+    cost: 4,
+    range: 0,
+    damage: 0,
+    // No scaling, and the absence is the declaration. What a conjured light
+    // reaches is `MAGIC_DEFAULTS` in `player-lights.ts`, whole -- the same rule
+    // spec 190 keeps for an affliction, and for its reason: a light whose reach
+    // depended on who cast it is one the player carrying it cannot reason about.
+    effects: [
+      {
+        kind: 'applyStatus',
+        statusId: StatusId.MagicLight,
+        durationTicks: seconds(60),
+      },
+    ],
+    description: 'Cold light, and nothing under it that was not there before.',
+  },
   // --- the test row (spec 190) -------------------------------------------
   //
   // Not content. It exists to put **every mark the client can draw** on one
@@ -1062,6 +1096,12 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       // aimed at, that is nothing: it is `sentinel`, it fights nobody, and
       // `pulseAuraFields` asks `isHostile` from the *carrier's* side.
       { kind: 'applyStatus', statusId: StatusId.ScorchedEarth, durationTicks: TEST_STATUS_TICKS },
+      // The conjured light (spec 250). Here for the same reason as everything
+      // above -- this row's whole job is to put every mark the client can draw
+      // on one body at once -- and it is the cheapest of them to apply, because
+      // nothing in the sim reads it: what it does is entirely a light in the
+      // renderer, on whichever body happens to be carrying it.
+      { kind: 'applyStatus', statusId: StatusId.MagicLight, durationTicks: TEST_STATUS_TICKS },
       // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
       // They are inverted -- carrying one means the mechanic has fired and has
       // not re-armed -- so applying them would silently switch two mechanics off

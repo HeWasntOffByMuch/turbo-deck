@@ -4,10 +4,14 @@ import { hashUnit2 } from '../../shared/hash.js';
 import {
   FENCE_KINDS,
   FENCE_TILE_LENGTH,
+  FIXTURE_KINDS,
+  fixtureLight,
+  footprintRadius,
   HOUSE_PLAN,
   STRUCTURE_KINDS,
   WELL_RADIUS,
   type FenceKind,
+  type FixtureKind,
   type Prop,
   type StructureKind,
 } from '../../terrain/vegetation.js';
@@ -1750,6 +1754,255 @@ function buildWellParts(): PropPart[] {
   ];
 }
 
+/**
+ * The light fixtures (spec 250): a campfire, a street lamp on a stake, and a
+ * standing torch.
+ *
+ * They are `PropPart` lists like the buildings beside them and nothing about
+ * them is special-cased anywhere -- same batching, same per-instance tint, same
+ * region grid, same eraser. What makes one a *light* is a row in
+ * `FIXTURE_LIGHTS` and a `PointLight` the scene hangs at the height that row
+ * names; the geometry here is only what the light is coming *out of*, and it
+ * has to read as that from a hundred units up at the game's isometric bearing.
+ *
+ * Two rules they share with the hut. Neither `sway`s -- a tree leans in the wind
+ * because it is alive, and a lamp post that did would be a lamp post falling
+ * over. And each sinks a little into the ground, so a fixture on a slope shows
+ * no daylight under its base.
+ *
+ * The one thing worth knowing about their *colour*: the burning parts are drawn
+ * bright rather than emissive, because a prop batch is `MeshLambertMaterial` and
+ * an unlit material here would be a fifth kind of batch for three props. They
+ * are standing inside their own point light, which is what actually makes them
+ * the brightest thing in the frame -- so the geometry only has to be pale enough
+ * not to fight it.
+ */
+
+/** How far a fixture's base is buried. `BUILDING_SINK`'s reason, less deep. */
+const FIXTURE_SINK = 5;
+
+let CAMPFIRE_PARTS: PropPart[] | null = null;
+function campfireParts(): PropPart[] {
+  CAMPFIRE_PARTS ??= buildCampfireParts();
+  return CAMPFIRE_PARTS;
+}
+
+/**
+ * A campfire: a ring of stones, four logs leaning into the middle, and a bed of
+ * embers with a flame standing out of it.
+ *
+ * The ring is eight stones rather than a drum, and that is what says *fire*
+ * rather than *well* at this distance: a continuous kerb reads as stonework
+ * somebody built, and eight lumps at slightly different sizes read as stones
+ * somebody carried. They are hashed to no two the same by the batch's own
+ * per-instance jitter; the *ring* itself is fixed, because a fire is round.
+ */
+function buildCampfireParts(): PropPart[] {
+  const ring = 30;
+  const stones = Array.from({ length: 8 }, (_, i) => {
+    const a = (i / 8) * Math.PI * 2;
+    // Alternating sizes, so the ring has a rhythm rather than eight identical
+    // teeth. Hashed jitter varies it further per fire.
+    const big = i % 2 === 0;
+    return {
+      x: Math.cos(a) * ring,
+      y: (big ? 13 : 10) / 2 - FIXTURE_SINK,
+      z: Math.sin(a) * ring,
+      w: big ? 17 : 13,
+      h: big ? 13 : 10,
+      d: big ? 15 : 12,
+    };
+  });
+  // Four logs, laid across each other into the middle. Each is a long thin box
+  // rolled about its own length and yawed round the fire -- a cone of sticks
+  // would be a cone, and what a spent fire looks like is timber that has fallen
+  // in on itself.
+  const logs = Array.from({ length: 4 }, (_, i) => {
+    const a = (i / 4) * Math.PI + Math.PI / 8;
+    const reach = 22;
+    return {
+      x: Math.cos(a) * reach * 0.35,
+      y: 9 - FIXTURE_SINK,
+      z: Math.sin(a) * reach * 0.35,
+      w: 8,
+      h: 8,
+      d: 8,
+    };
+  });
+  return [
+    {
+      geometry: boxesGeometry(stones),
+      offsetY: 0,
+      // The warm stone rather than the pale one, and that is a decision the
+      // preview made: at `drystone` the ring is the brightest thing in the prop
+      // and a campfire photographs as a white splat with a small flame in it.
+      // What has to be brightest is the fire.
+      color: PALETTE.drystoneWarm,
+      foliage: false,
+      // The widest drift of any fixture part: a fire is made of stones somebody
+      // found, so one being greyer than the next is the point.
+      tintAmount: 0.16,
+    },
+    {
+      // The logs, merged into one geometry and turned as a group. Turning each
+      // one separately would need four parts, and what the eye reads from above
+      // is a dark cross in a bright ring rather than which log is on top.
+      geometry: boxesGeometry([
+        ...logs,
+        { x: 0, y: 12 - FIXTURE_SINK, z: 0, w: 46, h: 7, d: 7 },
+        { x: 0, y: 16 - FIXTURE_SINK, z: 0, w: 7, h: 7, d: 46 },
+      ]),
+      offsetY: 0,
+      color: PALETTE.charred,
+      foliage: false,
+      tintAmount: 0.08,
+      jitterYaw: 0.5,
+    },
+    {
+      // The ember bed: a low disc filling the ring, so a fire seen from directly
+      // above is not a hole with sticks over it.
+      geometry: new THREE.CylinderGeometry(ring * 0.62, ring * 0.72, 5, 10),
+      offsetY: 3 - FIXTURE_SINK,
+      color: PALETTE.emberBed,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    // **No flame.** A campfire's fire is a `vfx` effect -- `fire_camp` in
+    // `brush.ts` -- played at the middle of the ring by `world/fire-vfx.ts`.
+    //
+    // The cone that used to stand here is the whole reason this is worth a
+    // comment: a fire is the one prop in this file whose subject *moves*, and a
+    // static solid can only ever be a picture of one instant of it. It also
+    // fought the paint rather than sitting under it -- a five-sided cream cone
+    // inside a cloud of brush marks reads as a cone somebody put in a fire.
+    //
+    // What stays is everything that does not move: the stones, the logs and the
+    // embers between them. Those are what the light is coming out of, and they
+    // are still here when a distant fire's paint is culled.
+  ];
+}
+
+let LAMP_POST_PARTS: PropPart[] | null = null;
+function lampPostParts(): PropPart[] {
+  LAMP_POST_PARTS ??= buildLampPostParts();
+  return LAMP_POST_PARTS;
+}
+
+/**
+ * How high a street lamp carries its light.
+ *
+ * Measured against the body rather than chosen: a unit is about 56 tall, so a
+ * lamp head at 122 is a little over two of them -- high enough that a figure
+ * walking under it does not block its own pool of light, and low enough that it
+ * still reads as something a person put there rather than as a pylon.
+ *
+ * It has to agree with `FIXTURE_LIGHTS['lamp-post'].height`, which is what the
+ * light is actually hung at: a lamp whose flame is not inside its own lantern is
+ * the one mistake in this file nobody would think to look for.
+ */
+const LAMP_HEAD_HEIGHT = 122;
+
+function buildLampPostParts(): PropPart[] {
+  const stakeHeight = LAMP_HEAD_HEIGHT - 8 + FIXTURE_SINK;
+  return [
+    {
+      // The stake. Square rather than round, and slightly tapered by nothing at
+      // all: a fence post in this game is a box, and a lamp on a wooden stake
+      // should look like it came out of the same yard.
+      geometry: new THREE.BoxGeometry(9, stakeHeight, 9),
+      offsetY: stakeHeight / 2 - FIXTURE_SINK,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.12,
+      jitterYaw: 0.25,
+    },
+    {
+      // A cross-brace near the foot, which is the whole of what stops the stake
+      // reading as a stick pushed into the mud.
+      geometry: boxesGeometry([
+        { x: 0, y: 26, z: 0, w: 30, h: 5, d: 5 },
+        { x: 0, y: 26, z: 0, w: 5, h: 5, d: 30 },
+      ]),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      // The lantern's iron: a cage under a cap, drawn as two boxes because at
+      // this size the bars are one pixel and the silhouette is the whole of it.
+      geometry: boxesGeometry([
+        { x: 0, y: LAMP_HEAD_HEIGHT + 15, z: 0, w: 26, h: 6, d: 26 },
+        { x: 0, y: LAMP_HEAD_HEIGHT - 14, z: 0, w: 18, h: 5, d: 18 },
+      ]),
+      offsetY: 0,
+      color: PALETTE.ironDark,
+      foliage: false,
+    },
+    {
+      // The mantle, inside the cage. Pale rather than flame-coloured, because a
+      // lamp is a made thing: what separates it from the torch stand beside it
+      // at a hundred units is that this one is white and steady.
+      geometry: new THREE.BoxGeometry(19, 24, 19),
+      offsetY: LAMP_HEAD_HEIGHT,
+      color: PALETTE.lampMantle,
+      foliage: false,
+    },
+  ];
+}
+
+let TORCH_STAND_PARTS: PropPart[] | null = null;
+function torchStandParts(): PropPart[] {
+  TORCH_STAND_PARTS ??= buildTorchStandParts();
+  return TORCH_STAND_PARTS;
+}
+
+/** Where the standing torch's flame sits. See {@link LAMP_HEAD_HEIGHT}. */
+const TORCH_HEAD_HEIGHT = 78;
+
+function buildTorchStandParts(): PropPart[] {
+  const shaftHeight = TORCH_HEAD_HEIGHT - 6 + FIXTURE_SINK;
+  return [
+    {
+      geometry: new THREE.BoxGeometry(7, shaftHeight, 7),
+      offsetY: shaftHeight / 2 - FIXTURE_SINK,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.12,
+      jitterYaw: 0.3,
+    },
+    {
+      // Three legs splayed off the foot. A torch stand has to stand up, and a
+      // single stake in the ground is the lamp post one prop over.
+      geometry: boxesGeometry(
+        Array.from({ length: 3 }, (_, i) => {
+          const a = (i / 3) * Math.PI * 2;
+          return { x: Math.cos(a) * 9, y: 9, z: Math.sin(a) * 9, w: 5, h: 24, d: 5 };
+        }),
+      ),
+      offsetY: 0,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      // The head: a pitch-soaked bowl. Wider than the shaft, so the flame has
+      // something to sit in rather than balancing on a point.
+      geometry: new THREE.CylinderGeometry(12, 6, 14, 6),
+      offsetY: TORCH_HEAD_HEIGHT - 8,
+      color: PALETTE.charred,
+      foliage: false,
+    },
+    {
+      geometry: new THREE.ConeGeometry(9, 24, 5),
+      offsetY: TORCH_HEAD_HEIGHT + 9,
+      color: PALETTE.torchCore,
+      foliage: false,
+      jitterYaw: 0.9,
+    },
+  ];
+}
+
 /** Warm autumn foliage, for the fraction of trees that turn. */
 const AUTUMN = [0xb8502a, 0xd0722c, 0xe0a334] as const;
 /** Tint above which a prop goes autumn. ~18% of them, so it stays an accent. */
@@ -1923,11 +2176,28 @@ export interface PropFieldHandle {
   dropRegion(key: string): boolean;
   /** Region keys with batches on the scene graph. For the drop pass. */
   heldRegions(): readonly string[];
+  /**
+   * Every light fixture standing on ground this field is currently drawing
+   * (spec 250).
+   *
+   * Read off the held regions rather than kept as a list of its own, which is
+   * what makes a fixture on forgotten ground stop being lit *by construction*:
+   * spec 215's rule is that a region is drawn because a chunk under it is held,
+   * so a light that outlived its region would be a second residency rule with
+   * nothing keeping it in step with the first.
+   */
+  lights(): readonly RegionLight[];
   dispose(): void;
 }
 
 /** The kinds `buildPropField` knows how to draw. */
-const DRAWN_KINDS: ReadonlySet<string> = new Set<string>(['tree', 'bush', ...FENCE_KINDS, ...STRUCTURE_KINDS]);
+const DRAWN_KINDS: ReadonlySet<string> = new Set<string>([
+  'tree',
+  'bush',
+  ...FENCE_KINDS,
+  ...STRUCTURE_KINDS,
+  ...FIXTURE_KINDS,
+]);
 
 /** The unit surface normal of the ground, for props that lie along it. */
 export type NormalAt = (x: number, z: number) => readonly [number, number, number];
@@ -2095,6 +2365,7 @@ const PROP_GROUPS: readonly (
   | { readonly kind: 'bush' }
   | { readonly kind: 'fence'; readonly fence: FenceKind }
   | { readonly kind: 'structure'; readonly structure: StructureKind }
+  | { readonly kind: 'fixture'; readonly fixture: FixtureKind }
 )[] = [
   ...TREE_SPECIES.map((species) => ({ kind: 'tree' as const, species })),
   { kind: 'bush' as const },
@@ -2102,6 +2373,7 @@ const PROP_GROUPS: readonly (
   // Appended, never inserted: an index into this list crosses a thread, so a
   // group that moved would hand the worker's matrices to the wrong geometry.
   ...STRUCTURE_KINDS.map((structure) => ({ kind: 'structure' as const, structure })),
+  ...FIXTURE_KINDS.map((fixture) => ({ kind: 'fixture' as const, fixture })),
 ];
 
 /** How many batches a region can have, before its props are looked at. */
@@ -2114,7 +2386,15 @@ export function propGroupParts(group: number): readonly PropPart[] {
   if (of.kind === 'tree') return treeParts(of.species);
   if (of.kind === 'bush') return bushParts();
   if (of.kind === 'structure') return of.structure === 'well' ? wellParts() : houseParts();
+  if (of.kind === 'fixture') return fixtureParts(of.fixture);
   return fenceParts(of.fence);
+}
+
+/** The parts one light fixture draws with (spec 250). Memoized; see {@link treeParts}. */
+function fixtureParts(kind: FixtureKind): readonly PropPart[] {
+  if (kind === 'campfire') return campfireParts();
+  if (kind === 'lamp-post') return lampPostParts();
+  return torchStandParts();
 }
 
 /** The props in this bucket that a batch group draws. */
@@ -2130,6 +2410,7 @@ function propGroupMembers(
   }
   if (of.kind === 'bush') return bucket.filter((p) => p.kind === 'bush');
   if (of.kind === 'structure') return bucket.filter((p) => p.kind === of.structure);
+  if (of.kind === 'fixture') return bucket.filter((p) => p.kind === of.fixture);
   return bucket.filter((p) => p.kind === of.fence);
 }
 
@@ -2179,8 +2460,79 @@ function packSway(instances: readonly SwayInstance[]): { base: Float32Array; tun
  * them -- `smooth` picks a geometry and `swayNormals` patches a material, and
  * both of those happen where the mesh is made.
  */
+/**
+ * One light fixture in a region, ready to be hung on a `PointLight` (spec 250).
+ *
+ * Composed here rather than in the scene for one reason: this runs on the map
+ * worker, and the worker is where a prop's ground height is already being looked
+ * up. Working it out again on the render thread would be a second answer to
+ * "how high is the ground under that campfire", and the two would agree right up
+ * until the terrain changed under one of them.
+ *
+ * The position is where the *flame* is -- ground plus the row's height, scaled
+ * with the prop -- so nothing downstream has to know what a fixture is made of.
+ */
+export interface RegionLight {
+  /**
+   * Stable across a rebuild of the same region from the same document.
+   *
+   * The pool's residency is keyed on this, and a key that changed every time a
+   * region was recomposed would reassign every slot near the player on every
+   * stream event. Position and index, so two fixtures on one spot are still two
+   * keys.
+   */
+  readonly key: string;
+  /**
+   * Which fixture this is (spec 250).
+   *
+   * Nothing about the *light* reads it -- the pool is handed a colour and a
+   * reach, and could not care less what shape it is coming out of.
+   * It is here because a fixture's **paint** is decided by kind: a campfire has
+   * a fire in it and a lamp post does not, and the one list of "the fixtures on
+   * ground this client is drawing" is the thing both questions want an answer
+   * from. A second list keyed the same way would be a second residency rule.
+   */
+  readonly kind: FixtureKind;
+  /** Where the flame is: the ground, plus the row's height. */
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+  /**
+   * The ground under it.
+   *
+   * Carried rather than re-sampled on the render thread, for the reason the
+   * whole record is composed on the worker: the height under a prop is already
+   * being looked up there, and two threads answering "how high is the ground
+   * under that campfire" agree right up until the terrain changes under one of
+   * them. The fire's paint is born on the logs rather than at the flame, so it
+   * needs this one and not `y`.
+   */
+  readonly groundY: number;
+  /** Packed RGB, from the kind's row. */
+  readonly color: number;
+  readonly brightness: number;
+  readonly radius: number;
+  /**
+   * The ground the fixture blocks, in world units (spec 250).
+   *
+   * What its paint is sized by: a fire drawn at the ring of stones it is inside
+   * is a fire, and one drawn at a fixed size is a fire in a ring of stones that
+   * happens to be the wrong size. `footprintRadius` rather than a number of its
+   * own, so the two cannot drift.
+   */
+  readonly footprint: number;
+}
+
 export interface RegionInstances {
   readonly batches: readonly PropBatchInstances[];
+  /**
+   * The light fixtures standing in this region (spec 250).
+   *
+   * Beside the batches rather than derived from them, because a batch is
+   * matrices and a light is a place: `PropBatchInstances` has already thrown
+   * away which prop each matrix came from by the time it crosses the thread.
+   */
+  readonly lights: readonly RegionLight[];
   /**
    * Prop kinds in this region with no geometry to draw them with.
    *
@@ -2373,7 +2725,44 @@ export function buildRegionInstances(
       out.push({ group, part: partIndex, count: grown.length, matrices, colors, sway });
     });
   }
-  return { batches: out, undrawnKinds: [...undrawnKinds] };
+  return { batches: out, lights: composeLights(bucket, heightAt), undrawnKinds: [...undrawnKinds] };
+}
+
+/**
+ * Where the flames are in one region (spec 250).
+ *
+ * Walks the bucket in its own order and indexes into it, so a key names the same
+ * fixture on every rebuild of the same document -- which is what stops a stream
+ * event from reassigning every slot near the player.
+ */
+function composeLights(
+  bucket: readonly Prop[],
+  heightAt: (x: number, z: number) => number,
+): readonly RegionLight[] {
+  const out: RegionLight[] = [];
+  bucket.forEach((prop, index) => {
+    const light = fixtureLight(prop);
+    if (!light) return;
+    const scale = Number.isFinite(prop.scale) ? prop.scale : 1;
+    const ground = heightAt(prop.x, prop.y);
+    out.push({
+      key: `${Math.round(prop.x)}:${Math.round(prop.y)}:${index}`,
+      kind: prop.kind as FixtureKind,
+      x: prop.x,
+      y: ground + light.height * scale,
+      z: prop.y,
+      groundY: ground,
+      color: light.color,
+      brightness: light.brightness,
+      // Scaled with the prop, like everything else about it: a campfire dragged
+      // out to twice the size is twice the fire, and a reach that stayed put
+      // would make the big one look like a picture of a fire rather than one.
+      radius: light.radius * scale,
+      /** What the prop was placed at, so its paint is the size the prop is. */
+      footprint: footprintRadius(prop),
+    });
+  });
+  return out;
 }
 
 /** How a field is built, as opposed to what it is built from. */
@@ -2438,9 +2827,11 @@ export function buildPropField(
      */
     readonly shells: { shell: THREE.BufferGeometry; shared: THREE.BufferGeometry }[];
     readonly materials: THREE.Material[];
+    /** The fixtures standing in it, as composed (spec 250). */
+    readonly lights: readonly RegionLight[];
   }
   const regions = new Map<string, Region>();
-  let current: Region = { group, shells: [], materials: [] };
+  let current: Region = { group, shells: [], materials: [], lights: [] };
 
   /**
    * One `InstancedMesh` per batch, from arrays somebody else composed.
@@ -2526,7 +2917,12 @@ export function buildPropField(
     }
     const batches = instances.batches;
     if (batches.length === 0) return;
-    const region: Region = { group: new THREE.Group(), shells: [], materials: [] };
+    const region: Region = {
+      group: new THREE.Group(),
+      shells: [],
+      materials: [],
+      lights: instances.lights,
+    };
     current = region;
     for (const batch of batches) build(batch);
     regions.set(key, region);
@@ -2575,6 +2971,17 @@ export function buildPropField(
     },
     heldRegions(): readonly string[] {
       return [...regions.keys()];
+    },
+    lights(): readonly RegionLight[] {
+      // Region order, and region order is the sorted key order every build path
+      // here already walks -- so the list a residency pass is handed does not
+      // depend on which region happened to stream in first.
+      const out: RegionLight[] = [];
+      for (const key of [...regions.keys()].sort()) {
+        const held = regions.get(key);
+        if (held) out.push(...held.lights);
+      }
+      return out;
     },
     rebuildWithin(next, rect): void {
       const rects = Array.isArray(rect) ? (rect as readonly PropRect[]) : [rect as PropRect];

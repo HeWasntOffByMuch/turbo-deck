@@ -1,9 +1,12 @@
 import {
-  STRUCTURE_KINDS,
+  FIXTURE_KINDS,
+  FIXTURE_LIGHTS,
+  isFixtureKind,
+  PLACED_KINDS,
   type MapMarker,
   type MapMarkerKind,
+  type PlacedKind,
   type PropKind,
-  type StructureKind,
 } from '../../../terrain/index.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
@@ -163,8 +166,25 @@ export interface EditorSettings {
   fenceScale: number;
   variedColor: boolean;
   // Structures (spec 224)
-  structure: StructureKind;
+  structure: PlacedKind;
   structureScale: number;
+  /**
+   * What a light fixture is placed burning at (spec 250).
+   *
+   * **Always a number**, never null and never absent, and that is a hard
+   * requirement rather than tidiness: this is the object a lil-gui row is bound
+   * to, and `gui.add` refuses a value that is not a number -- it logs
+   * `gui.add failed` and hands back `undefined`, so the `.name()` on the end of
+   * the chain throws and takes the whole panel, and with it the editor, down to
+   * a black tab. Which is exactly what shipped, because the default armed kind
+   * is a hut and a hut has no light to seed from.
+   *
+   * "The kind's own row" needs no encoding of its own: `fixtureOverride`
+   * compares against the row and writes no override when they are equal, so a
+   * number that *is* the row's is already worth nothing in the document.
+   */
+  fixtureBrightness: number;
+  fixtureRadius: number;
   /** Where the front faces, in degrees. See `structure.ts`. */
   structureYaw: number;
   // Markers
@@ -228,6 +248,15 @@ export interface EditorSettings {
   rockDetailSeed: number;
 }
 
+/**
+ * The numbers the two light sliders start bound to.
+ *
+ * The first fixture kind's, because the default armed structure is a hut and a
+ * hut has no light -- and these two fields may never be anything but a number
+ * (see `EditorSettings.fixtureBrightness`).
+ */
+const SEED_LIGHT = FIXTURE_LIGHTS[FIXTURE_KINDS[0]];
+
 export function createEditorSettings(): EditorSettings {
   return {
     mode: 'terrain',
@@ -249,6 +278,12 @@ export function createEditorSettings(): EditorSettings {
     structure: DEFAULT_STRUCTURE.structure,
     structureScale: DEFAULT_STRUCTURE.structureScale,
     structureYaw: DEFAULT_STRUCTURE.structureYaw,
+    // Seeded from the first fixture kind rather than from `DEFAULT_STRUCTURE`,
+    // which is a hut and has no light. Nothing reads these until a fixture is
+    // armed, and the panel re-seeds them from that kind's own row when one is;
+    // what they are for here is that lil-gui has a number to bind a slider to.
+    fixtureBrightness: DEFAULT_STRUCTURE.fixtureBrightness ?? SEED_LIGHT.brightness,
+    fixtureRadius: DEFAULT_STRUCTURE.fixtureRadius ?? SEED_LIGHT.radius,
     // The one kind with a reader, so the first marker somebody places does
     // something (spec 178). It used to be `spawn`, which is written to the map
     // and read by nothing.
@@ -459,7 +494,20 @@ export const SPECIES_CHOICES = choices(['tree', 'bush'] as const satisfies reado
  * brush loaded with houses would sprinkle them at random over the ground with
  * no way to say where any one of them goes.
  */
-export const STRUCTURE_CHOICES = choices(STRUCTURE_KINDS);
+export const STRUCTURE_CHOICES = choices(PLACED_KINDS);
+
+/**
+ * Which of those emit light, so the panel knows when its two extra rows mean
+ * anything (spec 250).
+ *
+ * A **set** rather than a check at each call site, for the reason `tools.ts`
+ * holds every other one of these: what the panel shows and what the tool reads
+ * have to be the same answer, and a second `isFixtureKind` call in `panel.ts`
+ * is a second answer waiting to disagree.
+ */
+export function armedKindEmits(settings: EditorSettings): boolean {
+  return isFixtureKind(settings.structure);
+}
 
 /** The settings fields the select tool owns, as one object (spec 222). */
 export type MarkerSelection = Pick<

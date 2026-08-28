@@ -1199,9 +1199,12 @@
   ],
   "species": [
     "bush",
+    "campfire",
     "fence-boards",
     "fence-wood",
     "house",
+    "lamp-post",
+    "torch-stand",
     "tree",
     "well"
   ],
@@ -4373,13 +4376,13 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "eac16fd1",
+          "hash": "23e49dd2",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 1,
-          "hash": "00bfe005",
+          "hash": "59ad58cd",
           "cells": 3136
         },
         {
@@ -4835,5 +4838,5 @@
       ]
     }
   ],
-  "mapId": "aa45d4e5"
+  "mapId": "04630a14"
 }

@@ -114,6 +114,29 @@ async function readout(page: Page): Promise<string> {
   return (await page.textContent('body')) ?? '';
 }
 
+/**
+ * The readout, once it says what is being waited for -- or after a real wait.
+ *
+ * A **poll**, which is this repo's rule for every browser probe and not
+ * tidiness: the readout is published from the frame, and this environment
+ * paints the editor at about five frames a second under software GL, so reading
+ * it on the line after a click reads the state from before the click. It
+ * reported a working dirty indicator as one that said nothing.
+ *
+ * Returns whatever it last saw when the pattern never turns up, so the caller's
+ * own `check` reports the text rather than throwing.
+ */
+async function readoutUntil(page: Page, pattern: RegExp, timeoutMs = 8000): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let last = '';
+  do {
+    last = await readout(page);
+    if (pattern.test(last)) return last;
+    await page.waitForTimeout(200);
+  } while (Date.now() < deadline);
+  return last;
+}
+
 /** Which marker kind the strip shows as armed: the filled button (bold). */
 async function armedMarkerKind(page: Page): Promise<string> {
   return page.evaluate(() => {
@@ -254,6 +277,30 @@ async function setPanelOption(page: Page, label: string, value: string): Promise
 const markerCount = async (page: Page): Promise<number> =>
   Number(/(\d+) markers/.exec(await readout(page))?.[1] ?? -1);
 
+/**
+ * The marker count, once it is the number expected -- or after a real wait.
+ *
+ * The same poll as `readoutUntil` and for the same reason: the count is
+ * published from the frame, this environment paints the editor at about five
+ * frames a second, and a read on the line after a click is a read from before
+ * it. Both halves of this probe reported a working placement as a no-op that
+ * way, on alternate runs, which is the worst version of the bug -- a green run
+ * is not evidence of anything if a red one is not either.
+ *
+ * Returns what it last saw when the count never arrives, so the caller's own
+ * `check` reports the number rather than throwing.
+ */
+async function markerCountUntil(page: Page, want: number, timeoutMs = 8000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let last = -1;
+  do {
+    last = await markerCount(page);
+    if (last === want) return last;
+    await page.waitForTimeout(200);
+  } while (Date.now() < deadline);
+  return last;
+}
+
 async function openEditor(page: Page, query: string, port = PORT): Promise<void> {
   await page.goto(`http://localhost:${port}/${query}`, { waitUntil: 'load' });
   await page.click('button:has-text("Map editor")');
@@ -353,10 +400,11 @@ async function devHalf(browser: Browser, problems: string[]): Promise<void> {
     await page.getByRole('button', { name: 'campfire', exact: true }).click();
     await page.waitForTimeout(300);
     await clickGround(page, 600, 420);
+    const dirty = await readoutUntil(page, /not in maps\//);
     check(
       'the editor says the edit is not on disk yet',
-      /not in maps\//.test(await readout(page)),
-      /(\d+ edits? not in maps\/)/.exec(await readout(page))?.[1] ?? 'said nothing',
+      /not in maps\//.test(dirty),
+      /(\d+ edits? not in maps\/)/.exec(dirty)?.[1] ?? 'said nothing',
     );
 
     const said = await saveToDisk(page);
@@ -469,9 +517,10 @@ async function main(): Promise<void> {
     await page.waitForTimeout(400);
     await clickGround(page, 540, 400);
 
-    const placed = await markerCount(page);
+    const placed = await markerCountUntil(page, before + 1);
     check('placing one adds it to the map', placed === before + 1, `${before} -> ${placed}`);
-    const said = /placed (spawner-\d+: \w+|spawn-\d+)/.exec(await readout(page))?.[1] ?? '';
+    const said =
+      /placed (spawner-\d+: \w+|spawn-\d+)/.exec(await readoutUntil(page, /placed spawner-\d+: \w+/))?.[1] ?? '';
     check('the editor names what it just placed, with its monster', /^spawner-\d+: \w+$/.test(said), said || 'said nothing');
 
     // The picture, once, and of the shipped map: the billboards on screen are
@@ -654,7 +703,7 @@ async function main(): Promise<void> {
     const beforeDelete = await markerCount(page);
     await page.click('button:has-text("Delete marker")');
     const cleared = await waitForSelected(page, /^none$/);
-    const afterDelete = await markerCount(page);
+    const afterDelete = await markerCountUntil(page, beforeDelete - 1);
     check(
       'Delete takes the selected marker off the map',
       afterDelete === beforeDelete - 1 && cleared === 'none',

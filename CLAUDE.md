@@ -84,6 +84,9 @@ change a game outcome.
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
 | `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
+| `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
+| `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
+| `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
 | `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
 | `npx tsx scripts/make-reference-unit.ts` | Regenerate the reference unit in `assets/units/dev/` |
 | `npm run build` | Production build of the renderer (Vite) |
@@ -399,6 +402,63 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  a flat wall and a body that can stand in a corner, and erring
                  wide is the fence's own answer to the same question. A well is
                  already a circle, so that one is exact.
+                 Since spec 250 it also holds the **light fixtures**: a campfire,
+                 a street lamp on a stake, and a standing torch. The same
+                 argument one system further along -- a fixture is written into
+                 the map document, streamed, collided against, batched per region
+                 and taken out by the eraser without one line of any of those
+                 asking what kind a prop is -- and they share the buildings'
+                 press-to-place tool for the buildings' reason: a lamp is not
+                 *painted*, it goes in one spot somebody chose.
+                 What a fixture adds is two numbers, and they are optional.
+                 `FIXTURE_LIGHTS` authors a colour, a brightness, a reach and the
+                 height the flame sits at; `Prop.light` overrides only the two a
+                 level designer sets. **Absent is the row**, which is what makes
+                 placing forty of them and then deciding they are all too dim one
+                 edit here rather than forty in a map document -- and what keeps
+                 the whole feature a change nobody's map noticed, since a fixture
+                 at its defaults writes no key, so no committed region file's
+                 bytes moved and no `mapId` did.
+                 **Nothing here casts a shadow**, and that is a decision about
+                 how it looks rather than about what it costs. Spec 250 built
+                 bake-once cube maps and measured them free -- rendered on the
+                 frame a light takes a slot and never again, one lookup per lit
+                 fragment and no draw calls after that -- and then took them out
+                 anyway: a point light a body's height off the ground throws
+                 every trunk, post and body near it outward in a hard radial fan,
+                 and four fixtures round a square throw four of those across each
+                 other. It reads as broken lighting rather than as evening in a
+                 village, and being free does not make it look better.
+                 A campfire's **fire is paint rather than geometry** (spec 250):
+                 the prop is a ring of stones, four charred logs and a bed of
+                 embers, and `fire_camp` in `vfx/brush.ts` is played at the
+                 middle of it by `world/fire-vfx.ts`. The cone that used to
+                 stand there was the honest first answer and is the wrong one
+                 for one reason -- a fire is the only prop in this file whose
+                 subject *moves*, so a static solid can only ever be a picture
+                 of one instant of it -- and it fought the paint rather than
+                 sitting under it.
+                 `fixtureLight` is the one answer to "does this glow, and how",
+                 with three callers -- the worker composing a region, the editor
+                 drawing its ghost, the panel offering the sliders -- for the
+                 reason `footprintRadius` is one: a ring the editor draws and a
+                 light the renderer hangs are the same fixture, and two files
+                 deriving it separately agree until one is edited. An override
+                 arrives from a document somebody may have hand-edited, so it is
+                 clamped rather than trusted; a number that is *not a number* is
+                 not a number too big, so that one falls back to the row instead
+                 of being clamped into range.
+                 `height` is the field that decides more than `brightness` does,
+                 and the reason is one sentence: **the ground is not facing the
+                 light.** `brightness` is illuminance at half reach on a surface
+                 that is, so what lands on flat ground is scaled by
+                 `height / hypot(height, d)` -- a tenth for a flame a body's
+                 height up seen from two hundred units, half for one carried
+                 twice as high. Two fixtures at the same brightness therefore
+                 light the ground quite differently, which is why the campfire's
+                 light sits mid-flame rather than in its embers and why
+                 `preview-fixtures.ts` prints that number rather than only
+                 drawing the picture.
 src/sim/         shared geometry (Vec2/Rect/Circle/WorldColliders) plus the pure
                  collision and pathfinding helpers the server collides against.
                  slope.ts is how steep ground is (spec 228), and it is one file
@@ -2171,7 +2231,25 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  one in the tab; so the plugin swallows the reload for its own
                  writes only, invalidating the module without announcing it so a
                  later reload by hand still reads the new bytes.
-                 tools.ts holds the one thing 176 and 177 both missed, because
+                 tools.ts is the settings object every lil-gui row is bound to,
+                 and the one rule it has is a hard one: **every field holds a
+                 real value, because `gui.add` refuses one that is not.** It
+                 logs `gui.add failed`, hands back `undefined`, and the
+                 `.name()` on the end of the chain throws -- so panel
+                 construction stops where it stands and the editor never gets a
+                 frame. Spec 250 shipped exactly that: the two fixture-light
+                 sliders were seeded `null` for "the kind's own row", the
+                 default armed structure is a hut, a hut has no light, and the
+                 Map editor tab opened black on every boot with a half-built
+                 panel beside it. `null` was buying nothing --
+                 `fixtureOverride` already writes no override for a number equal
+                 to the kind's row -- so the fields are numbers. What catches
+                 the next one is a test over **every** field rather than those
+                 two, because nothing under `editor/` builds a panel outside a
+                 browser: this class of bug is silent in Node and fatal in the
+                 tab.
+                 tools.ts also holds the one thing 176 and 177 both missed,
+                 because
                  neither was about the panel (spec 178): of the five marker
                  kinds only `spawner` has a reader anywhere, and the strip
                  presented all five identically with an always-live monster
@@ -2315,7 +2393,17 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  that calls none of them -- which is exactly what spec 176 found
                  for markers. It drives the shipped build, arms the tool, presses
                  three times and checks the **file that came out**, because a
-                 building the editor draws and does not save is the bug. What it
+                 building the editor draws and does not save is the bug. Since
+                 spec 250 it counts what it *added* rather than asserting the map
+                 had none to begin with: that was true while the arena was empty
+                 ground and stopped being true the moment spec 247 gave the
+                 shopkeepers a village to stand in -- three huts and a well, none
+                 of them anything to do with this probe, and four checks failing
+                 to say so. Its size tolerance is derived from
+                 `STRUCTURE_SCALE_STEP` for a related reason: it was 0.06 against
+                 a step of 0.05, so a drag that reached exactly one step above
+                 the default matched every hut on the map and reported a working
+                 feature as broken. What it
                  got wrong first is worth keeping: panel rows are **not uniquely
                  named** -- the fence's tile size and a building's size are both
                  `Size`, correctly, since neither is on screen while the other is
@@ -2518,6 +2606,15 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  from the select tool's, since only the armed mode's folder is
                  shown -- and is what that helper should have been doing all
                  along, a hidden row being one nobody can use.
+                 Spec 250 extended that first rule to the two reads that were
+                 still constants -- the marker count and the readout after a
+                 placement -- because the flake had got worse than a wrong
+                 answer: two consecutive runs failed on *different* checks and
+                 passed the other, which is the worst version of the bug, since a
+                 green run is not evidence of anything if a red one is not
+                 either. `markerCountUntil` and `readoutUntil` are the polls, and
+                 both return what they last saw rather than throwing, so a
+                 genuine failure is still reported as the number that was there.
                  `npx tsx scripts/preview-paint.ts` is the same for the material
                  brush, and everything in it is measured off the **pixels**,
                  because the way this feature fails is "the store changed and the
@@ -4744,6 +4841,30 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  with it is the fallback rather than the plan"* -- to a `{2, 5}`
                  between the bow and the keen sword, because since 217 that
                  range **is** what an Ember Shot hits for)
+                 carried-light.ts (what the player is holding, and what that
+                 means for the two lights the scene already owns, spec 250).
+                 Pure, and worth being a module because **two things now decide
+                 one light**: the tuning panel spec 047 built, and the game. The
+                 rule is one sentence -- *the panel wins where it is asking for
+                 something, and the game decides where it is not* -- and both its
+                 switches are off by default, so a player who has never opened it
+                 has the whole say and one who has gets exactly what spec 047
+                 tuned, down to the shadow switches. A **carried** torch casts no
+                 shadow, and that is a decision rather than a default: a
+                 shadow-casting point light is six cube faces of the whole scene
+                 every frame, and this one moves every frame, so there is no
+                 version of it that could be paid for once. Nothing in the world
+                 casts either since spec 250's follow-up, but for a different
+                 reason -- a fixture's could have been frozen and was, and it was
+                 taken out for how it looked.
+                 What separates the two carried lights is what the wire carries.
+                 A torch is **equipment**, replicated for its owner only (spec
+                 165's reason for drawing one body's weapon), so nobody else sees
+                 it; a conjured light is a **status**, replicated to everybody,
+                 so a remote body's orb takes a pool slot like a fixture -- and
+                 the player's own stays the dedicated orb, because that is the
+                 one the panel drives and the one spec 118 measures at arm's
+                 length.
                  audio-wire.ts, footsteps.ts and audio-driver.ts (what the
                  Play tab hears, spec 229). The wire is `vfx-wire.ts`'s shape and
                  sits beside it for its reason: handed plain facts, answers what
@@ -5744,6 +5865,128 @@ src/render/iso3d/turn-ease.ts  the drawn turn's beginning and end (spec 142).
                  from: the wire for our own, the monster table for a monster, the
                  fastest base in `CHARACTERS` for a remote player, and nothing at all
                  for a projectile, whose facing is its path.
+src/render/iso3d/vfx/brush.ts's brushFire  a fire that stands somewhere and keeps
+                 burning (spec 250), and the first painted effect in this file
+                 authored to be *watched* rather than glanced at.
+                 Every other fire here is an event -- a shot crossing the frame,
+                 a blast, a body that caught. This one is what a campfire prop is
+                 made of, now that the prop is stones and charred timber and
+                 nothing that moves, and two things follow. **It has to loop
+                 invisibly**, so its three layers run at unrelated rates over
+                 unrelated lifetimes and nothing in it is phased off anything
+                 else. And **it has to cost nothing at distance**: what says
+                 "there is a fire there" from across the arena is the fixture's
+                 light, so this is `priority: 1` -- the first thing to yield
+                 under instance pressure -- and culls well inside the light's own
+                 reach.
+                 Flames rise on an updraft and die young; **embers are the one
+                 layer with gravity on them**, thrown up and falling back,
+                 because an arc is the shape an eye reads as heat coming off
+                 something and everything else here rises steadily; smoke is born
+                 *above* the flame, drifts, spreads and goes dark.
+                 Three of its numbers were paid for by
+                 `preview-brush-vfx.ts`'s fire rows rather than chosen. The first
+                 cut's flames rose about eighteen units and its marks were
+                 fifteen long, so the "column" was one mark tall and read as a
+                 puddle of fire; there was as much smoke as flame, which is
+                 `brushShot`'s own finding one effect along, because against a
+                 mid-green field a grey mark is a hole and an orange one is a
+                 highlight; and the embers were **additive**, which is right for
+                 a lick inside a fireball and wrong over open grass, where it is
+                 not a warm spark but a yellow-green speck. The alpha version
+                 both reads better and reuses a batch the table already has, so
+                 the registry's draw-call ceiling never moved.
+                 `world/fire-vfx.ts` is what plays it, built to
+                 `affliction-vfx.ts`'s three handle rules for that file's stated
+                 reasons -- `play` returns 0 on refusal, a full pool evicts
+                 rather than refusing, and nothing stops itself. What is new is
+                 the fourth thing, and it is why the driver exists: **a fire
+                 stops because the ground it stands on stopped being drawn**, and
+                 there is no event for that, so the whole list of fixtures on
+                 held ground is reconciled every frame and an absence is the
+                 signal. `FIXTURE_ART` says which kinds burn, in the register
+                 `shot-vfx.ts`'s `SHOT_ART` is in: which effect a fixture carries
+                 is art direction, so it lives beside the art rather than in the
+                 map format.
+src/render/iso3d/light-residency.ts, world-lights.ts  the lights standing in the
+                 world (spec 250). The pair `player-lights.ts` and
+                 `player-lighting.ts` already
+                 are: a decision that is arithmetic, and the three.js that acts
+                 on it. Spec 047 built a torch and a magic orb, spec 118 built
+                 the shader patch that lights a body from a carried flame as
+                 though it were farther away, and for a hundred and thirty specs
+                 the only caller of any of it was a **checkbox in the tuning
+                 panel**. Nothing in the world emitted light at all.
+                 What makes a village affordable is one sentence: **nothing here
+                 casts a shadow, and the number of lights never changes.**
+                 three collects lights in `projectObject`, which returns
+                 early on `object.visible === false`, and the count is part of
+                 the program key -- so "add a `PointLight` per fixture in range"
+                 is a *hitch* every time somebody walks past a campfire rather
+                 than a slowdown. `castShadow` is in that same key. So the pool
+                 is fixed: allocated at construction, never grown, never hidden,
+                 `castShadow = false` written once and never touched, an idle
+                 slot sitting at intensity 0 with a small reach. That is the
+                 whole cost -- a lit square adds no draw calls at all, which is
+                 what `probe-world-lights.ts` measures by sampling the frame's
+                 count across it.
+                 It **did** cast, briefly, and the round trip is worth knowing
+                 because the argument that lost was right about the cost. A
+                 fixture's cube map was rendered on the frame the light took a
+                 slot and never again (`shadow.autoUpdate` off, `needsUpdate`
+                 set once), which is a `samplerCube` and one lookup per lit
+                 fragment and nothing per frame -- measured flat with four of
+                 them lit. It is gone for how it *looked*: a point light a body's
+                 height off the ground throws every trunk, post and body near it
+                 outward in a hard radial fan, and four fixtures round a square
+                 throw four of those across each other. What went with it -- the
+                 casting prefix, the cube setup, the one-bake-a-frame queue, the
+                 `revision` stamp that re-took a map when its ground streamed in
+                 late, and the mask that kept moving bodies out of a frozen one
+                 -- was **deleted rather than left switched off**, because a
+                 socket with nothing plugged into it is what this repo keeps
+                 rediscovering a hundred specs later. Putting it back is one
+                 revert.
+                 `light-residency.ts` is which fixtures get slots, and
+                 **hysteresis is the whole of it**: a slot that flipped between
+                 two fixtures at equal distance would pop a light on and off
+                 every frame, the most visible thing in the system driven by the
+                 cheapest possible indecision. A request is claimed inside
+                 `activateRadius` and kept until past `releaseRadius`, and a slot
+                 is only taken from a light already in it by a candidate nearer
+                 by more than the margin. Spec 208's shape for map chunks and its
+                 reason: **the thing that lets go must not fight the thing that
+                 takes hold.**
+                 What the *player* carries is `world/carried-light.ts`, and it
+                 exists because two things now decide one light. The rule is one
+                 sentence -- **the panel wins where it is asking for something,
+                 and the game decides where it is not** -- so every switch spec
+                 047 tuned still does exactly what it did, and a player who has
+                 never opened the panel gets a torch by carrying one. Nothing
+                 the player carries casts either, which was true before the
+                 fixtures stopped casting and for a reason of its own: a carried
+                 light moves every frame, so there was never a version of it that
+                 could have been baked.
+                 The thing that could not be found in Node, and was not: three
+                 **unrolls** the point-light loop, so `player-lighting.ts`'s two
+                 injected declarations are emitted once per light *at the same
+                 scope*. With one point light -- which is all this game had until
+                 the pool -- that is one copy and it compiles; with two it is
+                 `'turboToLight' : redefinition`, the player's material never
+                 builds, and three logs a failed compile and carries on. Green
+                 suite, unlit player. The injection is one block now, and
+                 `player-lights.test.ts` pins both halves: that the loop is still
+                 unrolled, and that what is substituted into it is braced.
+                 `npx tsx scripts/probe-world-lights.ts` is the half that found
+                 it, and `npx tsx scripts/preview-fixtures.ts` is the instrument
+                 for the numbers -- which **measures rather than draws**, because
+                 the number that decides whether a lamp reads is one a thumbnail
+                 cannot show: the ground is not facing the light, so what a
+                 designer sets is scaled by the grazing angle
+                 `height / hypot(height, d)`, and a flame a body's height up
+                 delivers a tenth of its own brightness at two hundred units
+                 where one carried twice as high delivers half. That is why a
+                 campfire's light sits mid-flame rather than in its embers.
 src/render/iso3d/retro.ts, retro-pass.ts  the retro filter (specs 038/102/138):
                  the scene drawn into a low-resolution buffer, then painted over
                  the canvas through a shader that grades it, quantizes every

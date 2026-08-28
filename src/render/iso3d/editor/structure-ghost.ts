@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { buildPropField, type PropFieldHandle } from '../props.js';
-import type { StructureKind } from '../../../terrain/index.js';
+import type { PlacedKind } from '../../../terrain/index.js';
 
 /**
  * The building under the cursor, before it is put down (spec 225).
@@ -39,7 +39,7 @@ export interface StructureGhostHandle {
   readonly object: THREE.Object3D;
   /** Stand the ghost at a world point, on the ground, turned and sized. */
   showAt(
-    kind: StructureKind,
+    kind: PlacedKind,
     x: number,
     z: number,
     yawRadians: number,
@@ -55,9 +55,9 @@ export interface StructureGhostHandle {
    * or one left visible after the tool was disarmed, has to read as wrong here
    * or the readout is worse than no readout.
    */
-  drawn(): { readonly kind: StructureKind; readonly meshes: number; readonly scale: number } | null;
+  drawn(): { readonly kind: PlacedKind; readonly meshes: number; readonly scale: number } | null;
   /** Which kinds have been built. For the test that says each is built once. */
-  builtKinds(): readonly StructureKind[];
+  builtKinds(): readonly PlacedKind[];
   dispose(): void;
 }
 
@@ -70,9 +70,9 @@ export function createStructureGhost(): StructureGhostHandle {
   root.visible = false;
   root.renderOrder = 9;
 
-  const built = new Map<StructureKind, { field: PropFieldHandle; holder: THREE.Group }>();
+  const built = new Map<PlacedKind, { field: PropFieldHandle; holder: THREE.Group }>();
 
-  function ghostFor(kind: StructureKind): THREE.Group {
+  function ghostFor(kind: PlacedKind): THREE.Group {
     const held = built.get(kind);
     if (held) return held.holder;
 
@@ -127,7 +127,7 @@ export function createStructureGhost(): StructureGhostHandle {
       root.visible = false;
     },
 
-    drawn(): { kind: StructureKind; meshes: number; scale: number } | null {
+    drawn(): { kind: PlacedKind; meshes: number; scale: number } | null {
       if (!root.visible) return null;
       for (const [kind, entry] of built) {
         if (!entry.holder.visible) continue;
@@ -140,7 +140,7 @@ export function createStructureGhost(): StructureGhostHandle {
       return null;
     },
 
-    builtKinds(): readonly StructureKind[] {
+    builtKinds(): readonly PlacedKind[] {
       return [...built.keys()];
     },
 
