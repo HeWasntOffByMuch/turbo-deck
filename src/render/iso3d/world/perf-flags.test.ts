@@ -9,6 +9,7 @@ describe('parsePerfFlags', () => {
     expect(parsePerfFlags('')).toEqual({
       noShadow: false,
       noProps: false,
+      noPropShadow: false,
       noTerrain: false,
       noWorker: false,
       any: false,
@@ -33,6 +34,19 @@ describe('parsePerfFlags', () => {
     expect(flags.noWorker).toBe(true);
     expect(flags.noShadow).toBe(false);
     expect(flags.any).toBe(true);
+  });
+
+  it('tells "no trees" from "no trees in the shadow map"', () => {
+    // The two are one letter apart in the query and opposite in what they
+    // answer: one takes the props out of the picture, the other leaves them in
+    // it and out of the shadow pass. A parse that conflated them would report
+    // the cost of hiding the trees as the cost of the double submission.
+    const only = parsePerfFlags('?perf=nopropshadow');
+    expect(only.noPropShadow).toBe(true);
+    expect(only.noProps).toBe(false);
+    expect(only.noShadow).toBe(false);
+    expect(only.any).toBe(true);
+    expect(parsePerfFlags('?perf=noprops').noPropShadow).toBe(false);
   });
 
   it('ignores spacing, case and names it does not know', () => {

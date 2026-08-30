@@ -161,7 +161,14 @@ async function main(): Promise<void> {
     await page.addInitScript(INSTALL);
     await page.addInitScript(INSTALL_PASSES);
 
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    // `PERF=` passes a `?perf=` list straight through, so the per-pass table can
+    // be taken with a contributor removed and compared against the baseline
+    // *within one instrument* -- which `probe-frame-cost.ts` cannot do, since
+    // each of its variants is a separate page load and the wandering monsters
+    // move the whole-frame count between them by a few tens.
+    const perf = process.env['PERF'] ?? '';
+    const query = `?seed=20260806${perf ? `&perf=${perf}` : ''}`;
+    await page.goto(`http://localhost:${PORT}/${query}`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
     // Long warm-up: chunks stream in, props seed, every shader gets compiled.
     await page.waitForTimeout(20_000);

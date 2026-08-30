@@ -37,6 +37,9 @@ const CHROMIUM_ARGS = [
 const VARIANTS: readonly { readonly label: string; readonly perf: string }[] = [
   { label: 'baseline', perf: '' },
   { label: 'no shadow map', perf: 'noshadow' },
+  // The one variant that is a change somebody could ship rather than a frame
+  // nobody plays: the trees stay in the picture and leave the shadow map.
+  { label: 'props cast no shadow', perf: 'nopropshadow' },
   { label: 'no props', perf: 'noprops' },
   { label: 'no terrain', perf: 'noterrain' },
   { label: 'no shadow + no props', perf: 'noshadow,noprops' },

@@ -30,6 +30,17 @@ export interface PerfFlags {
   readonly noShadow: boolean;
   /** The prop field is hidden -- every tree, bush and fence. */
   readonly noProps: boolean;
+  /**
+   * The props stay in the picture and leave the shadow map.
+   *
+   * Between `noshadow` and `noprops` rather than a third of the same kind, and
+   * it is the one variant that names a *change somebody might ship*: spec 165's
+   * ninth follow-up found the shadow pass and the prop pass overlap, so some of
+   * the shadow map's draws are the trees being submitted a second time. Hiding
+   * the props answers "what do trees cost"; this answers "what does drawing
+   * them twice cost", which is the question with a fix behind it.
+   */
+  readonly noPropShadow: boolean;
   /** The terrain surface and its walls are hidden. */
   readonly noTerrain: boolean;
   /** The chunk load runs on this thread, as it did before spec 180. */
@@ -41,6 +52,7 @@ export interface PerfFlags {
 const NONE: PerfFlags = {
   noShadow: false,
   noProps: false,
+  noPropShadow: false,
   noTerrain: false,
   noWorker: false,
   any: false,
@@ -75,11 +87,13 @@ export function parsePerfFlags(search: string): PerfFlags {
   const flags = {
     noShadow: names.has('noshadow'),
     noProps: names.has('noprops'),
+    noPropShadow: names.has('nopropshadow'),
     noTerrain: names.has('noterrain'),
     noWorker: names.has('noworker'),
   };
   return {
     ...flags,
-    any: flags.noShadow || flags.noProps || flags.noTerrain || flags.noWorker,
+    any:
+      flags.noShadow || flags.noProps || flags.noPropShadow || flags.noTerrain || flags.noWorker,
   };
 }

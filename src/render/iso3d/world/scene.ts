@@ -1090,6 +1090,7 @@ export class WorldScene {
   private perf: PerfFlags = {
     noShadow: false,
     noProps: false,
+    noPropShadow: false,
     noTerrain: false,
     noWorker: false,
     any: false,
@@ -3200,6 +3201,15 @@ export class WorldScene {
     // the time: the prop field is replaced whenever a region rebuilds, and the
     // terrain group outlives every chunk, so a one-shot hide would come back.
     if (this.perf.noProps && this.propField) this.propField.group.visible = false;
+    // Same reason as the two beside it, one level down: regions are adopted and
+    // dropped as the camera moves, so a batch that arrives after a one-shot
+    // pass would cast again. The traverse is work the baseline does not do --
+    // read the draw count from this variant, never its frame time.
+    if (this.perf.noPropShadow && this.propField) {
+      this.propField.group.traverse((object) => {
+        object.castShadow = false;
+      });
+    }
     if (this.perf.noTerrain && this.terrainMesh) this.terrainMesh.group.visible = false;
   }
 
