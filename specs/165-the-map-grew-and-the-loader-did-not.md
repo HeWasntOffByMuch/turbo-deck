@@ -758,3 +758,189 @@ frame, and roughly 190 of its draws are the props being drawn a second time.**
 Anything that stops static geometry re-entering the shadow map -- a second
 static-only light, a baked map for the terrain and props with a small dynamic
 one for the bodies -- collects that without touching what a moving body does.
+
+---
+
+## Eleventh follow-up: can this game be played above 60fps?
+
+The question is two questions wearing one coat, and they have opposite answers.
+
+**Is the loop capped at 60?** No, and not by accident. `view.ts` turns wall-clock
+time into a whole number of fixed 60Hz ticks from an accumulator and then draws
+once per `requestAnimationFrame`, at whatever rate the browser paints; nothing
+anywhere sets a target rate, a limiter or a timer. The parts that would have to
+have been written for 60 were written for the split instead: `FRAME_WINDOW` in
+`fps-meter.ts` is 288 because "two seconds at 144Hz is the rate that has to fit
+rather than 60", and spec 118's `advanceSpeed` divides travel by *ticks* rather
+than by the frame delta with the reason in its comment -- "a drawn position only
+moves when a tick drained, so dividing by the frame delta reported a standing
+body on every frame that drained none, **which above 60fps is most of them**".
+The mech and critter rigs clamp their own `dt` to `[1e-4, 0.1]`, so an
+arbitrarily short frame cannot divide by zero in the gait. This is a codebase
+that has already been made correct for the case; nobody has ever been able to
+watch it run.
+
+**Is the frame cheap enough for 60fps to be a floor rather than a ceiling?** Not
+today, and that is where the work is.
+
+### What this container can and cannot say, with the control
+
+It cannot say anything about frame rate, and the reason is worth writing down
+because the obvious experiment looks like it works. Launching Chromium with
+`--disable-gpu-vsync --disable-frame-rate-limit` and then making the frame
+absurdly cheap -- `?perf=noshadow,noprops,noterrain` in a 192x108 viewport, 87
+draws, 1.44ms of preparation and 0.93ms of submission -- still reads 46.3fps,
+with **19.14ms of `rest`**: the loop sitting on its hands. In that run the
+stripped variant one row up read *exactly* the same 46.3fps with a frame five
+times the cost, which is what a fixed period looks like and what a workload
+limit does not.
+
+So `probe-high-fps.ts` opens with a control, and the control is the reading:
+`requestAnimationFrame` **on a blank page with no game in it** runs at 60.2fps
+with the flags off and 57.1 with them on. Headless Chromium's frame source is
+pinned at 60Hz here and neither switch lifts it. Nothing measured on this machine
+can show a page of any kind above 60, so a game row below 60 is evidence about
+the browser and not about this repo. A probe without that control reports the
+container as a finding about the code -- which is what the first cut of this one
+did, at some length.
+
+What transfers is what has always transferred here: draw calls, triangles, and
+the JavaScript the frame spends before it touches GL. The full frame's
+preparation measured **1.43ms and 2.24ms** across two runs and its simulation
+0.41-0.46ms -- call it 2-3ms of main thread before a single draw call is
+submitted, on a container CPU under contention. Against a 6.9ms budget at 144Hz
+that is already a third of the frame, and it is the number nobody has ever
+profiled.
+
+### What the frame costs now
+
+`?perf=nopropshadow` is new and is the one variant that names a change somebody
+could ship rather than a frame nobody would play: the trees stay in the picture
+and leave the shadow map. Follow-up 9's table, re-measured on today's map:
+
+| variant | draws | triangles | draws saved |
+|---|---|---|---|
+| baseline | 460 | 463k | — |
+| no shadow map | 202 | 246k | 258 (56%) |
+| **props cast no shadow** | **354** | **287k** | **106 (23%)** |
+| no props | 274 | 83k | 186 (40%) |
+| no terrain | 434 | 423k | 26 (6%) |
+| no shadow + no props | 87 | 41k | 373 (81%) |
+
+The shipped frame is **460 draws against follow-up 9's 625**, and this spec did
+not establish why -- `ink` was already off when that table was taken and
+`PROP_REGION_SIZE` has not moved, so it is thirty specs of map edits, prop
+residency and whatever was standing near the spawn. Worth knowing that the
+number drifts on its own; not worth chasing. The *shape* is unchanged, which is
+the part that has held across three measurements now: the shadow map is over
+half of it, the props are most of the rest, the terrain is under thirty draws and
+has never been the problem.
+
+One honest caveat on that table, which applies to follow-up 9's as much as this
+one: each variant is a **separate page load**, and monsters wander, so the number
+of bodies in the two frustums differs between rows by enough to move the count by
+a few tens. The columns do not reconcile to the last draw and should not be read
+as though they do -- `no shadow` and `no props` overtake `no shadow + no props`
+by 35.
+
+`probe-drawcalls.ts` does not have that weakness and should have been the
+instrument from the start: it counts draws *per pass* inside one frame, bucketed
+between `bindFramebuffer` calls, so the shadow map and the picture are separated
+without subtracting one page load from another. It takes a `PERF=` now for the
+same reason, and the pair is the cleanest reading in this whole spec:
+
+| | sun shadow (1024x1024) | the picture | total | programs |
+|---|---|---|---|---|
+| baseline | **272** | 214 | 486 | 27 |
+| `PERF=nopropshadow` | **178** | 216 | 394 | 20 |
+
+**94 draws leave the shadow pass and the picture does not move** -- 214 to 216,
+which is a monster walking, not a change. That is the double submission stated
+as a measurement rather than inferred from a subtraction: the props are a third
+of the shadow map, they are already drawn once, and drawing them again is 19% of
+the frame's calls and seven of its 27 program switches. Two geometry passes over
+the scene and no more, so follow-up 8's `ink` default is still holding.
+
+### The pixels were never the problem, and cannot become one
+
+Worth stating plainly, because it decides which optimisations are worth trying
+at all and because follow-up 9 inferred from an experiment what is simply a fact
+about the code: `internalRenderSize` draws the world at a **fixed internal height
+of 300 pixels**, capped at 760 wide (spec 041), and lets CSS blow it up. The
+world pass is therefore at most ~360k pixels on any display -- about a sixth of a
+1080p frame and a twentieth of a 4K one -- whatever window it is in.
+
+Three things follow. `pixelSize: 2` "bought nothing" because there was nothing to
+buy; the frame is CPU-bound *by construction* rather than by measurement. A
+player on a 4K 144Hz screen pays exactly what a player on a 1080p 60Hz screen
+pays for the world, so display resolution never enters the frame-rate question
+here. And the GPU is close to idle throughout -- which means **the only lever on
+frame rate in this game is main-thread JavaScript: draw submission and
+preparation.**
+
+### The order the work goes in
+
+1. **Stop static geometry re-entering the shadow map.** Follow-up 10 tried the
+   whole-map gate and reverted it -- correctly, because the state where the gate
+   skips is the state where every shadow in view is a body animating in place.
+   The variant above does not have that problem: it is not a gate on *when* the
+   map is rebuilt, it is a decision about *what goes into it*. 94 draws measured
+   inside one frame, ~38% of the frame's triangles, seven of its program
+   switches, and the artefact is a look change (trees stop casting) rather than
+   a bug. The version that keeps the look is the one follow-up 10 already
+   named: a static shadow map for terrain and props alongside a small dynamic
+   one for the bodies.
+2. **The props in the picture.** What is left of them once the shadow map has
+   stopped drawing them twice: ~92 of the picture's 214 draws, and 380k of the
+   frame's 463k triangles across both passes. Spec 195 measured region size and
+   found draws and triangles trade against each other, so there is no size that
+   wins both; nothing since has tried culling, which would win the triangles
+   without touching the draws.
+3. **The preparation floor.** Preparation and simulation are already a third of
+   a 144Hz frame on this container's CPU before anything is drawn. Whatever
+   happens to the draw calls, that number has to come down too, and the only
+   thing ever said about it is spec 194's split -- which says which half to look
+   in and not what is in it.
+
+### What 144fps would and would not buy, which is the part worth knowing
+
+Three things in the drawn frame step at exactly 60Hz, and none of them is a
+performance problem -- they are all deliberate, and two of them are load-bearing.
+
+- **The local player's own position.** `PredictionBuffer.drawn` is
+  `local + offset` where both advance per tick, so the one body in the middle of
+  the screen moves in 60Hz steps. Remote bodies do not: they are interpolated
+  across the 20Hz delta interval by `alpha`, which is wall-clock and continuous,
+  so *everyone else* is already smooth at any rate.
+- **Authored skeletal poses.** `driveUnit` and the LOD are stepped by
+  `frame.ticks` because a machine's events are authored on frame indices, and
+  one that skipped or doubled a tick would fire a footstep late or twice.
+- **Every particle effect.** `vfx.update(frame.ticks)`, with the reason in the
+  comment beside it: an effect stepped by elapsed time is a different effect at
+  30fps and at 144, and "the same seed draws the same thing" stops being
+  assertable.
+
+Which means the game is smooth *today* partly because the frame rate and the
+tick rate are the same number: at 60fps each frame drains exactly one tick and
+nothing is between samples. Above 60 the camera, the wind, the drawn yaw and
+every remote body get smoother, and the player's own body, the pig's limbs and
+every spark get a visible staircase. A frame-rate uncap that shipped without
+this half would read as a *worse* picture at a higher number.
+
+The fix for the first is standard and has a stated price: the accumulator's
+fraction is already computed for `drawnTick`, so the predictor need only expose
+the previous tick's local position to lerp against -- which costs a tick of
+input latency, on the one body this game is built around committing with.
+Extrapolating along the last input instead costs no latency and overshoots on a
+direction change. Either is a decision about feel rather than about frame time,
+and it belongs in its own spec. The other two are the same trick one layer down:
+keep the 60Hz simulation and interpolate what is *drawn* from it, never the
+state.
+
+### What was added
+
+`?perf=nopropshadow`, a row in `probe-frame-cost.ts`, a `PERF=` passthrough on
+`probe-drawcalls.ts` so the per-pass table can be taken with a contributor
+removed, and `scripts/probe-high-fps.ts` -- which measures the loop against a
+blank-page control and, on a machine whose browser is not pinned at 60, answers
+the question this follow-up had to answer by reading code.
