@@ -82,6 +82,16 @@ interface Sample {
   readonly guard: number;
   /** Whether the guard track was drawing at all -- it hides at full. */
   readonly guardShown: boolean;
+  /**
+   * Whether this body wears a player's plate rather than a monster's bar
+   * (spec 257).
+   *
+   * The guard rule differs between the two by design: on a plate that row is
+   * part of the frame and is drawn whether or not it is dented, so the
+   * "a full guard bar was drawn" check below would fail on the local player's
+   * own plate on every frame of every run.
+   */
+  readonly plate: boolean;
 }
 
 async function waitForServer(url: string): Promise<void> {
@@ -136,6 +146,7 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
       casting: boolean;
       guard: number;
       guardShown: boolean;
+      plate: boolean;
     }[] = [];
     const start = performance.now();
     while (performance.now() - start < duration) {
@@ -182,6 +193,7 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
           guardShown:
             (holder.querySelector('[data-bar="guard"]') as HTMLElement | null)?.style
               .visibility === 'visible',
+          plate: holder.dataset['plate'] === 'player',
         });
       }
     }
@@ -367,8 +379,10 @@ function reportGuard(samples: readonly Sample[], problems: string[]): void {
   // something was actually hitting somebody -- which the flash report answers.
   if (seen === 0) console.log('  no guard bar was dented during the fight');
   // Shown at full would mean the visibility rule is inverted, and that IS wrong
-  // however the fight went.
-  const wrong = samples.filter((sample) => sample.guardShown && sample.guard >= 1).length;
+  // however the fight went -- for a monster's bar. A player's plate draws that
+  // row whatever the guard is doing (spec 257), so it is exempt from this one
+  // check and from nothing else here.
+  const wrong = samples.filter((s) => !s.plate && s.guardShown && s.guard >= 1).length;
   if (wrong > 0) problems.push(`a full guard bar was drawn on ${wrong} frame(s)`);
 }
 
@@ -446,7 +460,19 @@ async function main(): Promise<void> {
       let scaled = 0;
       window.requestAnimationFrame = (callback: FrameRequestCallback): number =>
         real((stamp) => {
-          if (last === null) last = stamp;
+          // Seeded from the first real stamp rather than started at zero.
+          // A page is a second or two old before it draws a frame, and code
+          // that took its own baseline from `performance.now()` before this
+          // wrapper's first callback then measures a stamp *behind* its own
+          // start -- which is a large negative elapsed, once, at the moment the
+          // world begins streaming. Measured: chunks held stuck at 0 for as
+          // long as anybody waited, against 25 within five seconds with the
+          // timeline seeded. Scaling still works, because what is scaled is the
+          // gap between stamps and never the origin.
+          if (last === null) {
+            last = stamp;
+            scaled = stamp;
+          }
           scaled += (stamp - last) * win.__timeScale;
           last = stamp;
           callback(scaled);
@@ -455,8 +481,21 @@ async function main(): Promise<void> {
 
     // Pinned seed, like every other harness here: a world that moved between
     // runs cannot tell a regression from a Tuesday.
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
-    await page.waitForSelector('canvas');
+    //
+    // And `client=workbench`, like every other harness that drives `dist/`:
+    // since spec 255 the shipped page opens on the title screen, so a probe
+    // that asks for the bare URL waits out its timeout on a world behind a
+    // menu nobody pressed Start on.
+    await page.goto(`http://localhost:${PORT}/?client=workbench&seed=20260806`, {
+      waitUntil: 'load',
+    });
+    // `state: 'attached'` rather than Playwright's default `'visible'`, for the
+    // reason `probe-afflictions.ts` sets out at length: the world's canvas is
+    // drawn at the retro pass's reduced backing resolution and stretched by
+    // CSS, which is a legitimate way for a WebGL canvas to spend a load looking
+    // small, and the actionability check hangs on it. The wait that actually
+    // matters is `[data-world-ready="true"]` on the next line.
+    await page.waitForSelector('canvas', { state: 'attached', timeout: 60_000 });
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await page.waitForTimeout(1_500);
 
