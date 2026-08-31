@@ -19,9 +19,15 @@
  *
  * **Two naming conventions, and they are load-bearing.** A field named
  * `...Reduction` or `...Pct` is a *fraction that sums and is then applied
- * multiplicatively* by `player/derived.ts` -- three sources of 0.1 backswing
- * reduction produce a 0.7x backswing, not a 0.7x applied three times. Every
+ * multiplicatively* by `player/derived.ts` -- three sources of 0.1 wind-up
+ * reduction produce a 0.7x wind-up, not a 0.7x applied three times. Every
  * other field is a plain addition to the trait of the same name.
+ *
+ * `backswingCancelReduction` and `flowBackswingCancelPct` are the one stated
+ * exception (spec 253) and say so on their own rows: they move a threshold that
+ * is *already* a fraction of a phase, so they are subtracted rather than
+ * compounded. Two sources of "a tenth of the follow-through sooner" have to be
+ * a fifth sooner, and a multiplicative reading would make them 0.19.
  *
  * Only the fields content actually grants are here. A trait that is derived from
  * attributes alone -- `maxShield`, `staggerTicks` -- has no entry, because a
@@ -53,13 +59,24 @@ export interface TraitModifier {
   // --- Agility ---
   /** Sums, applied as `attackPointScale * (1 - total)`. */
   readonly attackPointReduction?: number;
-  readonly backswingReduction?: number;
   readonly handlingReduction?: number;
+  /**
+   * Sums, **subtracted** from the follow-through's cancel threshold (spec 253).
+   *
+   * Not a `Reduction` in this file's usual multiplicative sense, and the name
+   * says which thing it moves rather than by how much: the threshold is already
+   * a fraction of a phase, so 0.03 here is three hundredths of the
+   * follow-through, not three percent of a duration. It replaces
+   * `backswingReduction`, which shortened the phase itself and so shrank the
+   * window Agility's own cancel rewards are played in.
+   */
+  readonly backswingCancelReduction?: number;
   readonly handlingCooldowns?: number;
   readonly flowTicks?: number;
   /** Sums, applied as `flowTicks * (1 + total)`. */
   readonly flowDurationPct?: number;
-  readonly flowBackswingPct?: number;
+  /** Sums; subtracted from the cancel threshold **per Flow stack** (spec 253). */
+  readonly flowBackswingCancelPct?: number;
   readonly flowCostPct?: number;
   readonly flowArmorPct?: number;
   readonly flowWeakPoint?: number;
@@ -277,12 +294,12 @@ function zeroTraits(): TraitTotals {
     momentumWindupScale: 0,
     heavyWindupReduction: 0,
     attackPointReduction: 0,
-    backswingReduction: 0,
     handlingReduction: 0,
+    backswingCancelReduction: 0,
     handlingCooldowns: 0,
     flowTicks: 0,
     flowDurationPct: 0,
-    flowBackswingPct: 0,
+    flowBackswingCancelPct: 0,
     flowCostPct: 0,
     flowArmorPct: 0,
     flowWeakPoint: 0,

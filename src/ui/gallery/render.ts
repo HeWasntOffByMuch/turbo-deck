@@ -584,7 +584,7 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
           ],
         },
       ]),
-      track('agility', 'Agility', 'AGI', 26, 28, 35, 'Mobile Offense: each Flow stack also cuts 6% off your follow-through.', [
+      track('agility', 'Agility', 'AGI', 26, 28, 35, 'Mobile Offense: each Flow stack also lets you leave a follow-through sooner.', [
         {
           threshold: 10,
           reached: true,

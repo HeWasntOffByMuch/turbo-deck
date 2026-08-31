@@ -14,6 +14,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { ATTRIBUTE_KEYS, ordinalOfAttribute } from '../data/attributes.js';
+import { SCALING } from '../data/scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { startingBaseStats } from '../player/attributes.js';
@@ -131,7 +132,7 @@ describe('the Stats message', () => {
     const decoded = decodeServerMessage(encodeServerMessage(statsMessage(bare, record)));
     if (decoded.type !== ServerMessageType.Stats) throw new Error('wrong type');
     expect(decoded.specializations).toEqual([]);
-    expect(decoded.stats.traits.backswingScale).toBeCloseTo(1, 6);
+    expect(decoded.stats.traits.backswingCancelPct).toBeCloseTo(SCALING.agility.backswingCancelBase, 6);
   });
 });
 

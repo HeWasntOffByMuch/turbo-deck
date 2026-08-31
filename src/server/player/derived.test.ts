@@ -86,8 +86,11 @@ describe('a fresh character', () => {
   it('is neutral on every scale, so the content tables say what happens', () => {
     const traits = computeEffectiveStats(player()).traits;
     expect(traits.attackPointScale).toBe(1);
-    expect(traits.backswingScale).toBe(1);
     expect(traits.handlingScale).toBe(1);
+    // Not a scale but a threshold (spec 253): neutral is the base rather than
+    // 1, because the fraction of a follow-through a fresh character is
+    // committed to is what the tables say it is, not "all of it".
+    expect(traits.backswingCancelPct).toBe(SCALING.agility.backswingCancelBase);
     expect(traits.resourceCostScale).toBe(1);
     expect(traits.cooldownScale).toBe(1);
   });
@@ -398,9 +401,11 @@ describe('milestone progress, as the sheet reads it', () => {
 
 describe('a body with no progression at all', () => {
   it('is neutral rather than zero, so a monster behaves as it always did', () => {
-    // The scales are 1 and the flags are 0. A `backswingScale` of 0 would mean
-    // no follow-through at all, which is why the neutral is not just zeroes.
-    expect(NEUTRAL_TRAITS.backswingScale).toBe(1);
+    // The scales are 1 and the flags are 0. An `attackPointScale` of 0 would
+    // mean no wind-up at all, which is why the neutral is not just zeroes -- and
+    // a `backswingCancelPct` of 0 would say "walk out whenever you like", which
+    // is not the absence of the mechanic but the behaviour it replaced.
+    expect(NEUTRAL_TRAITS.backswingCancelPct).toBe(SCALING.agility.backswingCancelBase);
     expect(NEUTRAL_TRAITS.attackPointScale).toBe(1);
     expect(NEUTRAL_TRAITS.resourceCostScale).toBe(1);
     expect(NEUTRAL_TRAITS.cooldownScale).toBe(1);

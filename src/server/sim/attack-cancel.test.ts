@@ -31,7 +31,7 @@ import {
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
-import { attackTimingFor } from './abilities.js';
+import { attackTimingFor, backswingCancelTickOf, mayCancelBackswing } from './abilities.js';
 import { attackSpeedFactor } from './attack-timing.js';
 import {
   CastEndReason,
@@ -349,8 +349,15 @@ describe('cancelling after the attack point', () => {
     const stamped = self?.cooldowns['melee.slash'] ?? 0;
     const wasAt = { x: self?.position.x ?? 0, y: self?.position.y ?? 0 };
 
-    // Walk one tick later.
-    const after = run(during.state, 1, { 0: [input(player.id, WALK)] });
+    // Walk on the first tick the follow-through may be left (spec 253). It used
+    // to be the tick after the blow landed, which is the behaviour that spec
+    // replaced: a follow-through is committed for a while first, and asking
+    // before that is refused rather than honoured.
+    const live = self?.cast;
+    if (!live) throw new Error('no cast');
+    let held = during;
+    while (held.state.tick < backswingCancelTickOf(live)) held = run(held.state, 1);
+    const after = run(held.state, 1, { 0: [input(player.id, WALK)] });
     const moved = after.state.entities.get(player.id);
 
     // The attack is not revoked: the damage stands and the cooldown is the
@@ -428,9 +435,14 @@ describe('the invariant that makes backswing cancelling worth doing', () => {
     let current = state;
     for (let i = 0; i < ticks; i++) {
       const self = current.entities.get(player.id);
-      // Walk only while committed; asking to walk during a wind-up would
-      // withdraw from it and this measures the *cadence*, not the feint.
-      const walking = cancelBackswing && self?.cast?.committed === true;
+      // Walk only while committed *and past the cancel point* (spec 253);
+      // asking to walk during a wind-up would withdraw from it and this
+      // measures the *cadence*, not the feint. Asking too early is merely
+      // refused, so the test would still pass without the second half of that
+      // condition -- it is here because "the instant it may" is what the
+      // doc comment above claims, and a refusal is not that instant.
+      const walking =
+        cancelBackswing && self?.cast != null && mayCancelBackswing(self.cast, current.tick);
       const frame = input(player.id, {
         ...(walking ? WALK : {}),
         castAbilityId: 'melee.slash',

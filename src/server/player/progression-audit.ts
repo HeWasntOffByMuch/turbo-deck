@@ -59,8 +59,8 @@ import { computeEffectiveStats } from './stats.js';
  *
  * The brief's *"create explicit monotonic assertions for mechanics where
  * direction is known"*, as a table rather than as a heuristic -- because there
- * is no heuristic. `backswingScale` down is good and `flowTicks` up is good and
- * nothing about either name says so.
+ * is no heuristic. `backswingCancelPct` down is good and `flowTicks` up is good
+ * and nothing about either name says so.
  *
  * `ambiguous` is a **decision**, not an omission: a field marked ambiguous is
  * one somebody looked at and could not honestly give a direction to, and
@@ -96,11 +96,17 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
 
   // --- Agility ---
   attackPointScale: 'down',
-  backswingScale: 'down',
+  // How much of a follow-through must be committed to before it may be left
+  // (spec 253). Lower is better -- you get out sooner -- and it is a *threshold*
+  // rather than a duration, so this is not the old `backswingScale` direction
+  // renamed: that field said the phase was shorter, this says the exit is
+  // earlier, and only the second is progression the rest of the tree agrees with.
+  backswingCancelPct: 'down',
   handlingScale: 'down',
   handlingCooldowns: 'up',
   flowTicks: 'up',
-  flowBackswingPct: 'up',
+  // What one Flow stack *subtracts* from that threshold, so more is better.
+  flowBackswingCancelPct: 'up',
   flowCostPct: 'up',
   flowArmorPct: 'up',
   flowWeakPoint: 'up',

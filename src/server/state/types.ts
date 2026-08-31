@@ -357,8 +357,22 @@ export interface TraitStats {
    * directly in `attack-timing` tests.
    */
   readonly attackPointScale: number;
-  /** Multiplier on a basic attack's backswing. Same rule. */
-  readonly backswingScale: number;
+  /**
+   * How much of a basic attack's follow-through is **committed** before the
+   * body may voluntarily walk out of it, 0..1 (spec 253).
+   *
+   * The attribute's own contribution and Quick Recovery's, resolved; Flow's is
+   * applied where the swing is timed, because a status is not a fact about the
+   * character. Replaces `backswingScale`, which divided the phase itself --
+   * every point of Agility made the follow-through shorter, so every point also
+   * shrank the window the Flow and Mobile Offense loop is played in. Same slot
+   * on the wire; different question.
+   *
+   * **Never touches `intervalTicks` either.** A cancel gives back the legs and
+   * nothing else: the tick governing the next attack was written down at the
+   * attack point and no cancellation path writes it again.
+   */
+  readonly backswingCancelPct: number;
   /** Multiplier on the wind-up of an ability that launches a projectile. */
   readonly handlingScale: number;
   /** `handlingScale` also shortens projectile cooldowns, when 1. */
@@ -366,8 +380,8 @@ export interface TraitStats {
   /** Ticks a `flow` stack lives for. 0 means this body cannot gain flow. */
   readonly flowTicks: number;
   /**
-   * What one Flow stack is worth: follow-through, cost, damage reduction and
-   * weak-point chance.
+   * What one Flow stack is worth: the follow-through's cancel point, cost,
+   * damage reduction and weak-point chance.
    *
    * Deliberately **not** move speed, though the fantasy wants it to be. Flow is
    * a status and statuses are not replicated, so a body moving 15% faster than
@@ -376,7 +390,7 @@ export interface TraitStats {
    * likely to notice. Agility's raw speed lives on `moveSpeed`, which *is*
    * replicated and *is* predicted; Flow is about recovery and offence.
    */
-  readonly flowBackswingPct: number;
+  readonly flowBackswingCancelPct: number;
   readonly flowCostPct: number;
   readonly flowArmorPct: number;
   readonly flowWeakPoint: number;
@@ -547,11 +561,14 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'momentumWindupScale',
   'heavyWindupScale',
   'attackPointScale',
-  'backswingScale',
+  // Renamed in place from `backswingScale` (spec 253): same slot, same width,
+  // different question -- so no client reads a neighbour's number and the wire
+  // layout is untouched.
+  'backswingCancelPct',
   'handlingScale',
   'handlingCooldowns',
   'flowTicks',
-  'flowBackswingPct',
+  'flowBackswingCancelPct',
   'flowCostPct',
   'flowArmorPct',
   'flowWeakPoint',

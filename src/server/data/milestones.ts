@@ -2,7 +2,7 @@
  * What an attribute does at 20, 35 and 50 (spec 147).
  *
  * The answer to the brief's central complaint. Below a milestone an attribute is
- * numbers: more health, a shorter backswing, a better chance at a weak point.
+ * numbers: more health, an earlier cancel point, a better chance at a weak point.
  * At one it changes what the body is *able to do* -- what may be cancelled, what
  * can interrupt it, what a blow leaves behind, what a cast may be paid for with.
  *
@@ -96,7 +96,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     threshold: TIER_1,
     name: 'Quick Recovery',
     effect: 'Walking out of a follow-through grants Flow for 1.2s, up to three stacks.',
-    grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowBackswingPct: 0.03 } },
+    grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowBackswingCancelPct: 0.01 } },
     deepens: 'agi.quickRecovery',
   },
   {
@@ -104,8 +104,8 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_2,
     name: 'Mobile Offense',
-    effect: 'Each Flow stack also cuts 6% off your follow-through.',
-    grants: { traits: { flowBackswingPct: 0.06 } },
+    effect: 'Each Flow stack also lets you leave a follow-through 1% sooner.',
+    grants: { traits: { flowBackswingCancelPct: 0.01 } },
     deepens: 'agi.mobileOffense',
   },
   {

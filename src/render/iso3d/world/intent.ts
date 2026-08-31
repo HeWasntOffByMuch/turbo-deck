@@ -108,6 +108,22 @@ export interface IntentInput {
    */
   readonly castAim: Point | null;
   /**
+   * True while the follow-through this body is in may not yet be left
+   * (spec 253).
+   *
+   * The one thing that makes {@link castAim} outrank a direction. A wind-up is
+   * withdrawn from *by* asking to move, so a direction beating the root there is
+   * the feature; a committed follow-through cannot be withdrawn from at all
+   * until its cancel point, so during that window the server holds the body
+   * whatever this asks for, and asking anyway is a walk predicted against a
+   * server standing still.
+   *
+   * Optional, because the two sandboxes and the tests that drive `moveIntent`
+   * directly have no server to be committed to; absent reads as "free", which is
+   * how they behaved before this existed.
+   */
+  readonly committed?: boolean;
+  /**
    * Where a drop this client has asked for is aimed, or null (spec 172).
    *
    * Ranked under {@link castAim} and over everything else, including a
@@ -245,7 +261,11 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // commitment is withdrawn from, and the server acts on it the tick it arrives.
   // Holding the body still here would be predicting a stand the server is about
   // to turn into a step.
-  if (input.castAim && !direction) {
+  //
+  // Except inside a committed follow-through (spec 253), where there is no
+  // withdrawal to be had: the server refuses it and holds the body, so the root
+  // wins and the same held key walks the moment the cancel point is reached.
+  if (input.castAim && (!direction || input.committed === true)) {
     const dx = input.castAim.x - input.self.x;
     const dy = input.castAim.y - input.self.y;
     const facing = Math.hypot(dx, dy) < 1e-6 ? input.facing : Math.atan2(dy, dx);

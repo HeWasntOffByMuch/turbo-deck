@@ -40,7 +40,7 @@ re-derive.
 ```ts
 agility: {
   backswingCancelBase: 0.7,   // committed, with no Agility at all
-  backswingCancelPer: 0.003,  // per point above the starting attribute
+  backswingCancelPer: 0.002,  // per point above the starting attribute
   backswingCancelFloor: 0.25, // never less committed than this
 }
 ```
@@ -99,10 +99,23 @@ effective = clamp(base
 
 The first two land on `TraitStats.backswingCancelPct` because they are what the
 character *is*; Flow is a status, so it is applied where the swing is timed. The
-shipped maxima are 0.165 (attribute), 0.09 (Quick Recovery, three tiers) and
-0.15 (Flow, three stacks at 0.05 each) against a 0.45 budget, so nothing in the
-tree is bought into a filled cap and the floor is a guard rather than a shared
-ceiling.
+shipped maxima are 0.11 (attribute at the hard cap), 0.15 (Quick Recovery, 0.05
+a tier) and 0.15 (Flow, three stacks at 0.05 each) against the 0.45 between base
+and floor. That is 0.41 of it, so nothing in the tree is bought into a filled cap
+and the floor is a guard rather than a shared ceiling -- and the two thirds a
+player *buys* outweigh the third the attribute hands over, because controlling
+commitment should be built toward rather than accrued.
+
+On the shipped slash (24 ticks of follow-through) that reads:
+
+| build | committed | may leave after | ticks freed |
+|---|---|---|---|
+| Agility 5, nothing | 70% | 17 ticks | 7 |
+| Agility 60, nothing bought | 59% | 14 | 10 |
+| Agility 60, Quick Recovery 3 | 44% | 11 | 13 |
+| Agility 60, Quick Recovery 3, three Flow | 38% | 9 | 15 |
+
+with `intervalTicks` at 72 in every row.
 
 The client mirrors the rule rather than being told it: `ClientView.selfCommitted`
 is true while the local body is inside the committed part of its follow-through,
@@ -110,6 +123,13 @@ is true while the local body is inside the committed part of its follow-through,
 recomputed from the *replicated* `releaseTick`, `endTick` and Flow stacks. Being
 one tick late costs a tick; being one tick early costs a correction, so the
 client is allowed to be late and never early.
+
+Two client paths, not one, and the second is the worse failure. `sendInput`
+must not predict the *walk*; `GameClient.cancelCast` -- the stop key -- must not
+drop the *cast*, because a cast lives in this client's own map and arrives as an
+event rather than in a delta, so nothing puts one back. Dropped early, the body
+reads as free locally and walks against a rooted server for the whole rest of the
+phase rather than for a round trip.
 
 ## Invariants tested
 
@@ -126,6 +146,9 @@ client is allowed to be late and never early.
   together, at every Agility value.
 - A refused (too-early) cancel grants no Flow, so it cannot trigger Mobile
   Offense; a legal one does.
+- Over a real loopback the client neither steps nor drops its cast inside the
+  committed window, walks on the tick the cancel point is reached, and takes
+  **zero** corrections doing it.
 - Death and a guard break still take a body out of its follow-through inside the
   committed window.
 - Perfect Exit still fires, and still reads the **wind-up**: it is unaffected by

@@ -371,6 +371,91 @@ describe('what the player sees, the moment they press', () => {
     expect(selfCast(client)).toBeUndefined();
   });
 
+  it('holds the legs through the committed follow-through, and lets them go at the cancel point', async () => {
+    // Spec 253's client half, and the reason it exists: the server settles a
+    // walk-out on the very tick the input carrying it lands, so a client that
+    // predicted the walk before the cancel point would step locally against a
+    // server standing still -- a correction on every tick of the refusal.
+    //
+    // Driven over a real loopback rather than against the predicate directly,
+    // because the claim is about what the two ends *do* with the same held key.
+    const { server, client } = await wire();
+    client.useAbility('melee.slash', 1000, 0);
+
+    const still = { moveX: 0, moveY: 0, facing: 0, buttons: 0 };
+    const walk = { moveX: 0, moveY: 1, facing: Math.PI / 2, buttons: 0 };
+
+    // Stand through the wind-up. Walking *there* withdraws from it (spec 079),
+    // the blow never lands, and there is no follow-through to be committed to
+    // -- which is the shape of the first version of this test, and it measured
+    // nothing at all.
+    for (let i = 0; i < SERVER_TICK_RATE * 2 && !client.view().selfCommitted; i++) {
+      server.tick();
+      client.advanceTick();
+      client.sendInput(still);
+      await settle();
+    }
+    expect(client.view().selfCommitted).toBe(true);
+
+    const before = client.correctionCount;
+    let committedFor = 0;
+    let movedWhileCommitted = 0;
+    let freed = -1;
+
+    for (let i = 0; i < SERVER_TICK_RATE * 2; i++) {
+      server.tick();
+      client.advanceTick();
+      const was = client.view();
+      const at = was.self ? { x: was.self.x, y: was.self.y } : null;
+      client.sendInput(walk);
+      await settle();
+      const now = client.view();
+      if (was.selfCommitted) {
+        committedFor += 1;
+        if (at && now.self && Math.hypot(now.self.x - at.x, now.self.y - at.y) > 1e-6) {
+          movedWhileCommitted += 1;
+        }
+      } else if (freed < 0) {
+        freed = now.estimatedTick;
+      }
+    }
+
+    // There really was a committed window -- an assertion of "it never moved"
+    // over zero ticks would pass on a client that had stopped predicting.
+    expect(committedFor).toBeGreaterThan(0);
+    expect(movedWhileCommitted).toBe(0);
+    // And it ended: the same held key walks once the cancel point is reached.
+    expect(freed).toBeGreaterThan(0);
+    expect(client.view().selfCommitted).toBe(false);
+    expect(selfCast(client)).toBeUndefined();
+    // The whole point of predicting the hold rather than waiting to be told.
+    expect(client.correctionCount).toBe(before);
+  });
+
+  it('does not drop a committed follow-through the server is going to keep', async () => {
+    // The other door into the same mistake (spec 253). `cancelCast` is the stop
+    // key, and it clears this client's own copy of the cast -- which no later
+    // message puts back, because a cast arrives as an event rather than in a
+    // delta. Dropped while the server still holds one, the body would read as
+    // free locally and walk against a rooted server for the rest of the phase.
+    const { server, client } = await wire();
+    client.useAbility('melee.slash', 1000, 0);
+    for (let i = 0; i < SERVER_TICK_RATE * 2 && !client.view().selfCommitted; i++) {
+      server.tick();
+      client.advanceTick();
+      client.sendInput({ moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      await settle();
+    }
+    expect(client.view().selfCommitted).toBe(true);
+
+    client.cancelCast();
+    await settle();
+    // Still committed, still rooted, still drawing the bar it is really in.
+    expect(client.view().selfCommitted).toBe(true);
+    expect(client.view().selfRoot).not.toBeNull();
+    expect(selfCast(client)).toBeDefined();
+  });
+
   it('predicts nothing for a second press during a cast, and leaves the first alone', async () => {
     const { client } = await wire();
     client.useAbility('melee.slash', 1000, 0);

@@ -934,6 +934,13 @@ export function step(
     //    is the legs. Which is the whole feature: cancelling the follow-through
     //    buys movement, and can never buy a faster next attack.
     //
+    // And after it the answer may be **no** (spec 253): a follow-through is
+    // committed until its cancel point, so `cancelCast` refuses a walk-out
+    // asked for too early and reports nothing cancelled. Nothing here has to
+    // handle that -- the cast stays on the body, and the root below goes on
+    // dropping the movement components of anything still casting, which is
+    // exactly what a refusal means.
+    //
     // **A player only** (spec 221). Walking out of a blow is a decision, and a
     // monster does not make one: `monsterIntent` asks to move whenever its
     // target is past standoff, with no regard for a live cast, so this line

@@ -27,7 +27,13 @@ import {
   type ServerWorldState,
 } from './types.js';
 import { SHOT_IMPACT_HEIGHT, SHOT_LAUNCH_HEIGHT } from './ballistics.js';
-import { COMMIT_ALIGN_TICKS, commitAlignEps, facesAim, TURN_ALIGN_EPS } from './abilities.js';
+import {
+  backswingCancelTickOf,
+  COMMIT_ALIGN_TICKS,
+  commitAlignEps,
+  facesAim,
+  TURN_ALIGN_EPS,
+} from './abilities.js';
 import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 import { MAX_ATTACK_INTERVAL_SECONDS } from './attack-timing.js';
 
@@ -587,11 +593,21 @@ describe('wind-up', () => {
     const stamped = committed?.cooldowns['melee.slash'] ?? 0;
     expect(stamped).toBeGreaterThan(0);
 
-    // Walking now skips the rest of the animation and nothing else. It is
-    // reported as its own kind of ending, so a client cannot mistake it for the
+    // Walking skips the rest of the animation and nothing else. It is reported
+    // as its own kind of ending, so a client cannot mistake it for the
     // withdrawal that refunds -- and the interval stamped at the attack point
     // is untouched, to the tick.
-    const after = run(during.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
+    //
+    // From the cancel point on, since spec 253: a follow-through is committed
+    // for a while before it may be left, and asking earlier is refused rather
+    // than honoured. Walked forward to that tick rather than assuming it,
+    // because the threshold is a fraction of a phase whose length is content.
+    const live = committed?.cast;
+    if (!live) throw new Error('no cast');
+    let held = during;
+    const leaveAt = backswingCancelTickOf(live);
+    while (held.state.tick < leaveAt) held = run(held.state, 1);
+    const after = run(held.state, 1, { 0: [input(player.id, { moveX: 0, moveY: 1 })] });
     expect(after.state.entities.get(player.id)?.cast).toBeNull();
     expect(after.state.entities.get(player.id)?.cooldowns['melee.slash']).toBe(stamped);
     expect(

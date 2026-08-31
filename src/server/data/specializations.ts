@@ -112,11 +112,17 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Nothing takes you off a blow you have committed to. Only while you are committed.'),
 
   // ======================= AGILITY ========================
+  // The three rows below are one mechanic seen three ways (spec 253): a
+  // follow-through is committed until its cancel point, Quick Recovery moves
+  // that point earlier, Flow moves it earlier again while it is held, and Mobile
+  // Offense is what pays for the cancel itself. None of them shortens the
+  // follow-through, which is what they used to do and what made them cancel each
+  // other out -- a shorter phase is a smaller window to be good at leaving.
   specialization('agi.quickRecovery', 'agility', 'Quick Recovery', T1, 3, 'passive',
-    { traits: { backswingReduction: 0.1 } },
-    'You are rooted for less of every attack. You do not attack more often.'),
+    { traits: { backswingCancelReduction: 0.05 } },
+    'You may break out of a follow-through sooner. You do not attack more often.'),
   specialization('agi.mobileOffense', 'agility', 'Mobile Offense', T1, 3, 'on cancelling a follow-through',
-    { traits: { flowTicks: Math.round(SCALING.agility.flowTicks * 0.15), flowBackswingPct: 0.01 } },
+    { traits: { flowTicks: Math.round(SCALING.agility.flowTicks * 0.15), flowBackswingCancelPct: 0.005 } },
     'Breaking out of a swing feeds your momentum instead of wasting it.'),
   specialization('agi.lightfoot', 'agility', 'Lightfoot', T2, 3, 'passive',
     { moveSpeed: 6, armor: 0.008 },
@@ -125,8 +131,8 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     { traits: { handlingReduction: 0.12 } },
     'Draw, load and release. The cadence does not move.'),
   specialization('agi.flow', 'agility', 'Flow', T2, 3, 'while Flow is held',
-    { traits: { flowBackswingPct: 0.06, flowDurationPct: 0.12 } },
-    'Kept moving, kept swinging: each stack shortens the next recovery.'),
+    { traits: { flowBackswingCancelPct: 0.005, flowDurationPct: 0.12 } },
+    'Kept moving, kept swinging: each stack lets you leave the next follow-through sooner.'),
   specialization('agi.perfectExit', 'agility', 'Perfect Exit', T3, 1, 'withdrawing just after being hit',
     { traits: { perfectExitResource: 5, perfectExitWindowTicks: Math.round(SCALING.agility.flowTicks / 6) } },
     'Reading a blow and stepping out of your own turns the exchange around.'),

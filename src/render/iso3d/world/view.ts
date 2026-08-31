@@ -3544,6 +3544,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
+      // And whether that root may be walked out of yet (spec 253). A wind-up
+      // always may; a follow-through only from its cancel point on, so this is
+      // what keeps a held key from predicting a step the server is about to
+      // refuse.
+      committed: view.selfCommitted,
       // Turning to put something down (spec 172): the same aim the server is
       // turning the body with, so the drawn heading is the one it is about to
       // arrive at rather than the one it left.
