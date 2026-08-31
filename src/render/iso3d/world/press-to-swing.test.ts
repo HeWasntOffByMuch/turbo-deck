@@ -1,5 +1,5 @@
 /**
- * Pressing an ability means "stop and swing" (spec 257).
+ * Pressing an ability means "stop and swing" (spec 258).
  *
  * Two halves, `combat.test.ts`'s split and for its reason. The pure half pins
  * the rule, because a rule is cheaper to pin down than a session. The wired half
@@ -36,7 +36,7 @@ const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve,
 
 const held = (...actions: string[]): ReadonlySet<string> => new Set(actions);
 
-describe('what a press takes out of the player’s hands (spec 257)', () => {
+describe('what a press takes out of the player’s hands (spec 258)', () => {
   it('takes the directions that were already down', () => {
     const hold = swingHold({
       previous: NO_HOLD,
@@ -276,7 +276,7 @@ async function walkAndSwing(pressAt: number, ticks: number): Promise<Walked> {
   return { started, refused, movedBefore, movedAfter, movedDuring };
 }
 
-describe('walking and attacking, over a real loopback (spec 257)', () => {
+describe('walking and attacking, over a real loopback (spec 258)', () => {
   it('lands the swing, stops for it, and walks on afterwards', async () => {
     const run = await walkAndSwing(10, SERVER_TICK_RATE * 2);
 

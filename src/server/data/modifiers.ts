@@ -24,7 +24,7 @@
  * other field is a plain addition to the trait of the same name.
  *
  * `backswingCancelReduction` and `flowBackswingCancelPct` are the one stated
- * exception (spec 257) and say so on their own rows: they move a threshold that
+ * exception (spec 258) and say so on their own rows: they move a threshold that
  * is *already* a fraction of a phase, so they are subtracted rather than
  * compounded. Two sources of "a tenth of the follow-through sooner" have to be
  * a fifth sooner, and a multiplicative reading would make them 0.19.
@@ -61,7 +61,7 @@ export interface TraitModifier {
   readonly attackPointReduction?: number;
   readonly handlingReduction?: number;
   /**
-   * Sums, **subtracted** from the follow-through's cancel threshold (spec 257).
+   * Sums, **subtracted** from the follow-through's cancel threshold (spec 258).
    *
    * Not a `Reduction` in this file's usual multiplicative sense, and the name
    * says which thing it moves rather than by how much: the threshold is already
@@ -75,7 +75,7 @@ export interface TraitModifier {
   readonly flowTicks?: number;
   /** Sums, applied as `flowTicks * (1 + total)`. */
   readonly flowDurationPct?: number;
-  /** Sums; subtracted from the cancel threshold **per Flow stack** (spec 257). */
+  /** Sums; subtracted from the cancel threshold **per Flow stack** (spec 258). */
   readonly flowBackswingCancelPct?: number;
   readonly flowCostPct?: number;
   readonly flowArmorPct?: number;

@@ -372,7 +372,7 @@ describe('what the player sees, the moment they press', () => {
   });
 
   it('holds the legs through the committed follow-through, and lets them go at the cancel point', async () => {
-    // Spec 257's client half, and the reason it exists: the server settles a
+    // Spec 258's client half, and the reason it exists: the server settles a
     // walk-out on the very tick the input carrying it lands, so a client that
     // predicted the walk before the cancel point would step locally against a
     // server standing still -- a correction on every tick of the refusal.
@@ -433,7 +433,7 @@ describe('what the player sees, the moment they press', () => {
   });
 
   it('does not drop a committed follow-through the server is going to keep', async () => {
-    // The other door into the same mistake (spec 257). `cancelCast` is the stop
+    // The other door into the same mistake (spec 258). `cancelCast` is the stop
     // key, and it clears this client's own copy of the cast -- which no later
     // message puts back, because a cast arrives as an event rather than in a
     // delta. Dropped while the server still holds one, the body would read as

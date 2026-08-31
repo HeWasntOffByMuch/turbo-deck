@@ -349,7 +349,7 @@ describe('cancelling after the attack point', () => {
     const stamped = self?.cooldowns['melee.slash'] ?? 0;
     const wasAt = { x: self?.position.x ?? 0, y: self?.position.y ?? 0 };
 
-    // Walk on the first tick the follow-through may be left (spec 257). It used
+    // Walk on the first tick the follow-through may be left (spec 258). It used
     // to be the tick after the blow landed, which is the behaviour that spec
     // replaced: a follow-through is committed for a while first, and asking
     // before that is refused rather than honoured.
@@ -435,7 +435,7 @@ describe('the invariant that makes backswing cancelling worth doing', () => {
     let current = state;
     for (let i = 0; i < ticks; i++) {
       const self = current.entities.get(player.id);
-      // Walk only while committed *and past the cancel point* (spec 257);
+      // Walk only while committed *and past the cancel point* (spec 258);
       // asking to walk during a wind-up would withdraw from it and this
       // measures the *cadence*, not the feint. Asking too early is merely
       // refused, so the test would still pass without the second half of that

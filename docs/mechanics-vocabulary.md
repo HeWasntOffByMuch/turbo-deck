@@ -43,7 +43,7 @@ with · an example.
 | **Wind-up** | The rooted window between committing and the effect landing (`windupTicks`). |
 | **Attack point** | The instant the effect lands, at the end of the wind-up. |
 | **Backswing** | The rooted follow-through after the attack point (`backswingTicks`). |
-| **Cancel point** | The tick within the backswing from which it may be broken off (spec 257, `backswingCancelTicks`). Before it the body is committed; the length of the backswing itself is not something progression moves. |
+| **Cancel point** | The tick within the backswing from which it may be broken off (spec 258, `backswingCancelTicks`). Before it the body is committed; the length of the backswing itself is not something progression moves. |
 | **Withdraw** | Cancelling during the wind-up. Everything is refunded and the ability did not happen. |
 | **Break off** | Cancelling during the backswing, from the cancel point on. Nothing is refunded, because the blow already landed. |
 
@@ -673,7 +673,7 @@ are genuinely signed the other way — `prepareTicks` is authored negative and
 `preparedWindupScale` is a negative delta on a multiplier — and must not be
 renamed to match.
 
-Spec 257 sharpened the same rule into a second one: **name the thing the number
+Spec 258 sharpened the same rule into a second one: **name the thing the number
 moves, not the thing it is near.** That trait used to be `backswingReduction` and
 really did divide the backswing; it now moves the *cancel point* and the phase is
 the same length for everybody. A label that still said "Backswing reduction"

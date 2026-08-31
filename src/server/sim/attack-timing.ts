@@ -79,7 +79,7 @@ export interface AttackTimingBase {
   readonly baseAttackBackswingTicks: number;
   /**
    * How much of that follow-through is **committed** before a voluntary cancel
-   * becomes legal (spec 257). 0.7 is "seven tenths of it".
+   * becomes legal (spec 258). 0.7 is "seven tenths of it".
    *
    * A fraction rather than a count of ticks, and that is the whole reason it
    * belongs here rather than being resolved by a caller: attack speed divides
@@ -98,7 +98,7 @@ export interface AttackTimingBase {
  * The cancel fraction of a body that has bought nothing: the whole thing.
  *
  * Not zero, which is the tempting default and the wrong one -- zero says "leave
- * whenever you like", which is the behaviour spec 257 exists to replace, and it
+ * whenever you like", which is the behaviour spec 258 exists to replace, and it
  * would arrive silently at any call site that forgot the field.
  */
 export const FULLY_COMMITTED = 1;
@@ -115,7 +115,7 @@ export interface AttackTiming {
   readonly backswingTicks: number;
   /**
    * Ticks of that backswing which must elapse before a voluntary cancel is
-   * legal (spec 257). 0 when there is no follow-through to leave.
+   * legal (spec 258). 0 when there is no follow-through to leave.
    *
    * Measured from the attack point, so the tick a body may walk from is
    * `releaseTick + backswingCancelTicks`. Resolved here rather than at the

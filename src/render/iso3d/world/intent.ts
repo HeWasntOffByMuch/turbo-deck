@@ -92,7 +92,7 @@ export interface SwingHoldInput {
 }
 
 /**
- * Which held directions a swing has taken out of the player's hands (spec 257).
+ * Which held directions a swing has taken out of the player's hands (spec 258).
  *
  * **Pressing an ability means "stop and swing".** Without this it means nothing
  * at all: `asksToMove` is how a body withdraws from a blow (spec 079) and a
@@ -182,7 +182,7 @@ export interface IntentInput {
   readonly castAim: Point | null;
   /**
    * True while the follow-through this body is in may not yet be left
-   * (spec 257).
+   * (spec 258).
    *
    * The one thing that makes {@link castAim} outrank a direction. A wind-up is
    * withdrawn from *by* asking to move, so a direction beating the root there is
@@ -335,7 +335,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // Holding the body still here would be predicting a stand the server is about
   // to turn into a step.
   //
-  // Except inside a committed follow-through (spec 257), where there is no
+  // Except inside a committed follow-through (spec 258), where there is no
   // withdrawal to be had: the server refuses it and holds the body, so the root
   // wins and the same held key walks the moment the cancel point is reached.
   if (input.castAim && (!direction || input.committed === true)) {

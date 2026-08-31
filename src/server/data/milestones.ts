@@ -95,7 +95,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_1,
     name: 'Quick Recovery',
-    // 0.02 rather than 0.01 (spec 257, after 254). This and `agi.flow` are the
+    // 0.02 rather than 0.01 (spec 258, after 254). This and `agi.flow` are the
     // only two sources of Flow's contribution to the cancel point now that
     // Mobile Offense buys cooldown, and together they still come to the 0.05 a
     // stack the budget in `SCALING.agility` is stated against.

@@ -157,7 +157,7 @@ status with no live effect at all and two purchases buying nothing — so what F
 is *for* past the follow-through is a design question with content behind it,
 listed there rather than answered here.
 
-**Current rule — Agility moves the cancel point, not the length (spec 257).**
+**Current rule — Agility moves the cancel point, not the length (spec 258).**
 That effect is `flowBackswingCancelPct` now rather than `flowBackswingPct`, and
 the change is the other half of the circle 254 took apart. Its own complaint was
 that a shorter backswing is *fewer ticks in which the trigger can be reached at

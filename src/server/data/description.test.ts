@@ -498,7 +498,7 @@ describe('the passive skill tree (spec 191)', () => {
     // `backswingCancelReduction: 0.05` is a positive number meaning *less* of
     // the follow-through you have to sit through. Named as the quantity rather
     // than as the reduction, the line said the opposite of what the trait does
-    // -- and since spec 257 the quantity it must not be misread as is the
+    // -- and since spec 258 the quantity it must not be misread as is the
     // *length* of the phase, which this no longer moves at all.
     const quick = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'agi.quickRecovery');
     expect(quick).toBeDefined();

@@ -175,7 +175,7 @@ async function cancelAfterAttack(
       done = true;
     }
     await test.advance();
-    // **Held rather than pressed once** (spec 257). A follow-through is
+    // **Held rather than pressed once** (spec 258). A follow-through is
     // committed until its cancel point, so one tick of walking at the attack
     // point is refused and never retried -- and the client will not even send
     // the vector until its own estimate reaches that tick. Let go once the cast

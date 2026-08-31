@@ -1855,7 +1855,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const held = new Set<string>();
   /**
-   * The directions a swing has taken out of the player's hands (spec 257), and
+   * The directions a swing has taken out of the player's hands (spec 258), and
    * whether one was asked for on this frame.
    *
    * Held here rather than derived, because the rule is an *edge*: it is the keys
@@ -2318,7 +2318,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           hud.element.style.display = '';
           ui.setHudShown(true);
           if (loadControlsSeen(bindingStorage)) return;
-          // Seeded rather than assumed unchecked (spec 257): this only ever
+          // Seeded rather than assumed unchecked (spec 258): this only ever
           // reaches `false` today, since a `true` returned above -- but the
           // checkbox is asking what storage holds, not what this branch
           // already knows, and the two must not quietly drift apart.
@@ -2340,7 +2340,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     ui.setHudShown(false);
   }
 
-  // The X only puts the card away for this session (spec 257): it used to
+  // The X only puts the card away for this session (spec 258): it used to
   // also mean "seen", so a reflex close cost a player the card forever with
   // no way back. It is `setControlsShown(false)` and nothing else now.
   ui.onControlsDismissed = (): void => {
@@ -2527,7 +2527,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // ...and it calls off the auto-attack, for the same reason held keys
     // outrank a move order: reaching for a hotbar slot is taking control back.
     targetId = null;
-    // ...and it stops the walk (spec 257). Clearing the order above is only half
+    // ...and it stops the walk (spec 258). Clearing the order above is only half
     // of "give up everything that would fight it": a *held* direction is not an
     // order, and it fights harder -- asking to move withdraws (spec 079) and
     // outranks a commit on the same tick (spec 092), so a player walking on WASD
@@ -3675,7 +3675,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     driveCastOrder(view, me);
     driveAutoAttack(view, me);
     drivePickup(view, me);
-    // What a press has taken out of the player's hands (spec 257). Read from the
+    // What a press has taken out of the player's hands (spec 258). Read from the
     // cast's *phase* rather than from `selfCommitted`, because the two answer
     // different questions: this hold ends at the **attack point**, where a held
     // direction stops being a withdrawal and becomes a walk-out of the
@@ -3708,7 +3708,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
-      // And whether that root may be walked out of yet (spec 257). A wind-up
+      // And whether that root may be walked out of yet (spec 258). A wind-up
       // always may; a follow-through only from its cancel point on, so this is
       // what keeps a held key from predicting a step the server is about to
       // refuse.

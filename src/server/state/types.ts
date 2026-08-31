@@ -359,7 +359,7 @@ export interface TraitStats {
   readonly attackPointScale: number;
   /**
    * How much of a basic attack's follow-through is **committed** before the
-   * body may voluntarily walk out of it, 0..1 (spec 257).
+   * body may voluntarily walk out of it, 0..1 (spec 258).
    *
    * The attribute's own contribution and Quick Recovery's, resolved; Flow's is
    * applied where the swing is timed, because a status is not a fact about the
@@ -572,7 +572,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'momentumWindupScale',
   'heavyWindupScale',
   'attackPointScale',
-  // Renamed in place from `backswingScale` (spec 257): same slot, same width,
+  // Renamed in place from `backswingScale` (spec 258): same slot, same width,
   // different question -- so no client reads a neighbour's number and the wire
   // layout is untouched.
   'backswingCancelPct',
