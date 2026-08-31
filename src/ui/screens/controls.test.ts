@@ -6,6 +6,10 @@
  * a copy of the defaults, so a rebind changes what the card draws with no
  * second table to fall out of step -- and that an unbound featured action
  * drops its whole row rather than drawing a cap with nothing on it.
+ *
+ * Spec 256 adds a third: that dismissing the card and remembering it are two
+ * separate reports rather than one -- closing it must not imply "seen", and
+ * "seen" must never be assumed by anything but the checkbox itself.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -43,6 +47,44 @@ function keyLabelOf(glyph: ControlGlyph | undefined): string {
   if (!glyph) return '<missing>';
   return glyph.kind === 'key' ? glyph.label : `<pointer:${glyph.sprite}>`;
 }
+
+describe('the close button', () => {
+  it('is square, not a wide rectangle with the X off to one side', () => {
+    // The reported bug (spec 256): `Button.measureSelf` adds `ICON_ADVANCE`
+    // for a label that is not there, so a close button with none came out a
+    // wide rectangle with the X adrift near its left edge. Asserted off the
+    // arranged rect rather than off the class, because what went wrong was
+    // the measurement, not the widget's identity.
+    const { screen } = harness();
+    const box = screen.closeButton.rect;
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.width).toBe(box.height);
+  });
+});
+
+describe('the card itself', () => {
+  it('closes with a square button', () => {
+    // The reported bug (spec 256): `Button.measureSelf` adds `ICON_ADVANCE` for
+    // a label that is not there, so the close button came out a wide rectangle
+    // with the X adrift near its left edge. Asserted off the *arranged rect*
+    // rather than off the class, because what went wrong was the measurement.
+    const { screen } = harness();
+    const box = screen.closeButton.rect;
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.width).toBe(box.height);
+  });
+
+  it('says what it will stop showing, and has the room to', () => {
+    // The word that carries the meaning is AGAIN, and it was once dropped to
+    // save one pixel -- so this pins the *text*, not just that something fits.
+    // A card narrowed back to 140 clips it, which is how it went missing.
+    const { screen } = harness();
+    expect(screen.rememberCheckbox.label).toBe("DON'T SHOW AGAIN");
+    const box = screen.rememberCheckbox.rect;
+    expect(box.width).toBeGreaterThan(0);
+    expect(box.width).toBeLessThanOrEqual(CARD_WIDTH);
+  });
+});
 
 describe('controlHints', () => {
   it('derives every featured row from the shipped defaults, in order', () => {
@@ -133,20 +175,63 @@ describe('controlHints', () => {
 });
 
 describe('the controls card', () => {
-  it('reports a dismiss rather than acting on it', () => {
+  it('reports a dismiss rather than acting on it, and does not imply remembering', () => {
     // The whole rule every screen here follows: what closing this card means
-    // -- discarding it, remembering it was seen -- is not this file's to
-    // decide.
+    // -- discarding it for the session -- is not this file's to decide.
     const { screen } = harness();
     let dismissed = 0;
+    let remembered: boolean | undefined;
     screen.onDismiss = () => {
       dismissed++;
+    };
+    screen.onRemember = (value) => {
+      remembered = value;
     };
     screen.closeButton.press(0);
     expect(dismissed).toBe(1);
     // Nothing about the screen's own state moved: it does not hide itself,
     // it only says so.
     expect(screen.visible).toBe(true);
+    // Spec 256: the X used to also mean "seen". It no longer touches
+    // `onRemember` at all -- that is the checkbox's alone.
+    expect(remembered).toBeUndefined();
+  });
+
+  it('reports the "don\'t show again" checkbox rather than acting on it', () => {
+    const { screen } = harness();
+    let remembered: boolean | undefined;
+    screen.onRemember = (value) => {
+      remembered = value;
+    };
+    expect(screen.rememberCheckbox.checked).toBe(false);
+
+    screen.rememberCheckbox.toggle();
+    // The value is reported...
+    expect(remembered).toBe(true);
+    // ...and the widget owns its own checked state, the same way a bag cell
+    // does: there is no server or mount that could refuse this, so nothing
+    // here puts it back the way `DisplayScreen`'s exclusive rows do.
+    expect(screen.rememberCheckbox.checked).toBe(true);
+    // The screen itself does nothing else with it -- not hide, not dismiss.
+    expect(screen.visible).toBe(true);
+
+    screen.rememberCheckbox.toggle();
+    expect(remembered).toBe(false);
+  });
+
+  it('setRemember seeds the checkbox without notifying', () => {
+    const { screen } = harness();
+    let calls = 0;
+    screen.onRemember = () => {
+      calls++;
+    };
+    screen.setRemember(true);
+    expect(screen.rememberCheckbox.checked).toBe(true);
+    expect(calls).toBe(0);
+
+    screen.setRemember(false);
+    expect(screen.rememberCheckbox.checked).toBe(false);
+    expect(calls).toBe(0);
   });
 
   it('is a fixed width, whatever it is offered and whatever it holds', () => {

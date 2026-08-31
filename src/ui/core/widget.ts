@@ -79,7 +79,39 @@ export abstract class Widget {
   /** Assigned by {@link arrange}. Always whole UI pixels. */
   rect: Rect = ZERO_RECT;
 
+  /**
+   * Whether this widget is laid out and drawn at all.
+   *
+   * **Assigning this does not ask for a layout pass**, and that is the trap
+   * spec 256 was written about rather than an oversight to fix by making it an
+   * accessor: a private backing field would make `Widget` nominally distinct
+   * and break structural assignability across the tree, which typecheck says
+   * plainly the moment it is tried.
+   *
+   * It is harmless where visibility is decided *during* a screen's own update,
+   * because the tree is already dirty by then -- which is every one of the 150
+   * assignments in this framework except one. From outside a layout pass, use
+   * {@link setShown}: containers skip an invisible child in `measure` and in
+   * `arrange`, and `UiRoot.update` returns early when nothing is dirty, so a
+   * widget switched on has no rect and is never drawn until something else
+   * dirties the tree.
+   */
   visible = true;
+
+  /**
+   * Show or hide from outside a layout pass, and ask for the pass it needs.
+   *
+   * Only a *change* invalidates, which matters more than it looks: a caller
+   * that pushes the same visibility every frame is the normal case, and
+   * invalidating on every call would re-lay-out a settled tree sixty times a
+   * second -- which `budget.test.ts` asserts against, correctly.
+   */
+  setShown(next: boolean): void {
+    if (next === this.visible) return;
+    this.visible = next;
+    this.invalidateMeasure();
+  }
+
   enabled = true;
   focusable = false;
   /**
