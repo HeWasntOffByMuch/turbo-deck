@@ -2267,6 +2267,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * (what a paused loopback does to a socket, and what a *remote* server would
    * do about a body whose client has stopped asking for anything).
    */
+  /**
+   * Whether the front door is still up (spec 254).
+   *
+   * Read by every input handler below. The overlay itself is transparent to the
+   * pointer -- it has to be, or the options window it opens could not be
+   * touched -- so *this* is what stops a click on the painting ordering a body
+   * nobody can see to walk somewhere, and a `W` at the menu from walking it.
+   */
+  let titleUp = !showsWorkbenches();
+
   const title = showsWorkbenches()
     ? null
     : createTitleOverlay(root, {
@@ -2276,6 +2286,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
         // behind a title screen is a card nobody reads -- and only to somebody
         // who has not put it away before.
         onStart: () => {
+          titleUp = false;
+          // The game's own interface comes back with the game. Hidden until
+          // now, because a skill bar over a title screen is the interface of a
+          // game that has not started.
+          hud.element.style.display = '';
+          ui.setHudShown(true);
           if (loadControlsSeen(bindingStorage)) return;
           ui.setControlsShown(true);
         },
@@ -2285,6 +2301,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // The account window can be shown now (spec 226). Assigned rather than called
   // through `ui` from above, and pushed once here so a session that opened
   // holding an account's token says so before anybody presses anything.
+  // Both halves of the interface are put away for as long as the front door is
+  // (spec 254): the DOM one -- pool bars, the experience strip, the weapon
+  // switch, the window buttons -- and the framework's `hud` layer, which is
+  // where the skill bar lives since spec 196. The `windows` layer above it is
+  // deliberately left alone, so Options still opens over the title art.
+  if (titleUp) {
+    hud.element.style.display = 'none';
+    ui.setHudShown(false);
+  }
+
   // Closing the card is what "seen" means: remembered here rather than in the
   // screen, which has no storage and decides nothing.
   ui.onControlsDismissed = (): void => {
@@ -2685,6 +2711,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       return;
     }
 
+    // Nothing the game does is reachable from the front door (spec 254). After
+    // the interface has been offered the key, so the options window's own
+    // keyboard still works, and before anything is recorded as held -- a `W`
+    // banked here would walk the body the moment Start was pressed.
+    if (titleUp) return;
+
     // Recorded before the map is consulted, because these are the keys the map
     // does not know about (spec 140).
     heldKeys.add(event.code);
@@ -2906,6 +2938,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   };
   const onMouseDown = (event: MouseEvent): void => {
     if (offerPress(pointIn(event), event.button, mouseModifiers(event))) return;
+    // Offered to the interface first and then dropped, for as long as the front
+    // door is up (spec 254): the title overlay is pointer-transparent so the
+    // options window it opens can be used, which means a press on the painting
+    // arrives here as an ordinary press on the world.
+    if (titleUp) return;
     // Before the decision is applied, because three of the four pointer verbs
     // read it: an order, a trade and an aim are all aimed at a point.
     const rect = canvas.getBoundingClientRect();
@@ -3140,6 +3177,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       interfaceFingers.add(event.pointerId);
       return;
     }
+    if (titleUp) return;
     gestures.down(sampleOf(event));
   };
 

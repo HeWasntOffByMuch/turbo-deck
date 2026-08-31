@@ -124,6 +124,12 @@ interface Frame {
   readonly title: boolean;
   /** Whether it has finished loading and is offering its menu. */
   readonly titleReady: boolean;
+  /** `shown` / `hidden` / `''` -- whether the interface's own layer is drawn. */
+  readonly uiHud: string;
+  /** Whether the DOM half of the HUD is laid out on screen. */
+  readonly domHud: boolean;
+  /** Which framework windows are open, by id. */
+  readonly windows: string;
   /** Which of the two logotype halves the title screen settled on. */
   readonly titleLogo: string;
   /** Whether the frame-time meter is drawn. */
@@ -153,6 +159,15 @@ async function readFrame(page: Page): Promise<Frame> {
         title: document.querySelector('[data-title]') !== null,
         titleReady:
           document.querySelector<HTMLElement>('[data-title]')?.dataset['titleReady'] === 'true',
+        // On the interface canvas, which is what publishes it; `data-ui-windows`
+        // is on the world root two elements up.
+        uiHud: document.querySelector<HTMLElement>('[data-ui-canvas]')?.dataset['uiHud'] ?? '',
+        // `offsetParent` is null for a `display:none` subtree, which is the
+        // question -- and not the same question as "is it in the document".
+        domHud:
+          document.querySelector<HTMLElement>('[data-hud-bottom]')?.offsetParent != null,
+        windows:
+          document.querySelector<HTMLElement>('[data-ui-windows]')?.dataset['uiWindows'] ?? '',
         titleLogo:
           document.querySelector<HTMLElement>('[data-title-logo]')?.dataset['titleLogo'] ?? 'none',
         readoutPresent: status !== null,
@@ -219,6 +234,7 @@ async function main(): Promise<void> {
     console.log(`  readout         ${shipped.frame.readout || 'absent'}`);
     console.log(`  frame-time meter ${shipped.frame.meterShown ? 'drawn' : 'not drawn'}`);
     console.log(`  title screen    ${shipped.frame.title ? `up (logo: ${shipped.frame.titleLogo})` : 'absent'}`);
+    console.log(`  interface       canvas ${shipped.frame.uiHud || 'unpublished'}, DOM ${shipped.frame.domHud ? 'shown' : 'hidden'}`);
 
     if (shipped.frame.benchTabs.length > 0) {
       problems.push(`the shipped page offers benches: ${shipped.frame.benchTabs.join(', ')}`);
@@ -257,17 +273,56 @@ async function main(): Promise<void> {
       // seconds under software GL, and the menu does not exist until it has.
       // Waited out with a constant, this pressed a button that was not there
       // yet -- which is a timeout, not a failed feature.
+      // Neither half of the interface may be on screen while the front door is
+      // -- a skill bar over a title screen is the interface of a game that has
+      // not started, and it was over the loading screen before it too.
+      if (shipped.frame.uiHud !== 'hidden') {
+        problems.push(`the interface layer was "${shipped.frame.uiHud || 'unpublished'}" behind the title screen`);
+      }
+      if (shipped.frame.domHud) {
+        problems.push('the DOM HUD was on screen behind the title screen');
+      }
+
       const ready = await waitFor(shipped.page, (frame) => frame.titleReady, 120_000);
       if (!ready) {
         problems.push('the title screen never finished loading, so Start never appeared');
       } else {
+        // Options has to *work* from the menu, which is the whole reason the
+        // overlay is transparent to the pointer and sits under the interface
+        // canvas: the window is drawn above the title art and hears the pointer
+        // through the world canvas underneath it.
+        // Polled, not waited out. `data-ui-windows` is published from the
+        // frame, and this environment paints a real page at about four frames
+        // a second under software GL -- a constant here reads the state before
+        // the frame that would have changed it, which is how this probe
+        // reported a working Escape as a stuck window.
+        await shipped.page.click('[data-title-entry="options"]', { position: { x: 6, y: 6 } });
+        const opened = await waitFor(shipped.page, (f) => f.windows.includes('options'), 15_000);
+        if (!opened) {
+          problems.push('Options did nothing when pressed on the title screen');
+        } else {
+          // And it has to be *usable*, not merely drawn: Escape is the
+          // framework's own close, so a window that takes it is a window the
+          // player can reach.
+          await shipped.page.keyboard.press('Escape');
+          const closed = await waitFor(shipped.page, (f) => !f.windows.includes('options'), 15_000);
+          if (!closed) {
+            problems.push('the options window opened over the title screen but could not be closed');
+          }
+        }
         // Start has to reach the world, and the overlay has to go: an `inset:0`
         // element that stays behind eats every click of the game underneath it,
         // which is the failure `loading-overlay.ts` names.
-        await shipped.page.click('[data-title-entry="start"]');
-        await shipped.page.waitForTimeout(400);
-        const started = await readFrame(shipped.page);
-        if (started.title) problems.push('pressing Start left the title screen up');
+        // Pressed off-centre for a reason worth keeping: a word set in
+        // `pixelTextSvg` is an SVG path hit-tested against its filled geometry,
+        // so a press at the exact middle of START can land in the gap between
+        // two letters. The button takes its own box now (its children are out
+        // of the hit test), and this stays as the harder case.
+        await shipped.page.click('[data-title-entry="start"]', { position: { x: 6, y: 6 } });
+        const gone = await waitFor(shipped.page, (f) => !f.title, 15_000);
+        if (!gone) problems.push('pressing Start left the title screen up');
+        const back = await waitFor(shipped.page, (f) => f.uiHud === 'shown', 15_000);
+        if (!back) problems.push('the interface did not come back when play began');
       }
     }
 

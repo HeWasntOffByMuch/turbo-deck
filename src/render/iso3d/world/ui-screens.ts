@@ -1509,6 +1509,19 @@ export class UiScreens {
   }
 
   /**
+   * Show or hide the game's own interface (spec 254).
+   *
+   * The `hud` layer and nothing else: the action bar, the chat log, the
+   * selected-unit readout, the dialogue bubble and the controls card. The
+   * `windows` layer above it is deliberately left alone, which is what lets the
+   * title screen offer Options -- the options window is drawn over the title
+   * art while the skill bar behind it is not.
+   */
+  setHudShown(shown: boolean): void {
+    this.layers.layer('hud').visible = shown;
+  }
+
+  /**
    * The player closed the controls card (spec 254). Reported rather than acted
    * on here too: remembering that it has been seen is `display-store.ts`'s, and
    * this class has no storage.

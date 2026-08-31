@@ -251,6 +251,16 @@ export class UiLayer {
     this.screens.setAccount(view);
   }
 
+  /** Show or hide the game's own interface -- the `hud` layer (spec 254). */
+  setHudShown(shown: boolean): void {
+    this.screens.setHudShown(shown);
+    // Published, because the layer is drawn on a canvas and a harness cannot
+    // read a canvas. The two bugs this fixes -- a skill bar over the title
+    // screen, and one over the loading screen before it -- are both invisible
+    // to every other attribute the mount publishes.
+    this.element.dataset['uiHud'] = shown ? 'shown' : 'hidden';
+  }
+
   /** Show or hide the first-run controls card (spec 254). */
   setControlsShown(shown: boolean): void {
     this.screens.setControlsShown(shown);

@@ -118,6 +118,15 @@ export function createTitleOverlay(
     // The art is pixel art. Whatever it is scaled to, it must not be smoothed.
     'image-rendering:pixelated',
     'user-select:none',
+    // The art does not take the pointer; only the menu does.
+    //
+    // Options opens a framework window, and the framework hears the pointer
+    // through the *world canvas*'s listeners -- which are underneath this. An
+    // overlay that ate every press would therefore draw an options window
+    // nobody could touch. So the painting is transparent to the pointer and the
+    // buttons below re-arm it, and `view.ts` holds gameplay off for as long as
+    // this is up rather than relying on the overlay to swallow it.
+    'pointer-events:none',
     // Over the world and the DOM HUD, under the interface canvas. See the note
     // at the top of this file -- this number is load-bearing, not a guess.
     'z-index:35',
@@ -235,7 +244,7 @@ export function createTitleOverlay(
     button.setAttribute('aria-label', entry.label);
     button.style.cssText =
       'display:flex;align-items:center;gap:12px;background:none;border:none;padding:2px 6px;' +
-      'cursor:pointer;';
+      'cursor:pointer;pointer-events:auto;';
 
     // The selection mark. A square rather than a glyph, because the 5x7 face
     // has no diamond in it and inventing one for a 6px mark is a glyph nobody
