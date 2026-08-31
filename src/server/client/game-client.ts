@@ -136,6 +136,7 @@ import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory
 import { movesASkill } from '../player/skill-slots.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
+import { refundsBetween, type CooldownRefund } from './cooldown-refund.js';
 import { ReplicatedWorld } from './replica.js';
 import {
   advanceCast as advancePredictedCast,
@@ -575,6 +576,7 @@ type CastListener = (cast: CastStateMessage) => void;
 type CastEndListener = (end: CastEndedMessage) => void;
 type EffectListener = (effect: EffectMessage) => void;
 type CastRejectedListener = (abilityId: string, reason: string) => void;
+type CooldownRefundListener = (refunds: readonly CooldownRefund[]) => void;
 
 /**
  * A cast this client has asked for and has not heard back about (spec 067).
@@ -833,6 +835,7 @@ export class GameClient {
   private readonly castEndListeners: CastEndListener[] = [];
   private readonly effectListeners: EffectListener[] = [];
   private readonly castRejectedListeners: CastRejectedListener[] = [];
+  private readonly cooldownRefundListeners: CooldownRefundListener[] = [];
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
@@ -1768,6 +1771,19 @@ export class GameClient {
     this.castListeners.push(listener);
   }
 
+  /**
+   * A cooldown of ours got shorter (spec 253).
+   *
+   * A listener rather than a field on {@link ClientView}, because it is an
+   * *event*: a view field would have to be consumed to avoid being drawn twice,
+   * and every other thing that happens to this client -- a cast ending, a line
+   * of chat, an effect -- already arrives this way. What the renderer does with
+   * it is stamp the frame's own time on it; nothing here has a clock.
+   */
+  onCooldownRefund(listener: CooldownRefundListener): void {
+    this.cooldownRefundListeners.push(listener);
+  }
+
   onCastEnded(listener: CastEndListener): void {
     this.castEndListeners.push(listener);
   }
@@ -2574,10 +2590,21 @@ export class GameClient {
         }
         break;
 
-      case ServerMessageType.Cooldowns:
+      case ServerMessageType.Cooldowns: {
+        const previous = this.cooldowns;
         this.cooldowns = Object.fromEntries(
           message.entries.map((entry) => [entry.abilityId, entry.readyAtTick]),
         );
+        // Against the **confirmed** table on both sides, which is the whole
+        // reason this is here rather than in the renderer: `visibleCooldowns()`
+        // is raised by predictions that have not been retired yet, so a guess
+        // dropping away is a decrease that nothing refunded. The first message
+        // needs no special case -- the table before it is empty, so no id is in
+        // both and nothing is reported.
+        const refunded = refundsBetween(previous, this.cooldowns);
+        if (refunded.length > 0) {
+          for (const listener of this.cooldownRefundListeners) listener(refunded);
+        }
         // The pool, and the tick it was true on (spec 069). Carried forward
         // locally from here by the sim's own regen curve, so this message is
         // needed only when that model would be wrong -- which is when something
@@ -2597,6 +2624,7 @@ export class GameClient {
           }
         }
         break;
+      }
 
       case ServerMessageType.Restoration:
         this.restorationMeter = message.meter;

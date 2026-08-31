@@ -206,4 +206,32 @@ describe('Mobile Offense, bought and used through the wire', () => {
     const { before, after } = await cancelAfterAttack(test, 'turn');
     expect(before - after).toBe(0);
   });
+
+  /**
+   * The feedback the mechanic shipped without (spec 253).
+   *
+   * Cooldown coming off a *different* button from the one that earned it is the
+   * least visible reward this game hands out -- the reward it replaced was a
+   * Flow stack, which has a row in `data/status-visuals.ts` and therefore put a
+   * mark over the player's head. This is the wire half of putting one back: the
+   * client works the refund out for itself, from two of the server's own
+   * cooldown tables, with nothing added to the protocol.
+   */
+  it('tells the client a cooldown got shorter, and by how much', async () => {
+    const test = await session(3);
+    const heard: { abilityId: string; ticks: number }[] = [];
+    test.client.onCooldownRefund((refunds) => heard.push(...refunds));
+
+    await cancelAfterAttack(test, 'walk');
+    expect(heard).toEqual([{ abilityId: SKILL, ticks: 3 * PER_TIER }]);
+  });
+
+  it('tells it nothing when nothing was refunded', async () => {
+    const test = await session(0);
+    const heard: { abilityId: string; ticks: number }[] = [];
+    test.client.onCooldownRefund((refunds) => heard.push(...refunds));
+
+    await cancelAfterAttack(test, 'walk');
+    expect(heard).toEqual([]);
+  });
 });

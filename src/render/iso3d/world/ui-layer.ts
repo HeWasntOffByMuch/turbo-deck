@@ -24,6 +24,7 @@
  * DOM and us.
  */
 
+import type { CooldownRefund } from '../../../server/client/cooldown-refund.js';
 import { resolveUiScale, uiFrame, type UiFrame } from '../../../ui/core/frame.js';
 import { replay, type DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers } from '../../../ui/core/events.js';
@@ -561,6 +562,11 @@ export class UiLayer {
    */
   select(entityId: number | null): void {
     this.screens.select(entityId);
+  }
+
+  /** A cooldown of ours got shorter (spec 253). Marks the slots it landed on. */
+  pushCooldownRefund(refunds: readonly CooldownRefund[]): void {
+    this.screens.pushCooldownRefund(refunds);
   }
 
   // --- chat (spec 189) ------------------------------------------------------

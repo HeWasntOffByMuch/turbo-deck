@@ -82,6 +82,15 @@ export interface ActionSlotView {
   readonly highlight: SlotHighlight | null;
   /** A skill-slot change in flight over this slot (spec 188). */
   readonly change: { readonly label: string; readonly progress: number } | null;
+  /**
+   * A cooldown reduction that just landed on this slot (spec 253).
+   *
+   * Composed rather than a number, for the reason every other string this
+   * screen is handed is: `src/ui/` has no tick rate and no view of what a
+   * refund *is*, and how much of a second reads as worth saying is a decision
+   * outside this layer. What arrives is the text and the moment it landed.
+   */
+  readonly refund: { readonly label: string; readonly startedMs: number } | null;
 }
 
 export interface ActionBarView {
@@ -219,6 +228,7 @@ export class ActionBarScreen extends Row {
       slot.badge = entry?.badge ?? '';
       slot.highlight = entry?.highlight ? HIGHLIGHT_TOKENS[entry.highlight] : null;
       slot.change = entry?.change ?? null;
+      slot.refund = entry?.refund ?? null;
       const label = entry?.keyLabel ?? '';
       if (slot.keyLabel !== label) {
         slot.keyLabel = label;

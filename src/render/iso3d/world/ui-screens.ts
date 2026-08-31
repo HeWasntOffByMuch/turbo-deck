@@ -90,6 +90,8 @@ import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
 import type { SoundSink, UiSoundId } from '../../../ui/core/sound.js';
 import { ChatLog, revealAt } from './chat-log.js';
+import { CooldownRefundMarks } from './cooldown-marks.js';
+import type { CooldownRefund } from '../../../server/client/cooldown-refund.js';
 import { selectionOf } from './selection.js';
 import { ACTION_BAR, abilityForSlot, type ActionSlot } from './action-bar.js';
 import { actionBarViewOf } from './action-bar-model.js';
@@ -369,6 +371,15 @@ export class UiScreens {
   private readonly chat: ChatScreen;
   /** What has been said. Client state: nothing here is replicated (spec 189). */
   private readonly chatLog = new ChatLog();
+  /**
+   * Cooldown reductions still being drawn (spec 253).
+   *
+   * Client state exactly like {@link chatLog}, and stamped the same way: a
+   * refund arrives on a network callback rather than inside the frame, so the
+   * mount's own `now` is what dates it -- a second clock in here is the one
+   * thing that would make this half impure.
+   */
+  private readonly refundMarks = new CooldownRefundMarks();
   private readonly chatDock = new Anchor('chat:dock');
   private chatRevision = -1;
   private chatLines: readonly ChatLineView[] = [];
@@ -1174,6 +1185,9 @@ export class UiScreens {
         aimingAbilityId: this.aimingAbilityId,
         stats: view.stats,
         swap,
+        // Swept on read, so a mark cannot outlive its window whatever the frame
+        // rate does -- and nothing has to remember to clear one.
+        refunds: this.refundMarks.live(nowMs),
         tick: drawnTick,
         map: this.options.map,
         showsKeys: this.showsSlotKeys,
@@ -1675,6 +1689,17 @@ export class UiScreens {
    */
   pushChat(channel: number, from: string, text: string): void {
     this.chatLog.append(channel, from, text, this.now);
+  }
+
+  /**
+   * A cooldown of ours just got shorter (spec 253).
+   *
+   * Driven from `view.ts`'s `onCooldownRefund` in the register `pushChat` is
+   * driven from `onChat`: the impure half owns the client and this half owns
+   * what is drawn, and the seam between them is one call carrying plain facts.
+   */
+  pushCooldownRefund(refunds: readonly CooldownRefund[]): void {
+    this.refundMarks.add(refunds, this.now);
   }
 
   get chatOpen(): boolean {

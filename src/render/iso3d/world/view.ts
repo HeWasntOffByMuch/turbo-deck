@@ -2255,6 +2255,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   client.onChat((message) => {
     ui.pushChat(message.channel, message.from, message.text);
   });
+  // A cooldown of ours got shorter (spec 253) -- Mobile Offense walking out of
+  // a follow-through, or a guard break's refund. The reward is time off a
+  // *different* button from the one that earned it, which is the least visible
+  // thing this game hands out, so the bar says so.
+  client.onCooldownRefund((refunds) => {
+    ui.pushCooldownRefund(refunds);
+  });
   let cursor: { x: number; y: number } | null = null;
   /**
    * The canvas point of the press the interface is being offered, or null.

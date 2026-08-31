@@ -17,7 +17,9 @@ import {
   FULL_MOTION,
   isDone,
   MOTION,
+  NOTICE_TIMINGS,
   REDUCED_MOTION,
+  RESPONSE_TIMINGS,
   settled,
   tweenTo,
   valueAt,
@@ -121,13 +123,41 @@ describe('tweenTo', () => {
 });
 
 describe('the timings', () => {
-  it('keeps every animation short enough to be feedback', () => {
+  it('keeps every *response* short enough to be feedback', () => {
     // A quarter of a second is where an animation stops reading as a response
     // and starts reading as a wait. All three are well inside it.
-    for (const entry of Object.values(MOTION)) {
-      expect(entry.durationMs).toBeGreaterThan(0);
-      expect(entry.durationMs).toBeLessThanOrEqual(250);
+    for (const key of RESPONSE_TIMINGS) {
+      expect(MOTION[key].durationMs, key).toBeGreaterThan(0);
+      expect(MOTION[key].durationMs, key).toBeLessThanOrEqual(250);
     }
+  });
+
+  /**
+   * A notice is bounded from the other end.
+   *
+   * Nothing waits on one, so the quarter-second rule above does not apply and
+   * would be actively wrong: a number that floats off a slot to be noticed by
+   * somebody looking at the *world* has to outlast a glance. What it must not do
+   * is outlast the thing that produced it -- a follow-through cancel comes round
+   * about once a second at the sword's cadence.
+   */
+  it('gives every *notice* long enough to be read, and no longer than its cause', () => {
+    for (const key of NOTICE_TIMINGS) {
+      expect(MOTION[key].durationMs, key).toBeGreaterThanOrEqual(400);
+      expect(MOTION[key].durationMs, key).toBeLessThanOrEqual(1000);
+    }
+  });
+
+  /**
+   * The classification covers the table exactly.
+   *
+   * Without this, the two rules above are two lists somebody has to remember to
+   * add to, and a fourth timing would be checked by neither -- which is the same
+   * shape as `progression-audit.ts`'s table being asserted to cover `TraitStats`
+   * exactly, and for the same reason.
+   */
+  it('classifies every timing as one or the other', () => {
+    expect([...RESPONSE_TIMINGS, ...NOTICE_TIMINGS].sort()).toEqual(Object.keys(MOTION).sort());
   });
 });
 

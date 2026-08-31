@@ -137,6 +137,51 @@ or a smaller constant. None is a correctness fix — the mechanic clamps, cannot
 go negative, and cannot touch the cadence — so changing the number now would be
 tuning against a harness rather than against a game.
 
+## Follow-up: the bar says so
+
+Shipped, the mechanic had **no feedback at all**, and that was a regression
+rather than an omission. The reward it replaced was a Flow stack, and Flow has a
+row in `data/status-visuals.ts` — so a successful cancel used to put a mark over
+the player's head, and the first playtest of this change was somebody correctly
+reporting that a working feature did nothing. Cooldown coming off a *different*
+button from the one that earned it is the least visible thing this game hands
+out: a sweep the player is not looking at, moving by a fraction of a second,
+mid-swing.
+
+**The client derives it; nothing was added to the protocol.** The server never
+says "1.2s came off Arc Lash" — it sends the owner their whole cooldown table
+whenever it changes, so a refund is the *difference* between two of them
+(`client/cooldown-refund.ts`), which is the shape `world/xp-gain.ts` already is
+and for its reason. Two consequences worth stating: it reports whatever actually
+happened, so Strength's `breakCooldownRefund` gets the same mark with no second
+case; and the diff must be taken against the **server-confirmed** table, never
+`visibleCooldowns()`, whose predictions are retired by dropping away — which is
+itself a decrease that nothing refunded.
+
+What is drawn, per affected slot: a `success` frame, in the same register as the
+`aimed`/`casting`/`unaffordable` frames the slot already carries, and the amount
+floating off it (`-1.2`). Four things about the label were forced rather than
+chosen:
+
+- **It is written the way the slot already writes seconds** — `toFixed(1)` under
+  ten, whole at or above, no unit — because the number saying how much came off
+  and the number saying how much is left sit on the same square.
+- That rule **bounds it to four characters**, 23 font pixels against the 24 of
+  slot-plus-gap at the bar's smallest size. The ordinary case is several marks at
+  once, since one cancel pays every cooling ability, so a fifth character would
+  print into the neighbour.
+- The numeric face is uppercase-only, so `-1.2s` would draw the `s` as a **solid
+  block**. Asserted with `isDrawable`.
+- Its life is **the damage number's own** (`NUMBER_LIFE`, 800ms) rather than a
+  number picked here, since it is the same kind of thing one layer over. A test
+  asserts the two agree across the layer boundary.
+
+`MOTION`'s existing rule — every animation under a quarter second, or it reads as
+a wait rather than as a response — is **split rather than loosened**: it is a
+rule about the interface *answering* something, and nothing waits on a notice.
+`RESPONSE_TIMINGS` and `NOTICE_TIMINGS` are asserted to cover `MOTION` exactly,
+so a timing added later has to be classified rather than escape both checks.
+
 ## Out of scope
 
 - **No replacement Flow mechanic.** Flow keeps the backswing reduction it has,

@@ -14,6 +14,7 @@ import { LayerStack } from '../core/layers.js';
 import { UiRoot } from '../core/root.js';
 import { colorKey } from '../core/color.js';
 import { bakeAtlas } from '../render/atlas.js';
+import { MOTION, REDUCED_MOTION } from '../core/motion.js';
 import { THEME } from '../theme/theme.js';
 import { SLOT_SIDE, type AbilityView } from '../widgets/skill-slot.js';
 import {
@@ -32,7 +33,7 @@ interface Harness {
   readonly bar: ActionBarScreen;
   readonly root: UiRoot;
   readonly pressed: number[];
-  frame(): void;
+  frame(nowMs?: number): void;
   tints(): readonly string[];
 }
 
@@ -56,8 +57,8 @@ function harness(): Harness {
     bar,
     root,
     pressed,
-    frame() {
-      root.update(0);
+    frame(nowMs = 0) {
+      root.update(nowMs);
     },
     tints() {
       const seen = new Set<string>();
@@ -91,6 +92,7 @@ function slot(overrides: Partial<ActionSlotView> = {}): ActionSlotView {
     badge: '',
     highlight: null,
     change: null,
+    refund: null,
     ...overrides,
   };
 }
@@ -247,5 +249,90 @@ describe('the hovered slot', () => {
     bar.pointerMoved({ x: 200, y: 10 }, 32);
     expect(seen).toEqual([1, null]);
     expect(bar.hoveredSlot).toBeNull();
+  });
+});
+
+/**
+ * The refund mark (spec 253): where it is drawn, and when it stops being.
+ *
+ * Asserted off the draw list rather than off pixels, because what is being
+ * checked is that the widget *emits* the mark at the right moment and in the
+ * right colour -- the picture itself is `world-hud-refunded.png`, which is the
+ * only thing that can say whether it reads.
+ */
+describe('a cooldown reduction landing on a slot', () => {
+  const REFUND = { label: '-1.2', startedMs: 1000 };
+  const success = colorKey(THEME.color('success'));
+
+  /** Every glyph and quad the mark contributes, by their vertical position. */
+  function marks(test: Harness): readonly number[] {
+    const tops: number[] = [];
+    for (const command of test.root.paint().finish()) {
+      if (command.kind === 'sprite' && colorKey(command.tint) === success) tops.push(command.dst.y);
+      if (command.kind === 'solid' && colorKey(command.color) === success) tops.push(command.dst.y);
+    }
+    return tops;
+  }
+
+  it('draws nothing in the mark’s colour until one lands', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot()] });
+    test.frame(1000);
+    expect(marks(test)).toHaveLength(0);
+  });
+
+  it('draws the frame and the label the moment it lands', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000);
+    expect(marks(test).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The whole point of the mark: it leaves. Asserted as the label's *topmost*
+   * pixel rising, which is the one thing a still frame cannot show.
+   */
+  it('carries the label upward as it ages', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000);
+    const atStart = Math.min(...marks(test));
+    test.frame(1300);
+    const later = Math.min(...marks(test));
+    expect(later).toBeLessThan(atStart);
+  });
+
+  it('stops drawing once its window has run out', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000 + MOTION.refund.durationMs);
+    expect(marks(test)).toHaveLength(0);
+  });
+
+  /**
+   * Reduce-motion is answered centrally by `animate`, which snaps to the end of
+   * the tween -- so the mark still appears and still expires, it simply does not
+   * travel. A player who asked for less motion is not a player who asked to be
+   * told less.
+   */
+  it('still says its piece with motion reduced, without moving', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.root.setMotion(REDUCED_MOTION);
+    test.frame(1000);
+    const atStart = Math.min(...marks(test));
+    expect(Number.isFinite(atStart)).toBe(true);
+    test.frame(1300);
+    expect(Math.min(...marks(test))).toBe(atStart);
+  });
+
+  it('costs no layout pass -- a mark is a field, like everything else in a fight', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot()] });
+    test.frame(1000);
+    const before = test.bar.slots[0]?.rect;
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000);
+    expect(test.bar.slots[0]?.rect).toEqual(before);
   });
 });

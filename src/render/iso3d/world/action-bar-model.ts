@@ -33,6 +33,7 @@ import type {
 import type { AbilityView } from '../../../ui/widgets/skill-slot.js';
 import { abilityIconFor } from './character-model.js';
 import type { ActionSlot } from './action-bar.js';
+import { refundLabel, type RefundMark } from './cooldown-marks.js';
 import { barSlotOf, swapLabel, type SwapProgress } from './skill-swap-view.js';
 
 /** Everything about the player the bar reads, narrowed to what it actually uses. */
@@ -55,6 +56,15 @@ export interface ActionBarSource {
   readonly stats: EffectiveStats | null;
   /** A skill-slot change in flight (spec 188), already resolved against the tick. */
   readonly swap: SwapProgress | null;
+  /**
+   * Cooldown reductions still being drawn (spec 253).
+   *
+   * Held by the mount rather than derived here, because a mark outlives the
+   * frame it landed on and this function is a pure map from one frame's facts.
+   * Keyed onto slots by ability id -- a refund is a fact about an *ability*, and
+   * which slot it is in is this layer's question.
+   */
+  readonly refunds: readonly RefundMark[];
   /** The tick being drawn, so a wedge is measured against it and not a clock. */
   readonly tick: number;
   /** The key map, so a slot says what actually fires it rather than a guess. */
@@ -119,8 +129,29 @@ function slotViewOf(
       source.swap && changingSlot === index
         ? { label: swapLabel(source.swap.kind), progress: source.swap.progress }
         : null,
+    // Only where the slot holds the ability the refund is about. An empty slot
+    // and a slot holding something else are the same answer: nothing happened
+    // here.
+    refund: refundFor(source, slot.abilityId),
     hint: hintFor(ability),
   };
+}
+
+/**
+ * The mark over a slot, or null (spec 253).
+ *
+ * The label is composed here rather than in the widget because turning a span
+ * of seconds into the text a player reads is a content decision -- the same one
+ * `swapLabel` makes one field up -- and `src/ui/` is deliberately incapable of
+ * making it.
+ */
+function refundFor(
+  source: ActionBarSource,
+  abilityId: string | null,
+): { readonly label: string; readonly startedMs: number } | null {
+  if (abilityId === null) return null;
+  const mark = source.refunds.find((held) => held.abilityId === abilityId);
+  return mark ? { label: refundLabel(mark.seconds), startedMs: mark.startedMs } : null;
 }
 
 /**

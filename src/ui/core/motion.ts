@@ -156,4 +156,44 @@ export const MOTION = {
   modal: { durationMs: 90, easing: 'outBack' as Easing, riseUiPx: 10 },
   /** A meter chasing its value, so a hit reads as a hit and not a new number. */
   meter: { durationMs: 180, easing: 'outQuad' as Easing },
+  /**
+   * A number leaving a slot: up and away, decelerating (spec 253).
+   *
+   * **A notice, not a response**, which is the one entry here that is: the three
+   * above are the interface answering something the player did, and the rule
+   * they are held to is that an answer past a quarter of a second reads as a
+   * wait. Nothing is waiting on this one. It is a number floating off a thing to
+   * be read, so what bounds it is the opposite -- long enough to be noticed by
+   * somebody who is looking at the world rather than at the bar.
+   *
+   * 800ms is **the damage number's own life** (`world/damage-popup.ts`'s
+   * `NUMBER_LIFE`, 48 ticks) rather than a number chosen here, because it is the
+   * same kind of thing one layer over: a quantity that floats off what it
+   * happened to and fades out of the frame. A test asserts the two agree, so
+   * retuning one moves the other or fails.
+   *
+   * `riseFraction` is a fraction of the slot's own side rather than a count of
+   * pixels -- the three above move panels, whose size is their content's, and
+   * this moves a label off a square whose side is set by how big a finger is. A
+   * fixed rise that cleared a 46-pixel slot would leave a 20-pixel one behind
+   * before it had been read.
+   */
+  refund: { durationMs: 800, easing: 'outQuad' as Easing, riseFraction: 0.9 },
 } as const;
+
+/**
+ * The entries of {@link MOTION} that are the interface *answering* something.
+ *
+ * Named so the rule they are held to -- an answer past a quarter of a second
+ * reads as a wait rather than as a response -- can be asserted over exactly
+ * them, and so a timing added later has to be classified rather than quietly
+ * escaping the check. `motion.test.ts` asserts this list plus the notices covers
+ * `MOTION` exactly.
+ */
+export const RESPONSE_TIMINGS = ['window', 'modal', 'meter'] as const;
+
+/**
+ * ...and the ones that are a *notice*: something to be read, that nothing waits
+ * on. Bounded from the other side -- long enough to be seen.
+ */
+export const NOTICE_TIMINGS = ['refund'] as const;
