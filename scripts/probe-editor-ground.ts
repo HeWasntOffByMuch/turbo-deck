@@ -120,7 +120,9 @@ async function main(): Promise<void> {
     const errors: string[] = [];
     page.on('pageerror', (err) => errors.push(err.message));
 
-    await page.goto(`http://localhost:${String(PORT)}/`, { waitUntil: 'load' });
+    // The built page is the game client since spec 254 and builds no tab strip at
+    // all; this harness drives the Map editor tab, so it asks the workbench back.
+    await page.goto(`http://localhost:${String(PORT)}/?client=workbench`, { waitUntil: 'load' });
     await page.click('button:has-text("Map editor")');
     await page.waitForSelector('canvas:visible', { timeout: 60_000 });
 

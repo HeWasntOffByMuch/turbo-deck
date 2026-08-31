@@ -58,6 +58,7 @@ const DROP_LABEL_COLOR: Record<RarityId, string> = {
   exceptional: '#ffd489',
 };
 import { isHandheldDevice } from '../device.js';
+import { showsWorkbenches } from '../client-build.js';
 import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
@@ -536,12 +537,18 @@ export function createHud(project: Projector): HudHandle {
     'position:absolute;left:12px;top:52px;font:12px ui-monospace,Menlo,monospace;color:#cfd6e0;' +
     'background:rgba(10,14,20,.72);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;';
   /**
-   * Whether the player has asked for the readout (spec 183). Shown to begin
-   * with, because that is what every session before the toggle existed did, and
-   * nothing about it is persisted -- the *binding* outlives a session, where the
-   * switch does not.
+   * Whether the player has asked for the readout (specs 183, 254). Nothing about
+   * it is persisted -- the *binding* outlives a session, where the switch does
+   * not -- so what it opens at is the only question, and the build answers it:
+   * the bench opens showing it, which is what every session before the toggle
+   * existed did, and the shipped client opens without it.
+   *
+   * **Started rather than forbidden.** `debug.toggleStats` still reaches it in
+   * both builds, so a player who is asked for numbers can produce them; what
+   * moves is only what is on screen before anybody presses anything. The
+   * compact rule in `readoutShown` is untouched and still wins either way.
    */
-  let readoutWanted = true;
+  let readoutWanted = showsWorkbenches();
 
   /**
    * Hidden, not removed, and still written every frame. It is developer

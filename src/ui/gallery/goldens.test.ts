@@ -13,6 +13,7 @@ import {
   CHAT_GOLDEN_CASES,
   WORLD_HUD_GOLDEN_CASES,
   ACCOUNT_GOLDEN_CASES,
+  CONTROLS_GOLDEN_CASES,
 } from './goldens.js';
 import {
   renderGallery,
@@ -25,6 +26,7 @@ import {
   renderWorldHud,
   renderWindows,
   renderAccount,
+  renderControls,
 } from './render.js';
 import { buildGallery } from './gallery.js';
 import { bakeAtlas } from '../render/atlas.js';
@@ -119,6 +121,25 @@ describe('golden images', () => {
   for (const item of CHAT_GOLDEN_CASES) {
     it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
       const frame = renderChat(item.options);
+      const actual = {
+        width: frame.surface.width,
+        height: frame.surface.height,
+        pixels: frame.surface.pixels,
+      };
+      const expected = decodePng(readFileSync(new URL(`${item.name}.png`, directory)));
+      const difference = firstDifference(actual, expected);
+      expect(
+        difference,
+        difference === null
+          ? ''
+          : `${item.name} differs -- ${difference}. Look at the change, then run \`npm run bake:ui-goldens\` to accept it.`,
+      ).toBe(null);
+    });
+  }
+
+  for (const item of CONTROLS_GOLDEN_CASES) {
+    it(`${item.name} matches, pixel for pixel (${item.covers})`, () => {
+      const frame = renderControls(item.options);
       const actual = {
         width: frame.surface.width,
         height: frame.surface.height,

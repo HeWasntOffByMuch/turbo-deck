@@ -31,7 +31,7 @@
 
 import type { DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers, UiEvent } from '../../../ui/core/events.js';
-import { UNBOUNDED, type Point, type Rect, type Size } from '../../../ui/core/geom.js';
+import { UNBOUNDED, uniformInsets, type Point, type Rect, type Size } from '../../../ui/core/geom.js';
 import { Anchor } from '../../../ui/core/containers.js';
 import { LayerStack } from '../../../ui/core/layers.js';
 import { UiRoot } from '../../../ui/core/root.js';
@@ -48,6 +48,7 @@ import { BODY_FONT } from '../../../ui/text/font.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import { CharacterScreen } from '../../../ui/screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../../../ui/screens/chat.js';
+import { ControlsScreen, controlHints } from '../../../ui/screens/controls.js';
 import {
   DialogueDock,
   DialogueScreen,
@@ -370,6 +371,8 @@ export class UiScreens {
   /** What has been said. Client state: nothing here is replicated (spec 189). */
   private readonly chatLog = new ChatLog();
   private readonly chatDock = new Anchor('chat:dock');
+  private readonly controls: ControlsScreen;
+  private readonly controlsDock = new Anchor('controls:dock');
   private chatRevision = -1;
   private chatLines: readonly ChatLineView[] = [];
   /** The mini HUD for whatever was left-clicked (spec 196). */
@@ -712,6 +715,21 @@ export class UiScreens {
     this.chatDock.padding = chatInsets(THEME, 0);
     this.chatDock.place(this.chat, 'bottomLeft');
     this.layers.place('hud', this.chatDock);
+
+    // The first-run controls card (spec 255). Top right, which is the corner
+    // the shipped client leaves empty: spec 254 took the eight tuning popovers
+    // out of it, and the card only ever shows in that build. Its dock passes
+    // the pointer through and the card does not -- the dialogue bubble's split,
+    // and for its reason: the empty three-quarters of a dock must not eat
+    // clicks meant for the ground, and a press on the close button must not
+    // also be a press on the world.
+    this.controls = new ControlsScreen({ theme: THEME });
+    this.controls.visible = false;
+    this.controls.onDismiss = () => this.onControlsDismissed?.();
+    this.controlsDock.pointerTransparent = true;
+    this.controlsDock.padding = uniformInsets(THEME.spacing.md);
+    this.controlsDock.place(this.controls, 'topRight');
+    this.layers.place('hud', this.controlsDock);
     // Everything a submitted line needs is here and none of it is the screen's:
     // the client to say it to, the root's focus to give back, and the log to
     // remember it in. Doing all three in one place is what stops "send it" and
@@ -1488,6 +1506,40 @@ export class UiScreens {
    */
   setAccount(view: AccountView): void {
     this.account.setAccount(view);
+  }
+
+  /**
+   * Show or hide the game's own interface (spec 255).
+   *
+   * The `hud` layer and nothing else: the action bar, the chat log, the
+   * selected-unit readout, the dialogue bubble and the controls card. The
+   * `windows` layer above it is deliberately left alone, which is what lets the
+   * title screen offer Options -- the options window is drawn over the title
+   * art while the skill bar behind it is not.
+   */
+  setHudShown(shown: boolean): void {
+    this.layers.layer('hud').visible = shown;
+  }
+
+  /**
+   * The player closed the controls card (spec 255). Reported rather than acted
+   * on here too: remembering that it has been seen is `display-store.ts`'s, and
+   * this class has no storage.
+   */
+  onControlsDismissed: (() => void) | null = null;
+
+  /**
+   * Show or hide the first-run controls card.
+   *
+   * The hints are re-derived on the way in rather than held, because the one
+   * thing that can change them is a rebind -- and the keybindings window is
+   * open in the same session that would do it. Cheap: eight rows off a map
+   * this class already has, once per show.
+   */
+  setControlsShown(shown: boolean): void {
+    if (shown) this.controls.setView({ hints: controlHints(this.options.map) });
+    this.controls.visible = shown;
+    this.controlsDock.invalidateArrange();
   }
 
   /** Told whether the frame-time readout is being drawn (spec 165). */

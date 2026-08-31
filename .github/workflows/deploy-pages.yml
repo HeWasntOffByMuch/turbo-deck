@@ -34,6 +34,16 @@ jobs:
       # variable to `wss://your.host/ws` once the box is up; unset, it bakes in
       # an empty string and the page is single-player exactly as it was.
       # `?server=local` turns it off again on a build that has one.
+      #
+      # What this builds is the **game client** and not the workbench
+      # (spec 254): a `vite build` sets `import.meta.env.PROD`, and
+      # `src/render/iso3d/client-build.ts` reads it to decide that the six
+      # benches, the eight tuning popovers and the developer readout are not
+      # offered. There is deliberately nothing to set here for it -- keying it
+      # off the bundle rather than off a variable in this file is what makes
+      # the thing CI builds the thing that ships, with no way to publish the
+      # workbench by forgetting something. `?client=workbench` on the deployed
+      # URL is the way back for anybody who wants the benches.
       - run: npm run build -- --base=/turbo-deck/
         env:
           VITE_SERVER_URL: ${{ vars.PLAY_SERVER_URL }}

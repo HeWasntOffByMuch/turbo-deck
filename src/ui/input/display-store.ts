@@ -18,8 +18,23 @@
 
 import type { StorageLike } from '../core/layout-store.js';
 
-/** See {@link StoredDisplay.showFps}. */
-export const DEFAULT_SHOW_FPS = true;
+/**
+ * What an unwritten profile means for the frame-time meter (spec 254).
+ *
+ * `false`, so nothing opens with a frame-time graph and a draw-call counter
+ * over the world. It was `true`, which made spec 165's developer instrumentation
+ * the single most visible thing a real player met -- no key, no query switch and
+ * no device check behind it, just a checkbox already ticked.
+ *
+ * A constant rather than something the *build* decides, which was tried and is
+ * wrong twice over: `writeField` re-serialises the whole document, so a player
+ * who changed the interface scale would have this stamped into their profile at
+ * the bench's default and get the meter in the shipped client ever after -- and
+ * a build that could overrule the box would be a setting that does not stick.
+ * One meaning, both builds, and *Show frame rate* on the Display page is what
+ * either kind of user presses.
+ */
+export const DEFAULT_SHOW_FPS = false;
 
 /** `'auto'` defers to `autoUiScale`; a number overrides it. */
 export type ScaleChoice = 'auto' | 1 | 2 | 3 | 4;
@@ -47,6 +62,14 @@ export const SCALE_CHOICES: readonly ScaleChoice[] = ['auto', 1, 2, 3, 4];
  * 3 adds `maxZoom` (spec 202), and reads a 1 or a 2 the same way: absent means
  * `'supported'`, which is what every profile written before the setting existed
  * meant by saying nothing.
+ *
+ * `controlsSeen` (spec 255) does not move this number at all, and that is the
+ * pattern the two additions above already establish generalised: a field whose
+ * absence has an honest reading -- here, "this profile predates the card, so
+ * nobody has dismissed it" -- costs no version bump, because a version exists to
+ * refuse a document this build cannot honestly interpret, and an old document is
+ * perfectly interpretable here. It would take one only if some future field's
+ * absence were ambiguous between "never asked" and "asked and refused".
  */
 export const DISPLAY_VERSION = 3;
 export const DISPLAY_KEY = 'turbo-deck.ui.display';
@@ -67,6 +90,18 @@ export interface StoredDisplay {
   readonly showFps: boolean;
   /** See {@link MaxZoomChoice}. */
   readonly maxZoom: MaxZoomChoice;
+  /**
+   * Whether the controls card has been dismissed once already (spec 255).
+   *
+   * **Off by default**, which here means "never seen": an unwritten profile is a
+   * fresh session, and the card is the one place a new player learns the five
+   * things this game asks of a mouse and a keyboard, so it opens once and stays
+   * closed on every session after the player has dismissed it -- the same shape
+   * a captured tutorial step already has, without the version bump one would
+   * cost were the two-state meaning ("never seen" vs "seen and dismissed")
+   * anything other than what an absent field already says on its own.
+   */
+  readonly controlsSeen: boolean;
 }
 
 /** What a choice is called in the interface. One place, so the two ends agree. */
@@ -78,6 +113,11 @@ function readScale(raw: unknown): ScaleChoice | null {
   if (raw === 'auto') return 'auto';
   if (raw === 1 || raw === 2 || raw === 3 || raw === 4) return raw;
   return null;
+}
+
+/** Absent, or anything that is not literally `true`, both mean "not seen yet". */
+function readControlsSeen(raw: unknown): boolean {
+  return raw === true;
 }
 
 function readMaxZoom(raw: unknown): MaxZoomChoice {
@@ -106,7 +146,13 @@ export function migrateDisplay(raw: unknown): StoredDisplay | null {
   // Absent means the default rather than false, so a profile written before
   // this preference existed does not read as "the player turned it off".
   const showFps = record['showFps'] === undefined ? DEFAULT_SHOW_FPS : record['showFps'] === true;
-  return { version: DISPLAY_VERSION, scale, showFps, maxZoom: readMaxZoom(record['maxZoom']) };
+  return {
+    version: DISPLAY_VERSION,
+    scale,
+    showFps,
+    maxZoom: readMaxZoom(record['maxZoom']),
+    controlsSeen: readControlsSeen(record['controlsSeen']),
+  };
 }
 
 export function parseDisplay(text: string | null): StoredDisplay | null {
@@ -124,6 +170,7 @@ export const DISPLAY_DEFAULTS: StoredDisplay = {
   scale: 'auto',
   showFps: DEFAULT_SHOW_FPS,
   maxZoom: 'supported',
+  controlsSeen: false,
 };
 
 /** The stored document, or the defaults. Never throws. */
@@ -157,6 +204,10 @@ export function saveMaxZoom(storage: StorageLike, maxZoom: MaxZoomChoice, key = 
   patch(storage, { maxZoom }, key);
 }
 
+export function saveControlsSeen(storage: StorageLike, seen: boolean, key = DISPLAY_KEY): void {
+  patch(storage, { controlsSeen: seen }, key);
+}
+
 /** The stored preference, or `'supported'` -- which is what nothing stored means. */
 export function loadMaxZoom(storage: StorageLike, key = DISPLAY_KEY): MaxZoomChoice {
   return loadDisplay(storage, key).maxZoom;
@@ -181,4 +232,9 @@ export function loadScale(storage: StorageLike, key = DISPLAY_KEY): ScaleChoice 
 /** The stored preference, or off. */
 export function loadShowFps(storage: StorageLike, key = DISPLAY_KEY): boolean {
   return loadDisplay(storage, key).showFps;
+}
+
+/** Whether the controls card has been dismissed once already, or `false` -- not seen. */
+export function loadControlsSeen(storage: StorageLike, key = DISPLAY_KEY): boolean {
+  return loadDisplay(storage, key).controlsSeen;
 }

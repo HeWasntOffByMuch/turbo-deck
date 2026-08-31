@@ -251,6 +251,26 @@ export class UiLayer {
     this.screens.setAccount(view);
   }
 
+  /** Show or hide the game's own interface -- the `hud` layer (spec 255). */
+  setHudShown(shown: boolean): void {
+    this.screens.setHudShown(shown);
+    // Published, because the layer is drawn on a canvas and a harness cannot
+    // read a canvas. The two bugs this fixes -- a skill bar over the title
+    // screen, and one over the loading screen before it -- are both invisible
+    // to every other attribute the mount publishes.
+    this.element.dataset['uiHud'] = shown ? 'shown' : 'hidden';
+  }
+
+  /** Show or hide the first-run controls card (spec 255). */
+  setControlsShown(shown: boolean): void {
+    this.screens.setControlsShown(shown);
+  }
+
+  /** Told when the player closes that card. */
+  set onControlsDismissed(handler: (() => void) | null) {
+    this.screens.onControlsDismissed = handler;
+  }
+
   /** The audio mix as it actually stands (spec 229). See `AudioScreen`. */
   setAudioMix(mix: AudioMixView): void {
     this.screens.setAudioMix(mix);

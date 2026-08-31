@@ -231,7 +231,9 @@ async function main(): Promise<void> {
       if (message.type() === 'error' && /shader|GL_|WebGL/i.test(text)) problems.push(text);
     });
 
-    await page.goto(`http://localhost:${PORT}/?seed=${SEED}`, { waitUntil: 'load' });
+    // The built page is the game client since spec 254 and builds none of the tuning
+    // popovers; this harness drives "Weather", so it asks the workbench back.
+    await page.goto(`http://localhost:${PORT}/?seed=${SEED}&client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
     // Long enough for the terrain to have streamed and the prop field to have
     // been batched: a frame taken mid-stream is a frame with holes in the ground.

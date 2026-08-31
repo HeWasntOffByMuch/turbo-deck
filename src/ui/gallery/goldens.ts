@@ -23,6 +23,7 @@ import type {
   ChatRenderOptions,
   WorldHudRenderOptions,
   AccountRenderOptions,
+  ControlsRenderOptions,
 } from './render.js';
 
 export interface GoldenCase {
@@ -116,6 +117,36 @@ export const CHAT_GOLDEN_CASES: readonly ChatGoldenCase[] = [
     name: 'chat-leaving',
     options: { closed: true, reveal: 0.45 },
     covers: 'the wipe half done, clipped from the top so the newest line is the last to go',
+  },
+];
+
+export interface ControlsGoldenCase {
+  readonly name: string;
+  readonly options: ControlsRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The controls card (spec 255), in the two states worth a picture.
+ *
+ * Two rather than the usual handful: everything else worth knowing about it
+ * -- an unbound row dropping out, the pool compacting -- is a claim about
+ * which rows exist and is asserted in `controls.test.ts`, not about how a
+ * row is drawn. What a picture is for here is the two things pixels are the
+ * only way to check: that a pointer control reads as its picture and a
+ * keyboard one as a keycap with a label on it, and that a rebind changes the
+ * label without moving anything else.
+ */
+export const CONTROLS_GOLDEN_CASES: readonly ControlsGoldenCase[] = [
+  {
+    name: 'controls',
+    options: {},
+    covers: 'every featured row at its shipped default: keycaps beside the three pointer pictures',
+  },
+  {
+    name: 'controls-rebound',
+    options: { rebind: { actionId: 'ui.character', code: 'KeyX' } },
+    covers: "a rebind changing one cap's label with nothing else in the card moving",
   },
 ];
 

@@ -107,6 +107,7 @@ import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
+import { createTitleOverlay } from './title-overlay.js';
 import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
 import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize, type PropRect } from '../props.js';
@@ -119,8 +120,9 @@ import {
   sameBar,
   type ActionSlot,
 } from './action-bar.js';
-import { hudLayout } from './hud-layout.js';
+import { hudLayout, tuningMenusShown } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
+import { showsWorkbenches } from '../client-build.js';
 import { isFriendlyMonster } from '../../../server/data/monsters.js';
 import { DialogueDriver, SpeechSink } from './dialogue-driver.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
@@ -150,11 +152,13 @@ import {
   DEFAULT_SHOW_FPS,
   loadScale,
   loadMaxZoom,
+  loadControlsSeen,
   loadShowFps,
   resolveMaxZoom,
   saveScale,
   saveMaxZoom,
   saveShowFps,
+  saveControlsSeen,
 } from '../../../ui/input/display-store.js';
 import { SUPPORTED_MAX_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
@@ -763,7 +767,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const pendingInserts = new Map<string, HeldChunk>();
   const gate = new LoadGate();
-  const loading = createLoadingOverlay(root);
+  // One of these, never both (spec 255). The shipped client greets somebody
+  // with the title screen and shows the load *on* it; a bench has no title
+  // screen, so it keeps the bar it has always had. Built here because this is
+  // where it has to exist -- before the first `MapInfo` -- and decided by the
+  // same question the title screen itself is decided by.
+  const loading = showsWorkbenches() ? createLoadingOverlay(root) : null;
   /** The load as the overlay last drew it, so the DOM is written only on change. */
   let lastLoadLabel = '';
   /** Whether the remote path has built its collision ground and nav grid once. */
@@ -1252,7 +1261,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
     if (label !== lastLoadLabel) {
       lastLoadLabel = label;
-      loading.set(progress);
+      loading?.set(progress);
+      // `title` is initialised further down the mount and this runs from the
+      // frame loop, which `start()` begins after all of it -- so the reference
+      // is resolved by the time anything reads it.
+      title?.setProgress(progress);
       if (progress.phase === 'ready') root.dataset['worldReady'] = 'true';
     }
     // The canvas is what is hidden, not the whole root: the overlay draws over
@@ -1552,14 +1565,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // bar. `scene.controls` is still *built* -- the camera reads its sliders, and
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
   // gets the defaults and the options window (spec 135) instead.
-  const showsTuningMenus = hudLayout(isHandheldDevice()).showsTuningMenus;
+  //
+  // Nor in the shipped client (spec 254), for a second reason: they are
+  // workbench controls, and the options window is what a player is offered
+  // instead. `?client=workbench` on a built page brings them back, which is
+  // what every harness that clicks one of these buttons passes.
+  const showsTuningMenus = tuningMenusShown(hudLayout(isHandheldDevice()), showsWorkbenches());
   /**
    * How much blood the effects panel is currently asking for (spec 182).
    *
-   * Held out here because the panel is not built on a handheld and
-   * `onCombatResult` is registered whatever the device -- a phone keeps
-   * `VFX_DEFAULTS`, which is the same answer spec 140 gives for every other
-   * setting in this corner. It is the *blow* this feeds, not the decal field:
+   * Held out here because the panel is not built on a handheld -- nor in the
+   * shipped client since spec 254 -- and `onCombatResult` is registered either
+   * way, so both keep `VFX_DEFAULTS`, which is the same answer spec 140 gives
+   * for every other setting in this corner. It is the *blow* this feeds, not the decal field:
    * that half was already wired and was never the half anybody could see.
    */
   let gore: GoreLevel = VFX_DEFAULTS.gore;
@@ -2225,9 +2243,77 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     },
   });
 
+  /**
+   * The front door (spec 255).
+   *
+   * The shipped client only: a bench is a thing somebody opened to work on the
+   * game, and a menu in front of it every reload is a click between a developer
+   * and what they came for. `?client=game` on a dev server is how it gets
+   * looked at.
+   *
+   * Built here, after `ui`, because Options is a framework window drawn on the
+   * canvas *above* this overlay -- the whole reason the overlay sits at
+   * `z-index:35` -- so the screen needs something to open.
+   *
+   * The world behind it is mounted and running, which is what it already did at
+   * this point in the mount before this existed. What that costs is written
+   * down rather than hidden: a body stands in the world while the menu is up,
+   * so a player who leaves the title screen open is a player standing in the
+   * arena. It is the spawn village and nothing there attacks, and pausing the
+   * simulation behind the menu is a follow-up with its own decisions to make
+   * (what a paused loopback does to a socket, and what a *remote* server would
+   * do about a body whose client has stopped asking for anything).
+   */
+  /**
+   * Whether the front door is still up (spec 255).
+   *
+   * Read by every input handler below. The overlay itself is transparent to the
+   * pointer -- it has to be, or the options window it opens could not be
+   * touched -- so *this* is what stops a click on the painting ordering a body
+   * nobody can see to walk somewhere, and a `W` at the menu from walking it.
+   */
+  let titleUp = !showsWorkbenches();
+
+  const title = showsWorkbenches()
+    ? null
+    : createTitleOverlay(root, {
+        base: import.meta.env?.BASE_URL ?? '/',
+        // The first-run lesson (spec 255). Shown when play actually begins
+        // rather than at the mount, because a card explaining the controls
+        // behind a title screen is a card nobody reads -- and only to somebody
+        // who has not put it away before.
+        onStart: () => {
+          titleUp = false;
+          // The game's own interface comes back with the game. Hidden until
+          // now, because a skill bar over a title screen is the interface of a
+          // game that has not started.
+          hud.element.style.display = '';
+          ui.setHudShown(true);
+          if (loadControlsSeen(bindingStorage)) return;
+          ui.setControlsShown(true);
+        },
+        onOptions: () => ui.toggle('options'),
+      });
+
   // The account window can be shown now (spec 226). Assigned rather than called
   // through `ui` from above, and pushed once here so a session that opened
   // holding an account's token says so before anybody presses anything.
+  // Both halves of the interface are put away for as long as the front door is
+  // (spec 255): the DOM one -- pool bars, the experience strip, the weapon
+  // switch, the window buttons -- and the framework's `hud` layer, which is
+  // where the skill bar lives since spec 196. The `windows` layer above it is
+  // deliberately left alone, so Options still opens over the title art.
+  if (titleUp) {
+    hud.element.style.display = 'none';
+    ui.setHudShown(false);
+  }
+
+  // Closing the card is what "seen" means: remembered here rather than in the
+  // screen, which has no storage and decides nothing.
+  ui.onControlsDismissed = (): void => {
+    ui.setControlsShown(false);
+    saveControlsSeen(bindingStorage, true);
+  };
   accountSink.push = (view): void => ui.setAccount(view);
   // Through `setAuthState` rather than straight at `ui`, so the initial state
   // goes down *both* paths: the window, and the `data-account` readout a probe
@@ -2622,6 +2708,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       return;
     }
 
+    // Nothing the game does is reachable from the front door (spec 255). After
+    // the interface has been offered the key, so the options window's own
+    // keyboard still works, and before anything is recorded as held -- a `W`
+    // banked here would walk the body the moment Start was pressed.
+    if (titleUp) return;
+
     // Recorded before the map is consulted, because these are the keys the map
     // does not know about (spec 140).
     heldKeys.add(event.code);
@@ -2843,6 +2935,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   };
   const onMouseDown = (event: MouseEvent): void => {
     if (offerPress(pointIn(event), event.button, mouseModifiers(event))) return;
+    // Offered to the interface first and then dropped, for as long as the front
+    // door is up (spec 255): the title overlay is pointer-transparent so the
+    // options window it opens can be used, which means a press on the painting
+    // arrives here as an ordinary press on the world.
+    if (titleUp) return;
     // Before the decision is applied, because three of the four pointer verbs
     // read it: an order, a trade and an aim are all aimed at a point.
     const rect = canvas.getBoundingClientRect();
@@ -3077,6 +3174,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       interfaceFingers.add(event.pointerId);
       return;
     }
+    if (titleUp) return;
     gestures.down(sampleOf(event));
   };
 
@@ -4027,12 +4125,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     hud.setAccount({ signedInAs: authState.signedInAs });
 
     // Last, so what it reports is a whole frame's work rather than the part of
-    // one that happens before the world is drawn (spec 165). `stats()` is only
-    // computed when somebody is looking -- the sort over the window is cheap but
-    // it is not free, and a meter that costs frame time misreports the frame
-    // time it costs.
+    // one that happens before the world is drawn (spec 165).
+    //
+    // `stats()` is computed whether or not the meter is drawn (spec 254), which
+    // reverses spec 165's "only when somebody is looking": the probes that read
+    // `data-fps-*` are somebody looking, and they cannot tick a checkbox. The
+    // sort over the window is not free, but it ran on every frame of every
+    // session while the meter defaulted on, so what this costs is the sessions
+    // that had turned it off.
     fpsOverlay.set(
-      showFps ? frames.stats() : null,
+      frames.stats(),
+      showFps,
       worstIngestMs,
       worstStage,
       worstStageMs,
@@ -4155,6 +4258,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     },
     stop(): void {
       cancelAnimationFrame(raf);
+      // The front door goes with the tab (spec 255). Its keydown listener is on
+      // the window with `capture`, so a title screen left behind by a tab switch
+      // would go on swallowing the arrow keys of whatever was switched to.
+      title?.dispose();
       // Leaving the tab. Every held loop is stopped explicitly rather than left
       // to the sweep: `stop()` is what the shell calls when this tab is hidden,
       // and the frame loop that would have swept them is the thing being

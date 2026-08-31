@@ -9,7 +9,7 @@
 
 import { UiRoot } from '../core/root.js';
 import { replay } from '../core/draw-list.js';
-import { UNBOUNDED, type Size } from '../core/geom.js';
+import { UNBOUNDED, uniformInsets, type Size } from '../core/geom.js';
 import { bakeAtlas, type Atlas } from '../render/atlas.js';
 import { BODY_FONT } from '../text/font.js';
 import { RasterSurface } from '../render/raster.js';
@@ -35,6 +35,7 @@ import {
   type TrackView,
 } from '../screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../screens/chat.js';
+import { ControlsScreen, controlHints } from '../screens/controls.js';
 import { ActionBarScreen, actionBarInsets, type SlotHighlight } from '../screens/action-bar.js';
 import type { AbilityView } from '../widgets/skill-slot.js';
 import {
@@ -1239,5 +1240,60 @@ export function renderTrade(options: TradeRenderOptions = {}): TradeFrame {
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);
   surface.clear(theme.color('ink'));
   replay(surface, root.paint().finish());
+  return { surface, root, screen };
+}
+
+export interface ControlsFrame {
+  readonly surface: RasterSurface;
+  readonly root: UiRoot;
+  readonly screen: ControlsScreen;
+}
+
+export interface ControlsRenderOptions {
+  readonly viewport?: Size;
+  /** Rebind this action's primary chord first, so a rebound cap is in the frame. */
+  readonly rebind?: { readonly actionId: string; readonly code: string };
+}
+
+/**
+ * The controls card, rasterised (spec 255).
+ *
+ * Its own scene rather than a corner of the six-window one, `renderKeybindings`'s
+ * reason: that scene exists to measure a frame budget, and a seventh thing in it
+ * would quietly change what the number means.
+ */
+export function renderControls(options: ControlsRenderOptions = {}): ControlsFrame {
+  const theme = THEME;
+  const viewport = options.viewport ?? GOLDEN_VIEWPORT;
+  const atlas = bakeAtlas(theme);
+  const layers = new LayerStack();
+
+  // Written out here rather than shared with `renderKeybindings`'s map: a
+  // fresh `InputMap` is the shipped defaults, and the rebind case wants
+  // exactly one chord moved off them.
+  const map = new InputMap();
+  if (options.rebind !== undefined) {
+    map.bind(options.rebind.actionId, 'primary', { code: options.rebind.code });
+  }
+
+  const screen = new ControlsScreen({ theme });
+  screen.setView({ hints: controlHints(map) });
+  // Docked the way the mount would dock it: a corner, inside an anchor that
+  // fills the frame. See `renderPlay` for why the anchor is not optional --
+  // the root's own top-level content is always arranged to the whole
+  // viewport, and only an `Anchor` respects a child's measured size.
+  const dock = new Anchor('controlsDock');
+  dock.pointerTransparent = true;
+  dock.padding = uniformInsets(theme.spacing.sm);
+  dock.place(screen, 'topRight');
+  layers.place('hud', dock);
+
+  const root = new UiRoot(layers, { theme, atlas, viewport, layers });
+  root.update(0);
+
+  const surface = new RasterSurface(atlas, viewport.width, viewport.height);
+  surface.clear(theme.color('ink'));
+  replay(surface, root.paint().finish());
+
   return { surface, root, screen };
 }

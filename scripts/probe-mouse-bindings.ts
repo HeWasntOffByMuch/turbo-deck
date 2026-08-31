@@ -256,7 +256,10 @@ async function main(): Promise<void> {
     await waitForServer(`http://localhost:${PORT}/`);
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await context.newPage();
-    await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    // The built page is the game client since spec 254, where the readout starts
+    // hidden; this harness depends on it being drawn at load, so it asks the
+    // workbench back.
+    await page.goto(`http://localhost:${PORT}/?client=workbench`, { waitUntil: 'domcontentloaded' });
 
     // A profile left by an earlier run would make every press below a test of
     // that run's leftovers rather than of the shipped defaults.

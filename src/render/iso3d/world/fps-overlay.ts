@@ -52,7 +52,12 @@ const SCALE_MS = STALL_MS;
 
 export interface FpsOverlay {
   /**
-   * Draw, or hide when `stats` is null.
+   * Publish, and draw when `shown`. Nothing at all when `stats` is null, which
+   * means no frame has been measured yet.
+   *
+   * `shown` is a *drawing* decision and never a publishing one (spec 254): the
+   * `data-fps-*` attributes go out either way, so the harnesses that read them
+   * do not depend on a preference they cannot set.
    *
    * `workMs` is the frame's *streaming* cost -- inserting chunks, meshing them,
    * rebuilding props, warming the nav grid. Shown beside the frame time because
@@ -62,6 +67,7 @@ export interface FpsOverlay {
    */
   set(
     stats: FrameStats | null,
+    shown: boolean,
     workMs?: number,
     worstStage?: string,
     worstStageMs?: number,
@@ -150,8 +156,14 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
   };
 
   return {
+    // `shown` is second and required rather than a default on the end, because
+    // it is the decision: a defaulted flag behind six optional parameters is
+    // one a call site can forget. Everything below runs either way -- see the
+    // interface -- and the one thing hiding buys is the graph, which is the
+    // only part that is not a field write, so the canvas half returns early.
     set(
       stats: FrameStats | null,
+      shown: boolean,
       workMs = 0,
       worstStage = '',
       worstStageMs = 0,
@@ -163,7 +175,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
         root.style.display = 'none';
         return;
       }
-      root.style.display = 'flex';
+      root.style.display = shown ? 'flex' : 'none';
       // Both numbers, always. The average alone hides every stutter, and the
       // worst frame alone makes a healthy session look broken.
       text.textContent =
@@ -219,7 +231,7 @@ export function createFpsOverlay(parent: HTMLElement): FpsOverlay {
       root.dataset['fpsWorst'] = stats.worstMs.toFixed(1);
       root.dataset['fpsStalls'] = String(stats.stalls);
 
-      if (!ctx) return;
+      if (!shown || !ctx) return;
       ctx.clearRect(0, 0, WIDTH, HEIGHT);
       ctx.fillStyle = 'rgba(30,30,42,0.9)';
       ctx.fillRect(0, 0, WIDTH, HEIGHT);
