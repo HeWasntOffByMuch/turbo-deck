@@ -108,6 +108,7 @@ import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 import { LoadGate } from './loading.js';
 import { createLoadingOverlay } from './loading-overlay.js';
+import { createTitleOverlay } from './title-overlay.js';
 import { CostMeter, FrameMeter } from './fps-meter.js';
 import { createFpsOverlay } from './fps-overlay.js';
 import { PROP_REGION_SIZE, propRegionSize, setPropRegionSize, type PropRect } from '../props.js';
@@ -152,11 +153,13 @@ import {
   DEFAULT_SHOW_FPS,
   loadScale,
   loadMaxZoom,
+  loadControlsSeen,
   loadShowFps,
   resolveMaxZoom,
   saveScale,
   saveMaxZoom,
   saveShowFps,
+  saveControlsSeen,
 } from '../../../ui/input/display-store.js';
 import { SUPPORTED_MAX_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
@@ -767,7 +770,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const pendingInserts = new Map<string, HeldChunk>();
   const gate = new LoadGate();
-  const loading = createLoadingOverlay(root);
+  // One of these, never both (spec 254). The shipped client greets somebody
+  // with the title screen and shows the load *on* it; a bench has no title
+  // screen, so it keeps the bar it has always had. Built here because this is
+  // where it has to exist -- before the first `MapInfo` -- and decided by the
+  // same question the title screen itself is decided by.
+  const loading = showsWorkbenches() ? createLoadingOverlay(root) : null;
   /** The load as the overlay last drew it, so the DOM is written only on change. */
   let lastLoadLabel = '';
   /** Whether the remote path has built its collision ground and nav grid once. */
@@ -1256,7 +1264,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
     if (label !== lastLoadLabel) {
       lastLoadLabel = label;
-      loading.set(progress);
+      loading?.set(progress);
+      // `title` is initialised further down the mount and this runs from the
+      // frame loop, which `start()` begins after all of it -- so the reference
+      // is resolved by the time anything reads it.
+      title?.setProgress(progress);
       if (progress.phase === 'ready') root.dataset['worldReady'] = 'true';
     }
     // The canvas is what is hidden, not the whole root: the overlay draws over
@@ -2234,9 +2246,51 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     },
   });
 
+  /**
+   * The front door (spec 254).
+   *
+   * The shipped client only: a bench is a thing somebody opened to work on the
+   * game, and a menu in front of it every reload is a click between a developer
+   * and what they came for. `?client=game` on a dev server is how it gets
+   * looked at.
+   *
+   * Built here, after `ui`, because Options is a framework window drawn on the
+   * canvas *above* this overlay -- the whole reason the overlay sits at
+   * `z-index:35` -- so the screen needs something to open.
+   *
+   * The world behind it is mounted and running, which is what it already did at
+   * this point in the mount before this existed. What that costs is written
+   * down rather than hidden: a body stands in the world while the menu is up,
+   * so a player who leaves the title screen open is a player standing in the
+   * arena. It is the spawn village and nothing there attacks, and pausing the
+   * simulation behind the menu is a follow-up with its own decisions to make
+   * (what a paused loopback does to a socket, and what a *remote* server would
+   * do about a body whose client has stopped asking for anything).
+   */
+  const title = showsWorkbenches()
+    ? null
+    : createTitleOverlay(root, {
+        base: import.meta.env?.BASE_URL ?? '/',
+        // The first-run lesson (spec 254). Shown when play actually begins
+        // rather than at the mount, because a card explaining the controls
+        // behind a title screen is a card nobody reads -- and only to somebody
+        // who has not put it away before.
+        onStart: () => {
+          if (loadControlsSeen(bindingStorage)) return;
+          ui.setControlsShown(true);
+        },
+        onOptions: () => ui.toggle('options'),
+      });
+
   // The account window can be shown now (spec 226). Assigned rather than called
   // through `ui` from above, and pushed once here so a session that opened
   // holding an account's token says so before anybody presses anything.
+  // Closing the card is what "seen" means: remembered here rather than in the
+  // screen, which has no storage and decides nothing.
+  ui.onControlsDismissed = (): void => {
+    ui.setControlsShown(false);
+    saveControlsSeen(bindingStorage, true);
+  };
   accountSink.push = (view): void => ui.setAccount(view);
   // Through `setAuthState` rather than straight at `ui`, so the initial state
   // goes down *both* paths: the window, and the `data-account` readout a probe
@@ -4180,6 +4234,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     },
     stop(): void {
       cancelAnimationFrame(raf);
+      // The front door goes with the tab (spec 254). Its keydown listener is on
+      // the window with `capture`, so a title screen left behind by a tab switch
+      // would go on swallowing the arrow keys of whatever was switched to.
+      title?.dispose();
       // Leaving the tab. Every held loop is stopped explicitly rather than left
       // to the sweep: `stop()` is what the shell calls when this tab is hidden,
       // and the frame loop that would have swept them is the thing being

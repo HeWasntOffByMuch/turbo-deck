@@ -4,7 +4,7 @@ import { renderGallery, renderPlay } from './render.js';
 import { UiRoot } from '../core/root.js';
 import { bakeAtlas } from '../render/atlas.js';
 import { THEME } from '../theme/theme.js';
-import { renderChat, renderInventory, renderKeybindings, renderShop, renderWindows, GOLDEN_VIEWPORT } from './render.js';
+import { renderChat, renderControls, renderInventory, renderKeybindings, renderShop, renderWindows, GOLDEN_VIEWPORT } from './render.js';
 import { LayerStack } from '../core/layers.js';
 import { WindowManager } from '../core/window-manager.js';
 import { UiWindow } from '../widgets/window.js';
@@ -188,6 +188,10 @@ describe('nothing is drawn translucent', () => {
       }),
     play: () => renderPlay({ cast: 0.5, cooldowns: { 0: 0.4, 3: 0.9 } }),
     shop: () => renderShop({ confirmRow: 0, buyback: true }),
+    // The controls card is excluded here for the same reason `chat` is,
+    // immediately below: it is the one other surface with a translucent
+    // plate on it, and it is checked on its own terms in "the one thing that
+    // does blend" rather than against the opaque-everywhere rule.
   };
 
   for (const [name, build] of Object.entries(scenes)) {
@@ -271,5 +275,33 @@ describe('the one thing that does blend', () => {
     const commands = renderChat({ typing: '', empty: true }).root.paint().finish();
     const plates = commands.filter((command) => command.kind === 'solid' && command.color.a !== 255);
     expect(plates).toHaveLength(1);
+  });
+
+  /**
+   * ...and the controls card's plate is the same exception, reusing the same
+   * pair rather than a second chosen alpha (spec 254). Its border is opaque
+   * -- `drawNineSlice` tinted with `edgeLight`, every channel of which is 255
+   * -- so it must not turn up here at all; if it does, the border stopped
+   * being opaque and the two-backend guarantee is gone with it.
+   */
+  it('is the only translucent thing the controls card draws', () => {
+    const translucent = renderControls()
+      .root.paint()
+      .finish()
+      .filter((command) => {
+        const alpha = command.kind === 'solid' ? command.color.a : command.kind === 'sprite' ? command.tint.a : 255;
+        return alpha !== 255;
+      });
+    expect(translucent.length).toBeGreaterThan(0);
+    for (const command of translucent) {
+      expect(command.kind).toBe('solid');
+      if (command.kind !== 'solid') continue;
+      expect(command.color.a).toBe(PLATE_ALPHA);
+      expect({ r: command.color.r, g: command.color.g, b: command.color.b }).toEqual({
+        r: THEME.color(PLATE_TOKEN).r,
+        g: THEME.color(PLATE_TOKEN).g,
+        b: THEME.color(PLATE_TOKEN).b,
+      });
+    }
   });
 });

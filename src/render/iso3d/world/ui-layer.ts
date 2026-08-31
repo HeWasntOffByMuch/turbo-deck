@@ -251,6 +251,16 @@ export class UiLayer {
     this.screens.setAccount(view);
   }
 
+  /** Show or hide the first-run controls card (spec 254). */
+  setControlsShown(shown: boolean): void {
+    this.screens.setControlsShown(shown);
+  }
+
+  /** Told when the player closes that card. */
+  set onControlsDismissed(handler: (() => void) | null) {
+    this.screens.onControlsDismissed = handler;
+  }
+
   /** The audio mix as it actually stands (spec 229). See `AudioScreen`. */
   setAudioMix(mix: AudioMixView): void {
     this.screens.setAudioMix(mix);

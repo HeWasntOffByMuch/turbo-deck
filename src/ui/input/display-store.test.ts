@@ -10,11 +10,13 @@ import {
   DEFAULT_SHOW_FPS,
   DISPLAY_KEY,
   DISPLAY_VERSION,
+  loadControlsSeen,
   loadDisplay,
   loadMaxZoom,
   loadScale,
   loadShowFps,
   resolveMaxZoom,
+  saveControlsSeen,
   saveMaxZoom,
   migrateDisplay,
   parseDisplay,
@@ -62,6 +64,7 @@ describe('the scale preference across a reload', () => {
       scale: 3,
       showFps: DEFAULT_SHOW_FPS,
       maxZoom: 'supported',
+      controlsSeen: false,
     });
   });
 });
@@ -100,6 +103,7 @@ describe('what the store refuses', () => {
       scale: 'auto',
       showFps: DEFAULT_SHOW_FPS,
       maxZoom: 'supported',
+      controlsSeen: false,
     });
   });
 });
@@ -231,5 +235,58 @@ describe('the widest-zoom preference (spec 202)', () => {
     expect(resolveMaxZoom('supported', 420)).toBe(420);
     expect(resolveMaxZoom('supported', 380)).toBe(380);
     expect(resolveMaxZoom(900, 420)).toBe(900);
+  });
+});
+
+describe('whether the controls card has been dismissed (spec 254)', () => {
+  it('is not seen when nothing was ever written', () => {
+    expect(loadControlsSeen(storage())).toBe(false);
+  });
+
+  it('reads back what was written', () => {
+    const store = storage();
+    saveControlsSeen(store, true);
+    expect(loadControlsSeen(store)).toBe(true);
+    saveControlsSeen(store, false);
+    expect(loadControlsSeen(store)).toBe(false);
+  });
+
+  it('does not lose the other preferences when it is written, or the reverse', () => {
+    // The same read-modify-write argument `saveScale`/`saveShowFps` already
+    // make: two preferences set from two different places must not clobber
+    // each other.
+    const store = storage();
+    saveScale(store, 3);
+    saveControlsSeen(store, true);
+
+    expect(loadScale(store)).toBe(3);
+    expect(loadControlsSeen(store)).toBe(true);
+
+    saveShowFps(store, true);
+    expect(loadControlsSeen(store)).toBe(true);
+  });
+
+  it('reads a document written before the card existed as not yet seen', () => {
+    // What every profile written before spec 254 looks like. It has a scale in
+    // it that the player chose, and reading the absent field as "dismissed"
+    // would skip the card for a player who has never once been shown it.
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: DISPLAY_VERSION, scale: 4, showFps: true }));
+
+    expect(loadScale(store)).toBe(4);
+    expect(loadControlsSeen(store)).toBe(false);
+  });
+
+  it('treats anything other than a literal true as not seen', () => {
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: DISPLAY_VERSION, scale: 2, controlsSeen: 'yes' }));
+    expect(loadControlsSeen(store)).toBe(false);
+  });
+
+  it('does not need the version to move at all', () => {
+    // The field this test protects: adding it must not have bumped
+    // DISPLAY_VERSION, or every stored profile in the world would suddenly be
+    // "from a build that knew more than this one" one spec from now.
+    expect(DISPLAY_VERSION).toBe(3);
   });
 });

@@ -100,6 +100,31 @@ export const PATCHES: Readonly<Record<string, PatchSource>> = {
     ],
     border: 2,
   },
+  /**
+   * A keycap (spec 254), for the controls card.
+   *
+   * A **patch** rather than one sprite per key, and that is the decision the
+   * whole card rests on: a sprite per key is twenty-six letters plus the digits
+   * plus `SPACE`, `ESC`, `SHIFT` and `TAB` -- and it would still have nothing to
+   * draw the day somebody rebinds `Move north` to a key nobody authored. A
+   * stretchable cap with the key's own label drawn on it covers every key there
+   * is, at whatever width the label needs, from one piece of art.
+   *
+   * Ink outside so it reads against grass as well as against a panel, then the
+   * `raised` bevel one pixel in: light top-left, dark bottom-right, hollow. It
+   * is the button vocabulary a keycap already is, which is why the bevel is
+   * borrowed rather than invented.
+   */
+  keycap: {
+    rows: [
+      'IIIII',
+      'ILLLI',
+      'IL.DI',
+      'IDDDI',
+      'IIIII',
+    ],
+    border: 2,
+  },
   /** The focus ring. Drawn outside a widget's own frame, never instead of it. */
   focusRing: {
     rows: [
@@ -403,6 +428,70 @@ export const ITEM_ICONS: Readonly<Record<string, readonly string[]>> = {
  * which is a harder bar than an inventory icon and is why they lean on
  * silhouette rather than detail: a wedge, a ring, a crack.
  */
+/**
+ * The mouse, for the controls card (spec 254).
+ *
+ * Its own namespace and its own size, the reason `item:` has one: a pointer
+ * button is not an icon a widget puts in a row of icons, it is a **picture of a
+ * device**, and at 7x7 -- where `icon:close` lives -- a mouse is a blob. Twelve
+ * is the smallest square that still reads as one: two buttons, a body, and a
+ * rounded top, with room for the shading that says which half is being pressed.
+ *
+ * The three differ only in which part is in the accent, which is the whole
+ * design -- one silhouette, so a row of them reads as one control scheme rather
+ * than as three unrelated drawings, and the eye goes to the colour rather than
+ * hunting for a shape difference.
+ */
+export const CONTROL_ICON_SIZE = 12;
+
+export const CONTROL_ICONS: Readonly<Record<string, readonly string[]>> = {
+  mouseLeft: [
+    '...TTTTTT...',
+    '..TAAAWWWT..',
+    '..TAAAWWWT..',
+    '..TAAAWWWT..',
+    '..TTTTTTTT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '...TWWWWT...',
+    '....TTTT....',
+    '............',
+  ],
+  mouseRight: [
+    '...TTTTTT...',
+    '..TWWWAAAT..',
+    '..TWWWAAAT..',
+    '..TWWWAAAT..',
+    '..TTTTTTTT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '...TWWWWT...',
+    '....TTTT....',
+    '............',
+  ],
+  // The wheel is the two columns between the buttons rather than a third
+  // button, because that is where it is: a row of three equal blocks would be
+  // a drawing of a mouse this game does not ask anybody to own.
+  mouseWheel: [
+    '...TTTTTT...',
+    '..TWWAAWWT..',
+    '..TWWAAWWT..',
+    '..TWWAAWWT..',
+    '..TTTTTTTT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '..TWWWWWWT..',
+    '...TWWWWT...',
+    '....TTTT....',
+    '............',
+  ],
+};
+
 export const ABILITY_ICON_SIZE = ITEM_ICON_SIZE;
 
 export const ABILITY_ICONS: Readonly<Record<string, readonly string[]>> = {

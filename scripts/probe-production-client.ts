@@ -120,6 +120,12 @@ interface Frame {
   readonly readout: string;
   /** Whether a tab strip was drawn at all, game tab included. */
   readonly playTab: boolean;
+  /** Whether the title screen is up (spec 254). */
+  readonly title: boolean;
+  /** Whether it has finished loading and is offering its menu. */
+  readonly titleReady: boolean;
+  /** Which of the two logotype halves the title screen settled on. */
+  readonly titleLogo: string;
   /** Whether the frame-time meter is drawn. */
   readonly meterShown: boolean;
   /** Whether the meter is still publishing its numbers. It always should. */
@@ -144,6 +150,11 @@ async function readFrame(page: Page): Promise<Frame> {
         benchTabs: (benches ?? []).filter((label) => texts.includes(label)),
         menus: (menus ?? []).filter((label) => labels.includes(label)),
         playTab: texts.includes('Play'),
+        title: document.querySelector('[data-title]') !== null,
+        titleReady:
+          document.querySelector<HTMLElement>('[data-title]')?.dataset['titleReady'] === 'true',
+        titleLogo:
+          document.querySelector<HTMLElement>('[data-title-logo]')?.dataset['titleLogo'] ?? 'none',
         readoutPresent: status !== null,
         readout: status?.dataset['statsReadout'] ?? '',
         // Read off the computed style rather than the inline one, so "never
@@ -155,6 +166,20 @@ async function readFrame(page: Page): Promise<Frame> {
     },
     [BENCH_TABS, TUNING_MENUS] as const,
   );
+}
+
+/** Poll a frame reading until it satisfies `want`, or give up. */
+async function waitFor(
+  page: Page,
+  want: (frame: Frame) => boolean,
+  timeoutMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (want(await readFrame(page))) return true;
+    await page.waitForTimeout(250);
+  }
+  return false;
 }
 
 async function open(browser: Browser, query: string): Promise<{ page: Page; frame: Frame }> {
@@ -193,6 +218,7 @@ async function main(): Promise<void> {
     console.log(`  tuning popovers ${shipped.frame.menus.length}`);
     console.log(`  readout         ${shipped.frame.readout || 'absent'}`);
     console.log(`  frame-time meter ${shipped.frame.meterShown ? 'drawn' : 'not drawn'}`);
+    console.log(`  title screen    ${shipped.frame.title ? `up (logo: ${shipped.frame.titleLogo})` : 'absent'}`);
 
     if (shipped.frame.benchTabs.length > 0) {
       problems.push(`the shipped page offers benches: ${shipped.frame.benchTabs.join(', ')}`);
@@ -221,6 +247,30 @@ async function main(): Promise<void> {
     if (!shipped.frame.readoutPresent) {
       problems.push('the readout element is gone entirely, and half the harnesses use it as a clock');
     }
+    // The front door (spec 254). Checked before anything is pressed, because
+    // its whole claim is that it is what the page opens on.
+    if (!shipped.frame.title) {
+      problems.push('the shipped page did not open on the title screen');
+    } else {
+      // Polled rather than waited out, this repo's rule for every harness that
+      // reads a state the frame publishes: the world streams for several
+      // seconds under software GL, and the menu does not exist until it has.
+      // Waited out with a constant, this pressed a button that was not there
+      // yet -- which is a timeout, not a failed feature.
+      const ready = await waitFor(shipped.page, (frame) => frame.titleReady, 120_000);
+      if (!ready) {
+        problems.push('the title screen never finished loading, so Start never appeared');
+      } else {
+        // Start has to reach the world, and the overlay has to go: an `inset:0`
+        // element that stays behind eats every click of the game underneath it,
+        // which is the failure `loading-overlay.ts` names.
+        await shipped.page.click('[data-title-entry="start"]');
+        await shipped.page.waitForTimeout(400);
+        const started = await readFrame(shipped.page);
+        if (started.title) problems.push('pressing Start left the title screen up');
+      }
+    }
+
     // Started, not forbidden (spec 253): the readout opens hidden and the
     // binding still reaches it, so a player who is asked for numbers can
     // produce them. Worth pressing rather than reasoning about, because
@@ -255,6 +305,9 @@ async function main(): Promise<void> {
     if (!bench.frame.playTab) {
       problems.push('?client=workbench brought back the benches but drew no tab strip');
     }
+    // And no front door on a bench: a menu between a developer and the thing
+    // they opened the bench to look at is a click every reload.
+    if (bench.frame.title) problems.push('?client=workbench opened on the title screen');
     if (bench.frame.readout !== 'on') {
       problems.push(`?client=workbench opened with the readout "${bench.frame.readout || 'absent'}"`);
     }
