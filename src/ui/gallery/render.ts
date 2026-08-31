@@ -585,7 +585,7 @@ export function demoCharacter(spend: readonly string[] = []): CharacterView {
           ],
         },
       ]),
-      track('agility', 'Agility', 'AGI', 26, 28, 35, 'Mobile Offense: each Flow stack also cuts 6% off your follow-through.', [
+      track('agility', 'Agility', 'AGI', 26, 28, 35, 'Mobile Offense: breaking out of a follow-through takes another 0.4s off your cooling abilities.', [
         {
           threshold: 10,
           reached: true,
@@ -769,6 +769,16 @@ export interface WorldHudRenderOptions {
   readonly highlight?: { readonly slot: number; readonly kind: SlotHighlight };
   /** A skill-slot change in flight over a slot (spec 188). */
   readonly change?: { readonly slot: number; readonly progress: number };
+  /**
+   * A cooldown reduction landing on slots (spec 254).
+   *
+   * `agedMs` is how far into the mark's life the frame is, and it becomes the
+   * scene's clock: the mark rises with time, so a golden at zero would only
+   * ever check the instant it appeared. Several slots, because that is the
+   * ordinary case -- one cancel pays every cooling ability at once, and four
+   * labels over four slots is the arrangement worth a picture.
+   */
+  readonly refund?: { readonly slots: readonly number[]; readonly label: string; readonly agedMs: number };
 }
 
 /**
@@ -838,6 +848,10 @@ export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFra
       highlight: options.highlight?.slot === index ? options.highlight.kind : null,
       change:
         options.change?.slot === index ? { label: 'EQUIP', progress: options.change.progress } : null,
+      refund:
+        options.refund?.slots.includes(index) === true
+          ? { label: options.refund.label, startedMs: 0 }
+          : null,
     })),
   });
 
@@ -853,7 +867,10 @@ export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFra
         },
   );
 
-  root.update(0);
+  // The scene's clock, which only a refund has an opinion about: a mark is a
+  // pure function of how long it has been up, so a golden at zero would check
+  // the frame it appeared on and no other.
+  root.update(options.refund?.agedMs ?? 0);
 
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);
   surface.clear(theme.color('ink'));

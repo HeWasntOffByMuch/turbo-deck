@@ -115,9 +115,22 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('agi.quickRecovery', 'agility', 'Quick Recovery', T1, 3, 'passive',
     { traits: { backswingReduction: 0.1 } },
     'You are rooted for less of every attack. You do not attack more often.'),
+  // Cooldown, not recovery (spec 254). This used to grant Flow and a slice of
+  // Flow's own backswing reduction, which made the loop a circle: cancel the
+  // follow-through, gain Flow, have the follow-through shortened. The player
+  // has already left the recovery by the time the reward lands, so the payout
+  // was the thing they had just declined to spend -- and it shrank the window
+  // the trigger is read in, since a shorter backswing is fewer ticks in which
+  // `cancelBackswing` can be reached at all.
+  //
+  // The trigger is unchanged and is the right one: leaving a follow-through
+  // costs nothing mechanically, demands attention to a phase boundary, and can
+  // never buy attacks per second (spec 144). What it buys now is time off the
+  // active abilities, which is a reward for the *next* decision rather than a
+  // refund of the one just made.
   specialization('agi.mobileOffense', 'agility', 'Mobile Offense', T1, 3, 'on cancelling a follow-through',
-    { traits: { flowTicks: Math.round(SCALING.agility.flowTicks * 0.15), flowBackswingPct: 0.01 } },
-    'Breaking out of a swing feeds your momentum instead of wasting it.'),
+    { traits: { mobileOffenseCooldownTicks: SCALING.agility.mobileOffenseCooldownTicks } },
+    'Leaving a follow-through early puts every ability you are waiting on back in your hands sooner.'),
   specialization('agi.lightfoot', 'agility', 'Lightfoot', T2, 3, 'passive',
     { moveSpeed: 6, armor: 0.008 },
     'Footwork that is worth something even when it does not avoid the blow.'),

@@ -1462,15 +1462,24 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the one thing a harness has to be able to press.
     const dialogueRects = boxes(readout.dialogueRects);
     const dialogue = `${String(readout.dialogueOpen)}|${dialogueRects}|${readout.dialogueLine}`;
+    // The refund marks and the motion preference behind them (spec 254). In the
+    // key as well as the attributes, because a mark *travelling* changes nothing
+    // else on this line -- which is the whole thing being asked, and a readout
+    // that only refreshed when something else moved would report the frame it
+    // landed on and no other.
+    const refunds =
+      `${readout.motion}|` +
+      readout.refundMarks.map((mark) => `${mark.id}:${String(mark.rise)}`).join(';');
     const selectedRows = readout.selectedRows.join(';');
     const selected = `${readout.selected}|${selectedRows}|${readout.selectedRect ? 'shown' : 'hidden'}`;
     const text =
       `${windows}|${bag}|${readout.scale}|${readout.viewport.width}x${readout.viewport.height}` +
       `|${readout.tab}|${tabs}|${readout.scaleChoice}|${scales}|${cells}|${cellNames}|${frames}` +
-      `|${trade}|${tradeRects}|${chat}|${barSlots}|${selected}|${dialogue}`;
+      `|${trade}|${tradeRects}|${chat}|${barSlots}|${selected}|${dialogue}|${refunds}`;
     if (text === lastUiReadout) return;
     lastUiReadout = text;
     root.dataset['uiWindows'] = windows;
+    root.dataset['uiRefunds'] = refunds;
     root.dataset['uiDialogue'] = dialogue;
     root.dataset['uiBag'] = bag;
     root.dataset['uiScale'] = String(readout.scale);
@@ -2337,6 +2346,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // framed, sent, decoded and dropped.
   client.onChat((message) => {
     ui.pushChat(message.channel, message.from, message.text);
+  });
+  // A cooldown of ours got shorter (spec 254) -- Mobile Offense walking out of
+  // a follow-through, or a guard break's refund. The reward is time off a
+  // *different* button from the one that earned it, which is the least visible
+  // thing this game hands out, so the bar says so.
+  client.onCooldownRefund((refunds) => {
+    ui.pushCooldownRefund(refunds);
   });
   let cursor: { x: number; y: number } | null = null;
   /**

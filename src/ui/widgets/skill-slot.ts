@@ -15,7 +15,8 @@
 import type { DrawList } from '../core/draw-list.js';
 import type { EventContext, Gesture } from '../core/events.js';
 import type { Constraint, Rect, Size } from '../core/geom.js';
-import { alignTextX, drawNineSlice, drawTextClipped } from '../core/paint.js';
+import { drift, MOTION, type MotionPreference } from '../core/motion.js';
+import { alignTextX, drawNineSlice, drawText, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext } from '../core/widget.js';
 import { fontById, measureText } from '../text/font.js';
 import { StyledWidget } from './base.js';
@@ -96,6 +97,19 @@ export class SkillSlot extends StyledWidget {
    * is unusable.
    */
   change: { readonly label: string; readonly progress: number } | null = null;
+  /**
+   * A cooldown reduction that just landed here (spec 254), or null.
+   *
+   * Its own field rather than something inferred from `sweep` moving, because a
+   * widget cannot tell a wedge that shrank because time passed from one that
+   * shrank because something gave the time back -- and only the second is worth
+   * announcing. What decides that is `GameClient`, which is the only thing
+   * holding both cooldown tables.
+   *
+   * `startedMs` is when it landed, on the same clock `PaintContext.now` is on,
+   * so the flash and the rise are pure functions of the frame being drawn.
+   */
+  refund: { readonly label: string; readonly startedMs: number } | null = null;
 
   constructor(
     readonly index: number,
@@ -148,6 +162,34 @@ export class SkillSlot extends StyledWidget {
     if (event.code !== 'Enter' && event.code !== 'NumpadEnter' && event.code !== 'Space') return;
     this.onActivate?.(this.index);
     context.stopPropagation();
+  }
+
+  /**
+   * How far the refund label has travelled off this slot, in UI pixels.
+   *
+   * The paint's own arithmetic, called out so a probe can read what actually
+   * moved rather than the mark's start (spec 254) -- "it appears and does not
+   * move" is a claim about this number, and a start plus a promise that it
+   * animates is exactly what was true while it did not. The clearance is not in
+   * it, because a constant offset says nothing about travel.
+   *
+   * A method rather than a field because it is a function of the frame's time,
+   * and this widget keeps no clock.
+   */
+  refundRise(nowMs: number, motion: MotionPreference): number {
+    const refund = this.refund;
+    if (!refund) return 0;
+    return drift(
+      {
+        from: 0,
+        to: Math.max(MOTION.refund.riseUiPx, this.rect.height * MOTION.refund.riseFraction),
+        startMs: refund.startedMs,
+        durationMs: MOTION.refund.durationMs,
+        easing: MOTION.refund.easing,
+      },
+      nowMs,
+      motion,
+    );
   }
 
   protected override measureSelf(_constraint: Constraint, _context: LayoutContext): Size {
@@ -234,6 +276,61 @@ export class SkillSlot extends StyledWidget {
     this.paintKey(out, context, 'accent');
     this.paintBadge(out, context);
     this.paintChange(out, context);
+    this.paintRefund(out, context);
+  }
+
+  /**
+   * A reduction, announced: the slot outlined, and the amount floating off it.
+   *
+   * **Drawn last, over every other frame this slot can carry**, and they really
+   * can overlap: the refund is what *made* the ability castable, so pressing it
+   * inside the mark's own lifetime is the likely case rather than the odd one,
+   * and the slot is then `requested` or `casting` with a mark still up. The
+   * event wins because it is the thing that just happened; the highlight is a
+   * standing state and will still be there on the next frame.
+   *
+   * `success` because it is the palette's "something went your way", which is
+   * what it already means on the sheet's spare points and a completed trade. It
+   * is the only green on the bar, so no other slot state can be mistaken for it.
+   *
+   * The label rises and then **stops being drawn**, with no fade, which is the
+   * chat log's rule and for the chat log's reason: nothing in this framework
+   * blends, so there is no partial alpha to leave on. What separates the end of
+   * the mark from a cut is that it has travelled most of a slot away by then.
+   */
+  private paintRefund(out: DrawList, context: PaintContext): void {
+    const refund = this.refund;
+    if (!refund) return;
+    const elapsed = context.now - refund.startedMs;
+    if (elapsed < 0 || elapsed >= MOTION.refund.durationMs) return;
+
+    drawNineSlice(out, context.atlas.patch('frame'), this.rect, context.theme.color('success'));
+
+    const font = fontById('numeric');
+    const rise = this.refundRise(context.now, context.motion);
+    // Clear of the box before it has moved at all, by the same gap the row puts
+    // *between* slots -- the interface's own unit of "just clear of something".
+    // Without it the label's first frames sit on the slot's own top border, and
+    // a number that starts touching the box it came from reads as part of the
+    // box rather than as something leaving it.
+    const clearance = context.theme.spacing.xs;
+    const top = this.rect.y - font.height - clearance - Math.round(rise);
+    const width = measureText(font, refund.label);
+    // **Unclipped**, which is the one place this widget draws outside its own
+    // rect: the whole point of the mark is that it leaves the slot, and the row
+    // it sits in is docked furniture with nothing above it but the world. It is
+    // centred and overhangs symmetrically, and `refundLabel` bounds it to one
+    // slot-and-gap, so two neighbours marked by the same cancel cannot print
+    // over each other.
+    drawText(
+      out,
+      context.atlas,
+      font,
+      refund.label,
+      this.rect.x + Math.round((this.rect.width - width) / 2),
+      top,
+      context.theme.color('success'),
+    );
   }
 
   /**

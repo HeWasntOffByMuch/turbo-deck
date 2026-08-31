@@ -14,6 +14,7 @@ import { LayerStack } from '../core/layers.js';
 import { UiRoot } from '../core/root.js';
 import { colorKey } from '../core/color.js';
 import { bakeAtlas } from '../render/atlas.js';
+import { MOTION, REDUCED_MOTION } from '../core/motion.js';
 import { THEME } from '../theme/theme.js';
 import { SLOT_SIDE, type AbilityView } from '../widgets/skill-slot.js';
 import {
@@ -32,7 +33,7 @@ interface Harness {
   readonly bar: ActionBarScreen;
   readonly root: UiRoot;
   readonly pressed: number[];
-  frame(): void;
+  frame(nowMs?: number): void;
   tints(): readonly string[];
 }
 
@@ -56,8 +57,8 @@ function harness(): Harness {
     bar,
     root,
     pressed,
-    frame() {
-      root.update(0);
+    frame(nowMs = 0) {
+      root.update(nowMs);
     },
     tints() {
       const seen = new Set<string>();
@@ -91,6 +92,7 @@ function slot(overrides: Partial<ActionSlotView> = {}): ActionSlotView {
     badge: '',
     highlight: null,
     change: null,
+    refund: null,
     ...overrides,
   };
 }
@@ -247,5 +249,169 @@ describe('the hovered slot', () => {
     bar.pointerMoved({ x: 200, y: 10 }, 32);
     expect(seen).toEqual([1, null]);
     expect(bar.hoveredSlot).toBeNull();
+  });
+});
+
+/**
+ * The refund mark (spec 254): where it is drawn, and when it stops being.
+ *
+ * Asserted off the draw list rather than off pixels, because what is being
+ * checked is that the widget *emits* the mark at the right moment and in the
+ * right colour -- the picture itself is `world-hud-refunded.png`, which is the
+ * only thing that can say whether it reads.
+ */
+describe('a cooldown reduction landing on a slot', () => {
+  const REFUND = { label: '-1.2', startedMs: 1000 };
+  const success = colorKey(THEME.color('success'));
+
+  /** Every glyph and quad the mark contributes, by their vertical position. */
+  function marks(test: Harness): readonly number[] {
+    const tops: number[] = [];
+    for (const command of test.root.paint().finish()) {
+      if (command.kind === 'sprite' && colorKey(command.tint) === success) tops.push(command.dst.y);
+      if (command.kind === 'solid' && colorKey(command.color) === success) tops.push(command.dst.y);
+    }
+    return tops;
+  }
+
+  it('draws nothing in the mark’s colour until one lands', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot()] });
+    test.frame(1000);
+    expect(marks(test)).toHaveLength(0);
+  });
+
+  it('draws the frame and the label the moment it lands', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000);
+    expect(marks(test).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The whole point of the mark: it leaves. Asserted as the label's *topmost*
+   * pixel rising, which is the one thing a still frame cannot show.
+   */
+  it('carries the label upward as it ages', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000);
+    const atStart = Math.min(...marks(test));
+    test.frame(1300);
+    const later = Math.min(...marks(test));
+    expect(later).toBeLessThan(atStart);
+  });
+
+  /**
+   * **The property the first cut got wrong, at the size it got it wrong at.**
+   *
+   * The travel was one slot side, which is right in spirit and was wrong in
+   * fact: the bar converts a *physical* 46 CSS pixels through the interface
+   * scale, so a shipped slot is 20-23 UI pixels rather than the 46 an unscaled
+   * gallery draws. Twenty pixels over 800ms is a quarter of a pixel a frame, and
+   * sub-pixel-per-frame motion does not read as motion -- it reads as a label
+   * that appeared somewhere and sat there, which is how it was reported.
+   *
+   * So the claim is not "it ends up higher than it started", which the old
+   * version satisfied. It is that **every frame moves it**, at the smallest slot
+   * the bar is ever drawn at and at the frame rate the game runs at.
+   */
+  it('moves every frame at 60fps, at the bar’s smallest slot', () => {
+    const test = harness();
+    test.bar.setSlotSide(SLOT_SIDE);
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+
+    const frameMs = 1000 / 60;
+    let previous = Number.POSITIVE_INFINITY;
+    let frames = 0;
+    for (let elapsed = 0; elapsed < MOTION.refund.durationMs - frameMs; elapsed += frameMs) {
+      test.frame(REFUND.startedMs + elapsed);
+      const top = Math.min(...marks(test));
+      if (frames > 0) {
+        expect(top, `frame ${frames} at ${Math.round(elapsed)}ms`).toBeLessThanOrEqual(previous - 1);
+      }
+      previous = top;
+      frames += 1;
+    }
+    // ...and it really was the whole life being sampled, not two frames of it.
+    expect(frames).toBeGreaterThan(40);
+  });
+
+  /**
+   * Linear, which is what separates *rising* from *arriving*.
+   *
+   * The three other entries in `MOTION` ease out because each is arriving
+   * somewhere; a decelerating float reads as having got there and then creeping.
+   * `world/damage-popup.ts` rises its numbers at a constant rate for this
+   * reason, and this is the same object one layer over -- so the travel in the
+   * first half of the life is the travel in the second.
+   */
+  it('rises at a constant rate, as the world’s own floating numbers do', () => {
+    const test = harness();
+    test.bar.setSlotSide(SLOT_SIDE);
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    const half = MOTION.refund.durationMs / 2;
+
+    test.frame(REFUND.startedMs);
+    const start = Math.min(...marks(test));
+    test.frame(REFUND.startedMs + half);
+    const middle = Math.min(...marks(test));
+    test.frame(REFUND.startedMs + MOTION.refund.durationMs - 1);
+    const end = Math.min(...marks(test));
+
+    expect(start - middle).toBeGreaterThan(0);
+    // Within a pixel of each other: the two halves are the same distance.
+    expect(Math.abs((start - middle) - (middle - end))).toBeLessThanOrEqual(1);
+  });
+
+  it('stops drawing once its window has run out', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000 + MOTION.refund.durationMs);
+    expect(marks(test)).toHaveLength(0);
+  });
+
+  /**
+   * **Reduced motion holds it beside the slot, not at the far end.**
+   *
+   * `animate` snaps to `to`, which is right for everything else in `MOTION`
+   * because a window, a modal and a meter are all *arriving* -- the end of the
+   * tween is where they come to rest. A float has no resting state: the end of
+   * its journey is where it vanishes, so snapping parks the label as far from
+   * its slot as the animation ever gets and leaves it there. That shipped, and
+   * it was reported twice -- and *raising* the travel made it worse, because
+   * `to` is the one number a reduced client draws.
+   *
+   * So the assertion is not "it does not move", which the broken version also
+   * satisfied. It is that a reduced client sees the mark exactly where a full
+   * one sees it on the frame it lands.
+   */
+  it('holds the mark beside its slot with motion reduced, rather than at the far end', () => {
+    const full = harness();
+    full.bar.setView({ slots: [slot({ refund: REFUND })] });
+    full.frame(REFUND.startedMs);
+    const landing = Math.min(...marks(full));
+
+    const test = harness();
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.root.setMotion(REDUCED_MOTION);
+    test.frame(REFUND.startedMs);
+    expect(Math.min(...marks(test))).toBe(landing);
+
+    // Still there, still in the same place, and still expiring on time.
+    test.frame(REFUND.startedMs + 300);
+    expect(Math.min(...marks(test))).toBe(landing);
+    test.frame(REFUND.startedMs + MOTION.refund.durationMs);
+    expect(marks(test)).toHaveLength(0);
+  });
+
+  it('costs no layout pass -- a mark is a field, like everything else in a fight', () => {
+    const test = harness();
+    test.bar.setView({ slots: [slot()] });
+    test.frame(1000);
+    const before = test.bar.slots[0]?.rect;
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    test.frame(1000);
+    expect(test.bar.slots[0]?.rect).toEqual(before);
   });
 });

@@ -136,6 +136,7 @@ import { applyMove, removeFromSlot, type MoveRequest } from '../player/inventory
 import { movesASkill } from '../player/skill-slots.js';
 import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
+import { refundsBetween, type CooldownRefund } from './cooldown-refund.js';
 import { ReplicatedWorld } from './replica.js';
 import {
   advanceCast as advancePredictedCast,
@@ -575,6 +576,7 @@ type CastListener = (cast: CastStateMessage) => void;
 type CastEndListener = (end: CastEndedMessage) => void;
 type EffectListener = (effect: EffectMessage) => void;
 type CastRejectedListener = (abilityId: string, reason: string) => void;
+type CooldownRefundListener = (refunds: readonly CooldownRefund[]) => void;
 
 /**
  * A cast this client has asked for and has not heard back about (spec 067).
@@ -833,6 +835,7 @@ export class GameClient {
   private readonly castEndListeners: CastEndListener[] = [];
   private readonly effectListeners: EffectListener[] = [];
   private readonly castRejectedListeners: CastRejectedListener[] = [];
+  private readonly cooldownRefundListeners: CooldownRefundListener[] = [];
   private readonly casts = new Map<number, KnownCast>();
   private requestedAbilityId: string | null = null;
   private cooldowns: Readonly<Record<string, number>> = {};
@@ -1768,6 +1771,19 @@ export class GameClient {
     this.castListeners.push(listener);
   }
 
+  /**
+   * A cooldown of ours got shorter (spec 254).
+   *
+   * A listener rather than a field on {@link ClientView}, because it is an
+   * *event*: a view field would have to be consumed to avoid being drawn twice,
+   * and every other thing that happens to this client -- a cast ending, a line
+   * of chat, an effect -- already arrives this way. What the renderer does with
+   * it is stamp the frame's own time on it; nothing here has a clock.
+   */
+  onCooldownRefund(listener: CooldownRefundListener): void {
+    this.cooldownRefundListeners.push(listener);
+  }
+
   onCastEnded(listener: CastEndListener): void {
     this.castEndListeners.push(listener);
   }
@@ -2574,22 +2590,73 @@ export class GameClient {
         }
         break;
 
-      case ServerMessageType.Cooldowns:
+      case ServerMessageType.Cooldowns: {
+        const previous = this.cooldowns;
         this.cooldowns = Object.fromEntries(
           message.entries.map((entry) => [entry.abilityId, entry.readyAtTick]),
         );
+        // Against the **confirmed** table on both sides, which is the whole
+        // reason this is here rather than in the renderer: `visibleCooldowns()`
+        // is raised by predictions that have not been retired yet, so a guess
+        // dropping away is a decrease that nothing refunded. The first message
+        // needs no special case -- the table before it is empty, so no id is in
+        // both and nothing is reported.
+        const refunded = refundsBetween(previous, this.cooldowns);
+        if (refunded.length > 0) {
+          for (const listener of this.cooldownRefundListeners) listener(refunded);
+        }
         // The pool, and the tick it was true on (spec 069). Carried forward
         // locally from here by the sim's own regen curve, so this message is
         // needed only when that model would be wrong -- which is when something
         // was spent.
         this.serverResource = message.resource;
         this.serverResourceTick = message.atTick;
+        // **A refund moves the guess; it does not retire it** (spec 254).
+        //
+        // Retiring it was the first attempt and it was wrong in a way worth
+        // writing down, because the guess is doing a second job nothing names.
+        // `estimated` deliberately runs `oneWayTicks()` ahead of the server so
+        // that an input *arrives* on the tick it was predicted for -- while
+        // `readyAtTick` on the wire is in the **server's** frame. So every
+        // "am I off cooldown yet" the client asks (`autoAttack`'s, and the
+        // aim's) compares a server tick against a clock ahead of it, and would
+        // ask early by the one-way latency every single time. What stops it is
+        // this guess: it is computed in the client's own frame, so it sits
+        // exactly that far above the server's stamp, and `visibleCooldowns`
+        // taking the max of the two is the compensation. Delete it and the
+        // floor goes with it.
+        //
+        // Moving it keeps both. The server took a known span off this cooldown,
+        // so the guess -- which is the same instant expressed in this client's
+        // clock -- comes down by the same span. The reduction stops being
+        // hidden behind a number made before it (measured at zero latency: the
+        // bar sat 1.22s behind the truth for the rest of the cooldown), and the
+        // early-ask guard is untouched.
+        for (const refund of refunded) {
+          const predicted = this.predictedCooldowns.get(refund.abilityId);
+          if (predicted === undefined) continue;
+          this.predictedCooldowns.set(refund.abilityId, {
+            ...predicted,
+            readyAtTick: predicted.readyAtTick - refund.ticks,
+          });
+        }
+
         // A guess is retired only once the server's own number has caught up
         // with it. Dropping it on any cooldown message at all was worse than
         // not guessing: the message that arrives while a request is in flight
         // is the state from *before* it, so the guess was wiped by the very
         // staleness it exists to cover, and the next press predicted a root the
         // server was always going to refuse.
+        //
+        // Comparing the values -- rather than asking whether the server has
+        // stamped anything at all for this cast -- is deliberate and is
+        // **measured**, not merely inherited. It keeps a guess that is a tick
+        // above the truth alive for that tick, and that extra tick of grey is
+        // what stops a press landing on the boundary of an expiring cooldown
+        // from being predicted and then refused: `combat-latency.test.ts` holds
+        // the bars-without-commits gap at one over a whole run, and retiring on
+        // "the server has spoken" instead took it to eleven. The refund above
+        // is the one exception, and it is a narrow one.
         for (const entry of message.entries) {
           const predicted = this.predictedCooldowns.get(entry.abilityId);
           if (predicted !== undefined && entry.readyAtTick >= predicted.readyAtTick) {
@@ -2597,6 +2664,7 @@ export class GameClient {
           }
         }
         break;
+      }
 
       case ServerMessageType.Restoration:
         this.restorationMeter = message.meter;

@@ -126,6 +126,30 @@ export function animate(tween: Tween, nowMs: number, motion: MotionPreference): 
 }
 
 /**
+ * The value at `nowMs` for something that **drifts** rather than arrives.
+ *
+ * {@link animate} snaps to `to` under reduce-motion, and that is right for every
+ * caller it has: a window, a modal and a meter are all *arriving* somewhere, so
+ * the end of the tween is the resting state and jumping to it is the same
+ * picture without the travel.
+ *
+ * A float has no resting state. The end of its journey is where it disappears,
+ * so snapping puts it at the far end of a trip it never took -- as far from the
+ * thing it is about as the animation ever gets, and static there for its whole
+ * life. That is not "the same picture without the travel"; it is a different and
+ * worse picture. Spec 253's refund mark shipped that way and was reported twice:
+ * the label sat high above the slot and never moved, and *raising* the travel
+ * moved it further away, because `to` is the one number a reduced client draws.
+ *
+ * So a drift holds its **start**. Motion reduced means the label stays where it
+ * appears -- clear of the slot, beside what it is about -- and simply does not
+ * travel, which is what was actually asked for.
+ */
+export function drift(tween: Tween, nowMs: number, motion: MotionPreference): number {
+  return motion.reduced ? tween.from : valueAt(tween, nowMs);
+}
+
+/**
  * Whether the player has asked for less motion.
  *
  * An input to a frame, handed in beside `now` rather than sensed, for the same
@@ -156,4 +180,61 @@ export const MOTION = {
   modal: { durationMs: 90, easing: 'outBack' as Easing, riseUiPx: 10 },
   /** A meter chasing its value, so a hit reads as a hit and not a new number. */
   meter: { durationMs: 180, easing: 'outQuad' as Easing },
+  /**
+   * A number leaving a slot: up and away, decelerating (spec 254).
+   *
+   * **A notice, not a response**, which is the one entry here that is: the three
+   * above are the interface answering something the player did, and the rule
+   * they are held to is that an answer past a quarter of a second reads as a
+   * wait. Nothing is waiting on this one. It is a number floating off a thing to
+   * be read, so what bounds it is the opposite -- long enough to be noticed by
+   * somebody who is looking at the world rather than at the bar.
+   *
+   * 800ms is **the damage number's own life** (`world/damage-popup.ts`'s
+   * `NUMBER_LIFE`, 48 ticks) rather than a number chosen here, because it is the
+   * same kind of thing one layer over: a quantity that floats off what it
+   * happened to and fades out of the frame. A test asserts the two agree, so
+   * retuning one moves the other or fails.
+   *
+   * **Linear, and that is the whole difference between rising and appearing.**
+   * The three above ease out because each is *arriving* somewhere -- a window
+   * settling, a meter reaching its value -- and a decelerating float reads as
+   * having arrived and then creeping. `world/damage-popup.ts` rises its numbers
+   * at a constant rate for exactly this reason (`spent * popup.rise`, `spent`
+   * linear in age), and this is the same object one layer over.
+   *
+   * **`riseUiPx` is a floor and it is derived, not chosen.** The travel used to
+   * be one slot side, which is right in spirit -- a label off a square whose
+   * size is set by how big a finger is -- and wrong in fact: the bar converts
+   * `ACTION_SLOT_CSS` through the interface scale, so a shipped slot is 20 to 23
+   * *UI* pixels rather than the 46 an unscaled gallery draws. Twenty pixels over
+   * 800ms is a quarter of a pixel a frame at 60fps, and sub-pixel-per-frame
+   * motion does not read as motion at all -- it reads as a label that appeared
+   * somewhere and sat there, which is exactly how this was reported. The floor
+   * is therefore *one whole pixel per frame for the whole life*:
+   * `durationMs / 1000 * 60`. A bigger slot still gets a bigger rise.
+   */
+  refund: {
+    durationMs: 800,
+    easing: 'linear' as Easing,
+    riseFraction: 1,
+    riseUiPx: Math.round((800 / 1000) * 60),
+  },
 } as const;
+
+/**
+ * The entries of {@link MOTION} that are the interface *answering* something.
+ *
+ * Named so the rule they are held to -- an answer past a quarter of a second
+ * reads as a wait rather than as a response -- can be asserted over exactly
+ * them, and so a timing added later has to be classified rather than quietly
+ * escaping the check. `motion.test.ts` asserts this list plus the notices covers
+ * `MOTION` exactly.
+ */
+export const RESPONSE_TIMINGS = ['window', 'modal', 'meter'] as const;
+
+/**
+ * ...and the ones that are a *notice*: something to be read, that nothing waits
+ * on. Bounded from the other side -- long enough to be seen.
+ */
+export const NOTICE_TIMINGS = ['refund'] as const;

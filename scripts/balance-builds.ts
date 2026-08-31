@@ -184,12 +184,27 @@ function bareRecordFor(preset: BuildPreset): PersistedPlayer {
   };
 }
 
-interface Row {
-  readonly preset: BuildPreset;
+interface Fight {
   readonly metrics: BuildMetrics;
   readonly survived: boolean;
   readonly maxHealth: number;
 }
+
+interface Row extends Fight {
+  readonly preset: BuildPreset;
+}
+
+/**
+ * How the body behaves between casts.
+ *
+ * `still` is what every row of the twelve-build table does and has always done:
+ * stand there and swing. `cancelling` walks out of each follow-through the tick
+ * after the attack point, which is the *only* way Mobile Offense fires at all
+ * (spec 254) -- a body that never asks to move never reaches `cancelBackswing`,
+ * so the table above this one measures the mechanic at exactly zero whatever
+ * tiers are held.
+ */
+type Policy = 'still' | 'cancelling';
 
 /**
  * One build against a stream of monsters.
@@ -200,7 +215,17 @@ interface Row {
  * A fresh monster appears the tick after the last one dies.
  */
 function run(preset: BuildPreset): Row {
-  const record = recordFor(preset);
+  return { preset, ...fight(recordFor(preset), 'still') };
+}
+
+/**
+ * One record against a stream of monsters, under one behaviour policy.
+ *
+ * Split out of `run` so the Mobile Offense comparison below fights the *same*
+ * fight rather than a second harness written beside this one -- the whole value
+ * of comparing rank 0 with rank 3 is that nothing else about the run differs.
+ */
+function fight(record: PersistedPlayer, policy: Policy): Fight {
   const stats = computeEffectiveStats(record);
   const monster = monsterById(monsterId);
   if (!monster) throw new Error(`no such monster: ${monsterId}`);
@@ -209,7 +234,7 @@ function run(preset: BuildPreset): Row {
   const spawned = spawnEntity(state, {
     kind: EntityKindValue.Player,
     typeId: 'player',
-    ownerPlayerId: preset.id,
+    ownerPlayerId: record.id,
     position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
     stats,
     radius: 16,
@@ -228,6 +253,7 @@ function run(preset: BuildPreset): Row {
   let metrics = EMPTY_METRICS;
   let seq = 0;
   let foeId = 0;
+  let cancels = 0;
 
   for (let tick = 1; tick <= Math.round(seconds * SERVER_TICK_RATE); tick++) {
     const self = state.entities.get(selfId);
@@ -258,6 +284,13 @@ function run(preset: BuildPreset): Row {
 
     const target = state.entities.get(foeId);
     seq += 1;
+    // Asking to move is how a body walks out of a follow-through (spec 079),
+    // and one tick of it is the whole gesture. Alternating, so a fight that
+    // cancels forty swings ends where a fight that cancels none does -- a
+    // constant direction would walk the build out of its own duel and measure
+    // the leash rather than the mechanic.
+    const leaving = policy === 'cancelling' && self.cast !== null && self.cast.committed;
+    if (leaving) cancels += 1;
     // **One policy, for every build.** Throw the heaviest thing that is ready
     // and affordable, and fall back to the weapon. The differences in the table
     // are then the *stats* rather than a rotation somebody wrote per build --
@@ -268,7 +301,7 @@ function run(preset: BuildPreset): Row {
       entityId: selfId,
       seq,
       moveX: 0,
-      moveY: 0,
+      moveY: leaving ? (cancels % 2 === 0 ? 1 : -1) : 0,
       facing: 0,
       buttons: 0,
       predictedX: self.position.x,
@@ -302,7 +335,6 @@ function run(preset: BuildPreset): Row {
 
   const survivor = state.entities.get(selfId);
   return {
-    preset,
     metrics,
     survived: (survivor?.health ?? 0) > 0,
     maxHealth: stats.maxHealth,
@@ -560,6 +592,130 @@ for (const row of rows) {
     .sort((a, b) => a.remaining - b.remaining)[0];
   console.log(
     `  ${pad(row.preset.name, 16)}${next?.next ? `${next.remaining} more ${next.attribute} -> ${next.next.name}` : '(all reached)'}`,
+  );
+}
+
+// --- Mobile Offense, ranks 0 to 3 (spec 254) -------------------------------
+//
+// A section of its own rather than four more presets, because it is the only
+// thing in this file that measures a *behaviour* rather than a spread: the
+// twelve rows above stand perfectly still, and a body that never asks to move
+// never walks out of a follow-through, so Mobile Offense fires zero times on
+// every one of them however many tiers it holds.
+//
+// One spread, four tier counts, everything else identical -- the same monster,
+// the same seed, the same seconds, the same four sigils (ranked off a spread
+// that does not move between the rows). Agility is 25 deliberately: above the
+// 20 milestone, so Flow exists and the fight is the real one, and below the 35
+// milestone, which *also* grants `mobileOffenseCooldownTicks` and would quietly
+// make the rank-0 row a rank-1 row.
+//
+// What to read: TRIGGER/K against CANCELS is whether the mechanic is being
+// *collected* or merely fired, and USES/MIN is the only column that says
+// whether the reduction turned into anything. Seconds refunded is the loudest
+// number and the least meaningful on its own -- time taken off a cooldown that
+// was going to expire before the next opening is worth nothing.
+// Intelligence-heavy, and that is forced rather than chosen: `bestReady` only
+// throws an ability worth {@link PUNCTUATION_RATIO} times the weapon, and since
+// spec 217 a build with any Strength in it swings harder than any sigil it owns
+// -- eleven of the sixteen presets above clear that bar with nothing at all and
+// spend the whole fight auto-attacking. A build that never casts has no cooling
+// active ability, and a mechanic that reduces cooling active abilities cannot be
+// measured on one. Agility 25 is the constant across all four rows; the rest is
+// whatever makes four sigils castable.
+const MOBILE_OFFENSE_SPREAD = {
+  strength: 5,
+  agility: 25,
+  intelligence: 45,
+  constitution: 20,
+  perception: 5,
+  wisdom: 10,
+} as unknown as BaseStats;
+
+function mobileOffenseRecord(tiers: number): PersistedPlayer {
+  const bare: PersistedPlayer = {
+    id: `mobile-${String(tiers)}`,
+    displayName: `Mobile Offense x${String(tiers)}`,
+    baseStats: MOBILE_OFFENSE_SPREAD,
+    specializations:
+      tiers > 0 ? [{ specializationId: 'agi.mobileOffense', tier: tiers }] : [],
+    equipment: STARTER_EQUIPMENT,
+    inventory: emptyInventory(),
+    position: { x: ORIGIN.x, y: ORIGIN.y, z: 0 },
+    facing: 0,
+    currentZone: 'greenmarch',
+    level: 20,
+    experience: 0,
+    unspentProgressionPoints: 0,
+    health: 0,
+    resource: 0,
+    coins: 0,
+  };
+  const [skill1, skill2, skill3, skill4] = harnessSigilsFor(bare);
+  return {
+    ...bare,
+    equipment: {
+      ...bare.equipment,
+      skill1: skill1 ?? null,
+      skill2: skill2 ?? null,
+      skill3: skill3 ?? null,
+      skill4: skill4 ?? null,
+    },
+  };
+}
+
+const RANKS = [0, 1, 2, 3];
+const mobileRows = RANKS.map((tiers) => ({
+  tiers,
+  fight: fight(mobileOffenseRecord(tiers), 'cancelling'),
+}));
+
+console.log('\n  Mobile Offense, walking out of every follow-through:\n');
+console.log(
+  `  ${pad('RANK', 7)}${pad('PER CX', 8)}${pad('CANCELS', 9)}${pad('TRIGGERS', 10)}` +
+    `${pad('CD SEC', 8)}${pad('USES/MIN', 10)}${pad('KILLS', 7)}${pad('DPS', 7)}${pad('ROOT%', 7)}`,
+);
+console.log(`  ${'-'.repeat(73)}`);
+for (const row of mobileRows) {
+  const s = summarise(row.fight.metrics, SERVER_TICK_RATE);
+  const perTrigger =
+    row.fight.metrics.mobileOffenseTriggers > 0
+      ? s.cooldownSecondsRefunded / row.fight.metrics.mobileOffenseTriggers
+      : 0;
+  console.log(
+    `  ${pad(`x${String(row.tiers)}`, 7)}${pad(num(perTrigger, 2), 8)}` +
+      `${pad(String(row.fight.metrics.backswingsCancelled), 9)}` +
+      `${pad(String(row.fight.metrics.mobileOffenseTriggers), 10)}` +
+      `${pad(num(s.cooldownSecondsRefunded), 8)}` +
+      `${pad(num(s.activeAbilityUsesPerMinute, 2), 10)}` +
+      `${pad(String(s.kills), 7)}${pad(num(s.dps), 7)}${pad(num(s.rootedFraction * 100), 7)}`,
+  );
+}
+
+// Which abilities the time actually went to. One trigger reduces every cooling
+// active ability at once, so the total above cannot say whether a rank bought a
+// second poison dart or took a third off a 24-second Scorched Earth -- and only
+// the second of those is a balance problem.
+console.log('\n  Where the cooldown went:\n');
+for (const row of mobileRows) {
+  const byAbility = Object.entries(row.fight.metrics.cooldownRefundedByAbility)
+    .sort((a, b) => b[1] - a[1])
+    .map(([abilityId, ticks]) => `${abilityId} ${num(ticks / SERVER_TICK_RATE)}s`);
+  console.log(`  ${pad(`x${String(row.tiers)}`, 7)}${byAbility.join(', ') || '(nothing)'}`);
+}
+
+// The acceleration, stated rather than left to be worked out from two columns:
+// how much faster rank 3 gets to press an active ability than rank 0 does, on
+// the same spread against the same monster.
+const base = mobileRows[0];
+const top = mobileRows[RANKS.length - 1];
+if (base && top) {
+  const from = summarise(base.fight.metrics, SERVER_TICK_RATE).activeAbilityUsesPerMinute;
+  const to = summarise(top.fight.metrics, SERVER_TICK_RATE).activeAbilityUsesPerMinute;
+  const factor = from > 0 ? to / from : 0;
+  console.log(
+    `\n  x3 presses an active ability ${num(factor, 2)}x as often as x0 ` +
+      `(${num(from, 2)} -> ${num(to, 2)} per minute).`,
   );
 }
 

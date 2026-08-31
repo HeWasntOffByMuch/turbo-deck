@@ -181,6 +181,28 @@ export const WORLD_HUD_GOLDEN_CASES: readonly WorldHudGoldenCase[] = [
     covers: 'a skill going into an empty slot, beside the slot that is mid-cast',
   },
   {
+    // Mobile Offense's whole tell (spec 254), and the ordinary shape of it:
+    // one cancel pays every cooling ability, so several slots are marked at
+    // once. Aged, because the label rises -- a picture at zero would be of the
+    // frame it appeared on and of no other.
+    name: 'world-hud-refunded',
+    options: {
+      cooldowns: { 0: 0.75, 2: 0.3 },
+      refund: { slots: [0, 2], label: '-1.2', agedMs: 260 },
+    },
+    covers: 'a cooldown reduction landing on two slots at once: the frame, and the amount on its way off (this bar is unscaled, so its slot is the full 46px; a shipped one is 20-23)',
+  },
+  {
+    // The same mark on the frame it lands, which is the one the clearance is
+    // about: a label touching the box it came from reads as part of the box.
+    name: 'world-hud-refunded-landing',
+    options: {
+      cooldowns: { 0: 0.75, 2: 0.3 },
+      refund: { slots: [0, 2], label: '-1.6', agedMs: 0 },
+    },
+    covers: 'the instant a reduction lands: the frame, and the amount clear of the slot before it has moved',
+  },
+  {
     name: 'world-hud-alone',
     options: { noSelection: true },
     covers: 'nothing selected: the bar alone, and no panel frame in the corner at all',
