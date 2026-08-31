@@ -75,7 +75,6 @@ import type { TerrainSampler } from '../../../server/world/terrain.js';
 import { buildWorldFromMap } from '../../../server/world/build.js';
 import { adoptNavGrid } from '../../../sim/pathfinding.js';
 import {
-  BROADCAST_EVERY_N_TICKS,
   MAP_CHUNK_REQUEST_RADIUS,
   SERVER_PLAYER_RADIUS,
   SERVER_TICK_RATE,
@@ -347,8 +346,6 @@ const MESH_TIMEOUT_MS = 10_000;
 const NAV_REPLY_TIMEOUT_MS = 30_000;
 /** Never advance more than this many ticks in one frame, after a long pause. */
 const MAX_CATCH_UP_TICKS = 10;
-/** Ms between deltas -- the interval the renderer interpolates across. */
-const DELTA_MS = TICK_MS * BROADCAST_EVERY_N_TICKS;
 
 export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /**
@@ -3286,9 +3283,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let raf = 0;
   let last = 0;
   let accumulator = 0;
-  /** Ms since the last delta landed, for the interpolation alpha. */
-  let sinceDelta = 0;
-  let lastDeltaTick = 0;
   /** Whether the opening facing has been taken from the first delta. */
   let seeded = false;
   /** Whether the spawner readout has been asked for (spec 076). */
@@ -3818,7 +3812,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // moves is how often wall-clock time produces one.
     const tickMs = TICK_MS * (client.view().tickScale || 1);
     accumulator = Math.min(accumulator + elapsed, tickMs * MAX_CATCH_UP_TICKS);
-    sinceDelta += elapsed;
 
     let ticks = 0;
     // The whole loop, not `server.tick()` alone (spec 192): what the frame pays
@@ -3899,18 +3892,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     worstIngestMs = Math.max(worstIngestMs * INGEST_DECAY, ingestMs);
     updateLoading(view);
     seedTheField(view);
-    // A new delta resets the interpolation window. Measuring it from the delta's
-    // own tick rather than from a wall-clock guess keeps the alpha honest when
-    // frames are dropped.
-    if (view.tick !== lastDeltaTick) {
-      lastDeltaTick = view.tick;
-      sinceDelta = 0;
-    }
-    const alpha = Math.min(1, sinceDelta / DELTA_MS);
     // Two different clocks, and the difference matters.
     //
-    // `alpha` interpolates *bodies* between the last two deltas, so it is
-    // measured against `view.tick` -- authoritative samples, 20Hz apart.
+    // *Bodies* are played back by `EntityMotion`'s own head, which is a clock
+    // this client runs rather than a phase restarted by an arriving packet
+    // (spec 253) -- so nothing about a remote body's position is decided here
+    // any more.
     //
     // Anything with a duration -- a cast bar, a cooldown sweep -- is drawn
     // against `estimatedTick` instead, plus the fraction of a tick the
@@ -3926,7 +3913,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // tick whether the browser painted at 30fps or at 144 -- `dt` above cannot
       // say that and never could.
       ticks,
-      alpha,
       tick: drawnTick,
       selfFacing: facing,
       cursor,
