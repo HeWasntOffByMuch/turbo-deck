@@ -3296,6 +3296,28 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  as an event rather than in a delta, so nothing puts one back.
                  Dropped early it is not a round trip of error, it is a body that
                  reads as free locally for the whole rest of the phase.
+                 The other thing that spec had to fix is one the *window* only
+                 made visible: **a press has to stop the walk.** Asking to move
+                 is how a body withdraws (spec 079) and a withdrawal outranks a
+                 commit on the same tick (spec 092), so a held direction refused
+                 the cast before it began -- measured over a real loopback, 173
+                 swings asked for and **173 refused as `withdrawn`, none
+                 started**. Survivable while a follow-through could be left on
+                 its first tick and a stop-start rhythm once it could not.
+                 `castNow` already cleared the *move order*; a held key is not
+                 one. `swingHold` in `world/intent.ts` is the rest, and it is an
+                 **edge** rather than a level, which is the whole of what makes
+                 it safe: the directions already down when the button went down
+                 stop asking, one pressed *after* the commit still withdraws, a
+                 released key drops out so re-pressing it withdraws, and the
+                 hold ends at the **attack point** rather than at the end of the
+                 cast -- past which a held direction is the walk-out of the
+                 follow-through rather than a withdrawal, so a player who holds
+                 a direction through their own swing leaves on the first tick
+                 the cancel point allows with no second press. Only the explicit
+                 press sets the edge; a standing attack or cast order does not,
+                 because there a held key means what `moveIntent` has always
+                 said it means -- grabbing WASD is taking manual control back.
                  Two rules learned by getting them wrong first. The interval is
                  measured from `windupStartTick`, not from the commit: spec 065
                  turns the body before the swing begins, and counting the turn

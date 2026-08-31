@@ -75,6 +75,79 @@ export const MOVE_ACTIONS: Readonly<Record<string, readonly [number, number]>> =
  */
 export const ARRIVE_EPS = 6;
 
+/** Nothing taken out of the player's hands. */
+export const NO_HOLD: ReadonlySet<string> = new Set<string>();
+
+export interface SwingHoldInput {
+  /** What this answered on the previous frame. */
+  readonly previous: ReadonlySet<string>;
+  /** Every action id physically down right now. */
+  readonly held: ReadonlySet<string>;
+  /** An ability was asked for on this frame. */
+  readonly pressed: boolean;
+  /** A cast -- confirmed or only asked for -- is live. */
+  readonly casting: boolean;
+  /** That cast has passed its attack point (spec 144). */
+  readonly committed: boolean;
+}
+
+/**
+ * Which held directions a swing has taken out of the player's hands (spec 257).
+ *
+ * **Pressing an ability means "stop and swing".** Without this it means nothing
+ * at all: `asksToMove` is how a body withdraws from a blow (spec 079) and a
+ * withdrawal outranks a commit arriving on the same tick (spec 092), so a held
+ * direction refuses the cast *before it starts* -- measured over a real
+ * loopback, 173 swings asked for and **173 refused as `withdrawn`, none
+ * started**. A player walking with WASD simply could not attack, silently, and
+ * `castNow` clearing the move order did not help because a held key is not a
+ * move order.
+ *
+ * So the four movement actions that are **already down at the moment of the
+ * press** stop asking for anything, and the rule is edge-triggered rather than
+ * a level, which is the whole of what makes it safe:
+ *
+ *  - a direction pressed *after* the commit is untouched, so withdrawing from a
+ *    wind-up by stepping away -- the decision this game is built on -- still
+ *    works exactly as it did;
+ *  - a suppressed key that is **released** drops out, so pressing it again is a
+ *    fresh ask and withdraws;
+ *  - and the hold ends **at the attack point**, because past it walking is no
+ *    longer a withdrawal but a walk-out of the follow-through, which is the
+ *    thing Agility buys. A player who holds a direction through their own swing
+ *    therefore leaves on the first tick the cancel point allows, with no second
+ *    press -- the agile loop, for free.
+ *
+ * Pure, and the reason it is here rather than in `view.ts`: it is a rule about
+ * what the player is asking for, which is what this module is.
+ */
+export function swingHold(input: SwingHoldInput): ReadonlySet<string> {
+  // Past the attack point, or nothing to be committed to: the keys are the
+  // player's again. Checked before the press so a commit and a fresh press on
+  // one frame leave the *press* deciding, which is the later intent.
+  const carried =
+    input.casting && !input.committed
+      ? [...input.previous].filter((action) => input.held.has(action))
+      : [];
+  if (!input.pressed) return carried.length === 0 ? NO_HOLD : new Set(carried);
+  const next = new Set(carried);
+  for (const action of input.held) {
+    if (action in MOVE_ACTIONS) next.add(action);
+  }
+  return next;
+}
+
+/** The held set with whatever a swing is holding taken out of it. */
+export function heldAfterHold(
+  held: ReadonlySet<string>,
+  hold: ReadonlySet<string>,
+): ReadonlySet<string> {
+  if (hold.size === 0) return held;
+  const free = new Set(held);
+  for (const action of hold) free.delete(action);
+  return free;
+}
+
 export interface IntentInput {
   /** Action ids currently held. See {@link MOVE_ACTIONS}. */
   readonly held: ReadonlySet<string>;

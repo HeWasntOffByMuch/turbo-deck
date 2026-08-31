@@ -201,6 +201,57 @@ for spec 254's stated reason: the figure is large because one trigger pays every
 cooling active ability, which is a structural property rather than a mis-set
 constant.
 
+## Follow-up: a press has to stop the walk
+
+Shipped, the commitment read as a stop-start rhythm, and the cause was not the
+window. It was a rule twenty specs older that the window made visible.
+
+**Asking to move is how a body withdraws from a blow** (spec 079), and a
+withdrawal **outranks a commit arriving on the same tick** (spec 092). A held
+direction is asking to move on every tick. So a player walking on WASD who
+pressed attack was refused *before the cast started* — measured over a real
+loopback, **173 swings asked for, 173 refused as `withdrawn`, none started**.
+Not a swing that felt bad: no swing at all, silently, with `castRejected`
+carrying a reason nothing draws.
+
+That has always been true and was survivable while a follow-through could be
+left on its first tick, because movement and attacking interleaved anyway. With
+a real committed phase the loop becomes: stop, swing, wait, move — and the first
+step is one the player has to know to take.
+
+`castNow` was already half way there: committing *"cancels where you were
+going"*, clearing the destination and the route. A held key is not a move order,
+so it survived that and fought the cast instead.
+
+So `swingHold` in `world/intent.ts` is the other half, and it is an **edge**
+rather than a level, which is the whole of what makes it safe:
+
+- the four movement actions **already down when the button went down** stop
+  asking, so a press means "stop and swing";
+- a direction pressed *after* the commit is untouched, so withdrawing from a
+  wind-up by stepping away still works exactly as it did;
+- a suppressed key that is **released** drops out, so pressing it again is a
+  fresh ask and withdraws;
+- and the hold ends at the **attack point**, not at the end of the cast, because
+  past it a held direction is no longer a withdrawal but the walk-out of the
+  follow-through this spec is about. A player who holds a direction through
+  their own swing therefore leaves on the first tick the cancel point allows,
+  with no second press.
+
+Only the *explicit* press sets the edge. A standing attack order and a standing
+cast order (`driveAutoAttack`, `driveCastOrder`) deliberately do not, because
+there a held key means what `moveIntent` has always said it means: *grabbing
+WASD is how you take manual control back*.
+
+Measured through the Play tab's own chain, one held key from start to finish:
+
+```
+walk ......... 2.58 units a frame
+press ........ the body stops, the swing commits    (started 3, refused 0)
+attack point . the hold releases, the key is live again
+cancel point . the body walks out on its own, no second press
+```
+
 ## Out of scope
 
 - Mobile Offense's reward. Spec 254 made it active-ability cooldown and this
