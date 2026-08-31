@@ -52,6 +52,8 @@ import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, defaultMechTuning } from '../rigs.js';
 import { monsterLookFor } from './monster-look.js';
+import { beamLookFor } from './warden-beam.js';
+import { cycleByAbility } from '../../../server/data/warden.js';
 import { DropRig } from '../drop-rig.js';
 import {
   DropPresenter,
@@ -146,6 +148,7 @@ import type { AimShape } from './aim.js';
 import {
   SampledGround,
   aimTemplate,
+  laneTemplate,
   bodyRingRadius,
   bodyRingTemplate,
   discTemplate,
@@ -230,6 +233,28 @@ const AIM_COLOR = 0x7fd4ff;
 const RANGE_RING_LIFT = 1.1;
 const AIM_SHAPE_LIFT = 1.3;
 const TELEGRAPH_LIFT = 1.5;
+/**
+ * The Warden's lance (spec 259). Two decals: the lane, and its hot middle.
+ *
+ * Red, which is this file's own vocabulary for *it is about to hurt* -- but
+ * hotter and deeper than {@link TELEGRAPH_COLOR}'s salmon, because a telegraph
+ * is a place a blow will land and this is the blow. The core is the pale end of
+ * the same ramp rather than white: white on this grass is a hole rather than a
+ * heat, which is the finding `brushFire`'s embers already record one system
+ * over.
+ */
+const LANCE_COLOR = 0xff3323;
+const LANCE_CORE_COLOR = 0xffc07a;
+/**
+ * Above the telegraph, and the core above the lane.
+ *
+ * The order is the drawing order, the rule the three lifts above are already
+ * written under: the lance goes over a ground-targeted ring because a beam that
+ * is *firing* outranks a blast that is still winding up, and its core goes over
+ * itself or the two would tie and be settled by whichever three drew last.
+ */
+const LANCE_LIFT = 1.55;
+const LANCE_CORE_LIFT = 1.58;
 /**
  * The two rings drawn under a body, highest of the lot because they are the
  * ones that say *which* -- and because a body being attacked is often standing
@@ -421,6 +446,21 @@ interface Body {
    * shared default that cut straight through the pig's head.
    */
   headroom: number;
+  /**
+   * The heading this body was last *drawn* at, radians (spec 259).
+   *
+   * The eased yaw of spec 142 rather than the replicated one, and without the
+   * stagger flinch's rock on top: the flinch is a wobble of the model and the
+   * Warden's lance is not attached to the model, it is attached to the aim.
+   *
+   * Here rather than re-derived by whoever wants it, because the two candidates
+   * are both wrong. Reading `group.rotation.y` back gets the flinch with it; and
+   * a beam pointed from the drawn body along the *replicated* heading is a beam
+   * that leads the barrel it is supposed to be coming out of, by however far the
+   * ease is behind -- which is most visible during exactly the sweep the whole
+   * encounter is about.
+   */
+  drawnFacing: number;
   /**
    * The body's footprint radius, for the `surface` sampler (spec 215).
    *
@@ -656,6 +696,16 @@ export class WorldScene {
    */
   private readonly exemptBodies: THREE.Object3D[] = [];
   private readonly telegraphs = new Map<number, GroundDecal>();
+  /**
+   * The Warden's lance, per body: the lane and the hot middle inside it
+   * (spec 259).
+   *
+   * Two decals rather than one, because a band of one flat colour reads as a
+   * painted rectangle and a band with a brighter middle reads as something
+   * *shining* -- and the alternative, a gradient, is a texture this renderer
+   * would have to invent for one effect. A lock-on uses only the first of them.
+   */
+  private readonly lances = new Map<number, { lane: GroundDecal; core: GroundDecal }>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
   private readonly hoverTargets: HoverTarget[] = [];
   /**
@@ -1636,6 +1686,8 @@ export class WorldScene {
     this.carryTorch(view.selfEntityId);
 
     this.syncTelegraphs(view, frame);
+    // After `syncBodies`, which is what writes `drawnFacing` (spec 259).
+    this.syncLances(view, frame);
     this.ageEffects();
     // Advanced on whole 60Hz steps, never on `dt`: an effect stepped by elapsed
     // time is a different effect at 30fps and at 144, and "the same seed draws
@@ -1829,6 +1881,13 @@ export class WorldScene {
       decal.dispose();
     }
     this.telegraphs.clear();
+    for (const lance of this.lances.values()) {
+      this.scene.remove(lance.lane.mesh);
+      this.scene.remove(lance.core.mesh);
+      lance.lane.dispose();
+      lance.core.dispose();
+    }
+    this.lances.clear();
     this.aimShapeDecal.dispose();
     this.aimRangeDecal.dispose();
     // The two body rings, which leaked their geometry and material while they
@@ -2034,6 +2093,10 @@ export class WorldScene {
       body.group.position.set(x, ground, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
       body.group.rotation.y = -facing + flinch.yaw;
+      // Kept for anything that has to point *along* this body rather than turn
+      // with it (spec 259). The eased heading, without the flinch's rock: a
+      // beam that wobbled with the model would be a danger zone that lies.
+      body.drawnFacing = facing;
       // Rocked back about the lateral axis. Written every frame rather than
       // only while flinching, so a body that settles is put back flat.
       body.group.rotation.z = flinch.pitch;
@@ -2761,6 +2824,7 @@ export class WorldScene {
         unit: driven,
         highlight: attachHighlight(group),
         headroom: DEFAULT_HEADROOM,
+        drawnFacing: 0,
         radius,
       };
       this.scene.add(authoredBody.group);
@@ -2788,6 +2852,7 @@ export class WorldScene {
         headroom:
           (species.metrics.headY + species.metrics.headRadius) * PLAYER_FIGURE.bodyScale +
           HEADROOM_GAP,
+        drawnFacing: 0,
         radius,
       };
     } else if (rig === 'projectile') {
@@ -2796,7 +2861,7 @@ export class WorldScene {
       const shot = new ShotRig(look ?? 'orb', radius, { tint, detail, outline });
       // A shot never shows a bar, so its headroom is the shared default rather
       // than anything measured off the mesh.
-      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM, radius };
+      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM, drawnFacing: 0, radius };
     } else {
       // No authored unit for this type, so the procedural rig it has always
       // had. Additive on purpose: the roster moves over when there is a roster.
@@ -2827,6 +2892,7 @@ export class WorldScene {
           headroom:
             (species.metrics.headY + species.metrics.headRadius) * animal.figure.bodyScale +
             HEADROOM_GAP,
+          drawnFacing: 0,
           radius,
         };
       } else {
@@ -2841,6 +2907,7 @@ export class WorldScene {
           mech,
           highlight: attachHighlight(mech.group),
           headroom: DEFAULT_HEADROOM,
+          drawnFacing: 0,
           radius,
         };
       }
@@ -2901,6 +2968,93 @@ export class WorldScene {
       this.scene.remove(decal.mesh);
       decal.dispose();
       this.telegraphs.delete(id);
+    }
+  }
+
+  /**
+   * The Warden's lance: a thin line while it aims, the lane itself while it
+   * fires (spec 259).
+   *
+   * Driven off `view.casts` like the telegraph above it, and for the same
+   * reason: a lock-on *is* a wind-up and a beam *is* a channel, so both are a
+   * cast that was already replicated with its ability, its phase and all three
+   * of its ticks. Nothing new crosses the wire for any of this.
+   *
+   * A **ground decal** rather than a mesh in the air, which is the one decision
+   * here worth arguing over. The sim's lane damages everything from the muzzle
+   * to the far end, so the beam grazes the ground for its whole length -- and
+   * spec 153's argument then applies unchanged: a flat quad is buried by its own
+   * half-width times the gradient under it, and a 620-unit beam laid flat across
+   * this arena's steepest ground would be a beam with most of it inside a hill.
+   * What is drawn conforms, so what a player can see is what will hit them.
+   *
+   * The direction is the body's **drawn** heading and never the cast's aim.
+   * They agree while it is firing -- `sim/warden.ts` keeps the aim and the
+   * facing equal every tick a beam is live, and asserts it -- and during the
+   * lock-on they do not: the aim is wherever the target is standing and the
+   * barrel is wherever it has swung round to. Drawing the aim would make the
+   * pointer teleport onto a player who ran behind it; drawing the barrel makes
+   * it sweep, which is both truthful and the better telegraph.
+   */
+  private syncLances(view: ClientView, frame: FrameInfo): void {
+    const live = new Set<number>();
+
+    for (const cast of view.casts) {
+      // The ability first, which is a lookup in a one-row map: every ordinary
+      // swing in the frame leaves here without touching the entity list, so the
+      // scan below runs for a lance and for nothing else.
+      if (!cycleByAbility(cast.abilityId)) continue;
+      const body = this.bodies.get(cast.entityId);
+      if (!body) continue;
+      const entity = view.entities.find((candidate) => candidate.id === cast.entityId);
+      if (!entity) continue;
+      const look = beamLookFor(entity.typeId, cast, frame.tick);
+      if (!look) continue;
+      live.add(cast.entityId);
+
+      let lance = this.lances.get(cast.entityId);
+      if (!lance) {
+        lance = {
+          lane: new GroundDecal(decalMaterial(LANCE_COLOR, look.opacity)),
+          core: new GroundDecal(decalMaterial(LANCE_CORE_COLOR, look.coreOpacity)),
+        };
+        this.scene.add(lance.lane.mesh);
+        this.scene.add(lance.core.mesh);
+        this.lances.set(cast.entityId, lance);
+      }
+
+      // From where the body is *drawn*, so the beam comes out of the machine
+      // rather than out of where the server last said it was.
+      const at = body.group.position;
+      const placement = { x: at.x, z: at.z, heading: body.drawnFacing, lift: LANCE_LIFT };
+      lance.lane.lay(
+        `lance:${look.width}:${look.length}`,
+        () => laneTemplate(look.length, look.width),
+        placement,
+        this.sampledGround.at,
+      );
+      lance.lane.material.opacity = look.opacity;
+
+      if (look.coreWidth > 0) {
+        lance.core.lay(
+          `lance:${look.coreWidth}:${look.length}`,
+          () => laneTemplate(look.length, look.coreWidth),
+          { ...placement, lift: LANCE_CORE_LIFT },
+          this.sampledGround.at,
+        );
+        lance.core.material.opacity = look.coreOpacity;
+      } else {
+        lance.core.hide();
+      }
+    }
+
+    for (const [id, lance] of this.lances) {
+      if (live.has(id)) continue;
+      this.scene.remove(lance.lane.mesh);
+      this.scene.remove(lance.core.mesh);
+      lance.lane.dispose();
+      lance.core.dispose();
+      this.lances.delete(id);
     }
   }
 

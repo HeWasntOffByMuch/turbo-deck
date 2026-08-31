@@ -21,7 +21,8 @@
  * here departs from it, the reason is in a comment.
  */
 
-import { ORDER_MARK_ARM, brushCross, brushExplosion, brushLane, brushShards, brushSwing } from './brush.js';
+import { ORDER_MARK_ARM, brushBeam, brushCross, brushExplosion, brushLane, brushShards, brushSwing } from './brush.js';
+import { WARDEN_LASER } from '../../../server/data/warden.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -1123,6 +1124,37 @@ export const LIBRARY: readonly EffectDefinition[] = [
     bright: 'corrodeBright',
     mid: 'corrodeBody',
     deep: 'corrodeDeep',
+  }),
+
+  // The Warden's lance, once per damage pulse (spec 259).
+  //
+  // Nothing new drives this: `landArea` already sends `${ability.id}.impact` at
+  // the caster's feet with the lane's bearing on it, every pulse, hit or miss --
+  // so registering the id under that name is the whole of the wiring, and the
+  // cadence is the sim's own damage tick rather than a clock the renderer keeps.
+  //
+  // Its length and width are **imported rather than typed**, the same rule
+  // `skill.scorchedEarth.self` below states: this is not decoration around the
+  // mechanic, it is where the beam is, and marks that ran past the lane would
+  // paint ground that is safe. Two literals that have to agree is the drift a
+  // shared constant exists to refuse.
+  brushBeam({
+    id: `${WARDEN_LASER.abilityId}.impact`,
+    length: WARDEN_LASER.range,
+    width: WARDEN_LASER.width,
+    // Six along six hundred units is a spark cluster every hundred, which at
+    // four pulses a second is a beam that crackles along its whole length
+    // without any one place on it becoming a bonfire.
+    nodes: 6,
+    // **Longer than the gap between pulses**, and derived from it rather than
+    // typed. The first cut was shorter, on the argument that each beat should
+    // be visibly its own -- photographed, that is a beam whose sparks vanish
+    // for a few ticks four times a second, which reads as a strobe rather than
+    // as something sustained. The beam under them is continuous, so these have
+    // to be. Five ticks of overlap is enough to close the gap and far short of
+    // eight pulses accumulating: the marks that survive into the next beat are
+    // the dimmest end of the previous one.
+    lifetimeTicks: WARDEN_LASER.pulseIntervalTicks + 5,
   }),
 
   // Scorched Earth: the ignition, which is the moment the ring is not.

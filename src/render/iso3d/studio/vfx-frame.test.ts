@@ -49,9 +49,18 @@ describe('the preview frame', () => {
       expect(Number.isFinite(frame.span), entry.id).toBe(true);
       expect(Number.isFinite(frame.centreY), entry.id).toBe(true);
       expect(frame.span, entry.id).toBeGreaterThanOrEqual(40);
-      // Nothing in the library is a kilometre across; a span that big means a
-      // stray particle was measured rather than the effect.
-      expect(frame.span, entry.id).toBeLessThan(1200);
+      // A span this big means a *stray* particle was measured rather than the
+      // effect -- one flung out by a speed and a lifetime that multiply to
+      // something nobody intended, which is the failure this bound exists to
+      // catch and which lands in the thousands rather than the hundreds.
+      //
+      // Moved from 1200 by spec 259, deliberately and once. `warden.laser.impact`
+      // is the first effect in this library whose subject is genuinely long: it
+      // paints a six-hundred-unit beam, its emitters are strung the whole way
+      // down it by design, and `library.test.ts` asserts separately that not one
+      // of them sits outside the lane the sim damages. Framed with air around it
+      // that is 1405 across, and it is the widest thing here by a factor of two.
+      expect(frame.span, entry.id).toBeLessThan(1600);
     }
   });
 

@@ -217,6 +217,54 @@ identical solo.
   says the rear vent in the brief is unnecessary: there is no standing position
   a player can hold that the next lock-on does not simply turn to face.
 
+## The picture
+
+First-pass visuals, and the whole of them is two ground decals and one effect
+already being sent.
+
+**The beam is a ground decal**, `world/scene.ts`'s `syncLances`, driven off
+`view.casts` exactly as the ground-targeted telegraph beside it is. That is the
+one decision worth arguing over, and spec 153's argument settles it: the sim's
+lane damages everything from the muzzle to the far end, so the beam grazes the
+ground for its whole length -- and a flat quad 620 units long is buried by its
+own half-width times the gradient under it. What conforms is what a player can
+trust. Two decals rather than one, because a band of one flat colour reads as a
+painted rectangle and a band with a brighter filament in it reads as something
+shining.
+
+| | width | opacity | what it says |
+|---|---|---|---|
+| lock-on | 6 | 0.32 -> 0.60 as it settles | this way, and soon |
+| firing | 70, the lane's own | 0.55 | this ground, now |
+| the core | 14% of the lane | 0.84, shimmering | it is live |
+
+The two phases differ by a factor of ten in **width** and not in brightness
+alone, which is deliberate: the retro pass quantizes brightness and cannot
+quantize a shape, so a telegraph that differed only in opacity is a telegraph
+some frames do not show.
+
+`world/warden-beam.ts` is the pure half and decides all of it from the
+replicated cast through `data/warden.ts`'s own `wardenPhaseOf` -- the same
+function the sim asks, so what is drawn and what is happening cannot be two
+derivations. The direction is the body's **drawn** heading and never the cast's
+aim: they agree while it is firing (the sim keeps them equal and asserts it),
+and during the lock-on they do not -- so drawing the barrel makes the pointer
+sweep onto you where drawing the aim would make it teleport.
+
+**The sparks are `brushBeam`**, registered as `warden.laser.impact`. Nothing new
+drives them: `landArea` already sends `${ability.id}.impact` at the caster's
+feet with the lane's bearing, once per damage pulse, hit or miss -- so the
+cadence is the sim's own damage tick. Two layers: small marks thrown out of the
+beam's *flanks* with gravity on them, and a flat spray of `brush-mark` on the
+ground under it. The second layer carries `collision`, which is the one part
+that could not be authored as a position: an offset is a point in the effect's
+flat frame, and six hundred units down-range on a slope that is a mark floating
+over a valley -- so it falls onto whatever the scene says the ground is.
+
+Nothing is drawn during the lock-on but the line. No flash, no smoke, no mass
+anywhere: the beam is continuous and the sparks are played eight times over it,
+so anything with weight would stack eight deep over the body standing in it.
+
 ## Tuning, measured
 
 Not balance -- the brief asks for a first pass -- but the two numbers that were
@@ -269,5 +317,9 @@ it safer.
 - **Placing it on `maps/arena`.** Where the encounter lives is a level-design
   decision, in the same family as the visuals; the map editor's marker tool
   and the admin console's spawn both reach it today.
-- **Visuals.** Every hook is state; nothing here draws anything. The
-  `Overheated` mark borrows the `vulnerable` glyph until one is authored.
+- **A beam in the air.** The lance is drawn on the ground, which is where the
+  damage is and where every other readable indicator in this game lives. A
+  raised beam mesh is a look decision with geometry behind it, and this is a
+  first pass.
+- **The overheat's own paint.** It has a status mark and the machine visibly
+  stops; what venting *looks* like is a later pass.
