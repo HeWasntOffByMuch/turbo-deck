@@ -112,9 +112,15 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Nothing takes you off a blow you have committed to. Only while you are committed.'),
 
   // ======================= AGILITY ========================
+  // The three rows below are one mechanic seen three ways (spec 258): a
+  // follow-through is committed until its cancel point, Quick Recovery moves
+  // that point earlier, Flow moves it earlier again while it is held, and Mobile
+  // Offense is what pays for the cancel itself. None of them shortens the
+  // follow-through, which is what they used to do and what made them cancel each
+  // other out -- a shorter phase is a smaller window to be good at leaving.
   specialization('agi.quickRecovery', 'agility', 'Quick Recovery', T1, 3, 'passive',
-    { traits: { backswingReduction: 0.1 } },
-    'You are rooted for less of every attack. You do not attack more often.'),
+    { traits: { backswingCancelReduction: 0.05 } },
+    'You may break out of a follow-through sooner. You do not attack more often.'),
   // Cooldown, not recovery (spec 254). This used to grant Flow and a slice of
   // Flow's own backswing reduction, which made the loop a circle: cancel the
   // follow-through, gain Flow, have the follow-through shortened. The player
@@ -123,11 +129,14 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   // the trigger is read in, since a shorter backswing is fewer ticks in which
   // `cancelBackswing` can be reached at all.
   //
-  // The trigger is unchanged and is the right one: leaving a follow-through
-  // costs nothing mechanically, demands attention to a phase boundary, and can
-  // never buy attacks per second (spec 144). What it buys now is time off the
-  // active abilities, which is a reward for the *next* decision rather than a
-  // refund of the one just made.
+  // Spec 258 closed the other half of that circle: the follow-through is a
+  // fixed length now and what Agility buys is the tick it may be *left* on, so
+  // nothing in this tree can shrink the window the trigger is read in any more.
+  // The trigger itself is unchanged and is the right one: leaving a
+  // follow-through costs nothing mechanically, demands attention to a phase
+  // boundary, and can never buy attacks per second (spec 144). What it buys is
+  // time off the active abilities, which is a reward for the *next* decision
+  // rather than a refund of the one just made.
   specialization('agi.mobileOffense', 'agility', 'Mobile Offense', T1, 3, 'on cancelling a follow-through',
     { traits: { mobileOffenseCooldownTicks: SCALING.agility.mobileOffenseCooldownTicks } },
     'Leaving a follow-through early puts every ability you are waiting on back in your hands sooner.'),
@@ -137,9 +146,15 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('agi.rapidHandling', 'agility', 'Rapid Handling', T2, 3, 'casting an ability that launches something',
     { traits: { handlingReduction: 0.12 } },
     'Draw, load and release. The cadence does not move.'),
+  // 0.01 a tier rather than 0.005 (spec 258, after 254). Flow's contribution to
+  // the cancel point is 0.05 a stack in total and it now comes from **two**
+  // sources rather than four: this and the milestone that introduces Flow at
+  // all. Mobile Offense used to be one of the other two and buys cooldown now,
+  // so the number moved to keep the budget where it was measured rather than to
+  // retune anything.
   specialization('agi.flow', 'agility', 'Flow', T2, 3, 'while Flow is held',
-    { traits: { flowBackswingPct: 0.06, flowDurationPct: 0.12 } },
-    'Kept moving, kept swinging: each stack shortens the next recovery.'),
+    { traits: { flowBackswingCancelPct: 0.01, flowDurationPct: 0.12 } },
+    'Kept moving, kept swinging: each stack lets you leave the next follow-through sooner.'),
   specialization('agi.perfectExit', 'agility', 'Perfect Exit', T3, 1, 'withdrawing just after being hit',
     { traits: { perfectExitResource: 5, perfectExitWindowTicks: Math.round(SCALING.agility.flowTicks / 6) } },
     'Reading a blow and stepping out of your own turns the exchange around.'),

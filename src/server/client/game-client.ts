@@ -138,6 +138,17 @@ import { NOMINAL, observeQueue, type RateMatchState } from './rate-match.js';
 import { createFlatPredictor, PredictionBuffer, type PredictedInput, type PredictStep } from './prediction.js';
 import { refundsBetween, type CooldownRefund } from './cooldown-refund.js';
 import { ReplicatedWorld } from './replica.js';
+
+/**
+ * The wire index Flow rides under (spec 258), looked up rather than typed.
+ *
+ * `StatusVisual.wire` is append-only protocol and the table is the one place it
+ * is decided; a literal here would be a second copy of a number whose whole
+ * contract is that it never moves. `-1` is unreachable -- Flow has a row and
+ * `status-visuals.test.ts` says so -- and is the honest "no such row" rather
+ * than an index that would match somebody else's status.
+ */
+const FLOW_WIRE = visualFor(StatusId.Flow)?.wire ?? -1;
 import {
   advanceCast as advancePredictedCast,
   mayCast,
@@ -145,7 +156,10 @@ import {
   steerFacing,
   type Mirror,
 } from './combat.js';
-import { attackTimingFor } from '../sim/abilities.js';
+import { attackTimingFor, backswingCancelPointOf } from '../sim/abilities.js';
+import { backswingCancelTicksFrom } from '../sim/attack-timing.js';
+import { visualFor } from '../data/status-visuals.js';
+import { StatusId } from '../sim/statuses.js';
 import { NO_ATTACK_SPEED, resolveAttackTiming } from '../sim/attack-timing.js';
 import { staggered } from '../sim/poise.js';
 import type { CastState } from '../sim/types.js';
@@ -503,6 +517,24 @@ export interface ClientView {
    * currently see them is worse than a frame of walking.
    */
   readonly selfDead: boolean;
+  /**
+   * True while this body is inside the **committed** part of a follow-through
+   * it may not yet walk out of (spec 258).
+   *
+   * Beside {@link selfStaggered} because it is the same shape of fact -- the
+   * legs are held and asking will not help -- and separate from
+   * {@link selfRoot} because that one is the whole cast, wind-up included, and
+   * a wind-up *is* withdrawn from by walking. This is the window where it is
+   * not.
+   *
+   * Predicted rather than replicated, and it has to be: the server settles a
+   * withdrawal on the very tick the input carrying it lands, so a client that
+   * waited to be told would ask to move, be refused, and walk locally against a
+   * server holding it still -- a correction on every tick of the refusal. The
+   * estimate can be a tick late, which costs a tick, and is deliberately never
+   * early, which would cost exactly that correction.
+   */
+  readonly selfCommitted: boolean;
   /**
    * True while a request of ours has been sent and not yet answered (spec 080).
    *
@@ -1018,7 +1050,14 @@ export class GameClient {
     // predicting the withdrawal would keep the legs locked locally while the
     // server moved them -- a correction on every tick of the step away, and a
     // bar still draining for a blow that has been called off.
-    if (Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
+    //
+    // Unless the follow-through is still committed (spec 258), in which case the
+    // server will refuse the withdrawal and hold the body, and a client that
+    // withdrew anyway would spend the committed window walking against a server
+    // standing still. Read **once**, up here, because `withdrawLocally` clears
+    // the cast the answer is about.
+    const committed = this.heldByFollowThrough();
+    if (!committed && Math.hypot(intent.moveX, intent.moveY) > 1e-6) this.withdrawLocally();
     // A poise break roots this body and the server has already started
     // discarding these components (spec 173). The onset cannot be predicted --
     // nobody knows they are about to be hit -- so the first round trip's worth
@@ -1042,7 +1081,15 @@ export class GameClient {
     // Both are zeroed here rather than at the call site so they cover every
     // caller, which is the half `moveIntent` cannot reach: the bot harness and
     // the tests build an input themselves.
-    const rooted = this.staggeredNow() || this.deadNow();
+    //
+    // A committed follow-through is the third (spec 258), and it is the one the
+    // server *would* read: `asksToMove` is what makes it try to cancel, so
+    // sending the vector before the cancel point is asking for a refusal. Zeroed
+    // rather than sent-and-ignored so that the input this client predicts and
+    // the input the server acts on are the same object -- which is what keeps a
+    // replay after a correction honest. The next input past the cancel point
+    // carries the vector again and the walk-out happens then.
+    const rooted = this.staggeredNow() || this.deadNow() || committed;
     const intended = rooted ? { ...intent, moveX: 0, moveY: 0 } : intent;
     // The slow the server last told us about (spec 188). Carried on the input
     // rather than baked into the predictor, so a replay after a correction
@@ -1541,7 +1588,15 @@ export class GameClient {
     // draw a bar for a blow they have withdrawn from. The request itself stays
     // outstanding: it will still be answered, and that answer still has a
     // cooldown and a cost to give back.
-    this.withdrawLocally();
+    //
+    // Unless the follow-through is still committed (spec 258), where the server
+    // will refuse and the cast goes on. Dropping it here would be worse than
+    // the mispredicted step `sendInput` guards against: the cast lives in this
+    // client's own map and no later message puts one back, so the body would
+    // stay unrooted locally and walk against a rooted server for the whole rest
+    // of the phase. The message is still sent -- the server is entitled to
+    // refuse it, and pressing stop is still how the *orders* are dropped.
+    if (!this.heldByFollowThrough()) this.withdrawLocally();
     this.channel.send(
       encodeClientMessage({ type: ClientMessageType.CancelCast, afterInputSeq: this.seq }),
     );
@@ -1652,6 +1707,49 @@ export class GameClient {
       { activity: self.activity, activityUntilTick: self.activityUntilTick },
       this.estimated,
     );
+  }
+
+  /**
+   * Flow stacks this body is visibly carrying, off the replica (spec 258).
+   *
+   * Replicated since spec 186, so this is the client agreeing with the server
+   * rather than modelling anything. The stale entry is refused on read, which is
+   * the same comparison `statusOf` makes in the sim and the same rule
+   * `status-marks.ts` follows one layer up -- nothing prunes that list.
+   *
+   * It can only ever be *behind* the server's answer, never ahead: Flow is
+   * granted by `cancelWindup` and `cancelBackswing`, both of which end the cast,
+   * so no stack can arrive while a swing is live. A stack that expired since the
+   * commit reads as gone here and makes the cancel point later, which is the
+   * safe direction to be wrong in.
+   */
+  private selfFlowStacks(): number {
+    const self = this.welcome ? this.world.get(this.welcome.entityId) : null;
+    if (!self) return 0;
+    const flow = self.statuses.find((status) => status.wire === FLOW_WIRE);
+    return flow && flow.expiresAtTick > this.estimated ? flow.stacks : 0;
+  }
+
+  /**
+   * Whether a follow-through is holding this body right now (spec 258).
+   *
+   * Rebuilt from the **replicated** release and end ticks rather than from the
+   * timing `selfCast` reconstructs, because those two ticks are what the server
+   * actually stamped and the reconstruction is a guess made without the statuses
+   * that shaped it. The threshold is this client's own traits and its own Flow
+   * stacks, which is the same arithmetic `backswingCancelPointFor` does on the
+   * other side of the wire -- one rulebook, asked twice.
+   *
+   * Only ever true past the attack point. A wind-up is withdrawn from by walking
+   * and always has been (spec 079); this is about the phase after it.
+   */
+  private heldByFollowThrough(): boolean {
+    const cast = this.selfCast();
+    if (!cast?.committed || !this.stats) return false;
+    const backswingTicks = cast.endTick - cast.releaseTick;
+    if (backswingTicks <= 0) return false;
+    const pct = backswingCancelPointOf(this.stats.traits, this.selfFlowStacks());
+    return this.estimated < cast.releaseTick + backswingCancelTicksFrom(backswingTicks, pct);
   }
 
   /** The cast this client will still be in at `tick`, or null if it is over. */
@@ -2040,6 +2138,7 @@ export class GameClient {
       selfRoot: this.selfRoot(),
       selfStaggered: this.staggeredNow(),
       selfDead: this.deadNow(),
+      selfCommitted: this.heldByFollowThrough(),
       awaitingCast: this.outstandingCasts.length > 0,
       awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),

@@ -146,13 +146,46 @@ export const SCALING = {
   },
 
   agility: {
-    /** Wind-up, backswing and handling scales. All reciprocal, all floored. */
+    /** Wind-up and handling scales. Both reciprocal, both floored. */
     attackPointPer: 0.01,
     attackPointFloor: 0.5,
-    backswingPer: 0.018,
-    backswingFloor: 0.25,
     handlingPer: 0.012,
     handlingFloor: 0.5,
+    /**
+     * The follow-through's **cancel point** (spec 258), and deliberately not its
+     * length.
+     *
+     * Agility used to divide the backswing by a reciprocal here -- 45% off at the
+     * cap -- while the rest of its tree paid the player for walking out of one.
+     * The two ate each other: every point spent shortening the phase shrank the
+     * window the Flow/Mobile Offense loop is played in. So the length is fixed
+     * and Agility buys the boundary inside it. **Agility controls commitment; it
+     * does not erase it.**
+     *
+     * `base` is how much of the follow-through is committed with no Agility at
+     * all, `per` is what a point above the starting attribute takes off, and
+     * `floor` is how committed a body always is however much is stacked on it.
+     * Subtractive rather than reciprocal, because this is a fraction of a phase
+     * rather than a multiplier on a duration: two sources of "10% sooner" should
+     * be 20% sooner, and a reciprocal would quietly make them 19%.
+     *
+     * The budget, so that no purchase is ever bought into a filled cap: 0.11
+     * from the attribute at the hard cap, 0.15 from Quick Recovery's three tiers
+     * and 0.15 from three Flow stacks (0.05 a stack, from the Agility 20
+     * milestone that grants Flow and the `agi.flow` specialization -- Mobile
+     * Offense buys cooldown rather than Flow since spec 254), against the 0.45
+     * between the base and the floor. That is 0.41 of it, so **nothing in the
+     * shipped tree reaches the floor** -- the state `MIN_ATTACK_INTERVAL_SECONDS`
+     * is in and the right one for a guard rather than a ceiling the tree is
+     * priced against.
+     *
+     * The two thirds a player *buys* are worth more than the third the attribute
+     * hands over, which is deliberate: controlling commitment is a thing to
+     * build toward rather than a number that accrues.
+     */
+    backswingCancelBase: 0.7,
+    backswingCancelPer: 0.002,
+    backswingCancelFloor: 0.25,
     movePer: 0.6,
     /**
      * Turn rate per point.

@@ -43,8 +43,9 @@ with · an example.
 | **Wind-up** | The rooted window between committing and the effect landing (`windupTicks`). |
 | **Attack point** | The instant the effect lands, at the end of the wind-up. |
 | **Backswing** | The rooted follow-through after the attack point (`backswingTicks`). |
+| **Cancel point** | The tick within the backswing from which it may be broken off (spec 258, `backswingCancelTicks`). Before it the body is committed; the length of the backswing itself is not something progression moves. |
 | **Withdraw** | Cancelling during the wind-up. Everything is refunded and the ability did not happen. |
-| **Break off** | Cancelling during the backswing. Nothing is refunded, because the blow already landed. |
+| **Break off** | Cancelling during the backswing, from the cancel point on. Nothing is refunded, because the blow already landed. |
 
 **Do not use:** *spell*, *power*, *move*, *technique*, *attack* (as a noun for an
 ability), *animation cancel*, *cast time* (say wind-up), *recovery* (say
@@ -645,8 +646,8 @@ document assumes the latter.
 
 ### 4.8 The stat skills in `data/skills.ts`
 
-Thirty-six rows granting `traits` keys — `windupPoiseArmor`, `flowBackswingPct`,
-`shapingCostRelief`. Each is a real number in the sim, and none is described
+Thirty-six rows granting `traits` keys — `windupPoiseArmor`,
+`flowBackswingCancelPct`, `shapingCostRelief`. Each is a real number in the sim, and none is described
 anywhere a player can read; the character sheet shows the authored sentence and
 the trigger.
 
@@ -665,11 +666,20 @@ requirement, which no signed quantity reads correctly) and
 fourth gap fails rather than passing quietly.
 
 The other rule the tree forced: **a "reduction" trait is named as a reduction.**
-`backswingReduction: 0.1` is a positive number meaning *less* backswing, so
-`+10% Backswing` said the opposite of what the trait does and `+10% Backswing
-reduction` says what it is. Two fields are genuinely signed the other way —
-`prepareTicks` is authored negative and `preparedWindupScale` is a negative delta
-on a multiplier — and must not be renamed to match.
+`backswingCancelReduction: 0.05` is a positive number meaning *less* of the
+backswing you have to sit through, so `+5% Backswing` said the opposite of what
+the trait does and `+5% Backswing you may break off` says what it is. Two fields
+are genuinely signed the other way — `prepareTicks` is authored negative and
+`preparedWindupScale` is a negative delta on a multiplier — and must not be
+renamed to match.
+
+Spec 258 sharpened the same rule into a second one: **name the thing the number
+moves, not the thing it is near.** That trait used to be `backswingReduction` and
+really did divide the backswing; it now moves the *cancel point* and the phase is
+the same length for everybody. A label that still said "Backswing reduction"
+would have been correctly formed, correctly signed, and describing a mechanic
+that no longer exists. The character sheet's `Recovery` row went the same way —
+it was the banned word in §1's do-not-use list, and it is `Break off` now.
 
 ### 4.9 An arc buys nothing, and three strings say it does
 

@@ -273,9 +273,15 @@ const STAT_ROWS: readonly {
   // As percentages of the authored animation, because "0.72x" is a ratio nobody
   // has the other half of. 28% shorter is a sentence.
   {
-    label: 'Recovery',
-    of: (s) => `-${Math.round((1 - s.traits.backswingScale) * 100)}%`,
-    hint: 'How much shorter your follow-through is. You are free to move sooner; you do not attack more often. Agility.',
+    // Shown as what you may *break off* rather than as what you are committed
+    // to, so it reads the same way round as every other row here -- bigger is
+    // better -- and so the label is the controlled term for the act rather than
+    // *recovery*, which `docs/mechanics-vocabulary.md` bans outright and which
+    // this row used to be called. The Backswing itself is the same length for
+    // everybody since spec 258; what Agility buys is the exit.
+    label: 'Break off',
+    of: (s) => `${Math.round((1 - s.traits.backswingCancelPct) * 100)}%`,
+    hint: 'How much of your Backswing you may break off and walk away from. You are free to move sooner; you do not attack more often. Agility.',
   },
   {
     label: 'Wind-up',

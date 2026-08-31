@@ -285,8 +285,10 @@ describe('effective stats', () => {
         }),
       ).critChance,
     ).toBeGreaterThan(slow.critChance);
-    // And Agility's own payoff, which is the animation and never the interval.
-    expect(quick.traits.backswingScale).toBeLessThan(slow.traits.backswingScale);
+    // And Agility's own payoff, which is the commitment and never the interval
+    // (spec 258): the follow-through is the same length, and it may be left
+    // sooner.
+    expect(quick.traits.backswingCancelPct).toBeLessThan(slow.traits.backswingCancelPct);
   });
 
   it('lets the weapon set the attack speed again (spec 174)', () => {
@@ -415,7 +417,7 @@ describe('effective stats', () => {
       }),
     );
     expect(intervalOf(trained)).toBe(intervalOf(bare));
-    expect(trained.traits.backswingScale).toBeLessThan(bare.traits.backswingScale);
+    expect(trained.traits.backswingCancelPct).toBeLessThan(bare.traits.backswingCancelPct);
   });
 
   it('holds the delay between its floor and its ceiling', () => {

@@ -77,7 +77,31 @@ export interface AttackTimingBase {
   readonly baseAttackPointTicks: number;
   /** Ticks of follow-through after that, which may be walked out of. */
   readonly baseAttackBackswingTicks: number;
+  /**
+   * How much of that follow-through is **committed** before a voluntary cancel
+   * becomes legal (spec 258). 0.7 is "seven tenths of it".
+   *
+   * A fraction rather than a count of ticks, and that is the whole reason it
+   * belongs here rather than being resolved by a caller: attack speed divides
+   * the backswing, and a fraction is invariant under that division -- so the
+   * rule reads the same at every attack speed with nothing to re-derive, and a
+   * hasted body's cancel point moves with its own animation for free.
+   *
+   * Optional, defaulting to {@link FULLY_COMMITTED}: a body with no opinion is
+   * committed to its whole follow-through, which is what every monster in the
+   * game does anyway (only a player withdraws -- spec 221).
+   */
+  readonly backswingCancelPct?: number;
 }
+
+/**
+ * The cancel fraction of a body that has bought nothing: the whole thing.
+ *
+ * Not zero, which is the tempting default and the wrong one -- zero says "leave
+ * whenever you like", which is the behaviour spec 258 exists to replace, and it
+ * would arrive silently at any call site that forgot the field.
+ */
+export const FULLY_COMMITTED = 1;
 
 /** The four numbers an attack actually runs on, plus the two it is read by. */
 export interface AttackTiming {
@@ -89,6 +113,18 @@ export interface AttackTiming {
   readonly attackPointTicks: number;
   /** Ticks of backswing after the commit. Never longer than what is left of the interval. */
   readonly backswingTicks: number;
+  /**
+   * Ticks of that backswing which must elapse before a voluntary cancel is
+   * legal (spec 258). 0 when there is no follow-through to leave.
+   *
+   * Measured from the attack point, so the tick a body may walk from is
+   * `releaseTick + backswingCancelTicks`. Resolved here rather than at the
+   * cancel, and snapshotted onto the cast with the rest of this object, for the
+   * reason the rest of it is: a buff landing mid-swing belongs to the next
+   * attack. Flow won by *this* cancel pays for the next follow-through, which
+   * is exactly the loop Agility's tree describes.
+   */
+  readonly backswingCancelTicks: number;
   /** The interval read the other way round, for anything showing a player a rate. */
   readonly attacksPerSecond: number;
 }
@@ -236,6 +272,37 @@ export function attackSpeedFromHaste(haste: number): number {
 }
 
 /**
+ * How much of a follow-through is committed, as a count of ticks.
+ *
+ * Its own function because three places need the same answer and only one of
+ * them has an {@link AttackTiming} to read it off: the resolver below, the
+ * client's own prediction (which rebuilds the cancel tick from the *replicated*
+ * release and end ticks rather than from a timing it would have to guess), and
+ * the tests that assert the two agree.
+ *
+ * Two bounds, and neither is a taste:
+ *
+ *  - **at least one tick**, so a legal cancel can never land on the attack
+ *    point itself. Cancelling *on* the release tick is already impossible --
+ *    the movement pass runs before the cast pass, so `committed` is not true
+ *    until the tick after -- and flooring here makes that a property of the
+ *    number rather than of the pass order.
+ *  - **at most the whole backswing**, so no threshold can push the cancel point
+ *    past the end of the phase it is inside. A cancel point a body can never
+ *    reach is a follow-through that cannot be left, which is a different
+ *    feature and not this one.
+ *
+ * A backswing of zero has no cancel point at all rather than a floored one: a
+ * channel and every ability that ends at its release are cancellable exactly as
+ * they were before this existed.
+ */
+export function backswingCancelTicksFrom(backswingTicks: number, pct: number): number {
+  if (!Number.isFinite(backswingTicks) || backswingTicks <= 0) return 0;
+  const fraction = Number.isFinite(pct) ? clamp(pct, 0, 1) : FULLY_COMMITTED;
+  return clamp(Math.round(backswingTicks * fraction), 1, backswingTicks);
+}
+
+/**
  * Every attack duration, resolved.
  *
  * The interval is clamped, the attack point is floored at one tick -- a blow
@@ -280,12 +347,21 @@ export function resolveAttackTiming(
       intervalTicks - attackPointTicks,
     ),
   );
+  // Taken against the **resolved** backswing rather than the authored one, so a
+  // truncated follow-through keeps its proportions: a fast unit that loses the
+  // tail of its clip to the line above should not also find its cancel point
+  // pushed past what is left of the phase.
+  const backswingCancelTicks = backswingCancelTicksFrom(
+    backswingTicks,
+    base.backswingCancelPct ?? FULLY_COMMITTED,
+  );
 
   return {
     factor,
     intervalTicks,
     attackPointTicks,
     backswingTicks,
+    backswingCancelTicks,
     attacksPerSecond: rate / intervalTicks,
   };
 }

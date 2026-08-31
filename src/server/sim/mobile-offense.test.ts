@@ -34,7 +34,12 @@ import {
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
-import { attackTimingFor, cancelCast } from './abilities.js';
+import {
+  attackTimingFor,
+  backswingCancelTickOf,
+  cancelCast,
+  mayCancelBackswing,
+} from './abilities.js';
 import { stagger } from './poise.js';
 import { applyStatus, StatusId, statusOf } from './statuses.js';
 import {
@@ -181,9 +186,13 @@ function swingAndCancel(
   const slash = abilityById('melee.slash');
   if (!slash) throw new Error('no melee.slash');
   const timing = attackTimingFor(slash, { stats: entityOf(state, playerId).stats });
-  // One tick past the attack point: the blow has landed, the interval is
-  // running, and the body is in the backswing with something to walk out of.
-  const cancelFrame = timing.attackPointTicks + 1;
+  // The first frame the follow-through may be walked out of (spec 258). It used
+  // to be one tick past the attack point, which is where a backswing became
+  // cancellable before there was a cancel point at all -- asked there now the
+  // sim refuses, the cast stays live, and Mobile Offense never fires. Derived
+  // from the same timing the sim resolved rather than typed, so a retune of the
+  // threshold moves the test with it.
+  const cancelFrame = timing.attackPointTicks + timing.backswingCancelTicks;
 
   const events: ServerSimEvent[] = [];
   let current = state;
@@ -243,7 +252,7 @@ describe('what a tier is worth', () => {
     // The old reward is gone: the specialization no longer grants Flow, nor a
     // slice of Flow's own backswing reduction.
     expect(statsWithTiers(3).traits.flowTicks).toBe(0);
-    expect(statsWithTiers(3).traits.flowBackswingPct).toBe(0);
+    expect(statsWithTiers(3).traits.flowBackswingCancelPct).toBe(0);
   });
 });
 
@@ -323,10 +332,11 @@ describe('a valid backswing cancel', () => {
     const { state, playerId, dummyId } = fight(3);
     const slash = abilityById('melee.slash');
     if (!slash) throw new Error('no melee.slash');
-    // `swingAndCancel` walks on the tick after the attack point, and the world
-    // starts at tick 0 -- so the tick the cancel lands on is knowable up front,
-    // which is what lets the seed be *just* short of it.
-    const willCancelAt = attackTimingFor(slash, { stats: statsWithTiers(3) }).attackPointTicks + 2;
+    // `swingAndCancel` walks on the first tick the follow-through may be left,
+    // and the world starts at tick 0 -- so the tick the cancel lands on is
+    // knowable up front, which is what lets the seed be *just* short of it.
+    const willCancel = attackTimingFor(slash, { stats: statsWithTiers(3) });
+    const willCancelAt = willCancel.attackPointTicks + willCancel.backswingCancelTicks + 1;
     // Three ticks of cooldown against 72 ticks of reduction.
     const run = swingAndCancel(state, playerId, dummyId, { 'skill.guardBreak': willCancelAt + 3 });
     expect(run.cancelTick).toBe(willCancelAt);
@@ -544,16 +554,31 @@ describe('what must not trigger it', () => {
     }
 
     const caster = entityOf(current, playerId);
-    expect(caster.cast?.committed).toBe(true);
+    const live = caster.cast;
+    if (!live) throw new Error('no cast');
+    expect(live.committed).toBe(true);
+
+    // Taken **inside** the committed window, which is where an interrupt is the
+    // only thing that can end a follow-through at all (spec 258). Dying and
+    // having your guard broken are not decisions, so they are exempt from the
+    // cancel point -- and they still pay nothing.
+    expect(mayCancelBackswing(live, current.tick)).toBe(false);
     const interrupted = cancelCast(caster, current.tick, CastEndReason.Interrupted);
     expect(interrupted.cancelled).toBe(true);
     expect(interrupted.kind).toBe('backswing');
     expect(refunds(interrupted.events)).toHaveLength(0);
     expect(interrupted.entity.cooldowns).toBe(caster.cooldowns);
 
-    // The same call, deliberately, is paid -- so the refusal above is the reason
-    // and not the fixture.
-    const deliberate = cancelCast(caster, current.tick, CastEndReason.Cancelled);
+    // A *deliberate* cancel there is refused outright rather than paid, which is
+    // the other half of the same rule: an early walk-out is not a cheap trigger,
+    // it is not a trigger.
+    const early = cancelCast(caster, current.tick, CastEndReason.Cancelled);
+    expect(early.cancelled).toBe(false);
+    expect(refunds(early.events)).toHaveLength(0);
+
+    // And the same call at the cancel point is paid -- so the two refusals above
+    // are the reason and not the fixture.
+    const deliberate = cancelCast(caster, backswingCancelTickOf(live), CastEndReason.Cancelled);
     expect(refunds(deliberate.events)).toHaveLength(1);
     expect(deliberate.entity.cooldowns['skill.guardBreak']).toBe(900 - 3 * PER_TIER);
   });

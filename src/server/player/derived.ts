@@ -49,10 +49,15 @@ function growth(total: number): number {
  * What every body has before an attribute says otherwise.
  *
  * Every field is the *neutral* value rather than zero, which matters for the
- * scales: a `backswingScale` of 0 would mean no follow-through at all, so the
+ * scales: an `attackPointScale` of 0 would mean no wind-up at all, so the
  * neutral there is 1. A monster with no progression at all runs through the same
  * combat code as a fully-built player and comes out with the same behaviour it
  * had before this spec existed.
+ *
+ * `backswingCancelPct` is the same idea for a threshold rather than a scale
+ * (spec 258): neutral is the *base*, because zero would say "walk out whenever
+ * you like" -- which is not the absence of the mechanic, it is the behaviour the
+ * mechanic replaced.
  */
 export const NEUTRAL_TRAITS: TraitStats = {
   staggerPower: 0,
@@ -71,11 +76,11 @@ export const NEUTRAL_TRAITS: TraitStats = {
   momentumWindupScale: 0,
   heavyWindupScale: 1,
   attackPointScale: 1,
-  backswingScale: 1,
+  backswingCancelPct: SCALING.agility.backswingCancelBase,
   handlingScale: 1,
   handlingCooldowns: 0,
   flowTicks: 0,
-  flowBackswingPct: 0,
+  flowBackswingCancelPct: 0,
   flowCostPct: 0,
   flowArmorPct: 0,
   flowWeakPoint: 0,
@@ -231,10 +236,20 @@ export function deriveTraits(
     0.25,
     1,
   );
-  const backswingScale = clamp(
-    reciprocal(above(AGI), S.agility.backswingPer, S.agility.backswingFloor) * reduction(t.backswingReduction),
-    0.1,
-    1,
+  // The follow-through's cancel point, not its length (spec 258). Subtractive
+  // and clamped **once** at the end, so two sources of "a tenth sooner" are a
+  // fifth sooner rather than 0.19 -- and so that a source cannot be silently
+  // cancelled by another source having already reached the floor.
+  //
+  // Flow is deliberately not in here: it is a status, and this object is what
+  // the character *is*. `backswingCancelPointFor` puts the two together at the
+  // one moment that matters, which is the tick the swing is timed.
+  const backswingCancelPct = clamp(
+    S.agility.backswingCancelBase -
+      linear(above(AGI), S.agility.backswingCancelPer) -
+      Math.max(0, t.backswingCancelReduction),
+    S.agility.backswingCancelFloor,
+    S.agility.backswingCancelBase,
   );
   const handlingScale = clamp(
     reciprocal(above(AGI), S.agility.handlingPer, S.agility.handlingFloor) * reduction(t.handlingReduction),
@@ -336,11 +351,15 @@ export function deriveTraits(
     heavyWindupScale: reduction(t.heavyWindupReduction),
 
     attackPointScale,
-    backswingScale,
+    backswingCancelPct,
     handlingScale,
     handlingCooldowns: t.handlingCooldowns > 0 ? 1 : 0,
     flowTicks,
-    flowBackswingPct: clamp(t.flowBackswingPct, 0, 0.25),
+    // Per stack, and capped per stack rather than in total: the total is what
+    // `backswingCancelPointFor` clamps against the floor, and clamping twice
+    // would let the ceiling here decide an answer the floor there is about to
+    // decide again.
+    flowBackswingCancelPct: clamp(t.flowBackswingCancelPct, 0, 0.1),
     flowCostPct: clamp(t.flowCostPct, 0, 0.25),
     flowArmorPct: clamp(t.flowArmorPct, 0, 0.15),
     flowWeakPoint: Math.max(0, t.flowWeakPoint),

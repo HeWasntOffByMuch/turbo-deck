@@ -53,6 +53,7 @@ import { monsterById } from '../src/server/data/monsters.js';
 import { startingBaseStats } from '../src/server/player/attributes.js';
 import { milestoneProgress, resolveProgression } from '../src/server/player/progression.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
+import { mayCancelBackswing } from '../src/server/sim/abilities.js';
 import {
   EMPTY_METRICS,
   foldMetrics,
@@ -285,11 +286,14 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
     const target = state.entities.get(foeId);
     seq += 1;
     // Asking to move is how a body walks out of a follow-through (spec 079),
-    // and one tick of it is the whole gesture. Alternating, so a fight that
-    // cancels forty swings ends where a fight that cancels none does -- a
-    // constant direction would walk the build out of its own duel and measure
-    // the leash rather than the mechanic.
-    const leaving = policy === 'cancelling' && self.cast !== null && self.cast.committed;
+    // and one tick of it is the whole gesture -- but only from the **cancel
+    // point** on (spec 258), because before that the sim refuses and the swing
+    // runs to its end. Alternating, so a fight that cancels forty swings ends
+    // where a fight that cancels none does -- a constant direction would walk
+    // the build out of its own duel and measure the leash rather than the
+    // mechanic.
+    const leaving =
+      policy === 'cancelling' && self.cast !== null && mayCancelBackswing(self.cast, tick);
     if (leaving) cancels += 1;
     // **One policy, for every build.** Throw the heaviest thing that is ready
     // and affordable, and fall back to the weapon. The differences in the table

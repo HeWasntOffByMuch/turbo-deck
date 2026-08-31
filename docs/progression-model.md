@@ -148,14 +148,37 @@ keeps spec 144's rule — cancelling buys movement, never attacks per second —
 true by construction rather than by care, and the flask is barred because its
 pacing is charges as well as a timer.
 
-Flow itself is untouched and keeps its backswing reduction, because Mobile
-Offense is no longer a source of it and two purchases still are: the Agility 20
-milestone that introduces Flow, and the **Flow** specialization at 25, whose
-whole payoff it is. With `flowArmorPct`, `flowWeakPoint`, `flowCostPct` and
-`spellbladeHandling` all in the granted-by-nothing list below, removing
-`flowBackswingPct` would leave the Flow status with no live effect at all and
-two purchases buying nothing — so what Flow is *for* past recovery is a design
-question with content behind it, listed there rather than answered here.
+Flow itself keeps its effect on the follow-through, because Mobile Offense is no
+longer a source of it and two purchases still are: the Agility 20 milestone that
+introduces Flow, and the **Flow** specialization at 25, whose whole payoff it is.
+With `flowArmorPct`, `flowWeakPoint`, `flowCostPct` and `spellbladeHandling` all
+in the granted-by-nothing list below, taking that away would leave the Flow
+status with no live effect at all and two purchases buying nothing — so what Flow
+is *for* past the follow-through is a design question with content behind it,
+listed there rather than answered here.
+
+**Current rule — Agility moves the cancel point, not the length (spec 258).**
+That effect is `flowBackswingCancelPct` now rather than `flowBackswingPct`, and
+the change is the other half of the circle 254 took apart. Its own complaint was
+that a shorter backswing is *fewer ticks in which the trigger can be reached at
+all* — and Quick Recovery, the Flow specialization and the Agility attribute
+itself were all still shortening it, so the window Mobile Offense is played in
+went on shrinking with every point spent on the tree that pays for using it.
+
+So the follow-through is a fixed length for everybody and what Agility buys is
+the tick it may be **left** on: `backswingCancelPct` is the fraction of it a body
+is committed to, 0.7 with nothing bought, and the attribute (0.11 at the cap),
+Quick Recovery (0.05 a tier) and Flow (0.05 a stack) subtract from it against a
+floor of 0.25. Nothing in the tree reaches that floor, so no purchase is bought
+into a filled cap. `backswingScale` and `backswingReduction` are gone, and
+`attackTimingFor` no longer lets anything Agility writes reach
+`baseAttackBackswingTicks`.
+
+The gate sits **above** the payout, in `cancelCast`, so a walk-out asked for too
+early earns neither the cooldown nor the Flow — it is refused outright and the
+swing runs on. An interrupt is exempt, because dying and having your guard broken
+are not decisions the player is making. **Strength wins commitment; Agility
+controls commitment.**
 
 ## 6. Explicit pair synergies
 
@@ -197,7 +220,8 @@ still fails.
 
 **Systemic interaction is not removed and is expected.** Strength pressures
 Guard; Perception reads and exploits Vulnerable and Weak Points; Agility moves
-the attack point and the backswing without touching the interval; Wisdom
+the attack point and the follow-through's cancel point without touching the
+interval; Wisdom
 stretches the resource economy; Constitution absorbs. Two builds compose because
 those mechanics meet, not because a row said they should. Whether that is
 *enough* is the question removing the authored layer exists to make answerable —

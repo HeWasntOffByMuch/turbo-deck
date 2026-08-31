@@ -141,7 +141,15 @@ import { TradeStageValue } from '../../../server/net/protocol.js';
 import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
-import { aligned, moveIntent, RoutePlanner } from './intent.js';
+import {
+  aligned,
+  heldAfterHold,
+  moveIntent,
+  NO_HOLD,
+  RoutePlanner,
+  swingHold,
+} from './intent.js';
+import { committedPhase } from './cast.js';
 import {
   approachLead,
   approachOrderFor,
@@ -1854,6 +1862,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const held = new Set<string>();
   /**
+   * The directions a swing has taken out of the player's hands (spec 258), and
+   * whether one was asked for on this frame.
+   *
+   * Held here rather than derived, because the rule is an *edge*: it is the keys
+   * that were already down when the button was pressed that stop asking, and
+   * nothing else in the frame remembers what was down a moment ago. See
+   * {@link swingHold}.
+   */
+  let swingHeld: ReadonlySet<string> = NO_HOLD;
+  let castPressed = false;
+  /**
    * Held raw key *codes*, for the input that is deliberately not rebindable.
    *
    * Today that is the two camera keys and nothing else (spec 129 chose two
@@ -2306,7 +2325,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           hud.element.style.display = '';
           ui.setHudShown(true);
           if (loadControlsSeen(bindingStorage)) return;
-          // Seeded rather than assumed unchecked (spec 256): this only ever
+          // Seeded rather than assumed unchecked (spec 258): this only ever
           // reaches `false` today, since a `true` returned above -- but the
           // checkbox is asking what storage holds, not what this branch
           // already knows, and the two must not quietly drift apart.
@@ -2328,7 +2347,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     ui.setHudShown(false);
   }
 
-  // The X only puts the card away for this session (spec 256): it used to
+  // The X only puts the card away for this session (spec 258): it used to
   // also mean "seen", so a reflex close cost a player the card forever with
   // no way back. It is `setControlsShown(false)` and nothing else now.
   ui.onControlsDismissed = (): void => {
@@ -2533,6 +2552,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // ...and it calls off the auto-attack, for the same reason held keys
     // outrank a move order: reaching for a hotbar slot is taking control back.
     targetId = null;
+    // ...and it stops the walk (spec 258). Clearing the order above is only half
+    // of "give up everything that would fight it": a *held* direction is not an
+    // order, and it fights harder -- asking to move withdraws (spec 079) and
+    // outranks a commit on the same tick (spec 092), so a player walking on WASD
+    // had every single press refused as `withdrawn` before it started. The frame
+    // loop reads this edge into `swingHeld`.
+    castPressed = true;
     client.useAbility(abilityId, at.x, at.y, targetEntityId);
   }
 
@@ -3786,8 +3812,29 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     driveAutoAttack(view, me);
     drivePickup(view, me);
     driveTalk(view, me);
-    const intent = moveIntent({
+
+    // What a press has taken out of the player's hands (spec 258). Read from the
+    // cast's *phase* rather than from `selfCommitted`, because the two answer
+    // different questions: this hold ends at the **attack point**, where a held
+    // direction stops being a withdrawal and becomes a walk-out of the
+    // follow-through, while `selfCommitted` stays true only for the part of that
+    // follow-through which may not be left. Ending it there instead would keep
+    // the keys suppressed past the cancel point and cost the player the very
+    // walk-out Agility buys.
+    const ownCast = view.casts.find((cast) => cast.entityId === view.selfEntityId) ?? null;
+    swingHeld = swingHold({
+      previous: swingHeld,
       held,
+      pressed: castPressed,
+      // Both halves of "am I committed", as everything else here reads it: the
+      // server's cast and the one this client has only asked for.
+      casting: view.selfRoot !== null,
+      committed: ownCast !== null && committedPhase(ownCast.phase),
+    });
+    castPressed = false;
+
+    const intent = moveIntent({
+      held: heldAfterHold(held, swingHeld),
       self: me,
       destination,
       // Routed once and remembered, not re-searched every tick: an A* at 60Hz
@@ -3799,6 +3846,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
+      // And whether that root may be walked out of yet (spec 258). A wind-up
+      // always may; a follow-through only from its cancel point on, so this is
+      // what keeps a held key from predicting a step the server is about to
+      // refuse.
+      committed: view.selfCommitted,
       // Turning to put something down (spec 172): the same aim the server is
       // turning the body with, so the drawn heading is the one it is about to
       // arrive at rather than the one it left.

@@ -685,13 +685,20 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'windupPoiseArmor', where: 'trait', name: 'Guard protection while winding up', form: 'percent' },
   { key: 'poiseArmorAllCasts', where: 'trait', form: 'flag', name: 'Guard protection covers every cast, not only attacks.' },
 
-  { key: 'backswingReduction', where: 'trait', name: 'Backswing reduction', form: 'percent' },
+  // Both of these move a **threshold**, so the quantity is "how much of the
+  // Backswing you may break off", not "how much shorter the Backswing is"
+  // (spec 258). Named for what moves rather than for the number, because a
+  // player reading "-5% Backswing" would reasonably expect to be attacking more
+  // often, and they are not. `Backswing` and `break off` are the controlled
+  // terms (`docs/mechanics-vocabulary.md` §1), which is also why neither line
+  // says *recovery*.
+  { key: 'backswingCancelReduction', where: 'trait', name: 'Backswing you may break off', form: 'percent' },
   { key: 'handlingReduction', where: 'trait', name: 'Wind-up reduction for abilities that launch something', form: 'percent' },
   { key: 'heavyWindupReduction', where: 'trait', name: 'Wind-up reduction for heavy abilities', form: 'percent' },
 
   { key: 'flowTicks', where: 'trait', name: 'Flow duration', form: 'seconds' },
   { key: 'flowDurationPct', where: 'trait', name: 'Flow duration', form: 'percent' },
-  { key: 'flowBackswingPct', where: 'trait', name: 'Backswing reduction per Flow stack', form: 'percent' },
+  { key: 'flowBackswingCancelPct', where: 'trait', name: 'Backswing you may break off per Flow stack', form: 'percent' },
   // Seconds rather than ticks, like every other span a player is shown: the
   // sim counts in ticks and nothing outside it should have to (spec 191).
   {

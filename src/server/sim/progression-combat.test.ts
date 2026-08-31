@@ -33,7 +33,7 @@ import {
 } from '../state/types.js';
 import {
   attackTimingFor,
-  backswingScaleFor,
+  backswingCancelPointFor,
   castRangeFor,
   cooldownScaleFor,
   overflowCostFor,
@@ -140,7 +140,14 @@ function casting(abilityId: string, phase: number): CastState {
     endTick: 60,
     phase,
     committed: phase === CastPhase.Backswing,
-    timing: { factor: 1, intervalTicks: 72, attackPointTicks: 30, backswingTicks: 24, attacksPerSecond: 1 },
+    timing: {
+      factor: 1,
+      intervalTicks: 72,
+      attackPointTicks: 30,
+      backswingTicks: 24,
+      backswingCancelTicks: 17,
+      attacksPerSecond: 1,
+    },
     targetX: 100,
     targetY: 0,
     targetEntityId: 0,
@@ -165,32 +172,40 @@ const DART = ability('skill.poisonDart');
 
 // ==========================================================================
 
-describe('Agility shortens the animation and never the interval', () => {
+describe('Agility shortens the wind-up and never the interval', () => {
   it('holds at every investment, for the basic attack', () => {
     // The load-bearing assertion of spec 147. `intervalTicks` must be bit
-    // identical across the whole range of Agility, while both animation spans
-    // shrink -- so a high-Agility character attacks exactly as often as anyone
-    // else and spends far less of each cycle rooted.
+    // identical across the whole range of Agility, while the wind-up shrinks and
+    // -- since spec 258 -- the follow-through's cancel point comes forward, so a
+    // high-Agility character attacks exactly as often as anyone else and spends
+    // far less of each cycle rooted.
     const base = attackTimingFor(SLASH, { stats: statsFor() });
     let previousPoint = base.attackPointTicks;
-    let previousSwing = base.backswingTicks;
+    let previousCancel = base.backswingCancelTicks;
 
     for (const agility of [10, 20, 30, 45, SCALING.attributeHardCap]) {
       const timing = attackTimingFor(SLASH, { stats: statsFor({ agility }) });
       expect(timing.intervalTicks, `interval@${agility}`).toBe(base.intervalTicks);
       expect(timing.attacksPerSecond, `rate@${agility}`).toBe(base.attacksPerSecond);
       expect(timing.attackPointTicks, `point@${agility}`).toBeLessThanOrEqual(previousPoint);
-      expect(timing.backswingTicks, `swing@${agility}`).toBeLessThanOrEqual(previousSwing);
+      // The phase itself does **not** move (spec 258). Agility buys the exit,
+      // not the length, or every point spent would shrink the window the rest of
+      // its own tree is played in.
+      expect(timing.backswingTicks, `swing@${agility}`).toBe(base.backswingTicks);
+      expect(timing.backswingCancelTicks, `cancel@${agility}`).toBeLessThanOrEqual(previousCancel);
       previousPoint = timing.attackPointTicks;
-      previousSwing = timing.backswingTicks;
+      previousCancel = timing.backswingCancelTicks;
     }
 
     const capped = attackTimingFor(SLASH, { stats: statsFor({ agility: SCALING.attributeHardCap }) });
     expect(capped.attackPointTicks).toBeLessThan(base.attackPointTicks);
-    expect(capped.backswingTicks).toBeLessThan(base.backswingTicks);
-    // And the rooted fraction of a cycle really did fall.
-    const rooted = (t: typeof base): number => (t.attackPointTicks + t.backswingTicks) / t.intervalTicks;
-    expect(rooted(capped)).toBeLessThan(rooted(base) * 0.75);
+    expect(capped.backswingCancelTicks).toBeLessThan(base.backswingCancelTicks);
+    // And the rooted fraction of a cycle really did fall -- counting the
+    // follow-through only up to the tick it may be walked out of, which is what
+    // a player who walks out of it actually spends.
+    const rooted = (t: typeof base): number =>
+      (t.attackPointTicks + t.backswingCancelTicks) / t.intervalTicks;
+    expect(rooted(capped)).toBeLessThan(rooted(base) * 0.8);
   });
 
   it('does not let any other attribute touch the interval either', () => {
@@ -212,17 +227,20 @@ describe('Agility shortens the animation and never the interval', () => {
     expect(windupScaleFor(SPELL, agile, 0)).toBe(1);
   });
 
-  it('lets Flow shorten the follow-through further, and nothing else', () => {
+  it('lets Flow bring the cancel point forward, and nothing else', () => {
     const stats = statsFor({ agility: 30 }, { specializations: [{ specializationId: 'agi.flow', tier: 3 }] });
-    const still = backswingScaleFor({ stats, statuses: NO_STATUSES }, 0);
-    const flowing = backswingScaleFor(
-      { stats, statuses: applyStatus(NO_STATUSES, StatusId.Flow, 0, 100, { maxStacks: 3 }) },
-      0,
-    );
-    expect(flowing).toBeLessThan(still);
-    // Still not the interval.
-    const timing = attackTimingFor(SLASH, { stats, statuses: NO_STATUSES }, 0);
-    expect(timing.intervalTicks).toBe(attackTimingFor(SLASH, { stats: statsFor() }).intervalTicks);
+    const flowing = applyStatus(NO_STATUSES, StatusId.Flow, 0, 100, { maxStacks: 3 });
+    const still = backswingCancelPointFor({ stats, statuses: NO_STATUSES }, 0);
+    expect(backswingCancelPointFor({ stats, statuses: flowing }, 0)).toBeLessThan(still);
+
+    // Not the follow-through's length, and not the interval (spec 258). Flow
+    // used to divide the phase, which is what made it fight Mobile Offense.
+    const dry = attackTimingFor(SLASH, { stats, statuses: NO_STATUSES }, 0);
+    const wet = attackTimingFor(SLASH, { stats, statuses: flowing }, 0);
+    expect(wet.backswingTicks).toBe(dry.backswingTicks);
+    expect(wet.backswingCancelTicks).toBeLessThan(dry.backswingCancelTicks);
+    expect(dry.intervalTicks).toBe(attackTimingFor(SLASH, { stats: statsFor() }).intervalTicks);
+    expect(wet.intervalTicks).toBe(dry.intervalTicks);
   });
 });
 

@@ -495,13 +495,17 @@ describe('the passive skill tree (spec 191)', () => {
   });
 
   it('reads a reduction as a reduction', () => {
-    // `backswingReduction: 0.1` is a positive number meaning *less* backswing.
-    // Named as the quantity rather than as the reduction, the line said the
-    // opposite of what the trait does.
+    // `backswingCancelReduction: 0.05` is a positive number meaning *less* of
+    // the follow-through you have to sit through. Named as the quantity rather
+    // than as the reduction, the line said the opposite of what the trait does
+    // -- and since spec 258 the quantity it must not be misread as is the
+    // *length* of the phase, which this no longer moves at all.
     const quick = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'agi.quickRecovery');
     expect(quick).toBeDefined();
     if (!quick) return;
-    expect(technicalText(describeSpecialization(quick, 0))).toContain('+10% Backswing reduction');
+    const text = technicalText(describeSpecialization(quick, 0));
+    expect(text).toContain('+5% Backswing you may break off');
+    expect(text).not.toContain('Backswing reduction');
   });
 
   it('marks a premium as bad and a benefit as good', () => {

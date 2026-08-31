@@ -3218,7 +3218,8 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  together and end apart**: an interval from the wind-up's first
                  tick, an attack point partway through it where the blow becomes
                  real, and a backswing after that which a *player* may walk out
-                 of for free (spec 221 roots monsters through theirs). One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
+                 of once it has been committed to for long enough (spec 258; spec
+                 221 roots monsters through theirs). One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
                  HoN's, where +100 is twice the rate -- divides all three, so
                  attacking faster shortens the swing rather than only the
                  standing still.
@@ -3231,6 +3232,94 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  movement and can never buy a faster next attack, since the tick
                  governing the next one was written down at the attack point and
                  no cancellation path writes it again.
+                 Since spec 258 the follow-through has a boundary of its own, and
+                 it exists because Agility's tree was pulling against itself:
+                 half of it *shortened* the phase (the attribute's own reciprocal
+                 `backswingScale`, Quick Recovery, every Flow stack) and the other
+                 half paid you for walking out of one, so each point spent shrank
+                 the window the rest of the tree is played in. Underneath both,
+                 `cancelBackswing` succeeded unconditionally -- escaping a
+                 follow-through was already free and instant for everybody, with
+                 nothing to buy and nothing to be good at.
+                 Spec 254 had taken apart the tightest loop of that a spec
+                 earlier -- Mobile Offense used to pay in Flow and Flow shortened
+                 the follow-through, so the reward for leaving one was a shorter
+                 one, and it buys active-ability cooldown now -- and named the
+                 rest of it in passing: a shorter backswing is *fewer ticks in
+                 which `cancelBackswing` can be reached at all*. That window is
+                 what this one is about, and the gate sits above the payout, so
+                 an early walk-out earns neither the cooldown nor the Flow.
+                 So `AttackTiming` carries a `backswingCancelTicks` and
+                 `cancelCast` **refuses** a voluntary walk-out before it. Agility
+                 buys that boundary rather than the length: nothing it writes
+                 touches `baseAttackBackswingTicks` any more, and the phase a
+                 fresh character has is the phase a specialist has -- they differ
+                 in how early they may leave it. **Agility controls commitment;
+                 it does not erase it.**
+                 The threshold is a **fraction**, and that is what makes it one
+                 number rather than a table: attack speed divides the backswing,
+                 and a fraction is invariant under that division, so a hasted
+                 body's cancel point moves with its own animation for free. It is
+                 resolved at the commit into `cast.timing`, beside the interval
+                 and the attack point and for their reason -- so Flow won by
+                 *this* cancel pays for the *next* follow-through, which is the
+                 loop the tree describes rather than a buff that reaches
+                 backwards into the swing it came from.
+                 Stacking is **subtractive and clamped once**: base, less the
+                 attribute, less Quick Recovery, less Flow per stack, held at a
+                 floor. Subtractive because the threshold is already a fraction of
+                 a phase -- two sources of "a tenth sooner" have to be a fifth
+                 sooner -- and clamped at the end rather than per source, so no
+                 purchase is silently cancelled by another having reached the
+                 bound first. The shipped maxima come to 0.41 of the 0.45 between
+                 base and floor, so **nothing in the tree reaches the floor**,
+                 which is the state a guard should be in rather than a ceiling the
+                 tree is priced against.
+                 An **interrupt is exempt**, and that is the definition rather
+                 than an exception: the gate is about a decision the player is
+                 making, and dying or having your guard broken is neither. Both
+                 arrive as `Interrupted` from `blow.ts` and `poise.ts`, so the
+                 things meant to knock a body out of a swing still do, on any
+                 tick. An ability with no follow-through has no cancel point at
+                 all, so a channel behaves exactly as it did.
+                 The client **mirrors** the rule rather than being told it
+                 (`ClientView.selfCommitted`), and it has to: the server settles a
+                 withdrawal on the very tick the input carrying it lands, so a
+                 client that waited to be told would ask to move, be refused, and
+                 walk locally against a server standing still -- a correction on
+                 every tick of the refusal. It rebuilds the cancel tick from the
+                 *replicated* release and end ticks and its own replicated Flow
+                 stacks, and is allowed to be a tick **late** and never early:
+                 late costs a tick, early costs exactly that correction. Two
+                 paths rather than one, and the second is the worse failure:
+                 `sendInput` must not predict the *walk*, and
+                 `GameClient.cancelCast` -- the stop key -- must not drop the
+                 *cast*, because a cast lives in the client's own map and arrives
+                 as an event rather than in a delta, so nothing puts one back.
+                 Dropped early it is not a round trip of error, it is a body that
+                 reads as free locally for the whole rest of the phase.
+                 The other thing that spec had to fix is one the *window* only
+                 made visible: **a press has to stop the walk.** Asking to move
+                 is how a body withdraws (spec 079) and a withdrawal outranks a
+                 commit on the same tick (spec 092), so a held direction refused
+                 the cast before it began -- measured over a real loopback, 173
+                 swings asked for and **173 refused as `withdrawn`, none
+                 started**. Survivable while a follow-through could be left on
+                 its first tick and a stop-start rhythm once it could not.
+                 `castNow` already cleared the *move order*; a held key is not
+                 one. `swingHold` in `world/intent.ts` is the rest, and it is an
+                 **edge** rather than a level, which is the whole of what makes
+                 it safe: the directions already down when the button went down
+                 stop asking, one pressed *after* the commit still withdraws, a
+                 released key drops out so re-pressing it withdraws, and the
+                 hold ends at the **attack point** rather than at the end of the
+                 cast -- past which a held direction is the walk-out of the
+                 follow-through rather than a withdrawal, so a player who holds
+                 a direction through their own swing leaves on the first tick
+                 the cancel point allows with no second press. Only the explicit
+                 press sets the edge; a standing attack or cast order does not,
+                 because there a held key means what `moveIntent` has always
+                 said it means -- grabbing WASD is taking manual control back.
                  Two rules learned by getting them wrong first. The interval is
                  measured from `windupStartTick`, not from the commit: spec 065
                  turns the body before the swing begins, and counting the turn
@@ -3312,8 +3401,16 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  BAT per row beside their own `NO_ATTACK_SPEED` as they already
                  did. `npx tsx scripts/probe-attack.ts --cancel=never|backswing`
                  prints the two timelines side by side, and the invariant reads
-                 off the summaries: same attacks, same cadence, a body rooted 24
-                 ticks per cycle or 1.
+                 off the summaries: same attacks, same cadence, a body rooted for
+                 the whole follow-through or only up to its cancel point.
+                 `--agility[=n]` is the other instrument (spec 258) and prints the
+                 four-build follow-through table instead of a timeline -- nothing,
+                 Quick Recovery, Flow, both -- with every number measured off a
+                 real fight rather than off `attackTimingFor`, since a table
+                 computed from the function the rule is written in would agree
+                 with itself whatever the sim did. At Agility 60 the movement
+                 freedom runs 10t to 17t while the follow-through stays 24t and
+                 the next attack stays due on the same tick in all four rows.
                  player/trade.ts and trades.ts are the first exchange with two
                  owners (spec 132), and the difference from the shop is not size:
                  its failure mode is *duplication* rather than a wrong number, so
@@ -4100,12 +4197,15 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  a socket with nothing plugged into it yet, that line says so in
                  as many words rather than describing a number that never moves.
                  The structural commitment is one line in `attackTimingFor`:
-                 **Agility scales the attack point and the backswing and nothing
-                 it writes reaches `baseAttackTimeTicks`.** A high-Agility
-                 character attacks exactly as often as anybody else and spends far
-                 less of each cycle rooted, which makes "the fast stat must not
-                 become the mandatory damage stat" a property of the module graph
-                 rather than a number somebody keeps retuning.
+                 **Agility scales the attack point and the follow-through's cancel
+                 point, and nothing it writes reaches `baseAttackTimeTicks`.** A
+                 high-Agility character attacks exactly as often as anybody else
+                 and spends far less of each cycle rooted, which makes "the fast
+                 stat must not become the mandatory damage stat" a property of the
+                 module graph rather than a number somebody keeps retuning. Since
+                 spec 258 it does not reach `baseAttackBackswingTicks` either --
+                 the phase is the same length for everybody, and what Agility buys
+                 is the tick it may be walked out of.
                  The derivation runs one way and stops (`player/progression.ts`,
                  `player/derived.ts`): allocation plus held grants settles the
                  attributes, those decide which milestones are met, and only

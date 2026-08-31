@@ -175,7 +175,14 @@ async function cancelAfterAttack(
       done = true;
     }
     await test.advance();
-    if (done) test.intent({ moveX: 0, moveY: 0, facing: 0 });
+    // **Held rather than pressed once** (spec 258). A follow-through is
+    // committed until its cancel point, so one tick of walking at the attack
+    // point is refused and never retried -- and the client will not even send
+    // the vector until its own estimate reaches that tick. Let go once the cast
+    // is actually gone, which is what both rewards hang off.
+    if (done && test.server.world.entities.get(test.selfId)?.cast === null) {
+      test.intent({ moveX: 0, moveY: 0, facing: 0 });
+    }
   }
   if (!done) throw new Error('the swing never reached its follow-through');
 
