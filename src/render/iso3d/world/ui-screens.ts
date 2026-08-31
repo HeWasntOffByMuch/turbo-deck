@@ -1556,7 +1556,13 @@ export class UiScreens {
    * art while the skill bar behind it is not.
    */
   setHudShown(shown: boolean): void {
-    this.layers.layer('hud').visible = shown;
+    // `setShown` rather than the field, because this is the one caller in the
+    // framework that decides visibility from *outside* a layout pass (spec 256).
+    // Assigned directly, the layer came back on with no rect and stayed undrawn
+    // until something else dirtied the tree -- so pressing Start left the skill
+    // bar, the chat log and the dialogue bubble missing until a window was
+    // opened, and then all three appeared at once.
+    this.layers.layer('hud').setShown(shown);
   }
 
   /**
