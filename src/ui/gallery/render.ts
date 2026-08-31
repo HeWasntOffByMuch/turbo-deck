@@ -769,7 +769,7 @@ export interface WorldHudRenderOptions {
   /** A skill-slot change in flight over a slot (spec 188). */
   readonly change?: { readonly slot: number; readonly progress: number };
   /**
-   * A cooldown reduction landing on slots (spec 253).
+   * A cooldown reduction landing on slots (spec 254).
    *
    * `agedMs` is how far into the mark's life the frame is, and it becomes the
    * scene's clock: the mark rises with time, so a golden at zero would only

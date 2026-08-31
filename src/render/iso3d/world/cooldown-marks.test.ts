@@ -1,5 +1,5 @@
 /**
- * What a refund mark says, and how long it says it for (spec 253).
+ * What a refund mark says, and how long it says it for (spec 254).
  */
 
 import { describe, expect, it } from 'vitest';
@@ -59,7 +59,7 @@ describe('the label', () => {
 
 /**
  * A number floating off a slot lives exactly as long as one floating off a body
- * (spec 253).
+ * (spec 254).
  *
  * Two constants in two layers that mean the same span, so the agreement is a
  * test rather than a coincidence: `src/ui/` cannot import the renderer, so

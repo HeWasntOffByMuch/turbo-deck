@@ -83,7 +83,7 @@ export interface ActionSlotView {
   /** A skill-slot change in flight over this slot (spec 188). */
   readonly change: { readonly label: string; readonly progress: number } | null;
   /**
-   * A cooldown reduction that just landed on this slot (spec 253).
+   * A cooldown reduction that just landed on this slot (spec 254).
    *
    * Composed rather than a number, for the reason every other string this
    * screen is handed is: `src/ui/` has no tick rate and no view of what a

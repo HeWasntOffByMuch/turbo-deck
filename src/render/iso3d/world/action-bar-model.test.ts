@@ -240,7 +240,7 @@ describe('actionBarViewOf (spec 196)', () => {
 });
 
 /**
- * Which slot a refund is drawn on (spec 253).
+ * Which slot a refund is drawn on (spec 254).
  *
  * The mark is a fact about an *ability*; which square that ability is sitting
  * in is this layer's question, and the answer is only ever "the slot holding

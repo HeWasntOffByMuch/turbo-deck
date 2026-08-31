@@ -1,5 +1,5 @@
 /**
- * The `-1.2` over a slot, and how long it stays there (spec 253).
+ * The `-1.2` over a slot, and how long it stays there (spec 254).
  *
  * Mobile Offense had no feedback at all when it shipped, and that was a
  * regression rather than an omission: the reward it replaced was a Flow stack,

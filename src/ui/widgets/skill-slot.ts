@@ -98,7 +98,7 @@ export class SkillSlot extends StyledWidget {
    */
   change: { readonly label: string; readonly progress: number } | null = null;
   /**
-   * A cooldown reduction that just landed here (spec 253), or null.
+   * A cooldown reduction that just landed here (spec 254), or null.
    *
    * Its own field rather than something inferred from `sweep` moving, because a
    * widget cannot tell a wedge that shrank because time passed from one that
@@ -168,7 +168,7 @@ export class SkillSlot extends StyledWidget {
    * How far the refund label has travelled off this slot, in UI pixels.
    *
    * The paint's own arithmetic, called out so a probe can read what actually
-   * moved rather than the mark's start (spec 253) -- "it appears and does not
+   * moved rather than the mark's start (spec 254) -- "it appears and does not
    * move" is a claim about this number, and a start plus a promise that it
    * animates is exactly what was true while it did not. The clearance is not in
    * it, because a constant offset says nothing about travel.

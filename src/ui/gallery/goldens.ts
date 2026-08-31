@@ -150,7 +150,7 @@ export const WORLD_HUD_GOLDEN_CASES: readonly WorldHudGoldenCase[] = [
     covers: 'a skill going into an empty slot, beside the slot that is mid-cast',
   },
   {
-    // Mobile Offense's whole tell (spec 253), and the ordinary shape of it:
+    // Mobile Offense's whole tell (spec 254), and the ordinary shape of it:
     // one cancel pays every cooling ability, so several slots are marked at
     // once. Aged, because the label rises -- a picture at zero would be of the
     // frame it appeared on and of no other.

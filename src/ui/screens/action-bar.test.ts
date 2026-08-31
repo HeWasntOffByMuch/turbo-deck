@@ -253,7 +253,7 @@ describe('the hovered slot', () => {
 });
 
 /**
- * The refund mark (spec 253): where it is drawn, and when it stops being.
+ * The refund mark (spec 254): where it is drawn, and when it stops being.
  *
  * Asserted off the draw list rather than off pixels, because what is being
  * checked is that the widget *emits* the mark at the right moment and in the

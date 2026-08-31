@@ -1,5 +1,5 @@
 /**
- * Telling a refund from everything else a cooldown table does (spec 253).
+ * Telling a refund from everything else a cooldown table does (spec 254).
  */
 
 import { describe, expect, it } from 'vitest';

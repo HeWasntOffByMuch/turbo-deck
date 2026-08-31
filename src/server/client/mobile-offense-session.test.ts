@@ -1,5 +1,5 @@
 /**
- * Mobile Offense, as a player actually reaches it (spec 253).
+ * Mobile Offense, as a player actually reaches it (spec 254).
  *
  * `sim/mobile-offense.test.ts` drives the mechanic through `step`, which is the
  * right instrument for what it pays and what it must not touch. This asks the
@@ -234,7 +234,7 @@ describe('Mobile Offense, bought and used through the wire', () => {
   });
 
   /**
-   * The feedback the mechanic shipped without (spec 253).
+   * The feedback the mechanic shipped without (spec 254).
    *
    * Cooldown coming off a *different* button from the one that earned it is the
    * least visible reward this game hands out -- the reward it replaced was a

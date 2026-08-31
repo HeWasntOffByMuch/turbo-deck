@@ -181,7 +181,7 @@ export const MOTION = {
   /** A meter chasing its value, so a hit reads as a hit and not a new number. */
   meter: { durationMs: 180, easing: 'outQuad' as Easing },
   /**
-   * A number leaving a slot: up and away, decelerating (spec 253).
+   * A number leaving a slot: up and away, decelerating (spec 254).
    *
    * **A notice, not a response**, which is the one entry here that is: the three
    * above are the interface answering something the player did, and the rule

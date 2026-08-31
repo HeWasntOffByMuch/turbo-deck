@@ -1449,7 +1449,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the one thing a harness has to be able to press.
     const dialogueRects = boxes(readout.dialogueRects);
     const dialogue = `${String(readout.dialogueOpen)}|${dialogueRects}|${readout.dialogueLine}`;
-    // The refund marks and the motion preference behind them (spec 253). In the
+    // The refund marks and the motion preference behind them (spec 254). In the
     // key as well as the attributes, because a mark *travelling* changes nothing
     // else on this line -- which is the whole thing being asked, and a readout
     // that only refreshed when something else moved would report the frame it
@@ -2261,7 +2261,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   client.onChat((message) => {
     ui.pushChat(message.channel, message.from, message.text);
   });
-  // A cooldown of ours got shorter (spec 253) -- Mobile Offense walking out of
+  // A cooldown of ours got shorter (spec 254) -- Mobile Offense walking out of
   // a follow-through, or a guard break's refund. The reward is time off a
   // *different* button from the one that earned it, which is the least visible
   // thing this game hands out, so the bar says so.

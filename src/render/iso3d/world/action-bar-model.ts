@@ -57,7 +57,7 @@ export interface ActionBarSource {
   /** A skill-slot change in flight (spec 188), already resolved against the tick. */
   readonly swap: SwapProgress | null;
   /**
-   * Cooldown reductions still being drawn (spec 253).
+   * Cooldown reductions still being drawn (spec 254).
    *
    * Held by the mount rather than derived here, because a mark outlives the
    * frame it landed on and this function is a pure map from one frame's facts.
@@ -138,7 +138,7 @@ function slotViewOf(
 }
 
 /**
- * The mark over a slot, or null (spec 253).
+ * The mark over a slot, or null (spec 254).
  *
  * The label is composed here rather than in the widget because turning a span
  * of seconds into the text a player reads is a content decision -- the same one

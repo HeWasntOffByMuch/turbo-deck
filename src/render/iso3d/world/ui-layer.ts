@@ -120,7 +120,7 @@ export interface UiReadout {
   readonly dialogueLine: string;
   /**
    * Whether the interface is honouring a reduced-motion preference, and how far
-   * each live refund mark has travelled (spec 253).
+   * each live refund mark has travelled (spec 254).
    *
    * Published because that feature has been reported wrong three times and every
    * one was invisible to a headless assertion -- a masked number, a label stuck
@@ -576,7 +576,7 @@ export class UiLayer {
     this.screens.select(entityId);
   }
 
-  /** A cooldown of ours got shorter (spec 253). Marks the slots it landed on. */
+  /** A cooldown of ours got shorter (spec 254). Marks the slots it landed on. */
   pushCooldownRefund(refunds: readonly CooldownRefund[]): void {
     this.screens.pushCooldownRefund(refunds);
   }

@@ -372,7 +372,7 @@ export class UiScreens {
   /** What has been said. Client state: nothing here is replicated (spec 189). */
   private readonly chatLog = new ChatLog();
   /**
-   * Cooldown reductions still being drawn (spec 253).
+   * Cooldown reductions still being drawn (spec 254).
    *
    * Client state exactly like {@link chatLog}, and stamped the same way: a
    * refund arrives on a network callback rather than inside the frame, so the
@@ -1319,7 +1319,7 @@ export class UiScreens {
     readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly dialogueLine: string;
     /**
-     * The refund marks currently up, and where each is drawn (spec 253).
+     * The refund marks currently up, and where each is drawn (spec 254).
      *
      * Published because this feature has now been reported wrong three times and
      * every one of them was invisible to a headless assertion: a masked number,
@@ -1716,7 +1716,7 @@ export class UiScreens {
   }
 
   /**
-   * A cooldown of ours just got shorter (spec 253).
+   * A cooldown of ours just got shorter (spec 254).
    *
    * Driven from `view.ts`'s `onCooldownRefund` in the register `pushChat` is
    * driven from `onChat`: the impure half owns the client and this half owns

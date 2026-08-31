@@ -1,5 +1,5 @@
 /**
- * Mobile Offense: what leaving a follow-through pays (spec 253).
+ * Mobile Offense: what leaving a follow-through pays (spec 254).
  *
  * Driven through the real `step` for the reason `attack-cancel.test.ts` gives:
  * the trigger lives entirely in the interaction between the movement pass and

@@ -1772,7 +1772,7 @@ export class GameClient {
   }
 
   /**
-   * A cooldown of ours got shorter (spec 253).
+   * A cooldown of ours got shorter (spec 254).
    *
    * A listener rather than a field on {@link ClientView}, because it is an
    * *event*: a view field would have to be consumed to avoid being drawn twice,
@@ -2611,7 +2611,7 @@ export class GameClient {
         // was spent.
         this.serverResource = message.resource;
         this.serverResourceTick = message.atTick;
-        // **A refund moves the guess; it does not retire it** (spec 253).
+        // **A refund moves the guess; it does not retire it** (spec 254).
         //
         // Retiring it was the first attempt and it was wrong in a way worth
         // writing down, because the guess is doing a second job nothing names.

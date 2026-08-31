@@ -134,7 +134,7 @@ which already meant the four **active abilities** a character equips
 (`skill1..skill4`, `activeSkillId`, `SkillSlot`). Those are untouched and remain
 a separate system with a separate UI.
 
-**Current rule — Mobile Offense pays cooldown, not recovery (spec 253).** The
+**Current rule — Mobile Offense pays cooldown, not recovery (spec 254).** The
 row and its milestone are the one place a conversion since 244 has changed what
 a tier is *worth*, and the reason is that the loop was a circle: cancel the
 follow-through, gain Flow, have Flow shorten the follow-through. The player has

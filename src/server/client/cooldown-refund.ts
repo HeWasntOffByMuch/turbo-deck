@@ -1,5 +1,5 @@
 /**
- * A cooldown that got *shorter* (spec 253).
+ * A cooldown that got *shorter* (spec 254).
  *
  * The server never says "I took 1.2s off Arc Lash". It sends the owner their
  * whole cooldown table whenever it changes, so a refund is a **difference**

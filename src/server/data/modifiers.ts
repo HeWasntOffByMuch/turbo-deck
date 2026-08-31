@@ -66,7 +66,7 @@ export interface TraitModifier {
   readonly spellbladeHandling?: number;
   /**
    * Mobile Offense: ticks of active-ability cooldown one walked-out
-   * follow-through removes (spec 253). Sums, spent whole.
+   * follow-through removes (spec 254). Sums, spent whole.
    */
   readonly mobileOffenseCooldownTicks?: number;
   /** Perfect Exit: resource returned, and its internal cooldown. */
