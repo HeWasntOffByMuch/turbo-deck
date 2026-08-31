@@ -82,6 +82,16 @@ interface Sample {
   readonly guard: number;
   /** Whether the guard track was drawing at all -- it hides at full. */
   readonly guardShown: boolean;
+  /**
+   * Whether this body wears a player's plate rather than a monster's bar
+   * (spec 256).
+   *
+   * The guard rule differs between the two by design: on a plate that row is
+   * part of the frame and is drawn whether or not it is dented, so the
+   * "a full guard bar was drawn" check below would fail on the local player's
+   * own plate on every frame of every run.
+   */
+  readonly plate: boolean;
 }
 
 async function waitForServer(url: string): Promise<void> {
@@ -136,6 +146,7 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
       casting: boolean;
       guard: number;
       guardShown: boolean;
+      plate: boolean;
     }[] = [];
     const start = performance.now();
     while (performance.now() - start < duration) {
@@ -182,6 +193,7 @@ async function watchBars(page: Page, ms: number): Promise<Sample[]> {
           guardShown:
             (holder.querySelector('[data-bar="guard"]') as HTMLElement | null)?.style
               .visibility === 'visible',
+          plate: holder.dataset['plate'] === 'player',
         });
       }
     }
@@ -367,8 +379,10 @@ function reportGuard(samples: readonly Sample[], problems: string[]): void {
   // something was actually hitting somebody -- which the flash report answers.
   if (seen === 0) console.log('  no guard bar was dented during the fight');
   // Shown at full would mean the visibility rule is inverted, and that IS wrong
-  // however the fight went.
-  const wrong = samples.filter((sample) => sample.guardShown && sample.guard >= 1).length;
+  // however the fight went -- for a monster's bar. A player's plate draws that
+  // row whatever the guard is doing (spec 256), so it is exempt from this one
+  // check and from nothing else here.
+  const wrong = samples.filter((s) => !s.plate && s.guardShown && s.guard >= 1).length;
   if (wrong > 0) problems.push(`a full guard bar was drawn on ${wrong} frame(s)`);
 }
 

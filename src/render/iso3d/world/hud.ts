@@ -63,6 +63,13 @@ import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.j
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
 import {
+  GUARD_TICKS,
+  healthTicks,
+  PLATE,
+  PLATE_LEVEL_HEIGHT,
+  PLATE_WIDTH,
+} from './player-plate.js';
+import {
   ACCOUNT_GUEST_LABEL,
   ACTION_SLOT_CSS,
   accountButtonCaption,
@@ -189,9 +196,33 @@ export const SYSTEM_BUTTONS: readonly {
 
 interface Bar {
   readonly root: HTMLElement;
-  /** Another player's name, over their body (spec 145). Empty for everything else. */
+  /**
+   * Which of the two overhead shapes this is (spec 256).
+   *
+   * A plate for a player -- level box, both rows marked, one frame round the
+   * lot -- and spec 145's bar for everything else. Held rather than re-asked
+   * because it decides what is *in* the holder rather than how it is painted,
+   * so it is settled once, when the elements are built.
+   */
+  readonly plate: boolean;
+  /** A player's name, over their body (specs 145, 256). Empty for everything else. */
   readonly name: HTMLElement;
   readonly health: HTMLElement;
+  /** The level, in its box on the left of a plate. Null on a monster's bar. */
+  readonly level: HTMLElement | null;
+  /** The marks across the health row, and across the guard row. Null on a bar. */
+  readonly healthTickRow: HTMLElement | null;
+  readonly guardTickRow: HTMLElement | null;
+  /**
+   * The health total the marks were last drawn for, and the colour the fill and
+   * the level box's ring were last painted in.
+   *
+   * Both move about as often as a level does, and both are strings written into
+   * the DOM -- so they are compared here rather than written every frame for
+   * every body on screen.
+   */
+  drawnTicks: string;
+  drawnFill: string;
   /** The white band behind the fill: the ground a blow just took (spec 145). */
   readonly ghost: HTMLElement;
   /**
@@ -261,6 +292,30 @@ const BAR_EMPTY = '#08090b';
 const BAR_ENEMY = '#e0362a';
 const BAR_SELF = '#7fd08a';
 const BAR_LOST = '#f4f2ee';
+/** How wide a monster's bar is (spec 145), and so how wide its holder is. */
+const BAR_WIDTH = 52;
+/**
+ * The plate's chrome (spec 256): the frame the two rows sit in, and its edge.
+ *
+ * Three darks rather than one, because a plate has to read as a frame with
+ * things inside it. The rows are `BAR_EMPTY`; the frame is a step lighter, so
+ * the padding around them and the gap between them draw themselves as rules
+ * with no extra elements in the plate; and the edge is darker than either, so
+ * the whole thing separates from whatever grass it is standing over.
+ */
+const PLATE_FRAME = '#22262e';
+const PLATE_EDGE = 'rgba(0,0,0,.85)';
+/**
+ * The marks across a row.
+ *
+ * Black at nearly three quarters rather than a flat colour, and it is the one
+ * place this file has to blend: a mark crosses the fill, the white chunk a blow
+ * left and the empty track in one stroke, and nothing opaque is legible against
+ * all three of those at once.
+ */
+const PLATE_TICK = 'rgba(0,0,0,.72)';
+/** The level, which is a number to read rather than a quantity to judge. */
+const PLATE_LEVEL_TEXT = '#f0ead8';
 /**
  * Guard (spec 147). Deliberately not a red and not the cast amber: health is
  * what a blow takes off you, guard is what it takes off your *footing*, and a
@@ -281,6 +336,39 @@ const STATUS_BOON = BAR_GUARD;
 const STATUS_AFFLICTION = '#d0796f';
 /** Small enough that eight fit over a body, big enough to tell apart. */
 const STATUS_ICON_PX = 13;
+
+/**
+ * The layer a row's marks are drawn on (spec 256).
+ *
+ * Its own element rather than marks appended straight to the track, so the
+ * track's children stay ghost, then fill, then this: `probe-health-flash.ts`
+ * reads the two bands by index, and a mark landing between them would have it
+ * sampling a 1px sliver as the fill for the rest of the run.
+ */
+function tickLayer(): HTMLElement {
+  const row = document.createElement('div');
+  row.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+  return row;
+}
+
+/**
+ * Draw the marks across one row of a plate.
+ *
+ * Rebuilt rather than pooled, and that is affordable only because it is rebuilt
+ * almost never: where the marks fall is a function of the body's *max* health,
+ * which moves on a level and an equip and on nothing else. The caller compares
+ * before it calls, so a fight costs none of these.
+ */
+function paintTicks(row: HTMLElement, at: readonly number[]): void {
+  row.replaceChildren();
+  for (const fraction of at) {
+    const mark = document.createElement('div');
+    mark.style.cssText =
+      `position:absolute;top:0;bottom:0;left:${(fraction * 100).toFixed(3)}%;` +
+      `width:1px;background:${PLATE_TICK};`;
+    row.append(mark);
+  }
+}
 
 /**
  * What hovering an ability says (spec 191).
@@ -1221,20 +1309,45 @@ export function createHud(project: Projector): HudHandle {
   const errorLog = new ErrorLog();
   const errorElements = new Map<number, HTMLElement>();
 
-  function barFor(id: number): Bar {
+  /**
+   * The plate over a player, or the bar over everything else (specs 145, 256).
+   *
+   * `player` decides the *shape* rather than being a style laid over one shape:
+   * the plate has a level box and marks across both its rows, and its frame is
+   * drawn by elements rather than by a border on each track. Toggling all of
+   * that per frame would be a dozen style writes for a fact that cannot change
+   * while a body is alive.
+   */
+  function barFor(id: number, player: boolean): Bar {
     const existing = bars.get(id);
-    if (existing) return existing;
+    if (existing && existing.plate === player) return existing;
+    // An entity id is a player or is not, for the whole life of the body, so
+    // this cannot fire today. It costs one comparison to not be relying on it.
+    if (existing) {
+      existing.root.remove();
+      bars.delete(id);
+    }
 
     const holder = document.createElement('div');
-    holder.style.cssText = 'position:absolute;transform:translate(-50%,-100%);width:52px;';
+    holder.style.cssText =
+      'position:absolute;transform:translate(-50%,-100%);' +
+      `width:${player ? PLATE_WIDTH : BAR_WIDTH}px;`;
     // Says which body this bar belongs to. Nothing in the game reads it; it is
     // how `scripts/preview-world.ts` finds a real unit on screen to click,
     // instead of re-deriving the camera projection and testing its own copy.
     holder.dataset['entity'] = String(id);
+    // And which of the two shapes it is (spec 256). Read by
+    // `scripts/probe-health-flash.ts`, whose "a full guard bar was drawn" check
+    // is a claim about spec 147's rule -- which a plate is exempt from, by
+    // design, on every frame.
+    if (player) holder.dataset['plate'] = 'player';
 
-    // Above the health track, so the holder's translate(-50%,-100%) puts the
-    // name over the body rather than through it. Hidden unless there is a name
-    // to draw, which is another player and nobody else.
+    // Above the bars, so the holder's translate(-50%,-100%) puts the name over
+    // the body rather than through it. Hidden unless there is a name to draw.
+    //
+    // Spec 145 withheld the local player's own name on the grounds that you
+    // know who you are; spec 256 draws it, because the plate is a nameplate and
+    // one missing on exactly one body in the world is a plate with a hole in it.
     const name = document.createElement('div');
     name.style.cssText = [
       'display:none',
@@ -1255,9 +1368,12 @@ export function createHud(project: Projector): HudHandle {
     // one -- `probe-health-flash.ts` has been resolving `firstElementChild` to
     // the name ever since, finding no fill inside it, and sampling nothing.
     healthTrack.dataset['bar'] = 'health';
-    healthTrack.style.cssText =
-      `position:relative;height:5px;background:${BAR_EMPTY};border-radius:2px;overflow:hidden;` +
-      'box-shadow:0 0 0 1px rgba(0,0,0,.55);';
+    // On a plate the frame around it is the plate's own; on a bar the track has
+    // to draw its own edge, because there is nothing else out there.
+    healthTrack.style.cssText = player
+      ? `position:relative;height:${PLATE.healthHeight}px;background:${BAR_EMPTY};overflow:hidden;`
+      : `position:relative;height:5px;background:${BAR_EMPTY};border-radius:2px;overflow:hidden;` +
+        'box-shadow:0 0 0 1px rgba(0,0,0,.55);';
     // Two bands in one track, the white underneath (spec 145). Stacked rather
     // than laid end to end, so the fill's width is still just health -- the
     // chunk is whatever the white is left showing past it, and the two can
@@ -1267,34 +1383,94 @@ export function createHud(project: Projector): HudHandle {
     const health = document.createElement('div');
     health.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_ENEMY};`;
     healthTrack.append(ghost, health);
+    // Third, and after both bands rather than over one of them: the marks read
+    // across the fill, the chunk and the empty track alike, and the index the
+    // probe reads the bands by must not move.
+    const healthTickRow = player ? tickLayer() : null;
+    if (healthTickRow) healthTrack.append(healthTickRow);
 
-    // Guard, immediately under health and *in flow* -- so it is part of the
-    // holder's height on every bar, every frame, whether or not it is showing.
+    // Guard, immediately under health (spec 147).
     //
-    // Hidden with `visibility` rather than `display`, and that is the whole
-    // reason it can sit in flow at all: the holder is bottom-anchored, so
-    // anything that leaves and rejoins the layout moves the health bar above it
-    // (the cast bar is out of flow for exactly this reason). `visibility` keeps
-    // the box and drops the ink, so a guard that fills up vanishes without
-    // shifting the thing a player is actually reading.
+    // On a bar it is *in flow* and hidden with `visibility` rather than
+    // `display` -- that is the whole reason it can sit in flow at all: the
+    // holder is bottom-anchored, so anything that leaves and rejoins the layout
+    // moves the health bar above it (the cast bar is out of flow for exactly
+    // this reason). `visibility` keeps the box and drops the ink, so a guard
+    // that fills up vanishes without shifting the thing a player is reading.
+    //
+    // On a plate it is a row of the frame and is always drawn (spec 256).
     const guard = document.createElement('div');
     guard.dataset['bar'] = 'guard';
-    guard.style.cssText =
-      `position:relative;margin-top:1px;height:3px;background:${BAR_EMPTY};border-radius:2px;` +
-      'overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.55);visibility:hidden;';
+    guard.style.cssText = player
+      ? `position:relative;height:${PLATE.guardHeight}px;background:${BAR_EMPTY};overflow:hidden;`
+      : `position:relative;margin-top:1px;height:3px;background:${BAR_EMPTY};border-radius:2px;` +
+        'overflow:hidden;box-shadow:0 0 0 1px rgba(0,0,0,.55);visibility:hidden;';
     const guardFill = document.createElement('div');
     guardFill.style.cssText = `height:100%;width:100%;background:${BAR_GUARD};`;
     guard.append(guardFill);
+    // Quarters, and drawn once here rather than per frame: guard is replicated
+    // as a fraction, so unlike the health row there is nothing about a
+    // particular body that could move them.
+    const guardTickRow = player ? tickLayer() : null;
+    if (guardTickRow) {
+      guard.append(guardTickRow);
+      paintTicks(guardTickRow, GUARD_TICKS);
+    }
 
-    // Hung off the health track rather than stacked under it in flow.
+    // The level (spec 256), in its own box on the left of the plate. Replicated
+    // for every player since the delta encoder was written, and until now drawn
+    // nowhere in the world.
+    const level = player ? document.createElement('div') : null;
+    if (level) {
+      level.dataset['plateLevel'] = '';
+      level.style.cssText = [
+        `flex:0 0 ${PLATE.levelWidth}px`,
+        `height:${PLATE_LEVEL_HEIGHT}px`,
+        'display:flex',
+        'align-items:center',
+        'justify-content:center',
+        `background:${BAR_EMPTY}`,
+        'font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+        `color:${PLATE_LEVEL_TEXT}`,
+        'overflow:hidden',
+      ].join(';');
+    }
+
+    // The frame (spec 256): the box, then the two rows, with the plate's own
+    // padding and gap showing between them as rules. Drawn by daylight rather
+    // than by borders, so a row's height is the height it is given.
+    const plate = player && level ? document.createElement('div') : null;
+    if (plate && level) {
+      plate.dataset['bar'] = 'plate';
+      plate.style.cssText = [
+        'box-sizing:border-box',
+        'display:flex',
+        `gap:${PLATE.gap}px`,
+        `padding:${PLATE.padding}px`,
+        `border:${PLATE.border}px solid ${PLATE_EDGE}`,
+        'border-radius:2px',
+        `background:${PLATE_FRAME}`,
+        'box-shadow:0 1px 2px rgba(0,0,0,.55)',
+      ].join(';');
+      const rows = document.createElement('div');
+      // `min-width:0`, or a flex item refuses to shrink below its content and
+      // the marks -- which are placed at percentages of it -- would be measured
+      // against a width the plate never had.
+      rows.style.cssText =
+        `flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:${PLATE.gap}px;`;
+      rows.append(healthTrack, guard);
+      plate.append(level, rows);
+    }
+
+    // Hung off the holder rather than stacked under the bars in flow.
     //
     // The holder is anchored by its *bottom* -- `translate(-50%,-100%)` puts its
     // last row over the head -- so a cast bar that took part in layout made the
     // holder taller the instant a wind-up began, and the health bar above it
     // jumped up by its height and dropped back when the swing landed. Every
     // wind-up in the game twitched the thing a player is reading. Out of flow it
-    // cannot change the holder's height, so the health bar holds still and the
-    // cast bar hangs below it.
+    // cannot change the holder's height, so the bars hold still and the cast bar
+    // hangs below them.
     const cast = document.createElement('div');
     cast.dataset['bar'] = 'cast';
     cast.style.cssText =
@@ -1347,12 +1523,12 @@ export function createHud(project: Projector): HudHandle {
       'pointer-events:none',
       // Allowed to be wider than the holder, and centred on it.
       //
-      // The holder is a fixed 52px -- the width of the health bar -- and four
-      // marks already need more than that. Left in flow the slots are flex items
-      // in a box too small for them, so they *shrink*: eight of them came out
-      // 3px wide each, which is a row of specks that passes every check about
-      // what is drawn and shows a player nothing. `max-content` takes the row
-      // out of that negotiation, and the half-shifts re-centre it over the body.
+      // A monster's holder is a fixed `BAR_WIDTH` and four marks already need
+      // more than that. Left in flow the slots are flex items in a box too small
+      // for them, so they *shrink*: eight of them came out 3px wide each, which
+      // is a row of specks that passes every check about what is drawn and shows
+      // a player nothing. `max-content` takes the row out of that negotiation,
+      // and the half-shifts re-centre it over the body.
       'width:max-content',
       'position:relative',
       'left:50%',
@@ -1412,13 +1588,22 @@ export function createHud(project: Projector): HudHandle {
     swapFill.style.cssText = 'height:100%;width:0;background:#6bd7cf;';
     swap.append(swapFill);
 
-    holder.append(statusRow, stun, name, healthTrack, guard, cast, swap);
+    // The two shapes differ in exactly one line of assembly: a plate is one
+    // framed block where a bar is two tracks stacked in flow.
+    if (plate) holder.append(statusRow, stun, name, plate, cast, swap);
+    else holder.append(statusRow, stun, name, healthTrack, guard, cast, swap);
     root.append(holder);
     const made: Bar = {
       root: holder,
+      plate: player,
       name,
       health,
       ghost,
+      level,
+      healthTickRow,
+      guardTickRow,
+      drawnTicks: '',
+      drawnFill: '',
       guard,
       guardFill,
       cast,
@@ -1505,7 +1690,8 @@ export function createHud(project: Projector): HudHandle {
       if (!wantsBar || !anchor.onScreen) continue;
 
       live.add(anchor.id);
-      const element = barFor(anchor.id);
+      const isPlayer = entity.kind === EntityKind.Player;
+      const element = barFor(anchor.id, isPlayer);
       // Says whether this bar is the local player's. Nothing in the game reads
       // it either; it is how `scripts/preview-world.ts` avoids aiming a click at
       // a monster its own body is standing in front of, which since spec 095 is
@@ -1513,13 +1699,14 @@ export function createHud(project: Projector): HudHandle {
       if (anchor.id === view.selfEntityId) element.root.dataset['self'] = '';
       else delete element.root.dataset['self'];
 
-      // Another player's name over their body (spec 145, the multiplayer one).
-      // Not our own -- you know who you are, and a label on your own head is
-      // one more thing between you and the fight.
-      const label =
-        entity.kind === EntityKind.Player && entity.id !== view.selfEntityId
-          ? displayName(entity)
-          : '';
+      // A player's name over their body (spec 145, the multiplayer one).
+      //
+      // Ours too, since spec 256. That spec withheld it on the grounds that you
+      // know who you are and a label on your own head is one more thing between
+      // you and the fight -- which was right about a bar and is wrong about a
+      // plate: a nameplate missing its name on exactly one body in the world
+      // reads as a plate with a hole in it rather than as restraint.
+      const label = isPlayer ? displayName(entity) : '';
       if (label === '') {
         element.name.style.display = 'none';
         element.name.textContent = '';
@@ -1610,15 +1797,48 @@ export function createHud(project: Projector): HudHandle {
       element.root.style.top = `${anchor.y + fill.shakeY}px`;
       element.health.style.width = `${fill.health * 100}%`;
       element.ghost.style.width = `${fill.ghost * 100}%`;
-      element.health.style.background = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;
 
-      // Shown only once the guard is dented, because a full guard is the
-      // resting state of every body in the world and a bar that is always full
-      // is a bar nobody reads. It refills whole on a break (spec 147), so it
-      // also *leaves* at the moment the stagger lands -- which is the same
+      // Green for your own health and red for anybody else's, which is the one
+      // distinction the floating bar has always made -- and, on a plate, the
+      // ring round the level box, so the two say the same thing rather than the
+      // plate inventing a fourth colour to say it again (spec 256).
+      const fillColor = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;
+      if (element.drawnFill !== fillColor) {
+        element.drawnFill = fillColor;
+        element.health.style.background = fillColor;
+        if (element.level) element.level.style.boxShadow = `inset 0 0 0 1px ${fillColor}`;
+      }
+
+      // The level (spec 256). Defended for the reason the guard below reads
+      // `?? 1`: several harnesses fabricate a view by hand (`hud-probe.ts`, the
+      // bot client) and a field on `ReplicatedEntity` is not one they know to
+      // set. The box holds two digits and `MAX_PLAYER_LEVEL` is 60, so nothing
+      // legal overruns it.
+      if (element.level) {
+        const shown = String(Math.max(1, Math.round(entity.level || 1)));
+        if (element.level.textContent !== shown) element.level.textContent = shown;
+      }
+
+      // Where the marks across the health row fall -- one every
+      // `healthPerSegment` points, so a segment is worth a stated amount rather
+      // than a fraction of whatever this body happens to have. Repainted only
+      // when the total moves, which is a level or an equip and never a blow.
+      if (element.healthTickRow && element.drawnTicks !== String(entity.maxHealth)) {
+        element.drawnTicks = String(entity.maxHealth);
+        paintTicks(element.healthTickRow, healthTicks(entity.maxHealth));
+      }
+
+      // On a monster's bar, shown only once the guard is dented: a full guard is
+      // the resting state of every body in the world and a bar that is always
+      // full is a bar nobody reads. It refills whole on a break (spec 147), so
+      // it also *leaves* at the moment the stagger lands -- which is the same
       // information from the other side.
+      //
+      // On a plate it is always drawn (spec 256), because there it is a row of
+      // the frame: an empty-looking second row says the body has no guard,
+      // which is the opposite of what a full one means.
       const guard = Math.min(1, Math.max(0, entity.poise ?? 1));
-      element.guard.style.visibility = guard < 1 ? 'visible' : 'hidden';
+      element.guard.style.visibility = element.plate || guard < 1 ? 'visible' : 'hidden';
       element.guardFill.style.width = `${guard * 100}%`;
       element.root.style.display = look.showsHealth ? 'block' : 'none';
 
