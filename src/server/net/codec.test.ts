@@ -51,7 +51,7 @@ const STATS: EffectiveStats = {
   skillAbilityIds: [],
   ...NO_WEAPON,
   // f32-exact for the reason `resourceRegen` above is: `backswingCancelPct` is
-  // the one neutral trait that is not a whole number (spec 253), and 0.7 does
+  // the one neutral trait that is not a whole number (spec 256), and 0.7 does
   // not survive a float32 round trip, so leaving it would make this test about
   // IEEE 754 rather than about the codec.
   traits: { ...NEUTRAL_TRAITS, backswingCancelPct: 0.75 },

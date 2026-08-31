@@ -87,7 +87,7 @@ describe('a fresh character', () => {
     const traits = computeEffectiveStats(player()).traits;
     expect(traits.attackPointScale).toBe(1);
     expect(traits.handlingScale).toBe(1);
-    // Not a scale but a threshold (spec 253): neutral is the base rather than
+    // Not a scale but a threshold (spec 256): neutral is the base rather than
     // 1, because the fraction of a follow-through a fresh character is
     // committed to is what the tables say it is, not "all of it".
     expect(traits.backswingCancelPct).toBe(SCALING.agility.backswingCancelBase);

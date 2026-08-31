@@ -1,5 +1,5 @@
 /**
- * The follow-through you may leave (spec 253).
+ * The follow-through you may leave (spec 256).
  *
  * A follow-through has two halves now -- committed, then leavable -- and every
  * Agility source that used to make the phase *shorter* makes the boundary
@@ -119,7 +119,7 @@ const traitsWith = (over: Partial<TraitStats>): TraitStats => ({ ...NEUTRAL_TRAI
 // The threshold itself: arithmetic, with no sim under it.
 // ===========================================================================
 
-describe('the cancel threshold (spec 253)', () => {
+describe('the cancel threshold (spec 256)', () => {
   it('is the base for a body that has bought nothing', () => {
     expect(backswingCancelPointOf(NEUTRAL_TRAITS, 0)).toBe(SCALING.agility.backswingCancelBase);
     expect(backswingCancelPointFor({ stats: statsFor() }, 0)).toBe(
@@ -213,7 +213,7 @@ describe('the cancel threshold (spec 253)', () => {
 // The length of the phase, and the cadence. Neither may move.
 // ===========================================================================
 
-describe('what the cancel point must never touch (spec 253)', () => {
+describe('what the cancel point must never touch (spec 256)', () => {
   const BUILDS: readonly { readonly name: string; readonly stats: EffectiveStats; readonly flow: number }[] = [
     { name: 'nothing', stats: statsFor(20), flow: 0 },
     { name: 'quick recovery 3', stats: statsFor(20, [{ specializationId: QUICK_RECOVERY, tier: 3 }]), flow: 0 },
@@ -389,7 +389,7 @@ function swingInto(run: Fight): Fight {
   return current;
 }
 
-describe('a follow-through in the real tick (spec 253)', () => {
+describe('a follow-through in the real tick (spec 256)', () => {
   it('refuses a walk-out before the cancel point, and honours it at it', () => {
     let run = swingInto(fight(statsFor(20)));
     const cancelTick = backswingCancelTickOf(castOf(selfOf(run)));
@@ -479,7 +479,7 @@ describe('a follow-through in the real tick (spec 253)', () => {
 
   it('grants Flow for a legal walk-out and nothing for a refused one', () => {
     // Mobile Offense's trigger, from both sides. The reward is not moved here
-    // (spec 253 is out of scope for what a cancel *pays*); what is asserted is
+    // (spec 256 is out of scope for what a cancel *pays*); what is asserted is
     // that only a cancel the rules allowed can ever fire it.
     const stats = statsFor(20, [{ specializationId: MOBILE_OFFENSE, tier: 3 }]);
     expect(stats.traits.flowTicks).toBeGreaterThan(0);
@@ -526,7 +526,7 @@ describe('a follow-through in the real tick (spec 253)', () => {
   });
 
   it('leaves Perfect Exit alone, because it reads the wind-up', () => {
-    // Audited against the new model (spec 253) rather than redesigned: its
+    // Audited against the new model (spec 256) rather than redesigned: its
     // window is the *wind-up*, which the backswing gate never touches, so it
     // remains the one escape that pays -- and a backswing cancel still pays
     // nothing, which is what keeps the two distinct.

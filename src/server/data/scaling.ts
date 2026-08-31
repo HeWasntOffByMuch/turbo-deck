@@ -152,7 +152,7 @@ export const SCALING = {
     handlingPer: 0.012,
     handlingFloor: 0.5,
     /**
-     * The follow-through's **cancel point** (spec 253), and deliberately not its
+     * The follow-through's **cancel point** (spec 256), and deliberately not its
      * length.
      *
      * Agility used to divide the backswing by a reciprocal here -- 45% off at the

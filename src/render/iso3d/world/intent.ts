@@ -109,7 +109,7 @@ export interface IntentInput {
   readonly castAim: Point | null;
   /**
    * True while the follow-through this body is in may not yet be left
-   * (spec 253).
+   * (spec 256).
    *
    * The one thing that makes {@link castAim} outrank a direction. A wind-up is
    * withdrawn from *by* asking to move, so a direction beating the root there is
@@ -262,7 +262,7 @@ export function moveIntent(input: IntentInput): MoveIntent {
   // Holding the body still here would be predicting a stand the server is about
   // to turn into a step.
   //
-  // Except inside a committed follow-through (spec 253), where there is no
+  // Except inside a committed follow-through (spec 256), where there is no
   // withdrawal to be had: the server refuses it and holds the body, so the root
   // wins and the same held key walks the moment the cancel point is reached.
   if (input.castAim && (!direction || input.committed === true)) {

@@ -3109,7 +3109,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  together and end apart**: an interval from the wind-up's first
                  tick, an attack point partway through it where the blow becomes
                  real, and a backswing after that which a *player* may walk out
-                 of once it has been committed to for long enough (spec 253; spec
+                 of once it has been committed to for long enough (spec 256; spec
                  221 roots monsters through theirs). One factor -- `(1 + attackSpeed/100) * mult * slowMult`,
                  HoN's, where +100 is twice the rate -- divides all three, so
                  attacking faster shortens the swing rather than only the
@@ -3123,7 +3123,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  movement and can never buy a faster next attack, since the tick
                  governing the next one was written down at the attack point and
                  no cancellation path writes it again.
-                 Since spec 253 the follow-through has a boundary of its own, and
+                 Since spec 256 the follow-through has a boundary of its own, and
                  it exists because Agility's tree was pulling against itself:
                  half of it *shortened* the phase (the attribute's own reciprocal
                  `backswingScale`, Quick Recovery, every Flow stack) and the other
@@ -3264,7 +3264,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  prints the two timelines side by side, and the invariant reads
                  off the summaries: same attacks, same cadence, a body rooted for
                  the whole follow-through or only up to its cancel point.
-                 `--agility[=n]` is the other instrument (spec 253) and prints the
+                 `--agility[=n]` is the other instrument (spec 256) and prints the
                  four-build follow-through table instead of a timeline -- nothing,
                  Quick Recovery, Flow, both -- with every number measured off a
                  real fight rather than off `attackTimingFor`, since a table
@@ -4064,7 +4064,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  and spends far less of each cycle rooted, which makes "the fast
                  stat must not become the mandatory damage stat" a property of the
                  module graph rather than a number somebody keeps retuning. Since
-                 spec 253 it does not reach `baseAttackBackswingTicks` either --
+                 spec 256 it does not reach `baseAttackBackswingTicks` either --
                  the phase is the same length for everybody, and what Agility buys
                  is the tick it may be walked out of.
                  The derivation runs one way and stops (`player/progression.ts`,

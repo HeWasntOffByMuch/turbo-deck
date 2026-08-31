@@ -97,7 +97,7 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   // --- Agility ---
   attackPointScale: 'down',
   // How much of a follow-through must be committed to before it may be left
-  // (spec 253). Lower is better -- you get out sooner -- and it is a *threshold*
+  // (spec 256). Lower is better -- you get out sooner -- and it is a *threshold*
   // rather than a duration, so this is not the old `backswingScale` direction
   // renamed: that field said the phase was shorter, this says the exit is
   // earlier, and only the second is progression the rest of the tree agrees with.

@@ -112,7 +112,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Nothing takes you off a blow you have committed to. Only while you are committed.'),
 
   // ======================= AGILITY ========================
-  // The three rows below are one mechanic seen three ways (spec 253): a
+  // The three rows below are one mechanic seen three ways (spec 256): a
   // follow-through is committed until its cancel point, Quick Recovery moves
   // that point earlier, Flow moves it earlier again while it is held, and Mobile
   // Offense is what pays for the cancel itself. None of them shortens the

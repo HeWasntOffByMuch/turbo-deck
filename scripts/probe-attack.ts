@@ -17,7 +17,7 @@
  *               time -- or `backswing`, walk the tick after it legally may.
  *   --seconds   how long to run. Default 8.
  *   --agility   print the four-build follow-through table instead of a
- *               timeline (spec 253), at this Agility. Default the hard cap.
+ *               timeline (spec 256), at this Agility. Default the hard cap.
  *
  * The interesting run is a pair:
  *
@@ -28,7 +28,7 @@
  * number of blows landed at the *same* ticks. That is the whole invariant, and
  * it reads off the two summaries without anybody having to trust a test.
  *
- * `--agility` is the other half of the same claim, one system along (spec 253).
+ * `--agility` is the other half of the same claim, one system along (spec 256).
  * It fights four builds -- nothing, Quick Recovery, Flow, and both -- and prints
  * what each one measurably got: how long the follow-through *is*, the first tick
  * it may be walked out of, how much that saves, when the next blow is due, and
@@ -86,7 +86,7 @@ if (!ability) {
   process.exit(1);
 }
 
-// --- the four-build follow-through table (spec 253) ------------------------
+// --- the four-build follow-through table (spec 256) ------------------------
 
 /**
  * What one build measurably got out of its follow-through.
@@ -336,7 +336,7 @@ if (agilityAt !== null) {
     ),
   ];
 
-  console.log(`# ${ability.name} (${ability.id}) at Agility ${agilityAt} -- the follow-through (spec 253)`);
+  console.log(`# ${ability.name} (${ability.id}) at Agility ${agilityAt} -- the follow-through (spec 256)`);
   console.log('#');
   console.log(
     '# build                     swing  cancel@  left@  natural  freed   ready@  flow@',
