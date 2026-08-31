@@ -84,7 +84,9 @@
             { "species": "bush", "x": 157.916, "z": 314.71, "rotation": 5.61, "scale": 1.205, "tint": -0.582 },
             { "species": "bush", "x": 589.636, "z": 101.479, "rotation": 5.392, "scale": 0.974, "tint": -0.752 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-16", "x": 50.677, "z": 585.982, "label": "stalker" }
+          ]
         },
         {
           "cx": 7,

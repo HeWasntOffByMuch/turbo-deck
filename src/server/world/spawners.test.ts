@@ -122,7 +122,7 @@ describe('the shipped map', () => {
   const shipped = loadMapFile().doc;
 
   /** How long a walk from the spawn point still counts as content a player meets. */
-  const REACH_SECONDS = 20;
+  const REACH_SECONDS = 45;
 
   it('places spawners, and every one names a monster in the table', () => {
     const points = spawnPointsFrom(shipped);
@@ -178,10 +178,23 @@ describe('the shipped map', () => {
    *
    * The bound is derived rather than picked. `MOVE_SPEED_HARD_MIN` is the
    * slowest anything in this game may ever move, so `MOVE_SPEED_HARD_MIN *
-   * REACH_SECONDS` is the distance even the slowest body covers in twenty
-   * seconds -- which makes it a distance *anybody* is inside twenty seconds of,
-   * rather than a number somebody liked. It is not a loose bound: that circle
-   * is 4% of the world's area, so the other 96% still fails.
+   * REACH_SECONDS` is the distance even the slowest body covers in
+   * `REACH_SECONDS` -- which makes it a distance *anybody* is inside that walk
+   * of, rather than a number somebody liked. It is not a loose bound: that
+   * circle is 19% of the world's area, so the other 81% still fails.
+   *
+   * `REACH_SECONDS` was twenty, and twenty was a claim about how far out the
+   * map had been *built* rather than about how far a player will walk. The
+   * spider nest east of the square sits 3,610-4,065 out, which is a place
+   * somebody put monsters on purpose; a bound that called it unreachable was
+   * describing a smaller world than the one being made. Forty-five is the
+   * furthest of those plus about a tenth, so the next marker nudged a few units
+   * outward does not re-open this -- and it is still four fifths of the world
+   * refused, which is what keeps it a bound rather than a formality.
+   *
+   * What it is NOT is permission to place content anywhere. Raise it again only
+   * for content somebody has actually authored out there, and re-derive the
+   * area fraction above when you do, or the sentence stops being true.
    */
   it('puts them within a walk of the spawn point, where a player will actually meet them', () => {
     const reach = MOVE_SPEED_HARD_MIN * REACH_SECONDS;

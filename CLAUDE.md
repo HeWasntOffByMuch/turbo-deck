@@ -4808,7 +4808,40 @@ src/server/admin-client/  the admin console (spec 154): one static HTML file, no
                  reported every check green while measuring older code.
 src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometric
                  world drawn from GameClient.view() and nothing else. interpolate.ts
-                 (20Hz deltas to a pose per frame), intent.ts, target.ts (the
+                 (20Hz deltas to a pose per frame -- since spec 253 played back
+                 on a **clock this client runs**, because an arrival is not one:
+                 the old ramp was zeroed by each delta landing on a socket
+                 callback, so it carried the wire's jitter plus a frame of
+                 quantisation and was restarted from a position it had not
+                 finished walking to. Measured on an ordinary connection, one
+                 frame in ten drew a walking body standing still and one in ten
+                 drew it at nearly twice its speed, with the mean perfectly
+                 correct throughout -- which is why nothing that measured a
+                 position ever caught it. A body is drawn *at a time* now, over
+                 the **tick span** of the two samples the head sits between, so
+                 a stall that delivers three deltas at once plays back over the
+                 time nine ticks are worth rather than the fifty milliseconds
+                 three deserve. `PLAYBACK_DELAY_TICKS` is derived rather than
+                 chosen -- one whole interval is what guarantees a bracketing
+                 pair when a delta is a full interval late, and the extra half
+                 is what centres the head so jitter has the same headroom early
+                 and late -- and what it costs is stated rather than hidden:
+                 remote bodies are 50ms further behind than they were, which is
+                 presentation only, since spec 221 made reach the answer taken
+                 server-side at the tick a wind-up begins. One clock for the
+                 whole wire rather than one per body, so an arrow and what it is
+                 flying at never disagree about when now is. Three rules were
+                 each learned by writing the version without them: the head is
+                 only ever set **forward**, since a head past its target is what
+                 "the server has nothing to say" looks like and setting it back
+                 replays the body's last movement for as long as the wire stays
+                 quiet; its lead is bounded by the same number that forgives a
+                 stall, or an unbounded lead is an unbounded recovery; and it
+                 follows the wire **back down**, because `newestTick` left to
+                 grow only parks the head in the future of a server that
+                 restarted and every remote body goes back to the 20Hz stutter
+                 for good, for the players who reconnected alone),
+                 intent.ts, target.ts (the
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)
