@@ -154,7 +154,11 @@
             { "species": "tree", "x": 153.105, "z": 2.849, "rotation": 2.972, "scale": 1.062, "tint": -0.78 },
             { "species": "bush", "x": 295.917, "z": 37.911, "rotation": 3.89, "scale": 0.975, "tint": -0.779 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-17", "x": 100.585, "z": 507.03, "label": "small_spider" },
+            { "kind": "spawner", "id": "spawner-18", "x": 123.028, "z": 297.32, "label": "small_spider" },
+            { "kind": "spawner", "id": "spawner-19", "x": 351.064, "z": 355.111, "label": "small_spider" }
+          ]
         },
         {
           "cx": 8,
@@ -279,7 +283,10 @@
             { "species": "bush", "x": 12.438, "z": 562.447, "rotation": 0.866, "scale": 0.868, "tint": 0.583 },
             { "species": "bush", "x": 614.909, "z": 48.715, "rotation": 3.9, "scale": 0.769, "tint": 0.981 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-20", "x": 437.158, "z": 382.371, "label": "small_spider" },
+            { "kind": "spawner", "id": "spawner-21", "x": 151.49, "z": 530.054, "label": "small_spider" }
+          ]
         }
       ]
     }
