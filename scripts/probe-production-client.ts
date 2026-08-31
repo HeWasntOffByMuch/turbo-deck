@@ -124,8 +124,19 @@ interface Frame {
   readonly title: boolean;
   /** Whether it has finished loading and is offering its menu. */
   readonly titleReady: boolean;
-  /** `shown` / `hidden` / `''` -- whether the interface's own layer is drawn. */
+  /** `shown` / `hidden` / `''` -- what the interface layer was *asked* for. */
   readonly uiHud: string;
+  /**
+   * Lit pixels in the bottom band of the interface canvas -- the skill bar's
+   * own ground (spec 256).
+   *
+   * The attribute above says what was asked for and this says what happened,
+   * and the difference is the whole of the bug this was written for: the layer
+   * was switched on with its children unarranged, so `uiHud` read `shown` while
+   * the canvas drew **nothing**, and the probe passed. Measured after Start:
+   * 0 before the fix, 10,580 after.
+   */
+  readonly hudPixels: number;
   /** Whether the DOM half of the HUD is laid out on screen. */
   readonly domHud: boolean;
   /** Which framework windows are open, by id. */
@@ -162,6 +173,15 @@ async function readFrame(page: Page): Promise<Frame> {
         // On the interface canvas, which is what publishes it; `data-ui-windows`
         // is on the world root two elements up.
         uiHud: document.querySelector<HTMLElement>('[data-ui-canvas]')?.dataset['uiHud'] ?? '',
+        hudPixels: ((): number => {
+          const canvas = document.querySelector<HTMLCanvasElement>('canvas[data-ui-canvas]');
+          const context = canvas?.getContext('2d');
+          if (!canvas || !context) return -1;
+          const band = context.getImageData(0, Math.max(0, canvas.height - 160), canvas.width, 160);
+          let lit = 0;
+          for (let i = 3; i < band.data.length; i += 4) if ((band.data[i] ?? 0) > 0) lit++;
+          return lit;
+        })(),
         // `offsetParent` is null for a `display:none` subtree, which is the
         // question -- and not the same question as "is it in the document".
         domHud:
@@ -276,8 +296,11 @@ async function main(): Promise<void> {
       // Neither half of the interface may be on screen while the front door is
       // -- a skill bar over a title screen is the interface of a game that has
       // not started, and it was over the loading screen before it too.
-      if (shipped.frame.uiHud !== 'hidden') {
-        problems.push(`the interface layer was "${shipped.frame.uiHud || 'unpublished'}" behind the title screen`);
+      if (shipped.frame.uiHud !== 'hidden' || shipped.frame.hudPixels > 0) {
+        problems.push(
+          `the interface was behind the title screen ("${shipped.frame.uiHud || 'unpublished'}", ` +
+            `${shipped.frame.hudPixels} lit pixels)`,
+        );
       }
       if (shipped.frame.domHud) {
         problems.push('the DOM HUD was on screen behind the title screen');
@@ -360,8 +383,18 @@ async function main(): Promise<void> {
         }
         const gone = await waitFor(shipped.page, (f) => !f.title, 15_000);
         if (!gone) problems.push('pressing Start left the title screen up');
-        const back = await waitFor(shipped.page, (f) => f.uiHud === 'shown', 15_000);
-        if (!back) problems.push('the interface did not come back when play began');
+        // Pixels, not the attribute (spec 256). `uiHud` said `shown` for the
+        // whole of the bug this replaces -- the layer was switched on with its
+        // children never arranged, so it published a claim and drew nothing.
+        const back = await waitFor(shipped.page, (f) => f.hudPixels > 0, 20_000);
+        const drawn = await readFrame(shipped.page);
+        console.log(`  skill bar band  ${drawn.hudPixels} lit pixels`);
+        if (!back) {
+          problems.push(
+            `the interface did not come back when play began (${drawn.hudPixels} lit pixels, ` +
+              `attribute "${drawn.uiHud}")`,
+          );
+        }
       }
     }
 

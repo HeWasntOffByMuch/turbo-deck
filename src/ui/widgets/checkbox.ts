@@ -42,6 +42,11 @@ export class Checkbox extends StyledWidget {
     this.checkedValue = value;
   }
 
+  /** The counterpart to {@link setLabel}, so a test can assert what is drawn. */
+  get label(): string {
+    return this.labelText;
+  }
+
   setLabel(value: string): void {
     if (value === this.labelText) return;
     this.labelText = value;
