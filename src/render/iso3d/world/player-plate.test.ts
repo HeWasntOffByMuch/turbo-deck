@@ -1,5 +1,5 @@
 /**
- * Spec 256. The plate's geometry, which is the half that can be wrong without
+ * Spec 257. The plate's geometry, which is the half that can be wrong without
  * anybody being able to see it: the holder is sized from `PLATE_WIDTH` and the
  * parts inside it are laid out from `PLATE`, so a total that is not the sum of
  * its parts is a plate whose last row runs past its own frame.

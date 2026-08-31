@@ -1,5 +1,5 @@
 /**
- * The plate over a player's head (spec 256).
+ * The plate over a player's head (spec 257).
  *
  * Pure -- no three.js, no DOM. It answers how big a plate is and how big the
  * parts inside it are; `hud.ts` owns the elements, which is the same division
@@ -59,3 +59,30 @@ export const PLATE_LEVEL_HEIGHT = PLATE.healthHeight + PLATE.gap + PLATE.guardHe
  * rather than judged.
  */
 export const PLATE_LEVEL_PX = 10;
+
+/**
+ * How much of the level box is padded above the number, in CSS pixels.
+ *
+ * **A digit has no descender.** Its ink fills the top of its line box and
+ * leaves the descent empty underneath, so a line box centred in the box -- which
+ * is what `align-items: center` does, correctly, and what every DOM rectangle
+ * reports -- puts the number visibly high. Measured through
+ * `preview-unit-plate.ts`, which reconstructs the baseline from the font's own
+ * metrics and reads the *ink* against the box's middle: exactly 1.00px high.
+ *
+ * Padding the top pushes the line box down, and what it is worth is not the
+ * padding: for as long as the content box is taller than the line box, flexbox
+ * re-centres and only half of each pixel lands. Three is the value that
+ * measures **0.00px** -- two of them shrink the content box to the line box's
+ * own height and move it a whole pixel, and the third overshoots it by one and
+ * so is worth the remaining half. Nothing is clipped by the `overflow: hidden`
+ * that follows from that, because a digit has no descender to clip.
+ *
+ * `box-sizing: border-box`, so the box keeps {@link PLATE_LEVEL_HEIGHT} and no
+ * part of the plate's geometry moves to buy this.
+ *
+ * It is a nudge and it is font-dependent, which is why the browser check exists
+ * rather than the number being taken on trust: a face whose descent is not a
+ * fifth of its em fails that check instead of shipping a number a pixel out.
+ */
+export const PLATE_LEVEL_PAD_TOP = 3;

@@ -75,7 +75,7 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
-| `npx tsx scripts/preview-unit-plate.ts` | The two overhead shapes side by side -- a player's plate and a monster's bar -- photographed at four times life size, with every box measured (spec 256). A plate is 84x16 CSS pixels and every way it fails is a way a stylesheet fails: a row negotiated down to nothing by a flex parent, a level box the digits spill out of, a ring creeping back around them. All of those are visible in a rectangle, which is why it reads the boxes as well as taking the picture |
+| `npx tsx scripts/preview-unit-plate.ts` | The two overhead shapes side by side -- a player's plate and a monster's bar -- photographed at four times life size, with every box measured (spec 257). A plate is 84x16 CSS pixels and every way it fails is a way a stylesheet fails: a row negotiated down to nothing by a flex parent, a level box the digits spill out of, a ring creeping back around them. All of those are visible in a rectangle, which is why it reads the boxes as well as taking the picture |
 | `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 252). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
@@ -5307,7 +5307,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  stamps, never the origin, so slowing the flinch down is
                  unaffected),
                  player-plate.ts (how big a player's overhead plate is and how
-                 big the parts inside it are, spec 256. Pure; `hud.ts` owns the
+                 big the parts inside it are, spec 257. Pure; `hud.ts` owns the
                  elements, the division `health-bar.ts` beside it already has.
                  There are **two overhead shapes** now: a monster keeps spec
                  145's bar unchanged, and a player gets a level box, a health row

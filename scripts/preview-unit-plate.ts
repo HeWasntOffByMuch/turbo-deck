@@ -1,9 +1,9 @@
 /**
- * The two overhead shapes, side by side, in a real browser (spec 256).
+ * The two overhead shapes, side by side, in a real browser (spec 257).
  *
  *   npx tsx scripts/preview-unit-plate.ts
  *
- * Everything spec 256 decides is asserted in Node (`world/player-plate.test.ts`)
+ * Everything spec 257 decides is asserted in Node (`world/player-plate.test.ts`)
  * and none of it is what could be wrong here. A plate is a frame with two rows
  * and a box in it, and every way it fails is a way a stylesheet fails: a row
  * negotiated down to nothing by a flex parent (which is what happened to the
@@ -169,6 +169,11 @@ interface Measured {
   readonly levelWidth: number;
   readonly levelText: string;
   readonly levelFontPx: number;
+  /**
+   * How far the digits' ink sits off the middle of their box, in CSS pixels.
+   * Positive is low.
+   */
+  readonly levelInkOffset: number;
   readonly levelOverflows: boolean;
   readonly levelRing: string;
   readonly rowMarks: number;
@@ -188,6 +193,41 @@ async function plateOf(page: Page, id: number): Promise<Measured | null> {
     const frame = (plate ?? track)?.getBoundingClientRect();
     const trackBox = track?.getBoundingClientRect();
     const levelStyle = level ? getComputedStyle(level) : null;
+
+    // Where the digits' *ink* sits, against the middle of the box holding it.
+    //
+    // Not the line box, which is what every DOM rectangle reports and is
+    // exactly what cannot answer this: a line box is centred by flexbox
+    // already, and the digits inside it sit above its middle by half the
+    // font's descent, because a digit has no descender to fill that space
+    // with. So the baseline is reconstructed from the font's own metrics and
+    // the ink measured off it, which is the only way to ask a browser where
+    // something *looks* like it is.
+    let levelInkOffset = 0;
+    if (level && levelStyle && level.firstChild) {
+      const context = document.createElement('canvas').getContext('2d');
+      if (context) {
+        context.font = `${levelStyle.fontSize} ${levelStyle.fontFamily}`;
+        const metrics = context.measureText(level.textContent ?? '');
+        const box = level.getBoundingClientRect();
+        // The line box is asked for rather than reconstructed from the border
+        // box, which is the mistake this measurement was written with: padding
+        // and flex centring both move it, so a reconstruction reports the same
+        // number whatever the box does and calls a fixed nudge no fix at all.
+        const range = document.createRange();
+        range.selectNodeContents(level);
+        const line = range.getBoundingClientRect();
+        const fontAscent = metrics.fontBoundingBoxAscent;
+        const fontDescent = metrics.fontBoundingBoxDescent;
+        // The baseline sits one half-leading plus one ascent below the top of
+        // the line box; the ink sits at its own ascent and descent either side.
+        const baseline = line.top + (line.height - (fontAscent + fontDescent)) / 2 + fontAscent;
+        const inkTop = baseline - metrics.actualBoundingBoxAscent;
+        const inkBottom = baseline + metrics.actualBoundingBoxDescent;
+        levelInkOffset = (inkTop + inkBottom) / 2 - (box.top + box.height / 2);
+      }
+    }
+
     return {
       width: frame?.width ?? 0,
       height: frame?.height ?? 0,
@@ -197,6 +237,7 @@ async function plateOf(page: Page, id: number): Promise<Measured | null> {
       levelWidth: level?.getBoundingClientRect().width ?? 0,
       levelText: level?.textContent ?? '',
       levelFontPx: levelStyle ? parseFloat(levelStyle.fontSize) : 0,
+      levelInkOffset,
       // The digits against the box holding them. A level box the number spills
       // out of is the one failure a fixed width invites, and the bigger the
       // face the likelier it gets.
@@ -275,6 +316,11 @@ async function main(): Promise<void> {
       `set at ${PLATE_LEVEL_PX}px (${(self?.levelFontPx ?? 0).toFixed(1)})`,
     );
     check(self?.levelOverflows === false, 'and two digits still fit inside the box');
+    check(
+      Math.abs(self?.levelInkOffset ?? 9) <= 0.5,
+      `centred in it, ink against box middle ` +
+        `(${(self?.levelInkOffset ?? 0).toFixed(2)}px, positive is low)`,
+    );
     check(
       self?.levelRing === 'none' || self?.levelRing === '',
       `with nothing drawn around them (${self?.levelRing ?? ''})`,

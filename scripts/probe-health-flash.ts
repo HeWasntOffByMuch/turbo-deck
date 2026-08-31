@@ -84,7 +84,7 @@ interface Sample {
   readonly guardShown: boolean;
   /**
    * Whether this body wears a player's plate rather than a monster's bar
-   * (spec 256).
+   * (spec 257).
    *
    * The guard rule differs between the two by design: on a plate that row is
    * part of the frame and is drawn whether or not it is dented, so the
@@ -380,7 +380,7 @@ function reportGuard(samples: readonly Sample[], problems: string[]): void {
   if (seen === 0) console.log('  no guard bar was dented during the fight');
   // Shown at full would mean the visibility rule is inverted, and that IS wrong
   // however the fight went -- for a monster's bar. A player's plate draws that
-  // row whatever the guard is doing (spec 256), so it is exempt from this one
+  // row whatever the guard is doing (spec 257), so it is exempt from this one
   // check and from nothing else here.
   const wrong = samples.filter((s) => !s.plate && s.guardShown && s.guard >= 1).length;
   if (wrong > 0) problems.push(`a full guard bar was drawn on ${wrong} frame(s)`);

@@ -56,7 +56,7 @@ interface ProbeApi {
    * here, so a rig that wants to look at that holder has to say where the body
    * is; nothing before spec 186 did, so it defaulted to none and stayed there.
    *
-   * A list as well as one point, since spec 256: there are two overhead shapes
+   * A list as well as one point, since spec 257: there are two overhead shapes
    * now, and the only useful picture of two shapes has both of them in it.
    */
   anchor(at: ProbeAnchor | readonly ProbeAnchor[] | null): void;

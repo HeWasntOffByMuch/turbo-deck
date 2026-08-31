@@ -65,6 +65,7 @@ import { HealthFlashes } from './health-bar.js';
 import {
   PLATE,
   PLATE_LEVEL_HEIGHT,
+  PLATE_LEVEL_PAD_TOP,
   PLATE_LEVEL_PX,
   PLATE_WIDTH,
 } from './player-plate.js';
@@ -196,7 +197,7 @@ export const SYSTEM_BUTTONS: readonly {
 interface Bar {
   readonly root: HTMLElement;
   /**
-   * Which of the two overhead shapes this is (spec 256).
+   * Which of the two overhead shapes this is (spec 257).
    *
    * A plate for a player -- level box, both rows marked, one frame round the
    * lot -- and spec 145's bar for everything else. Held rather than re-asked
@@ -204,7 +205,7 @@ interface Bar {
    * so it is settled once, when the elements are built.
    */
   readonly plate: boolean;
-  /** A player's name, over their body (specs 145, 256). Empty for everything else. */
+  /** A player's name, over their body (specs 145, 257). Empty for everything else. */
   readonly name: HTMLElement;
   readonly health: HTMLElement;
   /** The level, in its box on the left of a plate. Null on a monster's bar. */
@@ -289,7 +290,7 @@ const BAR_LOST = '#f4f2ee';
 /** How wide a monster's bar is (spec 145), and so how wide its holder is. */
 const BAR_WIDTH = 52;
 /**
- * The plate's chrome (spec 256): the frame the two rows sit in, and its edge.
+ * The plate's chrome (spec 257): the frame the two rows sit in, and its edge.
  *
  * Three darks rather than one, because a plate has to read as a frame with
  * things inside it. The rows are `BAR_EMPTY`; the frame is a step lighter, so
@@ -1262,7 +1263,7 @@ export function createHud(project: Projector): HudHandle {
   const errorElements = new Map<number, HTMLElement>();
 
   /**
-   * The plate over a player, or the bar over everything else (specs 145, 256).
+   * The plate over a player, or the bar over everything else (specs 145, 257).
    *
    * `player` decides the *shape* rather than being a style laid over one shape:
    * the plate has a level box and marks across both its rows, and its frame is
@@ -1288,7 +1289,7 @@ export function createHud(project: Projector): HudHandle {
     // how `scripts/preview-world.ts` finds a real unit on screen to click,
     // instead of re-deriving the camera projection and testing its own copy.
     holder.dataset['entity'] = String(id);
-    // And which of the two shapes it is (spec 256). Read by
+    // And which of the two shapes it is (spec 257). Read by
     // `scripts/probe-health-flash.ts`, whose "a full guard bar was drawn" check
     // is a claim about spec 147's rule -- which a plate is exempt from, by
     // design, on every frame.
@@ -1298,7 +1299,7 @@ export function createHud(project: Projector): HudHandle {
     // the body rather than through it. Hidden unless there is a name to draw.
     //
     // Spec 145 withheld the local player's own name on the grounds that you
-    // know who you are; spec 256 draws it, because the plate is a nameplate and
+    // know who you are; spec 257 draws it, because the plate is a nameplate and
     // one missing on exactly one body in the world is a plate with a hole in it.
     const name = document.createElement('div');
     name.style.cssText = [
@@ -1345,7 +1346,7 @@ export function createHud(project: Projector): HudHandle {
     // this reason). `visibility` keeps the box and drops the ink, so a guard
     // that fills up vanishes without shifting the thing a player is reading.
     //
-    // On a plate it is a row of the frame and is always drawn (spec 256).
+    // On a plate it is a row of the frame and is always drawn (spec 257).
     const guard = document.createElement('div');
     guard.dataset['bar'] = 'guard';
     guard.style.cssText = player
@@ -1356,7 +1357,7 @@ export function createHud(project: Projector): HudHandle {
     guardFill.style.cssText = `height:100%;width:100%;background:${BAR_GUARD};`;
     guard.append(guardFill);
 
-    // The level (spec 256), in its own box on the left of the plate. Replicated
+    // The level (spec 257), in its own box on the left of the plate. Replicated
     // for every player since the delta encoder was written, and until now drawn
     // nowhere in the world.
     //
@@ -1371,6 +1372,11 @@ export function createHud(project: Projector): HudHandle {
       level.style.cssText = [
         `flex:0 0 ${PLATE.levelWidth}px`,
         `height:${PLATE_LEVEL_HEIGHT}px`,
+        // The padding centres the *ink* rather than the line box, and
+        // `border-box` is what keeps it from costing the plate a pixel of
+        // height to do it.
+        'box-sizing:border-box',
+        `padding-top:${PLATE_LEVEL_PAD_TOP}px`,
         'display:flex',
         'align-items:center',
         'justify-content:center',
@@ -1381,7 +1387,7 @@ export function createHud(project: Projector): HudHandle {
       ].join(';');
     }
 
-    // The frame (spec 256): the box, then the two rows, with the plate's own
+    // The frame (spec 257): the box, then the two rows, with the plate's own
     // padding and gap showing between them as rules. Drawn by daylight rather
     // than by borders, so a row's height is the height it is given.
     const plate = player && level ? document.createElement('div') : null;
@@ -1643,7 +1649,7 @@ export function createHud(project: Projector): HudHandle {
 
       // A player's name over their body (spec 145, the multiplayer one).
       //
-      // Ours too, since spec 256. That spec withheld it on the grounds that you
+      // Ours too, since spec 257. That spec withheld it on the grounds that you
       // know who you are and a label on your own head is one more thing between
       // you and the fight -- which was right about a bar and is wrong about a
       // plate: a nameplate missing its name on exactly one body in the world
@@ -1748,7 +1754,7 @@ export function createHud(project: Projector): HudHandle {
         element.health.style.background = fillColor;
       }
 
-      // The level (spec 256). Defended for the reason the guard below reads
+      // The level (spec 257). Defended for the reason the guard below reads
       // `?? 1`: several harnesses fabricate a view by hand (`hud-probe.ts`, the
       // bot client) and a field on `ReplicatedEntity` is not one they know to
       // set. The box holds two digits and `MAX_PLAYER_LEVEL` is 60, so nothing
@@ -1765,7 +1771,7 @@ export function createHud(project: Projector): HudHandle {
       // it also *leaves* at the moment the stagger lands -- which is the same
       // information from the other side.
       //
-      // On a plate it is always drawn (spec 256), because there it is a row of
+      // On a plate it is always drawn (spec 257), because there it is a row of
       // the frame: an empty-looking second row says the body has no guard,
       // which is the opposite of what a full one means.
       const guard = Math.min(1, Math.max(0, entity.poise ?? 1));
