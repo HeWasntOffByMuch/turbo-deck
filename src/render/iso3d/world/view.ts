@@ -141,7 +141,7 @@ import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
 import { aligned, moveIntent, RoutePlanner } from './intent.js';
-import { pickupLead, pickupOrderFor } from './loot-drop.js';
+import { approachLead, approachOrderFor } from './approach.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
 import { pointerCode, wheelCode } from '../../../ui/input/actions.js';
@@ -3436,7 +3436,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // against the last input the server applied, so a placed cast sent from
       // exactly the edge can be refused for drift nobody can see. A distance a
       // body travels, not a fraction of the range.
-      castLead: pickupLead(
+      castLead: approachLead(
         view.stats?.moveSpeed ?? 0,
         view.roundTripTicks,
         SERVER_TICK_RATE,
@@ -3550,7 +3550,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * The same shape as `driveAutoAttack` and `driveCastOrder` -- a destination
    * into `moveIntent` and a request to the server, which validates it exactly as
    * it validates the other two. The decision itself is
-   * `pickupOrderFor`, so "does the player stop walking once they are close
+   * `approachOrderFor`, so "does the player stop walking once they are close
    * enough" is a question answered in Node.
    *
    * The order is dropped the moment the drop leaves the view, which covers all
@@ -3568,10 +3568,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
     const self = view.entities.find((entity) => entity.id === view.selfEntityId);
     const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
-    const decision = pickupOrderFor({
+    const decision = approachOrderFor({
       self: me,
       selfHealth: self?.health ?? 1,
-      drop: { entityId: mark.id, x: mark.x, y: mark.y },
+      target: { x: mark.x, y: mark.y },
       // The server's own reach, plus our body radius, because it measures from
       // the same two centres.
       reach,
@@ -3579,7 +3579,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // measured rather than assumed. Without it the walk stopped at the
       // client's copy of the reach and the server refused from a stride
       // further back.
-      lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+      lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
       // Cleared by whichever `Inventory` answers it, so a refusal is asked
       // again on the next tick rather than leaving the order standing there.
       pending: view.awaitingPickup,
@@ -3606,7 +3606,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     //
     // Nothing is lost by stopping. The one refusal walking could have fixed is
     // the range one, and the order no longer asks from a distance that produces
-    // it (see `pickupLead`); every other refusal -- not yours, bag full, gone --
+    // it (see `approachLead`); every other refusal -- not yours, bag full, gone --
     // is one the player has to act on, and asking again would not help.
     pickupId = null;
     destination = null;
