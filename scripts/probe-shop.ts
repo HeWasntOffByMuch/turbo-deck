@@ -162,6 +162,22 @@ async function bodies(page: Page): Promise<{ id: string; x: number; y: number }[
 }
 
 /**
+ * Where the body is, in world units (spec 256).
+ *
+ * `data-self-at` is the sim's own answer -- what the *server* moved the body to,
+ * rather than this file's arithmetic on a click -- and it is rounded to whole
+ * units, which is a hundredth of the walk being measured.
+ */
+async function selfAt(page: Page): Promise<{ x: number; y: number }> {
+  const text = await page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('[data-self-at]');
+    return host?.dataset['selfAt'] ?? '';
+  });
+  const [x, y] = text.split(',').map(Number);
+  return { x: x ?? 0, y: y ?? 0 };
+}
+
+/**
  * Hover every body until the game says one of them is somebody to talk to.
  *
  * The cursor is the game's own answer (spec 246's bubble mark), so this cannot
@@ -278,37 +294,70 @@ async function main(): Promise<void> {
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 30);
 
-    // Walk over, then talk. The client sends `Talk` whatever the distance and
-    // the server refuses past `talkRadius`, so a right-click from across the
-    // square is silently nothing -- which is why this walks first rather than
-    // assuming the merchant it can see is one it can reach.
-    let bubble = { open: false, replies: [] as Box[], line: '' };
-    for (let approach = 0; approach < 8 && !bubble.open; approach++) {
-      const at = await findTalkable(page);
-      if (!at) {
-        problems.push('no body on screen answered the pointer with the talk cursor');
-        throw new Error(problems.join('; '));
-      }
-      console.log(`  a merchant is at (${at.x.toFixed(0)}, ${at.y.toFixed(0)}) and the cursor says so`);
+    // **One click, from wherever the merchant was first spotted** (spec 256).
+    //
+    // This used to walk first, and said so: the client sent a `Talk` whatever
+    // the distance, the server refused it past `talkRadius`, and the refusal is
+    // silent -- so a right-click from across the square did nothing at all and
+    // the probe had to order its own walk between attempts. That walk is the
+    // thing being checked now, so doing it by hand would hide exactly the
+    // feature this asserts.
+    const found = await findTalkable(page);
+    if (!found) {
+      problems.push('no body on screen answered the pointer with the talk cursor');
+      throw new Error(problems.join('; '));
+    }
+    console.log(`  a merchant is at (${found.x.toFixed(0)}, ${found.y.toFixed(0)}) and the cursor says so`);
 
-      await page.mouse.click(at.x, at.y, { button: 'right' });
-      // Poll: this environment paints at about five frames a second under
-      // software GL, and every readout is published from the frame.
-      for (let i = 0; i < 14 && !bubble.open; i++) {
-        await page.waitForTimeout(150);
-        bubble = await dialogue(page);
-      }
-      if (bubble.open) break;
-      // Too far. Order a walk to the ground just below it and try again.
-      console.log('  ...too far to talk; walking closer');
-      await page.mouse.click(at.x, at.y + 60, { button: 'right' });
-      await page.waitForTimeout(1200);
+    // Back off first, so the one click below is provably from out of range.
+    //
+    // Without it the run is at the mercy of where the spawn pad sits: land
+    // inside `talkRadius` and the click asks immediately, the bubble opens, and
+    // the probe reports a working approach having never made one -- which is
+    // the shape of check that goes on passing after the feature is removed. The
+    // ground opposite the merchant, because the camera keeps the player in the
+    // middle of the frame, so that is directly away from it.
+    const frame = page.viewportSize() ?? { width: 1280, height: 800 };
+    const behind = {
+      x: Math.min(frame.width - 40, Math.max(40, frame.width - found.x)),
+      y: Math.min(frame.height - 40, Math.max(40, frame.height - found.y)),
+    };
+    const stood = await selfAt(page);
+    await page.mouse.click(behind.x, behind.y, { button: 'right' });
+    await page.waitForTimeout(2500);
+    const walkFrom = await selfAt(page);
+    console.log(
+      `  backed off ${Math.hypot(walkFrom.x - stood.x, walkFrom.y - stood.y).toFixed(0)} units first`,
+    );
+
+    // The merchant has moved on screen, so it is found again rather than
+    // clicked where it used to be.
+    const at = (await findTalkable(page)) ?? found;
+    let bubble = { open: false, replies: [] as Box[], line: '' };
+    await page.mouse.click(at.x, at.y, { button: 'right' });
+    // Poll: this environment paints at about five frames a second under
+    // software GL, every readout is published from the frame, and the order now
+    // has a walk in front of it -- the merchant can be most of the arena away,
+    // so this waits out a walk rather than a round trip.
+    for (let i = 0; i < 120 && !bubble.open; i++) {
+      await page.waitForTimeout(150);
+      bubble = await dialogue(page);
     }
     if (!bubble.open) {
       problems.push('right-clicking the merchant never opened a bubble');
       throw new Error(problems.join('; '));
     }
     console.log('  the bubble is up');
+    // The walk is the claim, so it is measured rather than assumed: a probe
+    // that happened to spawn inside `talkRadius` would report a working
+    // approach without one having happened, and would go on reporting one if
+    // the order were removed again.
+    const walkedTo = await selfAt(page);
+    const walked = Math.hypot(walkedTo.x - walkFrom.x, walkedTo.y - walkFrom.y);
+    console.log(`  the body walked ${walked.toFixed(0)} units to get there`);
+    if (walked < 1) {
+      problems.push('the bubble opened without the body walking: the approach was never made');
+    }
 
     // Wait for the replies, which are withheld while the line is still typing.
     for (let i = 0; i < 80 && bubble.replies.length === 0; i++) {

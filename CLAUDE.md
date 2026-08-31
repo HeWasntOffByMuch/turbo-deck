@@ -94,7 +94,7 @@ change a game outcome.
 | `npm run dev` | Dev server for the renderer, for actually playing the game |
 | `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 226); there is no database to start. Runs as `node --import tsx`, so it is **one** process rather than a `tsx` supervisor in front of the real one -- the wrapper cost a second runtime and swallowed signal bursts before the shutdown handler saw them |
 | `npx tsx scripts/db-status.ts` | What is in `data/game.db`: schema version, row counts, and which migrations have run (spec 226). Never prints a token or a hash |
-| `npm run build && npx tsx scripts/probe-shop.ts` | Talk to a merchant and open its shop in the shipped page (spec 249). Runs against a **real `npm run server`** rather than the in-tab loopback, which is the whole point: the two bugs it was written for -- a window sized before its stock arrived, and a stale shop answer landing on a window that had just opened -- are both invisible over a loopback, where every answer lands before the next frame is drawn. It finds the merchant with the cursor (`data-crosshair` reading `bubble` is the game's own answer to "that is somebody you can talk to"), walks until it is close enough, presses a reply, and measures the window's **box** as well as its openness -- because "open" and "readable" are two claims and the bug shipped green against the first one |
+| `npm run build && npx tsx scripts/probe-shop.ts` | Talk to a merchant and open its shop in the shipped page (spec 249). Runs against a **real `npm run server`** rather than the in-tab loopback, which is the whole point: the two bugs it was written for -- a window sized before its stock arrived, and a stale shop answer landing on a window that had just opened -- are both invisible over a loopback, where every answer lands before the next frame is drawn. It finds the merchant with the cursor (`data-crosshair` reading `bubble` is the game's own answer to "that is somebody you can talk to"), right-clicks it **once** from wherever it was spotted, presses a reply, and measures the window's **box** as well as its openness -- because "open" and "readable" are two claims and the bug shipped green against the first one. That single click is spec 256's own assertion: the probe used to order its own walk between attempts, and doing that now would hide exactly the feature it is checking, so it measures the ground the body covered off `data-self-at` instead |
 | `npm run build && npx tsx scripts/probe-production-client.ts` | Whether the page that ships is the game rather than the workbench (spec 254). Everything that spec *decides* is pure and asserted in Node, and this is the half no headless test can reach -- the **wiring**, which is what this repo keeps rediscovering: `visibleTabs` had a complete test file for sixty specs while spec 176 found the editor saving into a world nothing could load, and `layout-store.ts` passed every one of its own tests while nothing in the shipped build imported it. Runs twice, `probe-map-editor.ts`'s shape: once with no query, where every bench, popover and readout must be **gone**, and once with `?client=workbench`, where all of them must come back. The second pass is what makes the first mean anything -- every check in it is an *absence*, so a page that failed to mount, or a tab label misspelled in the probe's own list, scores a flawless zero on the first pass alone. It also checks the hidden meter is still publishing `data-fps-*`, since that is what made the default safe to move, and since spec 255 the **front door**: the shipped page must open on the title screen, `?client=workbench` must not, and Start must take it away -- an `inset:0` element left behind eats every click of the game underneath it, which is the failure `loading-overlay.ts` names |
 | `npm run build && npx tsx scripts/probe-account.ts` | Claim a guest character through the shipped page and read the database back to check the account owns *that* character (spec 226) |
 | `npm run server:bots` | Headless bot clients, for load and for watching prediction. Each mints its own guest character over `POST /api/auth/guest` first (spec 226), since a gated server refuses a `Hello` with no session token -- so a run leaves that many disposable players in the database |
@@ -1506,9 +1506,10 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  was not a move, a slot, a window or the cancel fell off the end
                  of `decideControlDown`. It ships on `Space` now and drops
                  everything a body is committed to in one press: the wind-up, the
-                 standing attack order, the walk over to a drop, a pending aim,
-                 a confirmed one, the click-to-move order and its route, and
-                 whatever is held. The id does not move, because a stored profile
+                 standing attack order, the walk over to a drop, the walk over
+                 to somebody to talk to (spec 256), a pending aim, a confirmed
+                 one, the click-to-move order and its route, and whatever is
+                 held. The id does not move, because a stored profile
                  references it; the label does, because "Stop" beside "Cancel
                  cast" does not say which is which. Three rules. It is
                  **unconditional** -- Escape asks whether anything is committed to
@@ -3940,7 +3941,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  could have. Taking one is bent at *both* ends, because the
                  two sides measure the reach from different instants: the client
                  asks from its **prediction** and the server checks against the
-                 last input it **applied**. So `pickupLead` floors the client's
+                 last input it **applied**. So `approachLead` floors the client's
                  margin at a broadcast interval -- a measured round trip of zero
                  left the order asking from exactly the distance the server
                  refuses past, which made every pickup on a good connection one
@@ -4980,6 +4981,28 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  bubble on the press, because the answer is what decides whether
                  the body stops walking and a bubble over something still ambling
                  away is worse than a moment's wait.
+                 What the press does instead, since spec 256, is arm an order:
+                 `driveTalk` in view.ts walks over and *then* asks, through the
+                 same `approachOrderFor` the drop's walk goes through. Before it,
+                 talking was the one reading of `world.order` that could not
+                 close its own range -- the client sent a `Talk` from wherever
+                 the player happened to be standing, `talkableFor` refused it
+                 past `talkRadius`, and spec 246 made that refusal **silent** on
+                 the stated grounds that every reason a conversation cannot start
+                 is something the player can see. Which they all are, except this
+                 one: from across the square the click did nothing at all, with
+                 no walk, no bubble and no word about why. `scripts/probe-shop.ts`
+                 had to order its own walk between attempts and said so in a
+                 comment.
+                 It inherits the drop's ending whole -- **one order, one
+                 request** -- and nothing tracks a `Talk` in flight, because a
+                 refusal is a `Conversation 0` and that is exactly what "not
+                 talking" already looks like: an order that kept standing after
+                 one would re-ask sixty times a second at whatever it was refused
+                 for. The one refusal walking could have fixed is the range one,
+                 and the walk is what stops it happening. It re-aims at the body
+                 every tick rather than at the point that was clicked, because a
+                 merchant wanders right up until the claim lands.
                  `SpeechSink` beside it is built to `affliction-vfx.ts`'s and
                  `shot-vfx.ts`'s rules because the failure modes are the same:
                  the **stop is owed** (nothing in the synth stops itself), and
@@ -5614,13 +5637,14 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  Three rules close it, and the first is the load-bearing one.
                  **The rule is at the legs**, `moveIntent`'s `dead`, ranked above
                  `staggered` and so above a held key and every aim: there are
-                 five doors into a destination -- a key, a move order, a chase,
-                 an aim's approach, a pickup walk -- and being dead is a fact
-                 about the body rather than about any of them, so one branch
-                 holds whichever door somebody finds next. (`autoAttack` and
-                 `pickupOrderFor` keep the death rules they have had since specs
-                 080 and 158, because they also decide whether to *ask the server
-                 for something*, which a rule at the legs cannot cover.)
+                 six doors into a destination -- a key, a move order, a chase,
+                 an aim's approach, a pickup walk, a walk over to somebody to
+                 talk to -- and being dead is a fact about the body rather than
+                 about any of them, so one branch holds whichever door somebody
+                 finds next. (`autoAttack` and `approachOrderFor` keep the death
+                 rules they have had since specs 080 and 158, because they also
+                 decide whether to *ask the server for something*, which a rule
+                 at the legs cannot cover.)
                  **`sendInput` zeroes the components too**, exactly as it already
                  does for a stagger, so the cover is every *caller* rather than
                  every call site -- the bot harness and the tests build an input
@@ -5738,6 +5762,31 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  **id rather than a flag**: the cancel takes a round trip, the
                  trade stays live and replicated throughout it, and a flag was
                  cleared by the very re-open it existed to prevent),
+                 approach.ts (go and stand next to a thing, then ask for it,
+                 specs 158/236/256. Three of the four readings of `world.order`
+                 are the same sentence with a different verb on the end -- walk
+                 until the server would agree we are close enough, then send one
+                 request -- and this is that sentence, lifted out of the drop it
+                 was written for once a conversation wanted it whole. It was
+                 already not only about a drop: `driveCastOrder` takes
+                 `approachLead` for spec 236's margin and says in a comment that
+                 it is taking the pickup's answer rather than inventing a second
+                 one.
+                 What is deliberately **not** in it is the reach, because that is
+                 three different comparisons in three different files on the
+                 server -- `PICKUP_RANGE` plus a body radius, an ability's range,
+                 an NPC's `talkRadius` measured centre to centre and added to by
+                 nothing -- so each caller states the server's own number and
+                 this decides what to do about it.
+                 `approachLead` is the margin, and the half worth knowing is what
+                 it does **not** describe: it is this client's own lead over the
+                 server, so a target that walks -- a wandering merchant -- adds a
+                 drift of its own, bounded by that body's pace over spec 253's
+                 playback delay. A couple of units against a margin measured in
+                 tens, and what it costs when it does bite is one refused
+                 request; correcting for it would mean replicating a monster's
+                 move speed to say something the broadcast-interval floor already
+                 covers),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks

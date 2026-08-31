@@ -82,6 +82,31 @@ ask was aimed. That is small against the margin the lead already buys — the
 floor alone is a broadcast interval of player travel — and the cost when it does
 bite is one click, not a wedged order.
 
+## Corrections
+
+One thing this design got wrong, and one it found and deliberately left alone.
+
+**A friendly body with no NPC row is refused rather than walked to.** The reach
+comes from `npcById`, and the obvious fallback for a missing row is a reach of
+zero — which is not a refusal, it is an order that walks onto the body and then
+stands there never asking. `friendly.test.ts` already asserts the row exists for
+every friendly monster, so this cannot fire; a wedge is a worse thing to leave
+behind than the click that did nothing, which is what the whole spec is about.
+
+**`pickupId` is not dropped by a held key or by a hotbar cast, and now neither
+is `talkId`.** `onKeyDown`'s movement branch says in a comment that "any manual
+step also drops a standing order" and drops `destination`, `targetId` and
+`order` — not the pickup walk, which is a standing order by every definition in
+this file; `castNow` says "committing to a blow cancels where you were going"
+and has the same gap. So a held key or a cast is fought by the order for as long
+as it lasts and the walk resumes on release. That is a second list of what an
+order is, drifted from `dropOrders`'s — exactly what that function's own comment
+was written to prevent — and it is spec 158's rather than this one's. The talk
+order is made **consistent with its neighbour** rather than given a third
+behaviour: both survive, both end on arrival, and `combat.stop` drops both. The
+fix is one shared list at all three sites and it belongs in a spec that is
+allowed to change what a pickup does.
+
 ## Invariants tested
 
 - `approachOrderFor` keeps every property `pickupOrderFor` was asserted to have:

@@ -29,6 +29,8 @@ import { buyPrice, vendorById } from '../data/vendors.js';
 import { STARTING_COINS } from '../player/player-manager.js';
 import { EntityKind } from '../net/protocol.js';
 import { GameClient } from './game-client.js';
+import { approachLead, approachOrderFor } from '../../render/iso3d/world/approach.js';
+import { SERVER_TICK_RATE } from '../config.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -321,5 +323,103 @@ describe('the shop behind it', () => {
     client.buyItem(npc.vendorId, affordable, 1);
     await tick(4);
     expect(client.view().coins).toBe(broke.coins);
+  });
+});
+
+describe('walking over to talk (spec 256)', () => {
+  /**
+   * The order driven end to end, through the same pure `approachOrderFor` the
+   * view uses -- so this is the approach a player actually makes rather than a
+   * teleport and a click.
+   *
+   * The click itself is not here and cannot be: `issueOrder` needs a cursor and
+   * a scene. What is here is everything after it, which is the half that was
+   * missing -- before spec 256 the click sent a `Talk` from wherever the player
+   * stood, the server refused it past `talkRadius`, and the refusal is silent.
+   */
+  async function walkAndTalk(
+    { server, client, tick }: Harness,
+    away: number,
+    ticks = 900,
+  ): Promise<{ asks: number; walked: number }> {
+    const body = merchantOf(client);
+    if (!body) throw new Error('no merchant');
+    await stand(server, 'p1', body, away);
+    await tick(4);
+
+    const reach = merchantNpc().talkRadius;
+    let asks = 0;
+    let walked = 0;
+    for (let i = 0; i < ticks && client.view().conversationEntityId === 0; i++) {
+      const view = client.view();
+      const self = view.entities.find((entity) => entity.id === view.selfEntityId);
+      // The merchant is read fresh every tick, because it wanders: an order
+      // aimed at the coordinate it was clicked on would arrive where it used to
+      // be. This is `driveTalk` re-aiming.
+      const mark = merchantOf(client);
+      if (!mark) throw new Error('the merchant left');
+      // The *predicted* position, which is what `view.ts` measures from.
+      const me = view.self ?? { x: self?.x ?? 0, y: self?.y ?? 0 };
+      const order = approachOrderFor({
+        self: me,
+        selfHealth: self?.health ?? 1,
+        target: { x: mark.x, y: mark.y },
+        reach,
+        lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+        // One order, one request -- `driveTalk` ends the order on the ask, so
+        // there is never a second one to throttle.
+        pending: false,
+      });
+      if (order.ask) {
+        client.talk(mark.id);
+        asks += 1;
+      }
+      const dx = mark.x - me.x;
+      const dy = mark.y - me.y;
+      const span = Math.hypot(dx, dy) || 1;
+      const walking = order.walkTo !== null;
+      if (walking) walked += 1;
+      client.sendInput({
+        moveX: walking ? dx / span : 0,
+        moveY: walking ? dy / span : 0,
+        facing: Math.atan2(dy, dx),
+        buttons: 0,
+      });
+      await tick();
+    }
+    return { asks, walked };
+  }
+
+  it('closes the gap from outside the radius and then talks', async () => {
+    const rig = await harness();
+    const { asks, walked } = await walkAndTalk(rig, merchantNpc().talkRadius + 400);
+    expect(walked, 'the order should have walked').toBeGreaterThan(0);
+    // One order, one request: the ask that opened it is the only one sent.
+    expect(asks).toBe(1);
+    expect(rig.client.view().conversationEntityId).toBe(merchantOf(rig.client)?.id);
+  });
+
+  /**
+   * The bug the lead exists for, in this radius rather than the drop's: the
+   * client asks from its prediction and the server checks against the last
+   * input it applied, so arriving at the client's own copy of `talkRadius` and
+   * asking earns a silent refusal -- which, unlike a pickup's, has no retry
+   * behind it, so it is not one wasted message but a click that did nothing.
+   */
+  it('is never refused for range on the ask the walk produced', async () => {
+    const rig = await harness();
+    // Far enough out that the whole approach is at full walking speed, so the
+    // ask lands at the moment the prediction is furthest ahead of the server.
+    await walkAndTalk(rig, merchantNpc().talkRadius + 900);
+    expect(rig.client.view().conversationEntityId).not.toBe(0);
+  });
+
+  /** Already close enough: no walking at all, and the same single ask. */
+  it('asks at once when the click was already in range', async () => {
+    const rig = await harness();
+    const { asks, walked } = await walkAndTalk(rig, merchantNpc().talkRadius - 30);
+    expect(walked).toBe(0);
+    expect(asks).toBe(1);
+    expect(rig.client.view().conversationEntityId).not.toBe(0);
   });
 });
