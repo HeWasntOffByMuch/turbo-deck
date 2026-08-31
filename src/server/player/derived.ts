@@ -85,6 +85,7 @@ export const NEUTRAL_TRAITS: TraitStats = {
   flowArmorPct: 0,
   flowWeakPoint: 0,
   spellbladeHandling: 0,
+  mobileOffenseCooldownTicks: 0,
   perfectExitResource: 0,
   perfectExitWindowTicks: 0,
   spellRadiusPct: 0,
@@ -363,6 +364,12 @@ export function deriveTraits(
     flowArmorPct: clamp(t.flowArmorPct, 0, 0.15),
     flowWeakPoint: Math.max(0, t.flowWeakPoint),
     spellbladeHandling: t.spellbladeHandling > 0 ? 1 : 0,
+    // Whole ticks, floored at zero and **uncapped** (spec 254): the ceiling is
+    // the specialization's three tiers plus the milestone that deepens it, and
+    // a cap here would be a second, invisible answer to how much Mobile Offense
+    // is worth -- the mistake `windupPoiseArmor` spent four specs paying for,
+    // where a milestone filled a cap and the tiers bought into a full number.
+    mobileOffenseCooldownTicks: Math.max(0, Math.round(t.mobileOffenseCooldownTicks)),
     perfectExitResource: Math.max(0, t.perfectExitResource),
     perfectExitWindowTicks: Math.max(0, Math.round(t.perfectExitWindowTicks)),
 

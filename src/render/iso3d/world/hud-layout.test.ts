@@ -28,6 +28,7 @@ import {
   poolLabelFits,
   readoutShown,
   stripHeight,
+  tuningMenusShown,
   stripWidth,
   windowButtonCaptionFits,
   windowButtonCaptionMaxChars,
@@ -175,6 +176,24 @@ describe('the HUD layout', () => {
    */
   it('builds no tuning popovers on a finger', () => {
     expect(compact.showsTuningMenus).toBe(false);
+  });
+
+  /**
+   * And none in the shipped client either (spec 254), for a second reason: they
+   * are workbench controls, and what a player is offered instead is the options
+   * window. Two rules over one answer, exactly as `readoutShown` has two.
+   */
+  it('builds tuning popovers only for a bench on a desktop layout', () => {
+    expect(tuningMenusShown(desktop, true)).toBe(true);
+    expect(tuningMenusShown(desktop, false)).toBe(false);
+  });
+
+  it('keeps the compact rule whatever the build says', () => {
+    // The device half still wins on its own: a phone running a bench build has
+    // no room for eight panels twenty rows deep, which is spec 140's finding
+    // and is not what spec 254 is about.
+    expect(tuningMenusShown(compact, true)).toBe(false);
+    expect(tuningMenusShown(compact, false)).toBe(false);
   });
 
   /**

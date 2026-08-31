@@ -171,10 +171,13 @@ export const SCALING = {
      *
      * The budget, so that no purchase is ever bought into a filled cap: 0.11
      * from the attribute at the hard cap, 0.15 from Quick Recovery's three tiers
-     * and 0.15 from three Flow stacks, against the 0.45 between the base and the
-     * floor. That is 0.41 of it, so **nothing in the shipped tree reaches the
-     * floor** -- the state `MIN_ATTACK_INTERVAL_SECONDS` is in and the right one
-     * for a guard rather than a ceiling the tree is priced against.
+     * and 0.15 from three Flow stacks (0.05 a stack, from the Agility 20
+     * milestone that grants Flow and the `agi.flow` specialization -- Mobile
+     * Offense buys cooldown rather than Flow since spec 254), against the 0.45
+     * between the base and the floor. That is 0.41 of it, so **nothing in the
+     * shipped tree reaches the floor** -- the state `MIN_ATTACK_INTERVAL_SECONDS`
+     * is in and the right one for a guard rather than a ceiling the tree is
+     * priced against.
      *
      * The two thirds a player *buys* are worth more than the third the attribute
      * hands over, which is deliberate: controlling commitment is a thing to
@@ -199,6 +202,17 @@ export const SCALING = {
     /** How long one `flow` stack lives, and how many may be held. */
     flowTicks: seconds(1.2),
     flowMaxStacks: 3,
+    /**
+     * Cooldown one tier of Mobile Offense takes off, per follow-through walked
+     * out of (spec 254).
+     *
+     * Here rather than in the specialization row for the reason everything in
+     * this file is here: what a tier is worth is a balance decision, and this
+     * one is the number the whole mechanic turns on -- one cancel pays it to
+     * *every* active ability that is cooling, so the same edit reaches the
+     * milestone that deepens it and both ends of the balance harness.
+     */
+    mobileOffenseCooldownTicks: seconds(0.4),
   },
 
   intelligence: {

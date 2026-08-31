@@ -257,7 +257,13 @@ async function probeDesktopSiteMode(
   try {
     const page = await context.newPage();
     page.on('pageerror', (error) => problems.push(String(error)));
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    // `client=workbench` is what keeps this probe *about* anything (spec 254).
+    // Every check below is an absence -- no tab buttons, no popovers, a readout
+    // written but not drawn -- and the shipped client hides all three on any
+    // device, so against the game build they would pass with handheld detection
+    // deleted entirely. Forcing the bench back on leaves the handheld rule as
+    // the only thing that can still hide them, which is the claim being made.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 120_000 });
     await page.waitForTimeout(1500);
 
@@ -363,8 +369,10 @@ async function main(): Promise<void> {
     });
 
     // Pinned, for the same reason `preview-world.ts` pins it: an unseeded world
-    // puts the bodies somewhere new every run.
-    await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+    // puts the bodies somewhere new every run. And `client=workbench` for the
+    // reason given at the desktop-site pass above: it is what leaves the
+    // handheld rule as the only thing that can empty this frame.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
     await waitForTick(page, 150);

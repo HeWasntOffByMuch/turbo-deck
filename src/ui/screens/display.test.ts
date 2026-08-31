@@ -120,12 +120,15 @@ describe('the options window', () => {
   });
 });
 
-describe('the frame-rate switch (spec 165)', () => {
-  it('opens on, because a readout nobody can find is a readout nobody uses', () => {
+describe('the frame-rate switch (specs 165, 254)', () => {
+  it('opens off, because nothing ships with a frame-time graph over the world', () => {
+    // Spec 165 opened this on, so that a meter behind a checkbox two pages in
+    // could be found at all. Spec 254 turns it off: the page a player opens is
+    // not the page that argument was about, and the row is still right here.
     const display = screen();
     expect(display.frameRateShown).toBe(DEFAULT_SHOW_FPS);
-    expect(display.frameRateShown).toBe(true);
-    expect(fpsBox(display).checked).toBe(true);
+    expect(display.frameRateShown).toBe(false);
+    expect(fpsBox(display).checked).toBe(false);
   });
 
   it('emits the wish and decides nothing itself', () => {
@@ -137,29 +140,29 @@ describe('the frame-rate switch (spec 165)', () => {
     display.onShowFpsChosen = (show) => asked.push(show);
 
     const box = fpsBox(display);
-    box.setChecked(false);
-    box.onToggle?.(false);
-    expect(asked).toEqual([false]);
-    // Neither the page's state nor its tick moved: the mount has not answered.
-    expect(display.frameRateShown).toBe(true);
-    expect(box.checked).toBe(true);
-
-    display.setShowFps(false);
-    expect(display.frameRateShown).toBe(false);
-    expect(fpsBox(display).checked).toBe(false);
-  });
-
-  it('asks to turn back on once it is off', () => {
-    const display = screen();
-    const asked: boolean[] = [];
-    display.onShowFpsChosen = (show) => asked.push(show);
-    display.setShowFps(false);
-
-    const box = fpsBox(display);
     box.setChecked(true);
     box.onToggle?.(true);
     expect(asked).toEqual([true]);
+    // Neither the page's state nor its tick moved: the mount has not answered.
+    expect(display.frameRateShown).toBe(false);
     expect(box.checked).toBe(false);
+
+    display.setShowFps(true);
+    expect(display.frameRateShown).toBe(true);
+    expect(fpsBox(display).checked).toBe(true);
+  });
+
+  it('asks to turn back off once it is on', () => {
+    const display = screen();
+    const asked: boolean[] = [];
+    display.onShowFpsChosen = (show) => asked.push(show);
+    display.setShowFps(true);
+
+    const box = fpsBox(display);
+    box.setChecked(false);
+    box.onToggle?.(false);
+    expect(asked).toEqual([false]);
+    expect(box.checked).toBe(true);
   });
 });
 

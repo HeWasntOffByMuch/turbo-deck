@@ -423,7 +423,10 @@ async function main(): Promise<void> {
     // checks that depend on where bodies happen to stand -- the forgiving pick
     // most of all -- passed or failed by the clock. A harness whose answer moves
     // between runs cannot tell a regression from a Tuesday.
-    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${PROBE_SLOTS}`, {
+    // The built page is the game client since spec 254 and builds none of the tuning
+    // popovers; this harness drives "View settings" and "Weather", so it asks the
+    // workbench back.
+    await page.goto(`http://localhost:${PORT}/?seed=20260806&slots=${PROBE_SLOTS}&client=workbench`, {
       waitUntil: 'load',
     });
     await page.waitForSelector('canvas');

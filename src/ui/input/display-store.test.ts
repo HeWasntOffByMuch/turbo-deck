@@ -10,11 +10,13 @@ import {
   DEFAULT_SHOW_FPS,
   DISPLAY_KEY,
   DISPLAY_VERSION,
+  loadControlsSeen,
   loadDisplay,
   loadMaxZoom,
   loadScale,
   loadShowFps,
   resolveMaxZoom,
+  saveControlsSeen,
   saveMaxZoom,
   migrateDisplay,
   parseDisplay,
@@ -62,6 +64,7 @@ describe('the scale preference across a reload', () => {
       scale: 3,
       showFps: DEFAULT_SHOW_FPS,
       maxZoom: 'supported',
+      controlsSeen: false,
     });
   });
 });
@@ -100,15 +103,28 @@ describe('what the store refuses', () => {
       scale: 'auto',
       showFps: DEFAULT_SHOW_FPS,
       maxZoom: 'supported',
+      controlsSeen: false,
     });
   });
 });
 
-describe('the frame-rate preference (spec 165)', () => {
-  it('is on unless somebody turned it off', () => {
-    // It shipped off, behind a checkbox two pages in, and the first thing
-    // anybody asked was where it was.
-    expect(loadShowFps(storage())).toBe(true);
+describe('the frame-rate preference (specs 165, 254)', () => {
+  it('is off unless somebody turned it on', () => {
+    // Spec 165 defaulted this on, because it shipped behind a checkbox two
+    // pages in and the first thing anybody asked was where it was. Spec 254
+    // turns it back off: "anybody" there was a developer, and on the page a
+    // player opens it is a frame-time graph and a draw-call counter over the
+    // world before the first frame is drawn.
+    expect(loadShowFps(storage())).toBe(false);
+  });
+
+  it('still reads back an explicit yes, so the meter is a click away in either build', () => {
+    // The half that makes the default safe to move: what changes is only what
+    // an *unwritten* profile means, and the Display page's own row is what
+    // either kind of user presses.
+    const store = storage();
+    saveShowFps(store, true);
+    expect(loadShowFps(store)).toBe(true);
   });
 
   it('reads back what was written', () => {
@@ -219,5 +235,58 @@ describe('the widest-zoom preference (spec 202)', () => {
     expect(resolveMaxZoom('supported', 420)).toBe(420);
     expect(resolveMaxZoom('supported', 380)).toBe(380);
     expect(resolveMaxZoom(900, 420)).toBe(900);
+  });
+});
+
+describe('whether the controls card has been dismissed (spec 255)', () => {
+  it('is not seen when nothing was ever written', () => {
+    expect(loadControlsSeen(storage())).toBe(false);
+  });
+
+  it('reads back what was written', () => {
+    const store = storage();
+    saveControlsSeen(store, true);
+    expect(loadControlsSeen(store)).toBe(true);
+    saveControlsSeen(store, false);
+    expect(loadControlsSeen(store)).toBe(false);
+  });
+
+  it('does not lose the other preferences when it is written, or the reverse', () => {
+    // The same read-modify-write argument `saveScale`/`saveShowFps` already
+    // make: two preferences set from two different places must not clobber
+    // each other.
+    const store = storage();
+    saveScale(store, 3);
+    saveControlsSeen(store, true);
+
+    expect(loadScale(store)).toBe(3);
+    expect(loadControlsSeen(store)).toBe(true);
+
+    saveShowFps(store, true);
+    expect(loadControlsSeen(store)).toBe(true);
+  });
+
+  it('reads a document written before the card existed as not yet seen', () => {
+    // What every profile written before spec 255 looks like. It has a scale in
+    // it that the player chose, and reading the absent field as "dismissed"
+    // would skip the card for a player who has never once been shown it.
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: DISPLAY_VERSION, scale: 4, showFps: true }));
+
+    expect(loadScale(store)).toBe(4);
+    expect(loadControlsSeen(store)).toBe(false);
+  });
+
+  it('treats anything other than a literal true as not seen', () => {
+    const store = storage();
+    store.setItem(DISPLAY_KEY, JSON.stringify({ version: DISPLAY_VERSION, scale: 2, controlsSeen: 'yes' }));
+    expect(loadControlsSeen(store)).toBe(false);
+  });
+
+  it('does not need the version to move at all', () => {
+    // The field this test protects: adding it must not have bumped
+    // DISPLAY_VERSION, or every stored profile in the world would suddenly be
+    // "from a build that knew more than this one" one spec from now.
+    expect(DISPLAY_VERSION).toBe(3);
   });
 });

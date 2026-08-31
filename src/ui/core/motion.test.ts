@@ -15,9 +15,12 @@ import {
   ease,
   EASINGS,
   FULL_MOTION,
+  drift,
   isDone,
   MOTION,
+  NOTICE_TIMINGS,
   REDUCED_MOTION,
+  RESPONSE_TIMINGS,
   settled,
   tweenTo,
   valueAt,
@@ -120,14 +123,71 @@ describe('tweenTo', () => {
   });
 });
 
+describe('drift, for something that floats rather than arrives', () => {
+  const rising: Tween = { from: 0, to: 48, startMs: 1000, durationMs: 800, easing: 'linear' };
+
+  it('is the same as animate while motion is full', () => {
+    for (const at of [1000, 1200, 1400, 1799, 1800]) {
+      expect(drift(rising, at, FULL_MOTION)).toBe(animate(rising, at, FULL_MOTION));
+    }
+  });
+
+  /**
+   * The distinction the whole helper exists for, and the bug it was extracted
+   * from: `animate` snaps to `to`, which for a float is the far end of a journey
+   * it never took -- as far from the thing it is about as the animation ever
+   * gets. A drift holds where it appeared.
+   */
+  it('holds its start with motion reduced, where animate holds its end', () => {
+    expect(drift(rising, 1400, REDUCED_MOTION)).toBe(rising.from);
+    expect(animate(rising, 1400, REDUCED_MOTION)).toBe(rising.to);
+  });
+
+  it('holds the start whatever the easing and whenever it is asked', () => {
+    for (const easing of Object.keys(EASINGS) as Easing[]) {
+      for (const at of [0, 1000, 1400, 9999]) {
+        expect(drift({ ...rising, easing }, at, REDUCED_MOTION)).toBe(rising.from);
+      }
+    }
+  });
+});
+
 describe('the timings', () => {
-  it('keeps every animation short enough to be feedback', () => {
+  it('keeps every *response* short enough to be feedback', () => {
     // A quarter of a second is where an animation stops reading as a response
     // and starts reading as a wait. All three are well inside it.
-    for (const entry of Object.values(MOTION)) {
-      expect(entry.durationMs).toBeGreaterThan(0);
-      expect(entry.durationMs).toBeLessThanOrEqual(250);
+    for (const key of RESPONSE_TIMINGS) {
+      expect(MOTION[key].durationMs, key).toBeGreaterThan(0);
+      expect(MOTION[key].durationMs, key).toBeLessThanOrEqual(250);
     }
+  });
+
+  /**
+   * A notice is bounded from the other end.
+   *
+   * Nothing waits on one, so the quarter-second rule above does not apply and
+   * would be actively wrong: a number that floats off a slot to be noticed by
+   * somebody looking at the *world* has to outlast a glance. What it must not do
+   * is outlast the thing that produced it -- a follow-through cancel comes round
+   * about once a second at the sword's cadence.
+   */
+  it('gives every *notice* long enough to be read, and no longer than its cause', () => {
+    for (const key of NOTICE_TIMINGS) {
+      expect(MOTION[key].durationMs, key).toBeGreaterThanOrEqual(400);
+      expect(MOTION[key].durationMs, key).toBeLessThanOrEqual(1000);
+    }
+  });
+
+  /**
+   * The classification covers the table exactly.
+   *
+   * Without this, the two rules above are two lists somebody has to remember to
+   * add to, and a fourth timing would be checked by neither -- which is the same
+   * shape as `progression-audit.ts`'s table being asserted to cover `TraitStats`
+   * exactly, and for the same reason.
+   */
+  it('classifies every timing as one or the other', () => {
+    expect([...RESPONSE_TIMINGS, ...NOTICE_TIMINGS].sort()).toEqual(Object.keys(MOTION).sort());
   });
 });
 

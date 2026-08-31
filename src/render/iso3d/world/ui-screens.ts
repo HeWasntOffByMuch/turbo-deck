@@ -31,7 +31,7 @@
 
 import type { DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers, UiEvent } from '../../../ui/core/events.js';
-import { UNBOUNDED, type Point, type Rect, type Size } from '../../../ui/core/geom.js';
+import { UNBOUNDED, uniformInsets, type Point, type Rect, type Size } from '../../../ui/core/geom.js';
 import { Anchor } from '../../../ui/core/containers.js';
 import { LayerStack } from '../../../ui/core/layers.js';
 import { UiRoot } from '../../../ui/core/root.js';
@@ -48,6 +48,7 @@ import { BODY_FONT } from '../../../ui/text/font.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import { CharacterScreen } from '../../../ui/screens/character.js';
 import { ChatScreen, chatInsets, type ChatLineView } from '../../../ui/screens/chat.js';
+import { ControlsScreen, controlHints } from '../../../ui/screens/controls.js';
 import {
   DialogueDock,
   DialogueScreen,
@@ -90,6 +91,8 @@ import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
 import type { SoundSink, UiSoundId } from '../../../ui/core/sound.js';
 import { ChatLog, revealAt } from './chat-log.js';
+import { CooldownRefundMarks } from './cooldown-marks.js';
+import type { CooldownRefund } from '../../../server/client/cooldown-refund.js';
 import { selectionOf } from './selection.js';
 import { ACTION_BAR, abilityForSlot, type ActionSlot } from './action-bar.js';
 import { actionBarViewOf } from './action-bar-model.js';
@@ -369,7 +372,18 @@ export class UiScreens {
   private readonly chat: ChatScreen;
   /** What has been said. Client state: nothing here is replicated (spec 189). */
   private readonly chatLog = new ChatLog();
+  /**
+   * Cooldown reductions still being drawn (spec 254).
+   *
+   * Client state exactly like {@link chatLog}, and stamped the same way: a
+   * refund arrives on a network callback rather than inside the frame, so the
+   * mount's own `now` is what dates it -- a second clock in here is the one
+   * thing that would make this half impure.
+   */
+  private readonly refundMarks = new CooldownRefundMarks();
   private readonly chatDock = new Anchor('chat:dock');
+  private readonly controls: ControlsScreen;
+  private readonly controlsDock = new Anchor('controls:dock');
   private chatRevision = -1;
   private chatLines: readonly ChatLineView[] = [];
   /** The mini HUD for whatever was left-clicked (spec 196). */
@@ -712,6 +726,21 @@ export class UiScreens {
     this.chatDock.padding = chatInsets(THEME, 0);
     this.chatDock.place(this.chat, 'bottomLeft');
     this.layers.place('hud', this.chatDock);
+
+    // The first-run controls card (spec 255). Top right, which is the corner
+    // the shipped client leaves empty: spec 254 took the eight tuning popovers
+    // out of it, and the card only ever shows in that build. Its dock passes
+    // the pointer through and the card does not -- the dialogue bubble's split,
+    // and for its reason: the empty three-quarters of a dock must not eat
+    // clicks meant for the ground, and a press on the close button must not
+    // also be a press on the world.
+    this.controls = new ControlsScreen({ theme: THEME });
+    this.controls.visible = false;
+    this.controls.onDismiss = () => this.onControlsDismissed?.();
+    this.controlsDock.pointerTransparent = true;
+    this.controlsDock.padding = uniformInsets(THEME.spacing.md);
+    this.controlsDock.place(this.controls, 'topRight');
+    this.layers.place('hud', this.controlsDock);
     // Everything a submitted line needs is here and none of it is the screen's:
     // the client to say it to, the root's focus to give back, and the log to
     // remember it in. Doing all three in one place is what stops "send it" and
@@ -1174,6 +1203,9 @@ export class UiScreens {
         aimingAbilityId: this.aimingAbilityId,
         stats: view.stats,
         swap,
+        // Swept on read, so a mark cannot outlive its window whatever the frame
+        // rate does -- and nothing has to remember to clear one.
+        refunds: this.refundMarks.live(nowMs),
         tick: drawnTick,
         map: this.options.map,
         showsKeys: this.showsSlotKeys,
@@ -1304,6 +1336,20 @@ export class UiScreens {
     readonly dialogueOpen: boolean;
     readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
     readonly dialogueLine: string;
+    /**
+     * The refund marks currently up, and where each is drawn (spec 254).
+     *
+     * Published because this feature has now been reported wrong three times and
+     * every one of them was invisible to a headless assertion: a masked number,
+     * a label stuck to its slot, and a label snapped to the far end of its own
+     * travel. All three are questions about *the shipped page* -- what clock it
+     * is on, what motion preference it is honouring, where the pixels went --
+     * and none of them can be asked of a mount driven by hand.
+     *
+     * `motion` is the one that would have answered the last two on its own.
+     */
+    readonly motion: string;
+    readonly refundMarks: readonly { readonly id: string; readonly rise: number }[];
   } {
     const tabs = this.optionsScreen.tabs;
     const shownTrade = this.isOpen('trade') ? this.trade.view : null;
@@ -1319,6 +1365,16 @@ export class UiScreens {
       // Separators stripped: the readout joins on these, and a line that carried
       // one would split into fields nobody meant.
       dialogueLine: this.dialogue.shownLine.replace(/[|;:,]/g, ' '),
+      motion: this.root.motion.reduced ? 'reduced' : 'full',
+      // How far each has *travelled*, off the widget, rather than the mark's own
+      // start -- "it appears and does not move" is a claim about that number,
+      // and a start plus a promise that it animates is exactly what was true
+      // while it did not.
+      refundMarks: this.actionBar.slots.flatMap((slot, index) =>
+        slot.refund === null
+          ? []
+          : [{ id: `bar:${String(index)}`, rise: Math.round(slot.refundRise(this.now, this.root.motion)) }],
+      ),
       windows: this.opened(),
       bag: this.inventory.bagSlots.map((cell) => cell.item?.name ?? ''),
       // What the chat is showing, said the way a player reads it (spec 189).
@@ -1488,6 +1544,40 @@ export class UiScreens {
    */
   setAccount(view: AccountView): void {
     this.account.setAccount(view);
+  }
+
+  /**
+   * Show or hide the game's own interface (spec 255).
+   *
+   * The `hud` layer and nothing else: the action bar, the chat log, the
+   * selected-unit readout, the dialogue bubble and the controls card. The
+   * `windows` layer above it is deliberately left alone, which is what lets the
+   * title screen offer Options -- the options window is drawn over the title
+   * art while the skill bar behind it is not.
+   */
+  setHudShown(shown: boolean): void {
+    this.layers.layer('hud').visible = shown;
+  }
+
+  /**
+   * The player closed the controls card (spec 255). Reported rather than acted
+   * on here too: remembering that it has been seen is `display-store.ts`'s, and
+   * this class has no storage.
+   */
+  onControlsDismissed: (() => void) | null = null;
+
+  /**
+   * Show or hide the first-run controls card.
+   *
+   * The hints are re-derived on the way in rather than held, because the one
+   * thing that can change them is a rebind -- and the keybindings window is
+   * open in the same session that would do it. Cheap: eight rows off a map
+   * this class already has, once per show.
+   */
+  setControlsShown(shown: boolean): void {
+    if (shown) this.controls.setView({ hints: controlHints(this.options.map) });
+    this.controls.visible = shown;
+    this.controlsDock.invalidateArrange();
   }
 
   /** Told whether the frame-time readout is being drawn (spec 165). */
@@ -1675,6 +1765,17 @@ export class UiScreens {
    */
   pushChat(channel: number, from: string, text: string): void {
     this.chatLog.append(channel, from, text, this.now);
+  }
+
+  /**
+   * A cooldown of ours just got shorter (spec 254).
+   *
+   * Driven from `view.ts`'s `onCooldownRefund` in the register `pushChat` is
+   * driven from `onChat`: the impure half owns the client and this half owns
+   * what is drawn, and the seam between them is one call carrying plain facts.
+   */
+  pushCooldownRefund(refunds: readonly CooldownRefund[]): void {
+    this.refundMarks.add(refunds, this.now);
   }
 
   get chatOpen(): boolean {

@@ -24,6 +24,7 @@
  * DOM and us.
  */
 
+import type { CooldownRefund } from '../../../server/client/cooldown-refund.js';
 import { resolveUiScale, uiFrame, type UiFrame } from '../../../ui/core/frame.js';
 import { replay, type DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers } from '../../../ui/core/events.js';
@@ -117,6 +118,18 @@ export interface UiReadout {
   readonly dialogueOpen: boolean;
   readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
   readonly dialogueLine: string;
+  /**
+   * Whether the interface is honouring a reduced-motion preference, and how far
+   * each live refund mark has travelled (spec 254).
+   *
+   * Published because that feature has been reported wrong three times and every
+   * one was invisible to a headless assertion -- a masked number, a label stuck
+   * to its slot, a label snapped to the far end of its own travel. All three are
+   * questions about the shipped page: what clock it is on, what preference it is
+   * honouring, where the pixels went.
+   */
+  readonly motion: string;
+  readonly refundMarks: readonly { readonly id: string; readonly rise: number }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };
@@ -249,6 +262,26 @@ export class UiLayer {
   /** What the server says this session is (spec 226). Straight through. */
   setAccount(view: AccountView): void {
     this.screens.setAccount(view);
+  }
+
+  /** Show or hide the game's own interface -- the `hud` layer (spec 255). */
+  setHudShown(shown: boolean): void {
+    this.screens.setHudShown(shown);
+    // Published, because the layer is drawn on a canvas and a harness cannot
+    // read a canvas. The two bugs this fixes -- a skill bar over the title
+    // screen, and one over the loading screen before it -- are both invisible
+    // to every other attribute the mount publishes.
+    this.element.dataset['uiHud'] = shown ? 'shown' : 'hidden';
+  }
+
+  /** Show or hide the first-run controls card (spec 255). */
+  setControlsShown(shown: boolean): void {
+    this.screens.setControlsShown(shown);
+  }
+
+  /** Told when the player closes that card. */
+  set onControlsDismissed(handler: (() => void) | null) {
+    this.screens.onControlsDismissed = handler;
   }
 
   /** The audio mix as it actually stands (spec 229). See `AudioScreen`. */
@@ -561,6 +594,11 @@ export class UiLayer {
    */
   select(entityId: number | null): void {
     this.screens.select(entityId);
+  }
+
+  /** A cooldown of ours got shorter (spec 254). Marks the slots it landed on. */
+  pushCooldownRefund(refunds: readonly CooldownRefund[]): void {
+    this.screens.pushCooldownRefund(refunds);
   }
 
   // --- chat (spec 189) ------------------------------------------------------

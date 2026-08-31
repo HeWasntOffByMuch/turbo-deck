@@ -131,7 +131,10 @@ async function main(): Promise<void> {
     await waitForServer(`http://localhost:${PORT}/`);
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await context.newPage();
-    await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
+    // The built page is the game client since spec 254, where the readout starts
+    // hidden; this harness's whole subject is the readout starting shown and
+    // toggling, so it asks the workbench back.
+    await page.goto(`http://localhost:${PORT}/?client=workbench`, { waitUntil: 'domcontentloaded' });
 
     // A binding stored by an earlier run would make every press below a test of
     // that run's leftovers rather than of the shipped default.
@@ -147,14 +150,33 @@ async function main(): Promise<void> {
     const hidden = await readout(page);
     check(hidden.state === 'off' && !hidden.drawn, `F3 takes the readout away (${hidden.state})`);
 
-    // The rule this feature could have broken. Read the tick twice with the box
+    // The rule this feature could have broken. Watch the tick with the box
     // hidden: a toggle that stopped the writing rather than the drawing would
     // leave `preview-touch.ts` unable to tell "the tap did nothing" from "the
     // frame had not run yet".
+    //
+    // **Polled, not waited out.** This was a fixed 1.2s, and the sim is still
+    // streaming the world at this point -- one chunk ingest is a frame long
+    // enough to cover that window on a machine with no GPU, so the read landed
+    // on the same tick it started on about one run in four and reported a
+    // working readout as a silenced one. Measured, rather than reasoned about:
+    // the tick advances every time given room to.
     const before = (await readout(page)).tick;
-    await page.waitForTimeout(1200);
-    const after = (await readout(page)).tick;
-    check(before > 0 && after > before, `the hidden readout is still written (tick ${before} -> ${after})`);
+    const deadline = Date.now() + 20_000;
+    let after = before;
+    let stayedHidden = true;
+    while (Date.now() < deadline && after <= before) {
+      await page.waitForTimeout(250);
+      const now = await readout(page);
+      after = now.tick;
+      // Checked on every sample rather than once at the end, because "still
+      // written" is only interesting while it is still hidden.
+      if (now.drawn) stayedHidden = false;
+    }
+    check(
+      before > 0 && after > before && stayedHidden,
+      `the hidden readout is still written (tick ${before} -> ${after}${stayedHidden ? '' : ', but it came back into view'})`,
+    );
 
     await press(page, 'F3');
     const back = await readout(page);

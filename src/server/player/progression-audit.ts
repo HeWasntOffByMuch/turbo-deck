@@ -111,6 +111,7 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   flowArmorPct: 'up',
   flowWeakPoint: 'up',
   spellbladeHandling: 'up',
+  mobileOffenseCooldownTicks: 'up',
   perfectExitResource: 'up',
   perfectExitWindowTicks: 'up',
 

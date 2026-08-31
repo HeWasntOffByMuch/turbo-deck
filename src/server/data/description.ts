@@ -699,6 +699,14 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'flowTicks', where: 'trait', name: 'Flow duration', form: 'seconds' },
   { key: 'flowDurationPct', where: 'trait', name: 'Flow duration', form: 'percent' },
   { key: 'flowBackswingCancelPct', where: 'trait', name: 'Backswing you may break off per Flow stack', form: 'percent' },
+  // Seconds rather than ticks, like every other span a player is shown: the
+  // sim counts in ticks and nothing outside it should have to (spec 191).
+  {
+    key: 'mobileOffenseCooldownTicks',
+    where: 'trait',
+    name: 'Active ability cooldown removed',
+    form: 'seconds',
+  },
   { key: 'momentumTicks', where: 'trait', name: 'Momentum duration', form: 'seconds' },
   { key: 'momentumWindupScale', where: 'trait', name: 'Wind-up reduction while Momentum is held', form: 'percent' },
   { key: 'perfectExitResource', where: 'trait', name: `${RESOURCE_NAME} on a perfect exit`, form: 'flat' },

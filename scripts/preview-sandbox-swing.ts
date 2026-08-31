@@ -95,7 +95,9 @@ async function main(): Promise<void> {
       }
     });
 
-    await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'load' });
+    // The built page is the game client since spec 254 and builds no tab strip at
+    // all; this harness drives the Movement sandbox tab, so it asks the workbench back.
+    await page.goto(`http://localhost:${PORT}/?client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');
     await page.getByRole('button', { name: 'Movement sandbox' }).click();
     await page.waitForTimeout(4000);

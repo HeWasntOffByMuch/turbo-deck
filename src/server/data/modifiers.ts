@@ -81,6 +81,11 @@ export interface TraitModifier {
   readonly flowArmorPct?: number;
   readonly flowWeakPoint?: number;
   readonly spellbladeHandling?: number;
+  /**
+   * Mobile Offense: ticks of active-ability cooldown one walked-out
+   * follow-through removes (spec 254). Sums, spent whole.
+   */
+  readonly mobileOffenseCooldownTicks?: number;
   /** Perfect Exit: resource returned, and its internal cooldown. */
   readonly perfectExitResource?: number;
   readonly perfectExitWindowTicks?: number;
@@ -304,6 +309,7 @@ function zeroTraits(): TraitTotals {
     flowArmorPct: 0,
     flowWeakPoint: 0,
     spellbladeHandling: 0,
+    mobileOffenseCooldownTicks: 0,
     perfectExitResource: 0,
     perfectExitWindowTicks: 0,
     spellRadiusPct: 0,

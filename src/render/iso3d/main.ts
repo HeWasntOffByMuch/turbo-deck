@@ -27,6 +27,7 @@ import { mountDebug } from './debug-view.js';
 import type { ViewHandle } from './view-handle.js';
 import { createFullscreenButton } from './fullscreen.js';
 import { isHandheldDevice } from './device.js';
+import { showsWorkbenches } from './client-build.js';
 import { mountLanded, showsTabButtons, tabPress, visibleTabs } from './shell-tabs.js';
 
 interface Tab {
@@ -78,8 +79,11 @@ function main(): void {
     { label: 'SFX', mount: mountSfx },
   ];
 
-  // A phone gets the game and nothing else (spec 140).
-  const tabs = visibleTabs(all, isHandheldDevice());
+  // A phone gets the game and nothing else (spec 140), and so does the shipped
+  // client (spec 254) -- two reasons, one filter, because two would be two
+  // answers to which tabs are the game. `showsTabButtons` then draws no strip at
+  // all, so the game build opens with nothing across the top of the world.
+  const tabs = visibleTabs(all, isHandheldDevice() || !showsWorkbenches());
 
   // The bar floats over the game window rather than pushing it down (spec 041);
   // the container beneath it is the full viewport, and the sandbox tabs scroll

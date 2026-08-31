@@ -95,8 +95,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_1,
     name: 'Quick Recovery',
-    effect: 'Walking out of a follow-through grants Flow for 1.2s, up to three stacks.',
-    grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowBackswingCancelPct: 0.01 } },
+    // 0.02 rather than 0.01 (spec 256, after 254). This and `agi.flow` are the
+    // only two sources of Flow's contribution to the cancel point now that
+    // Mobile Offense buys cooldown, and together they still come to the 0.05 a
+    // stack the budget in `SCALING.agility` is stated against.
+    effect: 'Walking out of a follow-through grants Flow for 1.2s, up to three stacks -- and each stack lets you leave the next one 2% sooner.',
+    grants: { traits: { flowTicks: SCALING.agility.flowTicks, flowBackswingCancelPct: 0.02 } },
     deepens: 'agi.quickRecovery',
   },
   {
@@ -104,8 +108,14 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'agility',
     threshold: TIER_2,
     name: 'Mobile Offense',
-    effect: 'Each Flow stack also lets you leave a follow-through 1% sooner.',
-    grants: { traits: { flowBackswingCancelPct: 0.01 } },
+    // Deepens what the specialization now grants (spec 254). It used to grant
+    // Flow's backswing reduction, which was the *whole* of the circle that spec
+    // took apart: the reward for leaving a follow-through was a shorter
+    // follow-through. It is worth one more tier's cooldown instead -- the same
+    // constant the tiers are bought in, so "what is Mobile Offense worth" stays
+    // one edit in `data/scaling.ts` rather than two numbers to keep in step.
+    effect: 'Breaking out of a follow-through takes another 0.4s off your cooling abilities.',
+    grants: { traits: { mobileOffenseCooldownTicks: SCALING.agility.mobileOffenseCooldownTicks } },
     deepens: 'agi.mobileOffense',
   },
   {

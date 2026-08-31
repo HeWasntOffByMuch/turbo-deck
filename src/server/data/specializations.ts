@@ -121,17 +121,39 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('agi.quickRecovery', 'agility', 'Quick Recovery', T1, 3, 'passive',
     { traits: { backswingCancelReduction: 0.05 } },
     'You may break out of a follow-through sooner. You do not attack more often.'),
+  // Cooldown, not recovery (spec 254). This used to grant Flow and a slice of
+  // Flow's own backswing reduction, which made the loop a circle: cancel the
+  // follow-through, gain Flow, have the follow-through shortened. The player
+  // has already left the recovery by the time the reward lands, so the payout
+  // was the thing they had just declined to spend -- and it shrank the window
+  // the trigger is read in, since a shorter backswing is fewer ticks in which
+  // `cancelBackswing` can be reached at all.
+  //
+  // Spec 256 closed the other half of that circle: the follow-through is a
+  // fixed length now and what Agility buys is the tick it may be *left* on, so
+  // nothing in this tree can shrink the window the trigger is read in any more.
+  // The trigger itself is unchanged and is the right one: leaving a
+  // follow-through costs nothing mechanically, demands attention to a phase
+  // boundary, and can never buy attacks per second (spec 144). What it buys is
+  // time off the active abilities, which is a reward for the *next* decision
+  // rather than a refund of the one just made.
   specialization('agi.mobileOffense', 'agility', 'Mobile Offense', T1, 3, 'on cancelling a follow-through',
-    { traits: { flowTicks: Math.round(SCALING.agility.flowTicks * 0.15), flowBackswingCancelPct: 0.005 } },
-    'Breaking out of a swing feeds your momentum instead of wasting it.'),
+    { traits: { mobileOffenseCooldownTicks: SCALING.agility.mobileOffenseCooldownTicks } },
+    'Leaving a follow-through early puts every ability you are waiting on back in your hands sooner.'),
   specialization('agi.lightfoot', 'agility', 'Lightfoot', T2, 3, 'passive',
     { moveSpeed: 6, armor: 0.008 },
     'Footwork that is worth something even when it does not avoid the blow.'),
   specialization('agi.rapidHandling', 'agility', 'Rapid Handling', T2, 3, 'casting an ability that launches something',
     { traits: { handlingReduction: 0.12 } },
     'Draw, load and release. The cadence does not move.'),
+  // 0.01 a tier rather than 0.005 (spec 256, after 254). Flow's contribution to
+  // the cancel point is 0.05 a stack in total and it now comes from **two**
+  // sources rather than four: this and the milestone that introduces Flow at
+  // all. Mobile Offense used to be one of the other two and buys cooldown now,
+  // so the number moved to keep the budget where it was measured rather than to
+  // retune anything.
   specialization('agi.flow', 'agility', 'Flow', T2, 3, 'while Flow is held',
-    { traits: { flowBackswingCancelPct: 0.005, flowDurationPct: 0.12 } },
+    { traits: { flowBackswingCancelPct: 0.01, flowDurationPct: 0.12 } },
     'Kept moving, kept swinging: each stack lets you leave the next follow-through sooner.'),
   specialization('agi.perfectExit', 'agility', 'Perfect Exit', T3, 1, 'withdrawing just after being hit',
     { traits: { perfectExitResource: 5, perfectExitWindowTicks: Math.round(SCALING.agility.flowTicks / 6) } },

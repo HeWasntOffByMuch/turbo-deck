@@ -72,8 +72,10 @@ import {
   ActivityValue,
   CastEndReason,
   CastPhase,
+  COOLDOWN_REFUND_MOBILE_OFFENSE,
   EntityKindValue,
   type CastState,
+  type CooldownRefund,
   type ProjectileState,
   type ServerEntity,
   type ServerSimEvent,
@@ -1097,17 +1099,67 @@ function grantFlow(
   return next;
 }
 
+const NO_REFUNDS: readonly CooldownRefund[] = [];
+
+/**
+ * Mobile Offense (spec 254): time off every *active ability* that is cooling.
+ *
+ * **What is reduced, and what is deliberately not.** An entry in `cooldowns`
+ * whose ability is `skill: true` -- the four equipped active abilities, which is
+ * what "active ability" already means here (`skillAbilityIds`, `activeSkillId`,
+ * the `skill1..skill4` slots). Two exclusions, and neither is an oversight:
+ *
+ *  - a **basic attack** stamps its own interval into this same map, from the
+ *    wind-up's start (`nextReadyTick`), so moving it would move the *cadence* --
+ *    the one thing spec 144 says cancelling a follow-through may never buy.
+ *    `rewardBreak` does reduce it and that is a separate, older decision;
+ *  - the **flask** is paced by charges as well as by a cooldown, and insurance
+ *    that runs out is its whole design. The smallest coherent rule leaves a
+ *    charge model alone rather than accelerating the half of it that is a
+ *    timer.
+ *
+ * Nothing already ready is touched, so a stale past-tick entry is never dragged
+ * forward; the new tick is floored at `tick`, which is *remaining zero* and
+ * never a cooldown in the past. A trigger that moves nothing hands back the
+ * **same map object**, because `server.ts` decides whether to send the owner
+ * their cooldowns by comparing that reference.
+ */
+function refundActiveCooldowns(
+  entity: ServerEntity,
+  tick: number,
+): { readonly cooldowns: Readonly<Record<string, number>>; readonly refunds: readonly CooldownRefund[] } {
+  const ticks = entity.stats.traits.mobileOffenseCooldownTicks;
+  if (ticks <= 0) return { cooldowns: entity.cooldowns, refunds: NO_REFUNDS };
+
+  const refunds: CooldownRefund[] = [];
+  const next: Record<string, number> = { ...entity.cooldowns };
+  for (const [abilityId, readyAt] of Object.entries(entity.cooldowns)) {
+    if (readyAt <= tick) continue;
+    const ability = abilityById(abilityId);
+    if (ability === null || ability.skill !== true) continue;
+    const moved = Math.max(tick, readyAt - ticks);
+    if (moved >= readyAt) continue;
+    next[abilityId] = moved;
+    refunds.push({ abilityId, ticks: readyAt - moved });
+  }
+  if (refunds.length === 0) return { cooldowns: entity.cooldowns, refunds: NO_REFUNDS };
+  return { cooldowns: next, refunds };
+}
+
 /**
  * Walking out of the follow-through. **The attack already happened.**
  *
  * Everything the blow did stands: the damage is dealt, the arrow is in the air
  * and flying under its own rules, the cost is spent, and the interval stamped at
- * the attack point is untouched. All that is given back is the root.
+ * the attack point is untouched. What is given back is the root -- and, for a
+ * body that bought Mobile Offense, time off the *active abilities* it has
+ * cooling (spec 254).
  *
  * That asymmetry is the point of the feature. Cancelling a backswing reduces how
  * long a player is animation-locked and can never raise their attacks per
  * second, because the number governing the next attack was written down before
- * this function could be called and is not written here.
+ * this function could be called and is not written here -- and the refund below
+ * is barred from the basic attack's own entry for exactly that reason.
  *
  * The reason is forced to `BackswingCancelled` unless the body is *dying*, in
  * which case the truth is that it was interrupted -- and a client that reads
@@ -1119,15 +1171,43 @@ function cancelBackswing(
   tick: number,
   reason: number,
 ): CancelResult {
-  // Agility's Flow (spec 147). Walking out of a follow-through is the one action
-  // this system rewards for its own sake, and it is the right one to reward:
-  // it costs nothing mechanically, it demands that the player be paying
-  // attention to a phase boundary, and it can never buy attacks per second.
+  // Walking out of a follow-through is the one action this system rewards for
+  // its own sake, and it is the right one to reward: it costs nothing
+  // mechanically, it demands that the player be paying attention to a phase
+  // boundary, and it can never buy attacks per second.
   //
-  // Not granted when the body is *dying* -- being killed out of a backswing is
-  // not the same action as choosing to leave one.
-  const statuses =
-    reason === CastEndReason.Interrupted ? entity.statuses : grantFlow(entity.statuses, entity, tick, 1);
+  // Neither reward is paid when the body is *dying* -- being killed out of a
+  // backswing is not the same action as choosing to leave one. That is the
+  // whole of the gate, and it is the same gate both halves read: `Interrupted`
+  // is what death and a poise break cancel as (`blow.ts`, `poise.ts`), and
+  // every deliberate withdrawal arrives as `Cancelled`.
+  const deliberate = reason !== CastEndReason.Interrupted;
+
+  // Agility's Flow (spec 147), where the body has any.
+  const statuses = deliberate ? grantFlow(entity.statuses, entity, tick, 1) : entity.statuses;
+  // And Mobile Offense (spec 254), which is what the *specialization* pays now.
+  // The trigger has not moved an inch; only what it hands over.
+  const refunded = deliberate
+    ? refundActiveCooldowns(entity, tick)
+    : { cooldowns: entity.cooldowns, refunds: NO_REFUNDS };
+
+  const events: ServerSimEvent[] = [
+    {
+      kind: 'castEnded',
+      entityId: entity.id,
+      abilityId: cast.abilityId,
+      reason: deliberate ? CastEndReason.BackswingCancelled : CastEndReason.Interrupted,
+    },
+  ];
+  if (refunded.refunds.length > 0) {
+    events.push({
+      kind: 'cooldownRefunded',
+      entityId: entity.id,
+      source: COOLDOWN_REFUND_MOBILE_OFFENSE,
+      ticks: refunded.refunds.reduce((sum, refund) => sum + refund.ticks, 0),
+      abilities: refunded.refunds,
+    });
+  }
 
   return {
     cancelled: true,
@@ -1136,20 +1216,11 @@ function cancelBackswing(
       ...entity,
       cast: null,
       statuses,
+      cooldowns: refunded.cooldowns,
       activity: ActivityValue.Idle,
       activityUntilTick: 0,
     },
-    events: [
-      {
-        kind: 'castEnded',
-        entityId: entity.id,
-        abilityId: cast.abilityId,
-        reason:
-          reason === CastEndReason.Interrupted
-            ? CastEndReason.Interrupted
-            : CastEndReason.BackswingCancelled,
-      },
-    ],
+    events,
   };
 }
 

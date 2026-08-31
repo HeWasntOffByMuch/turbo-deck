@@ -396,6 +396,17 @@ export interface TraitStats {
   readonly flowWeakPoint: number;
   /** A backswing cancel makes the next non-basic cast use `handlingScale`. */
   readonly spellbladeHandling: number;
+  /**
+   * Mobile Offense (spec 254): ticks taken off every *active ability* that is
+   * cooling, each time this body walks out of a follow-through.
+   *
+   * Deliberately **not** a multiplier and deliberately not read anywhere near
+   * `attack-timing.ts`. A flat span removed from a cooldown already running
+   * cannot reach `baseAttackTimeTicks`, the attack point or the backswing, so
+   * the rule spec 144 rests on -- animation cancelling buys movement and never
+   * attacks per second -- holds by construction rather than by care.
+   */
+  readonly mobileOffenseCooldownTicks: number;
   /** Perfect Exit: resource returned, and how soon after a hit it must happen. */
   readonly perfectExitResource: number;
   readonly perfectExitWindowTicks: number;
@@ -573,6 +584,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'flowArmorPct',
   'flowWeakPoint',
   'spellbladeHandling',
+  'mobileOffenseCooldownTicks',
   'perfectExitResource',
   'perfectExitWindowTicks',
   'spellRadiusPct',

@@ -163,7 +163,10 @@ try {
     try {
       // Pinned seed, for the same reason preview-world.ts pins one: without it
       // the view falls back to a clock and every run measures a different world.
-      await page.goto(`http://localhost:${PORT}/?seed=20260806`, { waitUntil: 'load' });
+      // The built page is the game client since spec 254 and builds none of the
+      // tuning popovers; this harness drives "Hike look", so it asks the workbench
+      // back.
+      await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
       await page.waitForSelector('canvas', { timeout: 30_000 });
       // Let the world stream in and the camera settle before measuring.
       await page.waitForTimeout(2500);

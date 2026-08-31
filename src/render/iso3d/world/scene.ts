@@ -283,8 +283,6 @@ export interface FrameInfo {
    * events in them and always were.
    */
   readonly ticks: number;
-  /** How far through the current delta interval this frame is, in [0, 1]. */
-  readonly alpha: number;
   /**
    * The sim tick to read cast bars against, fractional. Interpolated the same
    * way positions are, so a wind-up fills smoothly rather than in 20Hz steps.
@@ -1628,6 +1626,11 @@ export class WorldScene {
     advanceWind(dt);
 
     this.observe(view);
+    // The head every remote body is drawn at (spec 253). Advanced once, here,
+    // after the frame's observations and before anything samples one -- a body
+    // sampled at a different head from its neighbour is two bodies on two
+    // clocks, which is the stutter this replaced wearing a different hat.
+    this.motion.advance(dt * 1000);
     this.syncBodies(view, frame, dt);
     this.syncDrops(view, frame, dt);
     this.carryTorch(view.selfEntityId);
@@ -2000,7 +2003,7 @@ export class WorldScene {
       // The local player is drawn at its prediction; everything else at its
       // smoothed replica. Interpolating our own body would add a frame of lag to
       // the one thing that must feel immediate.
-      const pose = this.motion.sample(entity.id, frame.alpha);
+      const pose = this.motion.sample(entity.id);
       const x = isSelf && view.self ? view.self.x : (pose?.x ?? entity.x);
       const y = isSelf && view.self ? view.self.y : (pose?.y ?? entity.y);
       // What the sim says this body's heading is -- the prediction for our own

@@ -41,6 +41,7 @@ function source(overrides: Partial<ActionBarSource> = {}): ActionBarSource {
     cooldowns: {},
     resource: 100,
     restoration: { charges: 2, maxCharges: 2 },
+    refunds: [],
     casts: [],
     selfEntityId: 1,
     requestedAbilityId: null,
@@ -235,5 +236,50 @@ describe('actionBarViewOf (spec 196)', () => {
       source({ stats: STATS, restoration: { charges: 0, maxCharges: 2 } }),
     );
     expect(empty.slots[4]?.ability?.affordable).toBe(false);
+  });
+});
+
+/**
+ * Which slot a refund is drawn on (spec 254).
+ *
+ * The mark is a fact about an *ability*; which square that ability is sitting
+ * in is this layer's question, and the answer is only ever "the slot holding
+ * it".
+ */
+describe('cooldown refunds on the bar', () => {
+  const MARK = { abilityId: 'skill.blight', seconds: 1.2, startedMs: 4000 };
+
+  it('marks the slot holding the ability, and no other', () => {
+    // BAR is [stunningBlow, empty, blight, empty] plus the vial.
+    const view = actionBarViewOf(source({ refunds: [MARK] }));
+    expect(view.slots[2]?.refund).toEqual({ label: '-1.2', startedMs: 4000 });
+    expect(view.slots[0]?.refund).toBeNull();
+    expect(view.slots[1]?.refund).toBeNull();
+    expect(view.slots[3]?.refund).toBeNull();
+  });
+
+  it('marks every slot a single trigger paid', () => {
+    const view = actionBarViewOf(
+      source({
+        refunds: [MARK, { abilityId: 'skill.stunningBlow', seconds: 0.4, startedMs: 4000 }],
+      }),
+    );
+    expect(view.slots[0]?.refund?.label).toBe('-0.4');
+    expect(view.slots[2]?.refund?.label).toBe('-1.2');
+  });
+
+  /**
+   * A refund for something the player is no longer carrying: they cancelled a
+   * follow-through, it paid a skill, and the skill came out of its slot before
+   * the mark expired. There is nowhere to draw it, and that is the whole answer.
+   */
+  it('has nowhere to put a refund for an ability no slot holds', () => {
+    const view = actionBarViewOf(source({ refunds: [{ abilityId: 'skill.acidSpray', seconds: 1.2, startedMs: 0 }] }));
+    expect(view.slots.every((slot) => slot.refund === null)).toBe(true);
+  });
+
+  it('leaves every slot unmarked when nothing was refunded', () => {
+    const view = actionBarViewOf(source());
+    expect(view.slots.every((slot) => slot.refund === null)).toBe(true);
   });
 });

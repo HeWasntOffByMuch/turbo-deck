@@ -477,33 +477,46 @@ describe('a follow-through in the real tick (spec 256)', () => {
     expect(blowsOver(SERVER_TICK_RATE * 6, true)).toBe(still);
   });
 
-  it('grants Flow for a legal walk-out and nothing for a refused one', () => {
-    // Mobile Offense's trigger, from both sides. The reward is not moved here
-    // (spec 256 is out of scope for what a cancel *pays*); what is asserted is
-    // that only a cancel the rules allowed can ever fire it.
+  it('pays a legal walk-out and pays nothing at all for a refused one', () => {
+    // Mobile Offense's trigger, from both sides. The reward is not moved here --
+    // spec 254 made it active-ability cooldown and this spec leaves that alone
+    // -- and what is asserted is that only a cancel the rules allowed can ever
+    // fire it. Both payouts are checked, because both hang off the same call:
+    // Flow (where the character can hold it) and the cooldown refund.
     const stats = statsFor(20, [{ specializationId: MOBILE_OFFENSE, tier: 3 }]);
     expect(stats.traits.flowTicks).toBeGreaterThan(0);
+    expect(stats.traits.mobileOffenseCooldownTicks).toBeGreaterThan(0);
 
     const run = swingInto(fight(stats));
-    const self = selfOf(run);
-    const cast = self.cast;
-    if (!cast) throw new Error('no cast');
+    const cooling = 900;
+    const self: ServerEntity = {
+      ...selfOf(run),
+      cooldowns: { ...selfOf(run).cooldowns, 'skill.guardBreak': cooling },
+    };
+    const cast = castOf(self);
     expect(stacksOf(self.statuses, StatusId.Flow, run.state.tick)).toBe(0);
 
-    // Too early: refused outright, so there is nothing for the reward to hang
+    // Too early: refused outright, so there is nothing for either reward to hang
     // off. Not "cancelled but unpaid" -- the cast is still there.
     const early = cancelCast(self, run.state.tick, CastEndReason.Cancelled);
     expect(early.cancelled).toBe(false);
     expect(early.kind).toBe('none');
     expect(early.entity.cast).not.toBeNull();
     expect(stacksOf(early.entity.statuses, StatusId.Flow, run.state.tick)).toBe(0);
+    // The identical map, which is how the replication path stays silent.
+    expect(early.entity.cooldowns).toBe(self.cooldowns);
+    expect(early.events).toHaveLength(0);
 
-    // On the cancel point: allowed, and paid.
+    // On the cancel point: allowed, and paid, both ways.
     const at = backswingCancelTickOf(cast);
     const legal = cancelCast(self, at, CastEndReason.Cancelled);
     expect(legal.cancelled).toBe(true);
     expect(legal.kind).toBe('backswing');
     expect(stacksOf(legal.entity.statuses, StatusId.Flow, at)).toBe(1);
+    expect(legal.entity.cooldowns['skill.guardBreak']).toBe(
+      cooling - stats.traits.mobileOffenseCooldownTicks,
+    );
+    expect(legal.events.some((event) => event.kind === 'cooldownRefunded')).toBe(true);
   });
 
   it('still lets a guard break take a body out of a committed follow-through', () => {

@@ -23,6 +23,7 @@ import type {
   ChatRenderOptions,
   WorldHudRenderOptions,
   AccountRenderOptions,
+  ControlsRenderOptions,
 } from './render.js';
 
 export interface GoldenCase {
@@ -119,6 +120,36 @@ export const CHAT_GOLDEN_CASES: readonly ChatGoldenCase[] = [
   },
 ];
 
+export interface ControlsGoldenCase {
+  readonly name: string;
+  readonly options: ControlsRenderOptions;
+  readonly covers: string;
+}
+
+/**
+ * The controls card (spec 255), in the two states worth a picture.
+ *
+ * Two rather than the usual handful: everything else worth knowing about it
+ * -- an unbound row dropping out, the pool compacting -- is a claim about
+ * which rows exist and is asserted in `controls.test.ts`, not about how a
+ * row is drawn. What a picture is for here is the two things pixels are the
+ * only way to check: that a pointer control reads as its picture and a
+ * keyboard one as a keycap with a label on it, and that a rebind changes the
+ * label without moving anything else.
+ */
+export const CONTROLS_GOLDEN_CASES: readonly ControlsGoldenCase[] = [
+  {
+    name: 'controls',
+    options: {},
+    covers: 'every featured row at its shipped default: keycaps beside the three pointer pictures',
+  },
+  {
+    name: 'controls-rebound',
+    options: { rebind: { actionId: 'ui.character', code: 'KeyX' } },
+    covers: "a rebind changing one cap's label with nothing else in the card moving",
+  },
+];
+
 export interface WorldHudGoldenCase {
   readonly name: string;
   readonly options: WorldHudRenderOptions;
@@ -148,6 +179,28 @@ export const WORLD_HUD_GOLDEN_CASES: readonly WorldHudGoldenCase[] = [
     name: 'world-hud-swapping',
     options: { change: { slot: 1, progress: 0.55 }, highlight: { slot: 0, kind: 'casting' } },
     covers: 'a skill going into an empty slot, beside the slot that is mid-cast',
+  },
+  {
+    // Mobile Offense's whole tell (spec 254), and the ordinary shape of it:
+    // one cancel pays every cooling ability, so several slots are marked at
+    // once. Aged, because the label rises -- a picture at zero would be of the
+    // frame it appeared on and of no other.
+    name: 'world-hud-refunded',
+    options: {
+      cooldowns: { 0: 0.75, 2: 0.3 },
+      refund: { slots: [0, 2], label: '-1.2', agedMs: 260 },
+    },
+    covers: 'a cooldown reduction landing on two slots at once: the frame, and the amount on its way off (this bar is unscaled, so its slot is the full 46px; a shipped one is 20-23)',
+  },
+  {
+    // The same mark on the frame it lands, which is the one the clearance is
+    // about: a label touching the box it came from reads as part of the box.
+    name: 'world-hud-refunded-landing',
+    options: {
+      cooldowns: { 0: 0.75, 2: 0.3 },
+      refund: { slots: [0, 2], label: '-1.6', agedMs: 0 },
+    },
+    covers: 'the instant a reduction lands: the frame, and the amount clear of the slot before it has moved',
   },
   {
     name: 'world-hud-alone',

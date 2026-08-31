@@ -24,6 +24,7 @@ import {
   CHAT_GOLDEN_CASES,
   WORLD_HUD_GOLDEN_CASES,
   ACCOUNT_GOLDEN_CASES,
+  CONTROLS_GOLDEN_CASES,
 } from '../src/ui/gallery/goldens.js';
 import {
   renderGallery,
@@ -36,6 +37,7 @@ import {
   renderWorldHud,
   renderWindows,
   renderAccount,
+  renderControls,
 } from '../src/ui/gallery/render.js';
 
 const directory = fileURLToPath(new URL('../src/ui/gallery/goldens/', import.meta.url));
@@ -71,6 +73,13 @@ for (const item of CHAT_GOLDEN_CASES) {
 
 for (const item of WORLD_HUD_GOLDEN_CASES) {
   const frame = renderWorldHud(item.options);
+  const png = encodePng(frame.surface.width, frame.surface.height, frame.surface.pixels);
+  writeFileSync(`${directory}${item.name}.png`, png);
+  console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
+}
+
+for (const item of CONTROLS_GOLDEN_CASES) {
+  const frame = renderControls(item.options);
   const png = encodePng(frame.surface.width, frame.surface.height, frame.surface.pixels);
   writeFileSync(`${directory}${item.name}.png`, png);
   console.log(`${item.name}.png  ${frame.surface.width}x${frame.surface.height}  ${item.covers}`);
@@ -121,5 +130,6 @@ const total =
   WORLD_HUD_GOLDEN_CASES.length +
   KEYBINDING_GOLDEN_CASES.length +
   ACCOUNT_GOLDEN_CASES.length +
-  INVENTORY_GOLDEN_CASES.length;
+  INVENTORY_GOLDEN_CASES.length +
+  CONTROLS_GOLDEN_CASES.length;
 console.log(`\n${total} golden(s) written to src/ui/gallery/goldens/`);

@@ -302,7 +302,12 @@ async function markerCountUntil(page: Page, want: number, timeoutMs = 8000): Pro
 }
 
 async function openEditor(page: Page, query: string, port = PORT): Promise<void> {
-  await page.goto(`http://localhost:${port}/${query}`, { waitUntil: 'load' });
+  // The built page is the game client since spec 254 and builds no tab strip at
+  // all; this harness drives the Map editor tab, so it asks the workbench back --
+  // on both the dev and the dist pass, since the dev server is the workbench
+  // already and the param is harmless there.
+  const withClient = query.length > 0 ? `${query}&client=workbench` : '?client=workbench';
+  await page.goto(`http://localhost:${port}/${withClient}`, { waitUntil: 'load' });
   await page.click('button:has-text("Map editor")');
   // `canvas` alone matches the Play tab's too -- it stays in the DOM, hidden,
   // when a tab is switched away from.
