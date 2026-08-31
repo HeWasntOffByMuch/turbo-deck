@@ -2611,22 +2611,35 @@ export class GameClient {
         // was spent.
         this.serverResource = message.resource;
         this.serverResourceTick = message.atTick;
-        // **A refund retires the guess outright** (spec 253), ahead of the
-        // ordinary rule below and by a different test, because it is the one
-        // case where the server has said something *strictly newer* than the
-        // guess rather than merely catching up with it. Without this the
-        // reduction is invisible: `visibleCooldowns` returns `max(server,
-        // guess)`, so a guess still standing hides a cooldown that went down.
+        // **A refund moves the guess; it does not retire it** (spec 253).
         //
-        // Which it very often is, and at **zero latency** rather than at high
-        // -- the case nobody would think to check. The rule below compares the
-        // two *values*, and the client's lookahead is a tick ahead of where the
-        // server commits over a loopback, so the guess sits one tick above the
-        // truth and never satisfies it. Measured before this line existed: the
-        // refund landed correctly on the server, the mark was drawn over the
-        // slot, and the number on the button stayed 1.22s behind for the rest
-        // of the cooldown.
-        for (const refund of refunded) this.predictedCooldowns.delete(refund.abilityId);
+        // Retiring it was the first attempt and it was wrong in a way worth
+        // writing down, because the guess is doing a second job nothing names.
+        // `estimated` deliberately runs `oneWayTicks()` ahead of the server so
+        // that an input *arrives* on the tick it was predicted for -- while
+        // `readyAtTick` on the wire is in the **server's** frame. So every
+        // "am I off cooldown yet" the client asks (`autoAttack`'s, and the
+        // aim's) compares a server tick against a clock ahead of it, and would
+        // ask early by the one-way latency every single time. What stops it is
+        // this guess: it is computed in the client's own frame, so it sits
+        // exactly that far above the server's stamp, and `visibleCooldowns`
+        // taking the max of the two is the compensation. Delete it and the
+        // floor goes with it.
+        //
+        // Moving it keeps both. The server took a known span off this cooldown,
+        // so the guess -- which is the same instant expressed in this client's
+        // clock -- comes down by the same span. The reduction stops being
+        // hidden behind a number made before it (measured at zero latency: the
+        // bar sat 1.22s behind the truth for the rest of the cooldown), and the
+        // early-ask guard is untouched.
+        for (const refund of refunded) {
+          const predicted = this.predictedCooldowns.get(refund.abilityId);
+          if (predicted === undefined) continue;
+          this.predictedCooldowns.set(refund.abilityId, {
+            ...predicted,
+            readyAtTick: predicted.readyAtTick - refund.ticks,
+          });
+        }
 
         // A guess is retired only once the server's own number has caught up
         // with it. Dropping it on any cooldown message at all was worse than

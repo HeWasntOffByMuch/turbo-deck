@@ -144,7 +144,7 @@ async function session(tiers: number, delayTicks = 0): Promise<Session> {
 async function cancelAfterAttack(
   test: Session,
   withdraw: 'walk' | 'turn',
-): Promise<{ before: number; after: number; shown: number }> {
+): Promise<{ before: number; after: number; shownBefore: number; shown: number }> {
   const arc = abilityById(SKILL);
   const me = test.client.view().self;
   if (!arc || !me) throw new Error('no ability or no body');
@@ -157,12 +157,14 @@ async function cancelAfterAttack(
 
   test.client.useAbility('melee.slash', me.x + 40, me.y);
   let before = 0;
+  let shownBefore = 0;
   let done = false;
   for (let i = 0; i < 90; i++) {
     const body = test.server.world.entities.get(test.selfId);
     // The follow-through: the blow has landed and the body is still rooted.
     if (!done && body?.cast?.committed === true) {
       before = body.cooldowns[SKILL] ?? 0;
+      shownBefore = test.client.view().cooldowns[SKILL] ?? 0;
       // A **walk** is a withdrawal and a **turn** is not: `asksToMove` reads the
       // move vector, so spinning on the spot is not leaving anything.
       test.intent(
@@ -179,6 +181,7 @@ async function cancelAfterAttack(
 
   return {
     before,
+    shownBefore,
     after: test.server.world.entities.get(test.selfId)?.cooldowns[SKILL] ?? 0,
     shown: test.client.view().cooldowns[SKILL] ?? 0,
   };
@@ -193,13 +196,17 @@ describe('Mobile Offense, bought and used through the wire', () => {
       3 * PER_TIER,
     );
 
-    const { before, after, shown } = await cancelAfterAttack(test, 'walk');
+    const { before, after, shownBefore, shown } = await cancelAfterAttack(test, 'walk');
     expect(before - after).toBe(3 * PER_TIER);
-    // The half a sim test cannot reach. The client raises the server's table by
-    // what it has spent and not yet been told about (`visibleCooldowns`), which
-    // can only ever push a cooldown *later* -- so a reduction arriving under a
-    // live guess would be invisible on the bar with the server perfectly right.
-    expect(shown).toBe(after);
+    // The half a sim test cannot reach, and the claim has to be about what the
+    // number **moved by**, not about it matching the server's exactly.
+    // `visibleCooldowns` raises the server's table by this client's own guess,
+    // which is deliberately `oneWayTicks()` ahead -- that lead is what stops
+    // every "am I off cooldown" comparing a server tick against a clock running
+    // in front of it and asking early. So the bar legitimately sits a tick above
+    // the truth; what it must not do is fail to come down.
+    expect(shownBefore - shown).toBe(3 * PER_TIER);
+    expect(shown).toBeGreaterThanOrEqual(after);
   });
 
   /**
@@ -266,9 +273,12 @@ describe('Mobile Offense, bought and used through the wire', () => {
    */
   it.each([0, 1, 3, 6, 12])('shows the reduced cooldown at %i ticks of latency', async (delay) => {
     const test = await session(3, delay);
-    const { before, after, shown } = await cancelAfterAttack(test, 'walk');
+    const { before, after, shownBefore, shown } = await cancelAfterAttack(test, 'walk');
     expect(before - after).toBe(3 * PER_TIER);
-    expect(shown).toBe(after);
+    // Moved by the refund, and never *below* the server's own number: the
+    // overlay may push a cooldown later and must never light a button early.
+    expect(shownBefore - shown).toBe(3 * PER_TIER);
+    expect(shown).toBeGreaterThanOrEqual(after);
   });
 
   it('tells it nothing when nothing was refunded', async () => {

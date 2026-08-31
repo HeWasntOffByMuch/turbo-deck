@@ -239,6 +239,32 @@ honouring, and how far each live mark has actually travelled. Not the mark's
 start — a start plus a promise that it animates is precisely what was true while
 it did not.
 
+## The guess is a floor, and deleting it took the floor out
+
+The first fix for the masked number retired the guess outright on a refund, and
+that was wrong for a reason nothing in the code names: **the guess is doing a
+second job.**
+
+`GameClient.estimated` deliberately runs `oneWayTicks()` ahead of the server, so
+that an input *arrives* on the tick it was predicted for. But `readyAtTick` on
+the wire is in the **server's** frame. So every "am I off cooldown yet" this
+client asks — `autoAttack`'s, and the aim's — compares a server tick against a
+clock running in front of it, and would ask early by the one-way latency every
+single time. What stops it is the guess: it is computed in the client's own
+frame, sits exactly that far above the server's stamp, and `visibleCooldowns`
+taking the max of the two is the compensation. Delete it and the floor goes too;
+the next ask is early and comes back `onCooldown`.
+
+So a refund **moves** the guess instead: the server took a known span off this
+cooldown, so the same instant expressed in this client's clock comes down by the
+same span. The reduction stops being hidden and the guard is untouched.
+
+The test had to move with it. `expect(shown).toBe(after)` was the wrong claim —
+the bar legitimately sits a tick above the truth, because that lead is the guard.
+What it must do is come *down by the refund*, and never below the server's own
+number: the overlay may push a cooldown later and must never light a button
+early.
+
 ## The bug the feedback uncovered
 
 Drawing the mark made a second report possible — *the number on the button does
