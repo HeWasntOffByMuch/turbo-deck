@@ -126,6 +126,30 @@ export function animate(tween: Tween, nowMs: number, motion: MotionPreference): 
 }
 
 /**
+ * The value at `nowMs` for something that **drifts** rather than arrives.
+ *
+ * {@link animate} snaps to `to` under reduce-motion, and that is right for every
+ * caller it has: a window, a modal and a meter are all *arriving* somewhere, so
+ * the end of the tween is the resting state and jumping to it is the same
+ * picture without the travel.
+ *
+ * A float has no resting state. The end of its journey is where it disappears,
+ * so snapping puts it at the far end of a trip it never took -- as far from the
+ * thing it is about as the animation ever gets, and static there for its whole
+ * life. That is not "the same picture without the travel"; it is a different and
+ * worse picture. Spec 253's refund mark shipped that way and was reported twice:
+ * the label sat high above the slot and never moved, and *raising* the travel
+ * moved it further away, because `to` is the one number a reduced client draws.
+ *
+ * So a drift holds its **start**. Motion reduced means the label stays where it
+ * appears -- clear of the slot, beside what it is about -- and simply does not
+ * travel, which is what was actually asked for.
+ */
+export function drift(tween: Tween, nowMs: number, motion: MotionPreference): number {
+  return motion.reduced ? tween.from : valueAt(tween, nowMs);
+}
+
+/**
  * Whether the player has asked for less motion.
  *
  * An input to a frame, handed in beside `now` rather than sensed, for the same

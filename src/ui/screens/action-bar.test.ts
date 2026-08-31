@@ -372,20 +372,37 @@ describe('a cooldown reduction landing on a slot', () => {
   });
 
   /**
-   * Reduce-motion is answered centrally by `animate`, which snaps to the end of
-   * the tween -- so the mark still appears and still expires, it simply does not
-   * travel. A player who asked for less motion is not a player who asked to be
-   * told less.
+   * **Reduced motion holds it beside the slot, not at the far end.**
+   *
+   * `animate` snaps to `to`, which is right for everything else in `MOTION`
+   * because a window, a modal and a meter are all *arriving* -- the end of the
+   * tween is where they come to rest. A float has no resting state: the end of
+   * its journey is where it vanishes, so snapping parks the label as far from
+   * its slot as the animation ever gets and leaves it there. That shipped, and
+   * it was reported twice -- and *raising* the travel made it worse, because
+   * `to` is the one number a reduced client draws.
+   *
+   * So the assertion is not "it does not move", which the broken version also
+   * satisfied. It is that a reduced client sees the mark exactly where a full
+   * one sees it on the frame it lands.
    */
-  it('still says its piece with motion reduced, without moving', () => {
+  it('holds the mark beside its slot with motion reduced, rather than at the far end', () => {
+    const full = harness();
+    full.bar.setView({ slots: [slot({ refund: REFUND })] });
+    full.frame(REFUND.startedMs);
+    const landing = Math.min(...marks(full));
+
     const test = harness();
     test.bar.setView({ slots: [slot({ refund: REFUND })] });
     test.root.setMotion(REDUCED_MOTION);
-    test.frame(1000);
-    const atStart = Math.min(...marks(test));
-    expect(Number.isFinite(atStart)).toBe(true);
-    test.frame(1300);
-    expect(Math.min(...marks(test))).toBe(atStart);
+    test.frame(REFUND.startedMs);
+    expect(Math.min(...marks(test))).toBe(landing);
+
+    // Still there, still in the same place, and still expiring on time.
+    test.frame(REFUND.startedMs + 300);
+    expect(Math.min(...marks(test))).toBe(landing);
+    test.frame(REFUND.startedMs + MOTION.refund.durationMs);
+    expect(marks(test)).toHaveLength(0);
   });
 
   it('costs no layout pass -- a mark is a field, like everything else in a fight', () => {

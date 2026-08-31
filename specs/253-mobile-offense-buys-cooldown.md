@@ -208,6 +208,37 @@ The test that would have caught it is not "it ends higher than it started" —
 the broken version satisfied that. It is that **every frame moves it**, sampled
 at 60fps across the whole life, at the smallest slot the bar is ever drawn at.
 
+## ...and the helper was the wrong one
+
+Reported a third time: *it sits even higher now and doesn't move — there's
+something fundamentally wrong with your approach*. Which was right, and the
+fault was one line.
+
+`animate()` snaps to `tween.to` under reduce-motion, and that is correct for
+every caller it had: a window, a modal and a meter are all **arriving**
+somewhere, so the end of the tween is the resting state and jumping to it is the
+same picture without the travel. **A float has no resting state.** The end of its
+journey is where it disappears, so snapping parks the label at the far end of a
+trip it never took — as distant from the slot it is about as the animation ever
+gets, and static there for its whole life. Raising the travel to fix "it doesn't
+move" therefore moved it *further away*, which is exactly what the third report
+says.
+
+`drift()` is `animate()` for something that floats: same value while motion is
+full, holds its **start** when motion is reduced. So a reduced client sees the
+mark where a full one sees it on the frame it lands — beside its slot, legible,
+and not travelling, which is what was asked for. The rule lives beside the motion
+table so the next float finds it, and `motion.test.ts` pins the difference.
+
+The three visual reports on this feature share one shape, and it is worth naming:
+each was true of a headless assertion or an unscaled golden and false of the
+shipped page — the number masked by a prediction, the travel measured on a slot
+twice the size the game draws, the snap taken by a preference no test had set. So
+the mount now publishes `data-ui-refunds`: the motion preference the interface is
+honouring, and how far each live mark has actually travelled. Not the mark's
+start — a start plus a promise that it animates is precisely what was true while
+it did not.
+
 ## The bug the feedback uncovered
 
 Drawing the mark made a second report possible — *the number on the button does

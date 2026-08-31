@@ -15,7 +15,7 @@
 import type { DrawList } from '../core/draw-list.js';
 import type { EventContext, Gesture } from '../core/events.js';
 import type { Constraint, Rect, Size } from '../core/geom.js';
-import { animate, MOTION } from '../core/motion.js';
+import { drift, MOTION, type MotionPreference } from '../core/motion.js';
 import { alignTextX, drawNineSlice, drawText, drawTextClipped } from '../core/paint.js';
 import type { LayoutContext, PaintContext } from '../core/widget.js';
 import { fontById, measureText } from '../text/font.js';
@@ -164,6 +164,34 @@ export class SkillSlot extends StyledWidget {
     context.stopPropagation();
   }
 
+  /**
+   * How far the refund label has travelled off this slot, in UI pixels.
+   *
+   * The paint's own arithmetic, called out so a probe can read what actually
+   * moved rather than the mark's start (spec 253) -- "it appears and does not
+   * move" is a claim about this number, and a start plus a promise that it
+   * animates is exactly what was true while it did not. The clearance is not in
+   * it, because a constant offset says nothing about travel.
+   *
+   * A method rather than a field because it is a function of the frame's time,
+   * and this widget keeps no clock.
+   */
+  refundRise(nowMs: number, motion: MotionPreference): number {
+    const refund = this.refund;
+    if (!refund) return 0;
+    return drift(
+      {
+        from: 0,
+        to: Math.max(MOTION.refund.riseUiPx, this.rect.height * MOTION.refund.riseFraction),
+        startMs: refund.startedMs,
+        durationMs: MOTION.refund.durationMs,
+        easing: MOTION.refund.easing,
+      },
+      nowMs,
+      motion,
+    );
+  }
+
   protected override measureSelf(_constraint: Constraint, _context: LayoutContext): Size {
     return { width: this.side, height: this.side };
   }
@@ -279,17 +307,7 @@ export class SkillSlot extends StyledWidget {
     drawNineSlice(out, context.atlas.patch('frame'), this.rect, context.theme.color('success'));
 
     const font = fontById('numeric');
-    const rise = animate(
-      {
-        from: 0,
-        to: Math.max(MOTION.refund.riseUiPx, this.rect.height * MOTION.refund.riseFraction),
-        startMs: refund.startedMs,
-        durationMs: MOTION.refund.durationMs,
-        easing: MOTION.refund.easing,
-      },
-      context.now,
-      context.motion,
-    );
+    const rise = this.refundRise(context.now, context.motion);
     // Clear of the box before it has moved at all, by the same gap the row puts
     // *between* slots -- the interface's own unit of "just clear of something".
     // Without it the label's first frames sit on the slot's own top border, and

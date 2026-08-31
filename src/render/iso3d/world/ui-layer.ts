@@ -118,6 +118,18 @@ export interface UiReadout {
   readonly dialogueOpen: boolean;
   readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
   readonly dialogueLine: string;
+  /**
+   * Whether the interface is honouring a reduced-motion preference, and how far
+   * each live refund mark has travelled (spec 253).
+   *
+   * Published because that feature has been reported wrong three times and every
+   * one was invisible to a headless assertion -- a masked number, a label stuck
+   * to its slot, a label snapped to the far end of its own travel. All three are
+   * questions about the shipped page: what clock it is on, what preference it is
+   * honouring, where the pixels went.
+   */
+  readonly motion: string;
+  readonly refundMarks: readonly { readonly id: string; readonly rise: number }[];
   /** Device pixels per UI pixel. Whole, always -- the rule the frame exists for. */
   readonly scale: number;
   readonly viewport: { readonly width: number; readonly height: number };

@@ -15,6 +15,7 @@ import {
   ease,
   EASINGS,
   FULL_MOTION,
+  drift,
   isDone,
   MOTION,
   NOTICE_TIMINGS,
@@ -119,6 +120,35 @@ describe('tweenTo', () => {
     expect(second.from).toBe(midway);
     expect(valueAt(second, 1100)).toBe(midway);
     expect(valueAt(second, 1300)).toBe(20);
+  });
+});
+
+describe('drift, for something that floats rather than arrives', () => {
+  const rising: Tween = { from: 0, to: 48, startMs: 1000, durationMs: 800, easing: 'linear' };
+
+  it('is the same as animate while motion is full', () => {
+    for (const at of [1000, 1200, 1400, 1799, 1800]) {
+      expect(drift(rising, at, FULL_MOTION)).toBe(animate(rising, at, FULL_MOTION));
+    }
+  });
+
+  /**
+   * The distinction the whole helper exists for, and the bug it was extracted
+   * from: `animate` snaps to `to`, which for a float is the far end of a journey
+   * it never took -- as far from the thing it is about as the animation ever
+   * gets. A drift holds where it appeared.
+   */
+  it('holds its start with motion reduced, where animate holds its end', () => {
+    expect(drift(rising, 1400, REDUCED_MOTION)).toBe(rising.from);
+    expect(animate(rising, 1400, REDUCED_MOTION)).toBe(rising.to);
+  });
+
+  it('holds the start whatever the easing and whenever it is asked', () => {
+    for (const easing of Object.keys(EASINGS) as Easing[]) {
+      for (const at of [0, 1000, 1400, 9999]) {
+        expect(drift({ ...rising, easing }, at, REDUCED_MOTION)).toBe(rising.from);
+      }
+    }
   });
 });
 
