@@ -172,17 +172,30 @@ export const MOTION = {
    * happened to and fades out of the frame. A test asserts the two agree, so
    * retuning one moves the other or fails.
    *
-   * `riseFraction` is a fraction of the slot's own side rather than a count of
-   * pixels -- the three above move panels, whose size is their content's, and
-   * this moves a label off a square whose side is set by how big a finger is. A
-   * fixed rise that cleared a 46-pixel slot would leave a 20-pixel one behind
-   * before it had been read. A whole side of travel, so what the eye catches is
-   * the *movement*: at 0.9 the label still cleared the box, but it began flush
-   * against the slot's own top edge and read as stuck to it for the first few
-   * frames -- which is the half of "it should move up off the slot" that a
-   * clearance alone does not fix.
+   * **Linear, and that is the whole difference between rising and appearing.**
+   * The three above ease out because each is *arriving* somewhere -- a window
+   * settling, a meter reaching its value -- and a decelerating float reads as
+   * having arrived and then creeping. `world/damage-popup.ts` rises its numbers
+   * at a constant rate for exactly this reason (`spent * popup.rise`, `spent`
+   * linear in age), and this is the same object one layer over.
+   *
+   * **`riseUiPx` is a floor and it is derived, not chosen.** The travel used to
+   * be one slot side, which is right in spirit -- a label off a square whose
+   * size is set by how big a finger is -- and wrong in fact: the bar converts
+   * `ACTION_SLOT_CSS` through the interface scale, so a shipped slot is 20 to 23
+   * *UI* pixels rather than the 46 an unscaled gallery draws. Twenty pixels over
+   * 800ms is a quarter of a pixel a frame at 60fps, and sub-pixel-per-frame
+   * motion does not read as motion at all -- it reads as a label that appeared
+   * somewhere and sat there, which is exactly how this was reported. The floor
+   * is therefore *one whole pixel per frame for the whole life*:
+   * `durationMs / 1000 * 60`. A bigger slot still gets a bigger rise.
    */
-  refund: { durationMs: 800, easing: 'outQuad' as Easing, riseFraction: 1 },
+  refund: {
+    durationMs: 800,
+    easing: 'linear' as Easing,
+    riseFraction: 1,
+    riseUiPx: Math.round((800 / 1000) * 60),
+  },
 } as const;
 
 /**

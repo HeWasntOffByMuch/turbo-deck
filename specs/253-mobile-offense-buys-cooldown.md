@@ -182,6 +182,32 @@ rule about the interface *answering* something, and nothing waits on a notice.
 `RESPONSE_TIMINGS` and `NOTICE_TIMINGS` are asserted to cover `MOTION` exactly,
 so a timing added later has to be classified rather than escape both checks.
 
+## ...and the mark had to be told to move
+
+Reported as *the label is still not rising, it just appears high above the skill
+bar* — and both halves of that sentence were the same fault seen from either end.
+
+The travel was **one slot side**, which is right in spirit and wrong in fact: the
+bar states its size in *physical* pixels (`ACTION_SLOT_CSS`, 46) and converts
+through the interface scale, so a shipped slot is **20 to 23 UI pixels** where
+the gallery — which applies no scale — draws the full 46. Twenty pixels over
+800ms is a quarter of a pixel a frame at 60fps, and sub-pixel-per-frame motion is
+not slow motion, it is no motion: the label appears somewhere and sits there. The
+golden looked right for the same reason the bug shipped.
+
+Two changes, neither of them taste:
+
+- **Linear**, because a decelerating float reads as having arrived and then
+  creeping. The other three `MOTION` entries ease out because each is *arriving*
+  somewhere; `world/damage-popup.ts` rises its numbers at a constant rate, and
+  this is the same object one layer over.
+- **A floor on the travel, derived**: one whole pixel per frame for the whole
+  life, `durationMs / 1000 * 60`. A bigger slot still gets a bigger rise.
+
+The test that would have caught it is not "it ends higher than it started" —
+the broken version satisfied that. It is that **every frame moves it**, sampled
+at 60fps across the whole life, at the smallest slot the bar is ever drawn at.
+
 ## The bug the feedback uncovered
 
 Drawing the mark made a second report possible — *the number on the button does

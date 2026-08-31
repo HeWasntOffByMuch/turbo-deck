@@ -282,7 +282,7 @@ export class SkillSlot extends StyledWidget {
     const rise = animate(
       {
         from: 0,
-        to: this.rect.height * MOTION.refund.riseFraction,
+        to: Math.max(MOTION.refund.riseUiPx, this.rect.height * MOTION.refund.riseFraction),
         startMs: refund.startedMs,
         durationMs: MOTION.refund.durationMs,
         easing: MOTION.refund.easing,

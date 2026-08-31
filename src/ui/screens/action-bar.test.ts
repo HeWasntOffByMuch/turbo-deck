@@ -302,6 +302,68 @@ describe('a cooldown reduction landing on a slot', () => {
     expect(later).toBeLessThan(atStart);
   });
 
+  /**
+   * **The property the first cut got wrong, at the size it got it wrong at.**
+   *
+   * The travel was one slot side, which is right in spirit and was wrong in
+   * fact: the bar converts a *physical* 46 CSS pixels through the interface
+   * scale, so a shipped slot is 20-23 UI pixels rather than the 46 an unscaled
+   * gallery draws. Twenty pixels over 800ms is a quarter of a pixel a frame, and
+   * sub-pixel-per-frame motion does not read as motion -- it reads as a label
+   * that appeared somewhere and sat there, which is how it was reported.
+   *
+   * So the claim is not "it ends up higher than it started", which the old
+   * version satisfied. It is that **every frame moves it**, at the smallest slot
+   * the bar is ever drawn at and at the frame rate the game runs at.
+   */
+  it('moves every frame at 60fps, at the bar’s smallest slot', () => {
+    const test = harness();
+    test.bar.setSlotSide(SLOT_SIDE);
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+
+    const frameMs = 1000 / 60;
+    let previous = Number.POSITIVE_INFINITY;
+    let frames = 0;
+    for (let elapsed = 0; elapsed < MOTION.refund.durationMs - frameMs; elapsed += frameMs) {
+      test.frame(REFUND.startedMs + elapsed);
+      const top = Math.min(...marks(test));
+      if (frames > 0) {
+        expect(top, `frame ${frames} at ${Math.round(elapsed)}ms`).toBeLessThanOrEqual(previous - 1);
+      }
+      previous = top;
+      frames += 1;
+    }
+    // ...and it really was the whole life being sampled, not two frames of it.
+    expect(frames).toBeGreaterThan(40);
+  });
+
+  /**
+   * Linear, which is what separates *rising* from *arriving*.
+   *
+   * The three other entries in `MOTION` ease out because each is arriving
+   * somewhere; a decelerating float reads as having got there and then creeping.
+   * `world/damage-popup.ts` rises its numbers at a constant rate for this
+   * reason, and this is the same object one layer over -- so the travel in the
+   * first half of the life is the travel in the second.
+   */
+  it('rises at a constant rate, as the world’s own floating numbers do', () => {
+    const test = harness();
+    test.bar.setSlotSide(SLOT_SIDE);
+    test.bar.setView({ slots: [slot({ refund: REFUND })] });
+    const half = MOTION.refund.durationMs / 2;
+
+    test.frame(REFUND.startedMs);
+    const start = Math.min(...marks(test));
+    test.frame(REFUND.startedMs + half);
+    const middle = Math.min(...marks(test));
+    test.frame(REFUND.startedMs + MOTION.refund.durationMs - 1);
+    const end = Math.min(...marks(test));
+
+    expect(start - middle).toBeGreaterThan(0);
+    // Within a pixel of each other: the two halves are the same distance.
+    expect(Math.abs((start - middle) - (middle - end))).toBeLessThanOrEqual(1);
+  });
+
   it('stops drawing once its window has run out', () => {
     const test = harness();
     test.bar.setView({ slots: [slot({ refund: REFUND })] });
