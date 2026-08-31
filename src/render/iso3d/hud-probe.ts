@@ -26,6 +26,13 @@ import type { ClientView } from '../../server/client/game-client.js';
  * is on screen, in the right place, and connected to anything.
  */
 
+/** Where the rig claims one body is, in CSS pixels of the frame. */
+interface ProbeAnchor {
+  id: number;
+  x: number;
+  y: number;
+}
+
 interface ProbeApi {
   ready: boolean;
   /** Draw one frame with these overrides folded into the base view. */
@@ -41,15 +48,18 @@ interface ProbeApi {
   /** Draw `frames` more frames, so a floating number gets somewhere. */
   advance(frames: number): void;
   /**
-   * Put one body's floating bar at a screen point, or take it away (spec 186).
+   * Put a body's floating bar at a screen point, or take it away (spec 186).
    *
    * The per-body holder -- name, health, guard, cast bar, stun swirl, status row
    * -- is drawn from `anchors` rather than from the view, because in the game a
    * body's screen position is something the scene works out. There is no scene
    * here, so a rig that wants to look at that holder has to say where the body
    * is; nothing before spec 186 did, so it defaulted to none and stayed there.
+   *
+   * A list as well as one point, since spec 257: there are two overhead shapes
+   * now, and the only useful picture of two shapes has both of them in it.
    */
-  anchor(at: { id: number; x: number; y: number } | null): void;
+  anchor(at: ProbeAnchor | readonly ProbeAnchor[] | null): void;
 }
 
 declare global {
@@ -271,7 +281,8 @@ window.hudProbe = {
     draw();
   },
   anchor(at) {
-    anchors = at === null ? [] : [{ id: at.id, x: at.x, y: at.y, onScreen: true }];
+    const wanted: readonly ProbeAnchor[] = at === null ? [] : Array.isArray(at) ? at : [at];
+    anchors = wanted.map((point) => ({ id: point.id, x: point.x, y: point.y, onScreen: true }));
     draw();
   },
   respawns: () => respawnCount,
