@@ -182,6 +182,7 @@ import { autoAttack } from './target.js';
 import { windupLostItsMarkIn } from './withdraw.js';
 import { aimShape, castOrder, effectiveReach, startAim, type AimGesture, type AimOrder } from './aim.js';
 import { worldCursor, worldMark } from './crosshair.js';
+import { SignIndex, SIGN_READ_RADIUS, type SignMark } from './sign.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
@@ -1394,6 +1395,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       targetId !== null ? 'attack' : '',
       pickupId !== null ? 'pickup' : '',
       talkId !== null ? 'talk' : '',
+      // The one order in this list with nobody to ask (spec 259), so it is also
+      // the one whose *absence* is the whole answer: a sign order ends by
+      // opening the bubble, and there is no message in flight to have been
+      // refused.
+      signId !== null ? 'sign' : '',
       pendingAim !== null ? 'aim' : '',
       order !== null ? 'cast' : '',
       held.size > 0 ? 'keys' : '',
@@ -1476,7 +1482,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // attributes: a reply appearing changes nothing else on this line, and it is
     // the one thing a harness has to be able to press.
     const dialogueRects = boxes(readout.dialogueRects);
-    const dialogue = `${String(readout.dialogueOpen)}|${dialogueRects}|${readout.dialogueLine}`;
+    // The bubble's own box is a **fourth** field rather than a row in
+    // `dialogueRects` (spec 259), and that is not tidiness: `probe-shop.ts`
+    // reads that list as "the replies, in order" and presses one by index, so a
+    // row in it that is not a reply is a probe pressing the bubble's
+    // background and reporting a shop that would not open. Appended, so a
+    // reader that destructures the first three is unaffected.
+    const bubbleBox = readout.dialogueBubble;
+    const dialogueBubble = bubbleBox
+      ? `${bubbleBox.x},${bubbleBox.y},${bubbleBox.width},${bubbleBox.height}`
+      : '';
+    const dialogue =
+      `${String(readout.dialogueOpen)}|${dialogueRects}|${readout.dialogueLine}|${dialogueBubble}`;
     // The refund marks and the motion preference behind them (spec 254). In the
     // key as well as the attributes, because a mark *travelling* changes nothing
     // else on this line -- which is the whole thing being asked, and a readout
@@ -1961,11 +1978,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * wanted to look at something else mid-sentence.
    */
   let talkAim: { x: number; y: number } | null = null;
-  /** Which body `talkAim` was armed for, so a second conversation re-arms it. */
-  let talkAimFor = 0;
+  /**
+   * Which speaker `talkAim` was armed for, so a second conversation re-arms it.
+   *
+   * A string since spec 259, and `''` for nobody: a sign is worth turning to
+   * face and has no entity id, so the two kinds of speaker share one key rather
+   * than a number that one of them would have to fake.
+   */
+  let talkAimFor = '';
 
   const dialogue = new DialogueDriver({
     speech: new SpeechSink(audioEngine),
+    bodyLift: DIALOGUE_BUBBLE_LIFT,
     onShop: (vendorId) => {
       // The NPC's own shop, named by the reply. Since spec 247 it is the only
       // way a shop opens: the proximity answer went with the key press that was
@@ -2464,6 +2488,31 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /** How many times the standing talk order has asked. See `TALK_MAX_ASKS`. */
   let talkAsks = 0;
   /**
+   * The sign being walked over to, to read (spec 259).
+   *
+   * A **key** rather than a mark, because a mark is rebuilt whenever a chunk
+   * arrives or is dropped: `SignIndex` walks the store afresh on every
+   * revision, so anything held across frames is stale the moment the player
+   * crosses a chunk boundary. The rule spec 222 states for the editor's marker
+   * selection, one system over -- and here it also covers a sign whose ground
+   * was evicted mid-walk and streamed back, which is the same sign and comes
+   * back with the same key.
+   *
+   * It is the third reading of `world.order` that closes its own range, and the
+   * only one that then has nobody to ask: a sign has no claim to take, so the
+   * arrival *is* the answer and there is no refusal to close in against.
+   */
+  let signId: string | null = null;
+  /**
+   * The signs this client is holding ground for, memoized on the store's
+   * revision (spec 259).
+   *
+   * Here rather than inside the scene because a sign is a prop and the streamed
+   * store is this file's: the scene is handed the marks and contributes the
+   * ray, which is the one part of the question only a camera can answer.
+   */
+  const signIndex = new SignIndex();
+  /**
    * The skill being aimed but not yet thrown (spec 080).
    *
    * A hotbar press stops being the commitment and becomes this: the shape of
@@ -2656,6 +2705,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     pickupId = null;
     talkId = null;
     talkAsks = 0;
+    signId = null;
     destination = null;
     planner.clear();
   }
@@ -3057,6 +3107,26 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     order = null;
     pickupId = null;
     talkId = null;
+    signId = null;
+
+    // A sign is the fifth thing the button can mean (spec 259), and it is
+    // checked **first** -- which is precedence rather than clarity, unlike the
+    // three branches below it. A sign is a prop and everything else here is an
+    // entity, so this is the one pair that really can both be true: a merchant
+    // standing in front of a signpost is an ordinary thing for a village to
+    // contain. `worldMark` ranks the two the same way, so what lights up under
+    // the pointer is what the click does.
+    const sign = scene.pickSignAt(cursor.x, cursor.y, currentSignMarks());
+    if (sign) {
+      signId = sign.key;
+      targetId = null;
+      destination = null;
+      planner.clear();
+      // Walking over to read something is a change of mind about the swing,
+      // exactly as a new mark or a click on the ground is.
+      client.cancelCast();
+      return;
+    }
 
     const hovered = scene.pickUnitAt(cursor.x, cursor.y);
     const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
@@ -3229,6 +3299,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // under the pointer and what the button does cannot disagree -- which is
       // the rule `overEnemy` already lives by one line up.
       overNpc: hovered !== undefined && talkable(hovered),
+      // A prop rather than a body, so it is asked afresh rather than read off
+      // `scene.hoveredEntityId` (spec 259). Cheap: there are a handful of signs
+      // on a map against a store walked once per streamed chunk, and the test
+      // itself is a ray against a cylinder.
+      overSign:
+        cursor !== null && scene.pickSignAt(cursor.x, cursor.y, currentSignMarks()) !== null,
     };
     // The mark and the cursor under it are one decision read twice, so "we hid
     // the pointer" and "we drew a mark" cannot come apart.
@@ -3671,6 +3747,80 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
+   * The signs on ground this client is holding (spec 259).
+   *
+   * Memoized on `StreamedMap.revision`, which is spec 215's number and the only
+   * honest key here: `size` is bounded by the keep window, so it cannot tell
+   * "nothing changed" from "one chunk arrived as another was dropped", where
+   * `revision` counts both and only ever grows. Without the memo this walks
+   * every chunk in the store on every mouse move.
+   *
+   * Empty before the first `MapInfo`, which is the honest answer -- there is no
+   * ground yet, so there is nothing standing on it.
+   */
+  function currentSignMarks(): readonly SignMark[] {
+    const held = streamed;
+    if (!held) return [];
+    return signIndex.update(held.revision, () => held.props());
+  }
+
+  /**
+   * One tick of a sign order (spec 259): close the gap, then read it.
+   *
+   * `driveTalk`'s shape with the ask taken out, and the ask is the only thing
+   * that differs -- which is the whole of what makes a sign cheap. There is
+   * nobody to ask: no `Talk` goes out, no claim is taken, no refusal can come
+   * back, so the arrival *is* the answer and the bounded closing-in
+   * `TALK_MAX_ASKS` exists for has nothing to do here.
+   *
+   * The reach is therefore this client's own comparison rather than a
+   * prediction of somebody else's, so `approachOrderFor` is handed a `lead` of
+   * zero. That is not a shortcut round `approachLead`: that function measures
+   * how far this body's prediction may be *ahead of the server's*, and the
+   * margin exists because the server is the one doing the comparing. Here the
+   * comparer and the predictor are the same machine, and a lead would be this
+   * client hedging against itself.
+   *
+   * It is re-read out of the index every tick rather than remembered, because a
+   * chunk arriving or being dropped rebuilds the marks -- and a sign that has
+   * gone from the index is a sign whose ground this client no longer holds, at
+   * which point the order is over.
+   */
+  function driveSign(view: ReturnType<typeof client.view>, me: { x: number; y: number }, nowMs: number): void {
+    if (signId === null) return;
+    const mark = signIndex.find(signId);
+    if (!mark) {
+      signId = null;
+      destination = null;
+      planner.clear();
+      return;
+    }
+    const self = view.entities.find((entity) => entity.id === view.selfEntityId);
+    const decision = approachOrderFor({
+      self: me,
+      selfHealth: self?.health ?? 1,
+      target: { x: mark.x, y: mark.y },
+      reach: SIGN_READ_RADIUS,
+      lead: 0,
+      // Nothing is ever in flight: there is no message and no answer to wait
+      // for, so the one thing this flag guards against cannot arise.
+      pending: false,
+    });
+    destination = decision.walkTo;
+    if (!decision.walkTo) planner.clear();
+    if (!decision.ask) return;
+
+    // Arrived. **One order, one read** -- the drop's ending rather than the
+    // talk's, and for the drop's reason: the one refusal walking could have
+    // fixed is the range one, and this order does not have that refusal because
+    // it is the thing doing the refusing.
+    dialogue.readSign(mark, nowMs);
+    signId = null;
+    destination = null;
+    planner.clear();
+  }
+
+  /**
    * One tick of a talk order (spec 257): close the gap, then ask.
    *
    * `drivePickup`'s shape with that function's ending deliberately loosened.
@@ -3788,7 +3938,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     if (windupLostItsMarkIn(view)) client.cancelCast();
   }
 
-  function sendInput(): void {
+  /**
+   * @param nowMs the frame's clock, for the one order that opens something
+   *              rather than asking the server for it (spec 259). The same
+   *              clock `driveDialogue` reveals against, so a sign's first
+   *              character lands on the frame the body arrived.
+   */
+  function sendInput(nowMs: number): void {
     // First, and off its own read of the view, so everything below sees a body
     // that has already been let go: the legs come back on the tick the mark
     // died rather than on the one after it.
@@ -3812,6 +3968,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     driveAutoAttack(view, me);
     drivePickup(view, me);
     driveTalk(view, me);
+    driveSign(view, me, nowMs);
 
     // What a press has taken out of the player's hands (spec 258). Read from the
     // cast's *phase* rather than from `selfCommitted`, because the two answer
@@ -3984,33 +4141,44 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * the rate the framing eases is a bubble trailing the body it belongs to.
    */
   function driveDialogue(view: ClientView, nowMs: number): void {
-    dialogue.update(view.conversationEntityId, view.entities, nowMs);
-    const speakerId = dialogue.speakerId;
-    const speaker = speakerId === 0 ? undefined : view.entities.find((e) => e.id === speakerId);
+    // The *predicted* position, which is the one the walk that opened the
+    // bubble was measured against (spec 259): a release judged from the
+    // replica would fire a round trip late, and on the frame the player turns
+    // round at the edge of the reach that is a bubble that closes after they
+    // have already stopped walking away.
+    dialogue.update(view.conversationEntityId, view.entities, nowMs, selfPosition());
+    // Where the conversation *is*, which since spec 259 is a question only the
+    // driver can answer: an NPC is a body in the replicated set and a sign is a
+    // prop the server has never heard of, so a search of `view.entities` here
+    // would find one of them and silently draw nothing for the other.
+    const focus = dialogue.focus(view.entities);
 
     // The camera looks between the two while a conversation is live, and goes
     // back on its own when it is not: both are the same ease the camera has
     // always used to follow a body, so there is nothing to restore.
-    scene.setDialogueFraming(speaker ? { x: speaker.x, y: speaker.y } : null);
+    scene.setDialogueFraming(focus ? { x: focus.x, y: focus.y } : null);
 
     // Armed on the *edge* rather than held (spec 246): the player turns to face
     // whoever they have just spoken to, and is then free to look anywhere. Keyed
-    // on the body, so walking from one merchant to another turns you again.
-    if (speakerId !== talkAimFor) {
-      talkAimFor = speakerId;
-      talkAim = speaker ? { x: speaker.x, y: speaker.y } : null;
+    // on the speaker, so walking from one merchant to another turns you again --
+    // and on a *string* since spec 259, because a sign is worth turning to as
+    // well and has no entity id to be keyed by.
+    if (focus?.key !== talkAimFor) {
+      talkAimFor = focus?.key ?? '';
+      talkAim = focus ? { x: focus.x, y: focus.y } : null;
     }
 
     const bubble = dialogue.view();
-    if (bubble === null || speaker === undefined) {
+    if (bubble === null || focus === null) {
       ui.setDialogue(null, null);
       return;
     }
-    // Over the speaker's head. `projectPoint` answers in CSS pixels and reports
-    // whether the point is on screen at all -- an off-screen anchor draws no
-    // bubble rather than one pinned to an edge, since the conversation is with
-    // somebody the player cannot see and the camera is on its way to them.
-    const at = scene.projectPoint(speaker.x, speaker.y, DIALOGUE_BUBBLE_LIFT);
+    // Over the speaker's head, or over the board. `projectPoint` answers in CSS
+    // pixels and reports whether the point is on screen at all -- an off-screen
+    // anchor draws no bubble rather than one pinned to an edge, since what is
+    // being read is somewhere the player cannot see and the camera is on its
+    // way there.
+    const at = scene.projectPoint(focus.x, focus.y, focus.lift);
     ui.setDialogue(bubble, at.onScreen ? { x: at.x, y: at.y } : null);
   }
 
@@ -4081,7 +4249,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // The client keeps its own clock (spec 065's follow-up): deltas are
       // suppressed when nothing changed, so `view.tick` is not one.
       client.advanceTick();
-      sendInput();
+      sendInput(now);
     }
     simCosts.push(performance.now() - simStart);
     simTicks.push(ticks);

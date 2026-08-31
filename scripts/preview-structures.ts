@@ -217,6 +217,23 @@ const well = (x: number, z: number, scale = 1): Prop => ({
   rotation: 0,
   tint: 0,
 });
+/**
+ * A sign (spec 259).
+ *
+ * The message is not drawn -- the board is blank timber and the words are in
+ * the bubble -- so what these shots are for is the *silhouette*: whether a post
+ * and a board read as a sign at all from a hundred units up, and whether the
+ * board is broadside to the way its facing points it.
+ */
+const signpost = (x: number, z: number, yawDeg: number, scale = 1): Prop => ({
+  kind: 'sign',
+  x,
+  y: z,
+  scale,
+  rotation: (yawDeg * Math.PI) / 180,
+  tint: (((x * 5 + z * 11) % 200) / 100) - 1,
+  text: 'Hearthstead, two miles',
+});
 
 /**
  * How far the huts stand from the well, in the village shots.
@@ -232,6 +249,16 @@ const SHOTS: readonly Shot[] = [
   { label: 'house', props: [hut(0, 0, 0)], forward: VIEW_DIR, fit: 460, body: [120, 40] },
   { label: 'well', props: [well(0, 0)], forward: VIEW_DIR, fit: 460, body: [80, 20] },
   { label: 'house + well', props: [hut(-70, 0, 0), well(90, 30)], forward: VIEW_DIR, fit: 460, body: [30, 120] },
+
+  // Beside a body block, because a sign is the one prop here whose whole job is
+  // to be read at standing height: too tall and it is a gallows, too short and
+  // it is a stump, and neither is visible without something to compare it to.
+  { label: 'sign', props: [signpost(0, 0, 0)], forward: VIEW_DIR, fit: 260, body: [70, 0] },
+  // The facing is the only thing a level designer sets about a sign, so it gets
+  // its own row: a board edge-on to the road it labels is the failure.
+  { label: 'sign facing 0', props: [signpost(0, 0, 0)], forward: VIEW_DIR, fit: 240 },
+  { label: 'sign facing 90', props: [signpost(0, 0, 90)], forward: VIEW_DIR, fit: 240 },
+  { label: 'sign facing 180', props: [signpost(0, 0, 180)], forward: VIEW_DIR, fit: 240 },
 
   { label: 'facing 0', props: [hut(0, 0, 0)], forward: VIEW_DIR, fit: 380 },
   { label: 'facing 90', props: [hut(0, 0, 90)], forward: VIEW_DIR, fit: 380 },

@@ -116,15 +116,43 @@ const BUBBLE: readonly string[] = [
   '.........',
 ];
 
-/** The art's side, in font pixels. Square, so one number covers all three. */
+/**
+ * The question mark: what sits over a sign you can read (spec 259).
+ *
+ * The bubble's argument one prop over -- a *picture rather than a reticle*,
+ * because what this says is what the click does rather than where it lands --
+ * and deliberately not the bubble itself. A sign is not a person: it says one
+ * thing, it says it to everybody, and it cannot be asked anything back, so a
+ * mark that promised a conversation would promise the wrong thing about a
+ * board on a post.
+ *
+ * On the same nine-by-nine grid as the other three, so all four swap without
+ * the box under the pointer changing size. Its dot sits on the bottom row and
+ * the hook above it, which puts the glyph's own visual mass on the centre --
+ * the trap the bubble's blank top and bottom rows were cut for.
+ */
+const QUESTION: readonly string[] = [
+  '..#####..',
+  '.##...##.',
+  '.##...##.',
+  '.....##..',
+  '....##...',
+  '....##...',
+  '.........',
+  '....##...',
+  '....##...',
+];
+
+/** The art's side, in font pixels. Square, so one number covers all of them. */
 export const CROSSHAIR_SIDE = FULL.length;
 
-/** Which of the three marks a caller wants. */
-export type CrosshairArt = 'full' | 'small' | 'bubble';
+/** Which of the four marks a caller wants. */
+export type CrosshairArt = 'full' | 'small' | 'bubble' | 'sign';
 
 function artFor(art: CrosshairArt): readonly string[] {
   if (art === 'full') return FULL;
-  return art === 'bubble' ? BUBBLE : SMALL;
+  if (art === 'bubble') return BUBBLE;
+  return art === 'sign' ? QUESTION : SMALL;
 }
 
 /** One rect per lit pixel, origin at the top left, in font-pixel coordinates. */
@@ -245,6 +273,17 @@ export interface WorldPointerInput {
    * where a player looks to find that out.
    */
   readonly overNpc: boolean;
+  /**
+   * True while the cursor is over a sign with something written on it
+   * (spec 259) -- `pickSign`'s answer, the way `overNpc` is `talkable`'s.
+   *
+   * Its own field for `overNpc`'s reason and one more: a sign is a **prop**,
+   * and every other field here is about an entity, so folding it into one of
+   * them would be the pointer's input claiming a body where there is none. A
+   * sign with no message never produces one, so this is false over a blank post
+   * and the click that follows walks past it.
+   */
+  readonly overSign: boolean;
 }
 
 /**
@@ -260,6 +299,15 @@ export interface WorldPointerInput {
  */
 export function worldMark(input: WorldPointerInput): CrosshairArt | null {
   if (input.aiming) return 'full';
+  // A sign is checked first among the three world marks, and for once that is
+  // precedence rather than clarity (spec 259): the other three are answers
+  // about a *body* and this is an answer about a prop, so unlike every pair
+  // above them the two really can both be true -- a merchant standing in front
+  // of a signpost is an ordinary thing for a village to contain. The sign wins
+  // because it is the thing further from the camera in that arrangement and so
+  // the one a player has to aim at deliberately, and because `issueOrder` reads
+  // the same order: what lights up is what the click does.
+  if (input.overSign) return 'sign';
   // Ahead of `overEnemy` for clarity rather than for precedence: `attackable`
   // already refuses a friendly body, so the two can never both be true.
   if (input.overNpc) return 'bubble';

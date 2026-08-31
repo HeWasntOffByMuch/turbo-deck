@@ -4,6 +4,7 @@ import {
   fixtureLight,
   loadMap,
   parseMap,
+  signText,
   type ChunkCoord,
   type ChunkRect,
   type LoadedMap,
@@ -2019,10 +2020,18 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
           // exactly like one put down at the right one until it is dark
           // (spec 250). A kind that emits nothing says nothing extra.
           const lit = fixtureLight(out.placed);
+          // And what a sign was placed *saying*, for exactly that reason one
+          // prop over (spec 259): a board with the wrong words on it looks
+          // identical to one with the right words on it until somebody walks
+          // up to it, and the whole point of the message being a panel field is
+          // that the panel is where it can still be got wrong. Quoted and cut,
+          // because a status line is one line.
+          const said = signText(out.placed);
           status =
             `placed ${out.placed.kind} facing ${Math.round(settings.structureYaw)}\u00b0` +
             ` at ${scale.toFixed(2)}x` +
-            (lit ? `, ${lit.brightness.toFixed(2)} over ${String(Math.round(lit.radius))}` : '');
+            (lit ? `, ${lit.brightness.toFixed(2)} over ${String(Math.round(lit.radius))}` : '') +
+            (said === null ? '' : `: "${said.length > 40 ? `${said.slice(0, 40)}\u2026` : said}"`);
         } else if (out.refused) {
           status = out.refused;
         }

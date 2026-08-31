@@ -21,6 +21,7 @@ import {
   PART_TOOL_CHOICES,
   PART_TOOL_COLORS,
   armedKindEmits,
+  armedKindHasMessage,
   ROCK_TOOL_CHOICES,
   ROCK_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
@@ -339,6 +340,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     (kind) => {
       s.structure = kind;
       lightRows();
+      messageRow.show(armedKindHasMessage(s));
     },
     () => MODE_COLORS.structure,
   );
@@ -369,6 +371,27 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
   const radiusRow = structures
     .add(s, 'fixtureRadius', MIN_FIXTURE_RADIUS, MAX_FIXTURE_RADIUS, 10)
     .name('Light radius');
+
+  /**
+   * What a sign is placed saying (spec 259).
+   *
+   * Hidden for a kind that cannot read one, which is the two light rows' rule
+   * and the same judgement: unlike spec 178's monster dropdown -- shown but
+   * disabled, because a strip that changed height as the armed kind changed was
+   * worse than a dead control -- this is a text field with a perfectly plausible
+   * sentence in it and nowhere for that sentence to go. A message on a well is
+   * a box you can type into that changes nothing.
+   *
+   * Deliberately **not** re-seeded when the armed kind changes, which is where
+   * it parts company with the light rows above. Those are seeded from the kind's
+   * own row because a blank slider cannot be dragged and because a lamp post
+   * showing a campfire's brightness is a panel lying about what pressing now
+   * would place. A message has no row to come from and is something a person
+   * *typed*: clearing it on the way to arming a hut and back would throw away
+   * the one field here that costs anything to produce.
+   */
+  const messageRow = structures.add(s, 'signText').name('Message');
+  messageRow.show(armedKindHasMessage(s));
 
   /**
    * Show the two light rows for a kind that emits, and hide them for one that

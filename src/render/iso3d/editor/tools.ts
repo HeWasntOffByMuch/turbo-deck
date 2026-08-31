@@ -187,6 +187,14 @@ export interface EditorSettings {
   fixtureRadius: number;
   /** Where the front faces, in degrees. See `structure.ts`. */
   structureYaw: number;
+  /**
+   * What a sign is placed saying (spec 259). Ignored by every other kind.
+   *
+   * A string and never `undefined`, for the reason `fixtureBrightness` above is
+   * a number and never `null`: `gui.add` refuses a field with no value in it and
+   * the `.name()` after it throws, which takes the panel and the tab with it.
+   */
+  signText: string;
   // Markers
   markerKind: MapMarkerKind;
   /** Which monster a `spawner` marker spawns (spec 076). Ignored by other kinds. */
@@ -278,6 +286,7 @@ export function createEditorSettings(): EditorSettings {
     structure: DEFAULT_STRUCTURE.structure,
     structureScale: DEFAULT_STRUCTURE.structureScale,
     structureYaw: DEFAULT_STRUCTURE.structureYaw,
+    signText: DEFAULT_STRUCTURE.signText,
     // Seeded from the first fixture kind rather than from `DEFAULT_STRUCTURE`,
     // which is a hut and has no light. Nothing reads these until a fixture is
     // armed, and the panel re-seeds them from that kind's own row when one is;
@@ -507,6 +516,18 @@ export const STRUCTURE_CHOICES = choices(PLACED_KINDS);
  */
 export function armedKindEmits(settings: EditorSettings): boolean {
   return isFixtureKind(settings.structure);
+}
+
+/**
+ * Which of them carries a message, so the panel knows when its text row means
+ * anything (spec 259).
+ *
+ * Beside {@link armedKindEmits} and for its stated reason: what the panel shows
+ * and what the tool reads have to be the same answer, and a second `=== 'sign'`
+ * in `panel.ts` is a second answer waiting to disagree.
+ */
+export function armedKindHasMessage(settings: EditorSettings): boolean {
+  return settings.structure === 'sign';
 }
 
 /** The settings fields the select tool owns, as one object (spec 222). */

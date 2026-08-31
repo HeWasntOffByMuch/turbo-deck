@@ -6,6 +6,8 @@ import type { SpeakEvent } from '../../audio/dialogue-voice.js';
 import { planLine } from '../../audio/dialogue-voice.js';
 import { DialogueDriver, type DialogueBody } from './dialogue-driver.js';
 import type { DialogueSpeech } from './dialogue.js';
+import { SIGN_BUBBLE_LIFT, SIGN_READ_RADIUS, signMarks, type SignMark } from './sign.js';
+import type { Prop } from '../../../terrain/index.js';
 
 /**
  * Spec 246. The four things a conversation is joined to, with none of them real.
@@ -47,6 +49,20 @@ function greetMs(): number {
   return planLine(first.text, npc.voice, `${npc.id}:${first.id}`).durationMs;
 }
 
+/** Any lift will do; what is asserted is that a body's is not a sign's. */
+const BODY_LIFT = 96;
+
+/**
+ * Where the player is standing, for the range release (spec 259).
+ *
+ * On top of the sign in every test but the one that walks away, because the
+ * release is the *only* thing that ends a sign's bubble and a reader parked
+ * out of range would close every one of them before it had said anything.
+ * Ignored entirely by a conversation with a body, whose release is the
+ * server's.
+ */
+const READER = { x: 300, y: -140 } as const;
+
 interface Harness {
   readonly driver: DialogueDriver;
   readonly sink: Recorder;
@@ -60,6 +76,7 @@ function harness(): Harness {
   const leaves: number[] = [];
   const driver = new DialogueDriver({
     speech: sink,
+    bodyLift: BODY_LIFT,
     onShop: (vendorId) => shops.push(vendorId),
     onLeave: () => leaves.push(1),
   });
@@ -68,13 +85,13 @@ function harness(): Harness {
 
 /** Drive the reveal the way a frame loop would. */
 function run(driver: DialogueDriver, bodies: readonly DialogueBody[], toMs: number, from = 0): void {
-  for (let t = from; t <= toMs; t += 8) driver.update(NPC_ENTITY, bodies, t);
+  for (let t = from; t <= toMs; t += 8) driver.update(NPC_ENTITY, bodies, t, READER);
 }
 
 describe('starting', () => {
   it('opens nothing until the server says so', () => {
     const { driver } = harness();
-    driver.update(0, [merchant()], 0);
+    driver.update(0, [merchant()], 0, READER);
     expect(driver.active).toBe(false);
     expect(driver.view()).toBeNull();
     expect(driver.speakerId).toBe(0);
@@ -82,7 +99,7 @@ describe('starting', () => {
 
   it('opens on the server’s answer, and names the body', () => {
     const { driver } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
     expect(driver.active).toBe(true);
     expect(driver.speakerId).toBe(NPC_ENTITY);
     expect(driver.view()?.speaker).toBe(npcById(MERCHANT_ID)?.name);
@@ -102,7 +119,7 @@ describe('starting', () => {
     // the honest answer: the merchant would otherwise stand still forever in
     // front of a client drawing no bubble.
     const { driver, leaves } = harness();
-    driver.update(NPC_ENTITY, [{ id: NPC_ENTITY, typeId: 'small_spider', x: 0, y: 0 }], 0);
+    driver.update(NPC_ENTITY, [{ id: NPC_ENTITY, typeId: 'small_spider', x: 0, y: 0 }], 0, READER);
     expect(driver.active).toBe(false);
     expect(leaves).toHaveLength(1);
   });
@@ -115,7 +132,7 @@ describe('ending', () => {
     const { driver, sink } = harness();
     run(driver, [merchant()], 60);
     const before = sink.spoken.length;
-    driver.update(0, [merchant()], 100);
+    driver.update(0, [merchant()], 100, READER);
     expect(driver.active).toBe(false);
     expect(driver.view()).toBeNull();
     expect(sink.stops).toBeGreaterThan(0);
@@ -130,15 +147,15 @@ describe('ending', () => {
     // the gap where a body streams out of interest range while its
     // `Conversation` message is still in flight.
     const { driver, sink } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
-    driver.update(NPC_ENTITY, [], 16);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
+    driver.update(NPC_ENTITY, [], 16, READER);
     expect(driver.active).toBe(false);
     expect(sink.stops).toBeGreaterThan(0);
   });
 
   it('tells the server when the player is the one leaving', () => {
     const { driver, leaves } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
     driver.leave();
     expect(driver.active).toBe(false);
     expect(leaves).toHaveLength(1);
@@ -148,14 +165,14 @@ describe('ending', () => {
     // The asymmetry that matters: answering a release with a release is a
     // message for nothing, and on a reconnect it would race the new session.
     const { driver, leaves } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
-    driver.update(0, [merchant()], 16);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
+    driver.update(0, [merchant()], 16, READER);
     expect(leaves).toHaveLength(0);
   });
 
   it('is harmless to leave twice', () => {
     const { driver, leaves } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
     driver.leave();
     driver.leave();
     driver.leave();
@@ -172,7 +189,7 @@ describe('ending', () => {
     const { driver, sink } = harness();
     run(driver, [merchant()], 60);
     const other: DialogueBody = { id: 77, typeId: MERCHANT_ID, x: 0, y: 0 };
-    driver.update(77, [merchant(), other], 100);
+    driver.update(77, [merchant(), other], 100, READER);
     expect(driver.speakerId).toBe(77);
     expect(sink.stops).toBeGreaterThan(1);
   });
@@ -181,7 +198,7 @@ describe('ending', () => {
 describe('acting', () => {
   it('opens the NPC’s own shop from the reply that says so', () => {
     const { driver, shops } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
     driver.advance(0);
     driver.choose(0, 0);
     expect(shops).toEqual([npcById(MERCHANT_ID)?.vendorId]);
@@ -189,7 +206,7 @@ describe('acting', () => {
 
   it('leaves on the reply that ends the conversation', () => {
     const { driver, leaves } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
     driver.advance(0);
     driver.choose(2, 0);
     expect(driver.active).toBe(false);
@@ -224,7 +241,7 @@ describe('acting', () => {
     // and the conversation should close rather than sit on a bubble with no way
     // out of it.
     const { driver, leaves } = harness();
-    driver.update(NPC_ENTITY, [merchant()], 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
     driver.advance(0);
     driver.choose(0, 0);
     driver.advance(0);
@@ -238,9 +255,166 @@ describe('the shipped NPCs', () => {
   it('can each be talked to, from the table alone', () => {
     for (const npc of ALL_NPCS) {
       const { driver } = harness();
-      driver.update(7, [{ id: 7, typeId: npc.id, x: 0, y: 0 }], 0);
+      driver.update(7, [{ id: 7, typeId: npc.id, x: 0, y: 0 }], 0, READER);
       expect(driver.active, npc.id).toBe(true);
       expect(driver.view()?.speaker, npc.id).toBe(npc.name);
     }
+  });
+});
+
+/**
+ * Spec 259. A sign goes through the whole of the conversation above with two
+ * things different, and both are asserted here rather than by reading the code:
+ * **the server is never told**, and **nothing sounds**.
+ */
+describe('reading a sign', () => {
+  const SIGN_AT = { x: 300, y: -140 } as const;
+
+  function post(text = 'Beware the bridge.'): SignMark {
+    const prop: Prop = {
+      kind: 'sign',
+      x: SIGN_AT.x,
+      y: SIGN_AT.y,
+      scale: 1,
+      rotation: 0,
+      tint: 0,
+      text,
+    };
+    const mark = signMarks([prop])[0];
+    if (mark === undefined) throw new Error('a sign with a message makes a mark');
+    return mark;
+  }
+
+  /** Reveal the way a frame loop would, with no server conversation anywhere. */
+  function reveal(driver: DialogueDriver, toMs: number, from = 0): void {
+    for (let t = from; t <= toMs; t += 8) driver.update(0, [], t, READER);
+  }
+
+  it('opens on this client\'s own say-so, with the server saying nothing', () => {
+    // The one place the rule at the top of this file bends, and it does not
+    // contradict it: a sign is not a conversation -- there is no body to claim,
+    // nothing to be refused and nobody else to be talking to it.
+    const { driver } = harness();
+    driver.readSign(post(), 0);
+    expect(driver.active).toBe(true);
+    reveal(driver, 20_000);
+    expect(driver.view()?.text).toBe('Beware the bridge.');
+    expect(driver.view()?.choices).toEqual([]);
+  });
+
+  it('stays open while the server keeps saying there is no conversation', () => {
+    // The failure this is written against: `update(0, ...)` is what ends an
+    // NPC's conversation, and it arrives on every frame of a sign's.
+    const { driver } = harness();
+    driver.readSign(post(), 0);
+    reveal(driver, 4000);
+    expect(driver.active).toBe(true);
+  });
+
+  it('speaks nothing and never asks the injected sink for anything', () => {
+    const { driver, sink } = harness();
+    driver.readSign(post('Beware the bridge, traveller. It has taken carts.'), 0);
+    reveal(driver, 20_000);
+    expect(sink.spoken).toEqual([]);
+    // Not even a stop: the sign's session holds `SILENT_SPEECH`, so the sink
+    // this driver was constructed with is never reached at all.
+    expect(sink.stops).toBe(0);
+  });
+
+  it('tells the server nothing when it is put down', () => {
+    // A release for a conversation nobody is having would drop a claim
+    // somebody else may be holding on a merchant across the square.
+    const { driver, leaves } = harness();
+    driver.readSign(post(), 0);
+    driver.leave();
+    expect(driver.active).toBe(false);
+    expect(leaves).toEqual([]);
+  });
+
+  it('closes on the confirm press, since a sign has no replies', () => {
+    const { driver, leaves } = harness();
+    driver.readSign(post(), 0);
+    reveal(driver, 20_000);
+    driver.advance(20_000);
+    expect(driver.active).toBe(false);
+    expect(leaves).toEqual([]);
+  });
+
+  it('reveals first and closes second, so a press does not skip the line', () => {
+    const { driver } = harness();
+    driver.readSign(post('Beware the bridge, traveller. It has taken carts.'), 0);
+    driver.update(0, [], 0, READER);
+    expect(driver.view()?.typing).toBe(true);
+    driver.advance(0);
+    expect(driver.active).toBe(true);
+    expect(driver.view()?.typing).toBe(false);
+    driver.advance(0);
+    expect(driver.active).toBe(false);
+  });
+
+  it('points the bubble at the board, with no body to be found', () => {
+    const { driver } = harness();
+    driver.readSign(post(), 0);
+    driver.update(0, [], 0, READER);
+    // `speakerId` is what the *server* has a claim on, and it has none.
+    expect(driver.speakerId).toBe(0);
+    const focus = driver.focus([]);
+    expect(focus).toMatchObject({ entityId: 0, x: SIGN_AT.x, y: SIGN_AT.y, lift: SIGN_BUBBLE_LIFT });
+    // And a body's focus uses the body's own lift, so the two cannot be
+    // confused by a caller that only reads the point.
+    expect(focus?.lift).not.toBe(BODY_LIFT);
+  });
+
+  it('is put down by a conversation with a body, rather than opening two bubbles', () => {
+    const { driver, leaves } = harness();
+    driver.readSign(post(), 0);
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
+    expect(driver.speakerId).toBe(NPC_ENTITY);
+    expect(driver.focus([merchant()])).toMatchObject({ entityId: NPC_ENTITY, lift: BODY_LIFT });
+    // The sign was never the server's, so putting it down says nothing.
+    expect(leaves).toEqual([]);
+  });
+
+  it('puts down a live conversation, and tells the server, when a sign is read', () => {
+    // The mirror of the case above: walking off to read a sign mid-sentence is
+    // leaving the conversation, and a merchant left holding a claim stands
+    // still forever.
+    const { driver, leaves } = harness();
+    driver.update(NPC_ENTITY, [merchant()], 0, READER);
+    expect(driver.speakerId).toBe(NPC_ENTITY);
+    driver.readSign(post(), 0);
+    expect(leaves).toEqual([1]);
+    expect(driver.speakerId).toBe(0);
+    expect(driver.focus([merchant()])).toMatchObject({ x: SIGN_AT.x, y: SIGN_AT.y });
+  });
+
+  it('is put down when the reader walks out of range', () => {
+    // The mirror of `sweepConversations` on the server: an NPC's bubble goes
+    // when the player leaves `talkRadius`, and a sign's must too or it follows
+    // them across the map. Nothing else ends one -- there is no server here.
+    const { driver, leaves } = harness();
+    driver.readSign(post(), 0);
+    driver.update(0, [], 0, READER);
+    expect(driver.active).toBe(true);
+    driver.update(0, [], 16, { x: READER.x + SIGN_READ_RADIUS + 1, y: READER.y });
+    expect(driver.active).toBe(false);
+    // And still says nothing to the server, which never knew about it.
+    expect(leaves).toEqual([]);
+  });
+
+  it('stays open right up to the reach that opened it', () => {
+    // One radius for both, spec 246's rule: "close enough to read" should be a
+    // single fact a player can learn rather than two with a gap between them.
+    const { driver } = harness();
+    driver.readSign(post(), 0);
+    driver.update(0, [], 0, { x: READER.x + SIGN_READ_RADIUS - 1, y: READER.y });
+    expect(driver.active).toBe(true);
+  });
+
+  it('has no focus at all once it is closed', () => {
+    const { driver } = harness();
+    driver.readSign(post(), 0);
+    driver.leave();
+    expect(driver.focus([])).toBeNull();
   });
 });

@@ -51,14 +51,18 @@ a second player to be refused.
 export interface SignMark { readonly key: string; readonly x: number; readonly y: number;
                             readonly text: string; readonly radius: number; readonly height: number }
 export function signMarks(props: readonly Prop[]): readonly SignMark[];
-export function pickSign(ray: THREE.Ray, marks: readonly SignMark[], ground: Vec2 | null): SignMark | null;
+export function pickSign(ray: RayLike, marks: readonly SignMark[], ground: Vec2 | null): SignMark | null;
 export function signSpeaker(mark: SignMark): DialogueSpeaker;
+export class SignIndex { update(revision: number, props: () => readonly Prop[]): readonly SignMark[] }
 export const SIGN_READ_RADIUS: number;
 ```
 
 `pickSign` is `hover.ts`'s two tests with the meshes left out — the upright
 volume through the already-exported `rayBodyDistance`, then the ground
-footprint. A sign's board stands well above the point it is filed at, and at
+footprint. That function's `THREE.Ray`/`HoverTarget` parameters become a
+structural `RayLike`/`RayVolume`, which both existing callers already satisfy:
+the volume test is arithmetic, the class is only how a camera hands one over,
+and a sign has no `Object3D` of its own to put in a field nothing reads. A sign's board stands well above the point it is filed at, and at
 this camera's pitch the ground under a cursor aimed at the board is metres from
 the post; the editor's marker tool records the same finding and the same fix.
 
@@ -110,6 +114,15 @@ for a fixture. `placeStructure` reads it the way it reads `structureYaw`.
   test spec 250 added after seeding a slider `null` opened the editor black.
 - A sign's collider is its post, and `SIGN_READ_RADIUS` clears it by more than
   a body radius — so the reach is reachable rather than inside the thing.
+- A sign's bubble is **released by range**, the mirror of `sweepConversations`:
+  it stays open right up to `SIGN_READ_RADIUS` and is put down past it, and the
+  server is told nothing either way.
+- A conversation with a body puts a sign down; reading a sign puts a live
+  conversation down *and* tells the server, since that one was its.
+- `DialogueScreen.bubbleRect` is the box the hit test takes, and null when the
+  bubble is not up — the handle a line with no replies is pressed by.
+- `SignIndex` walks the store only when its revision moves, and finds a sign by
+  the key a standing order holds.
 - The presentation-only assertion still holds: the same seed and inputs, once
   with a sign read and once without, produce identical authoritative state.
 

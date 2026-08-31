@@ -106,6 +106,20 @@ export class DialogueScreen extends Panel {
     return this.visible ? `${this.speaker.text} ${this.body.text}` : '';
   }
 
+  /**
+   * The bubble's own box, in UI pixels, or null when it is not up (spec 259).
+   *
+   * Beside {@link DialogueScreen.replyRects} and for that field's stated
+   * reason, one case further along: a bubble is drawn to a canvas, so a harness
+   * has no element to ask -- and **a line with no replies has no other
+   * handle**. Pressing the bubble itself is what advances one, which is the
+   * whole of how a sign is dismissed, and until this there was nothing on
+   * screen a probe could aim at to do it.
+   */
+  get bubbleRect(): Rect | null {
+    return this.visible ? this.rect : null;
+  }
+
   get replyRects(): readonly { readonly id: string; readonly rect: Rect }[] {
     if (!this.visible) return [];
     return this.buttons

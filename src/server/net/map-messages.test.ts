@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { MAP_VERSION, isKnownPropKind, type MapChunk } from '../../terrain/map.js';
+import { MAX_SIGN_TEXT } from '../../terrain/vegetation.js';
 import { BufferReader } from './codec.js';
 import {
   decodeChunkDenied,
@@ -121,6 +122,40 @@ describe('MapChunk round trip', () => {
       payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: lit })),
     );
     expect(back.chunk).toEqual(lit);
+  });
+
+  /**
+   * A sign's message crosses too (spec 259).
+   *
+   * The second optional block on a prop, which is what this is really about:
+   * with two of them the *order* has to be agreed, and a decoder that read the
+   * string before the light -- or read one it was not sent -- would not lose a
+   * message, it would desynchronise every prop after it in the chunk. Hence a
+   * chunk holding one of each and one of both.
+   */
+  it("reproduces a sign's message, beside a light on the same chunk", () => {
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const said: MapChunk = {
+      ...chunk,
+      props: [
+        { species: 'sign', x: 10, z: 20, rotation: 0, scale: 1, tint: 0, text: 'Hearthstead, two miles' },
+        { species: 'campfire', x: 30, z: 40, rotation: 0, scale: 1, tint: 0, light: { brightness: 2, radius: 300 } },
+        // Neither, so the flags byte is proved to be per prop.
+        { species: 'well', x: 50, z: 60, rotation: 0, scale: 1, tint: 0 },
+        // Quotes, a backslash and a newline: a message is the one field in a
+        // prop record that holds text somebody typed.
+        { species: 'sign', x: 70, z: 80, rotation: 0, scale: 1, tint: 0, text: 'He said "no".\nC:\\road' },
+        // The longest a document may carry, so the length prefix is exercised
+        // past one byte.
+        { species: 'sign', x: 90, z: 100, rotation: 0, scale: 1, tint: 0, text: 'x'.repeat(MAX_SIGN_TEXT) },
+      ],
+    };
+    const back = decodeMapChunk(
+      payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: said })),
+    );
+    expect(back.chunk).toEqual(said);
   });
 
   it('reproduces heights bit for bit, not merely close', () => {

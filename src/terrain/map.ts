@@ -11,8 +11,10 @@ import {
   FIXTURE_KINDS,
   MAX_FIXTURE_BRIGHTNESS,
   MAX_FIXTURE_RADIUS,
+  MAX_SIGN_TEXT,
   MIN_FIXTURE_BRIGHTNESS,
   MIN_FIXTURE_RADIUS,
+  signText,
   STRUCTURE_KINDS,
   type Prop,
   type PropKind,
@@ -131,6 +133,18 @@ export interface MapProp {
    * move and no `mapId` does either.
    */
   readonly light?: MapPropLight;
+  /**
+   * What a sign says (spec 259).
+   *
+   * Optional and absent by default, `light` beside it for `light`'s own stated
+   * reason: no committed document gains a key, so no region file's bytes move
+   * and no `mapId` does either.
+   *
+   * The one prop field a person is expected to edit by hand. A map is committed
+   * so the world reviews as a diff, and a sentence is the one thing in a prop
+   * record that reads as a sentence rather than as a coordinate.
+   */
+  readonly text?: string;
 }
 
 /** A fixture's two authored numbers, as the document stores them (spec 250). */
@@ -474,6 +488,14 @@ export function exportMap(input: ExportMapInput): MapDocument {
           ...(prop.light
             ? { light: { brightness: quantize(prop.light.brightness), radius: quantize(prop.light.radius) } }
             : {}),
+          // Through `signText` rather than off the field, so a blank message and
+          // an absent one are one state in the document as well as in the game
+          // -- and so a `text` that landed on a hut is dropped here rather than
+          // written out and ignored forever after.
+          ...((): { text?: string } => {
+            const text = signText(prop);
+            return text === null ? {} : { text };
+          })(),
         })),
         markers: (markersByChunk.get(key) ?? []).map((m) => ({
           kind: m.kind,
@@ -577,7 +599,11 @@ function writeProp(prop: MapProp): string {
     `{ "species": ${writeScalar(prop.species)}, "x": ${prop.x}, "z": ${prop.z}, ` +
     `"rotation": ${prop.rotation}, "scale": ${prop.scale}, "tint": ${prop.tint}` +
     `${prop.align ? ', "align": true' : ''}${prop.uniform ? ', "uniform": true' : ''}` +
-    `${prop.light ? `, "light": { "brightness": ${prop.light.brightness}, "radius": ${prop.light.radius} }` : ''} }`
+    `${prop.light ? `, "light": { "brightness": ${prop.light.brightness}, "radius": ${prop.light.radius} }` : ''}` +
+    // `writeScalar`, so a message holding a quote, a backslash or a newline is
+    // escaped by `JSON.stringify` rather than by anything written here: a map
+    // this could not read back is a map the editor made unloadable.
+    `${prop.text === undefined ? '' : `, "text": ${writeScalar(prop.text)}`} }`
   );
 }
 
@@ -862,6 +888,17 @@ function parseProp(value: unknown, what: string): MapProp {
   const uniform = r['uniform'];
   if (uniform !== undefined && typeof uniform !== 'boolean') fail(`${what}.uniform must be a boolean`);
   const light = r['light'];
+  const text = r['text'];
+  if (text !== undefined) {
+    if (typeof text !== 'string') fail(`${what}.text must be a string`);
+    // Refused rather than truncated. The bound exists because a `str` on the
+    // wire is length-prefixed and a map is a file somebody may hand-edit, and a
+    // document silently losing the second half of a sentence is worse than one
+    // that says which prop is too long.
+    if (text.length > MAX_SIGN_TEXT) {
+      fail(`${what}.text is ${text.length} characters, over the ${MAX_SIGN_TEXT} a sign may carry`);
+    }
+  }
   return {
     species: asString(r['species'], `${what}.species`),
     x: asNumber(r['x'], `${what}.x`),
@@ -872,6 +909,7 @@ function parseProp(value: unknown, what: string): MapProp {
     ...(align === true ? { align: true } : {}),
     ...(uniform === true ? { uniform: true } : {}),
     ...(light === undefined ? {} : { light: parsePropLight(light, `${what}.light`) }),
+    ...(typeof text === 'string' ? { text } : {}),
   };
 }
 

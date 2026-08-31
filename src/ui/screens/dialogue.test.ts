@@ -244,6 +244,26 @@ describe('the pointer', () => {
     expect(advances).toBe(1);
   });
 
+  it('publishes its own box, which is what a line with no replies is pressed by (spec 259)', () => {
+    // The reply rects answer "where do I press to choose"; this answers "where
+    // do I press to go on", which for a sign is the only press there is.
+    const bubble = screen();
+    expect(bubble.bubbleRect).toBeNull();
+    bubble.setAnchor({ x: 400, y: 300 });
+    bubble.setView({ speaker: 'Sign', text: 'Beware the bridge.', typing: false, choices: [] });
+    laid(bubble);
+    const box = bubble.bubbleRect;
+    expect(box).not.toBeNull();
+    // The box a press has to land in, so it has to be the one the hit test
+    // takes -- a published rectangle that is not the pressable one would be a
+    // harness aiming at the world.
+    expect(bubble.hitTest({ x: (box?.x ?? 0) + 4, y: (box?.y ?? 0) + 4 })).not.toBeNull();
+    // And it goes away with the bubble, since a box for something not on screen
+    // is a press into empty space.
+    bubble.setView(null);
+    expect(bubble.bubbleRect).toBeNull();
+  });
+
   it('reports a reply by its index', () => {
     const bubble = screen();
     const pressed: number[] = [];

@@ -164,7 +164,7 @@ describe('the drawn mark', () => {
 });
 
 describe('which mark the world draws', () => {
-  const NOTHING = { aiming: false, overEnemy: false, overDrop: false, overNpc: false };
+  const NOTHING = { aiming: false, overEnemy: false, overDrop: false, overNpc: false, overSign: false };
 
   it('is the full crosshair while an aim is pending', () => {
     expect(worldMark({ ...NOTHING, aiming: true })).toBe('full');
@@ -176,6 +176,7 @@ describe('which mark the world draws', () => {
     expect(worldMark({ ...NOTHING, aiming: true, overEnemy: true })).toBe('full');
     expect(worldMark({ ...NOTHING, aiming: true, overDrop: true })).toBe('full');
     expect(worldMark({ ...NOTHING, aiming: true, overNpc: true })).toBe('full');
+    expect(worldMark({ ...NOTHING, aiming: true, overSign: true })).toBe('full');
   });
 
   it('is the small mark over a body a click would act on', () => {
@@ -187,6 +188,22 @@ describe('which mark the world draws', () => {
     // where it lands, because a friendly body is the one case where the button
     // means something other than "act on this".
     expect(worldMark({ ...NOTHING, overNpc: true })).toBe('bubble');
+  });
+
+  it('is the question mark over a sign with something on it (spec 259)', () => {
+    expect(worldMark({ ...NOTHING, overSign: true })).toBe('sign');
+  });
+
+  it('lets a sign win over a body standing in front of it (spec 259)', () => {
+    // The one pair here that really can both be true: every other field is
+    // about an entity and this one is about a prop, so a merchant in front of a
+    // signpost is an ordinary village. `issueOrder` reads the same order, so
+    // what lights up is what the click does.
+    expect(worldMark({ ...NOTHING, overSign: true, overNpc: true })).toBe('sign');
+    expect(worldMark({ ...NOTHING, overSign: true, overEnemy: true })).toBe('sign');
+    // And an armed skill still outranks all of it: a left click *places* the
+    // aim, so no mark may promise something else.
+    expect(worldMark({ ...NOTHING, overSign: true, aiming: true })).toBe('full');
   });
 
   it('is nothing over a drop, or over open ground', () => {
@@ -201,7 +218,9 @@ describe('which mark the world draws', () => {
       { ...NOTHING, aiming: true },
       { ...NOTHING, overEnemy: true },
       { ...NOTHING, overNpc: true },
-      { ...NOTHING, aiming: true, overEnemy: true, overDrop: true, overNpc: true },
+      { ...NOTHING, overSign: true },
+      { ...NOTHING, aiming: true, overEnemy: true, overDrop: true, overNpc: true, overSign: true },
+      { ...NOTHING, overSign: true, overDrop: true },
       NOTHING,
       { ...NOTHING, overDrop: true },
     ]) {

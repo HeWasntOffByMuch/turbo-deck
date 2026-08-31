@@ -319,6 +319,17 @@ export const MapPropFlag = {
    * this one says whether a value follows.
    */
   Light: 1 << 2,
+  /**
+   * This prop carries a message, and a `str` follows the light block if there
+   * is one (spec 259).
+   *
+   * {@link MapPropFlag.Light}'s shape rather than {@link MapPropFlag.Align}'s,
+   * and for its reason: almost no prop is a sign, so the common case pays the
+   * bit it was already paying and nothing else. What follows is a `str` because
+   * a message has no fixed length -- which is also why it is bounded before it
+   * ever reaches here, by `MAX_SIGN_TEXT` in the parser.
+   */
+  Text: 1 << 3,
 } as const;
 
 /**

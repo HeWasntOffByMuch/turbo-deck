@@ -34,7 +34,8 @@ export type PropKind =
   | 'well'
   | 'campfire'
   | 'lamp-post'
-  | 'torch-stand';
+  | 'torch-stand'
+  | 'sign';
 
 /**
  * The kinds that are a length of fence rather than a plant: a regular one and a
@@ -56,8 +57,20 @@ export function isFenceKind(kind: PropKind): kind is FenceKind {
  * and a fence is laid along a path, and a building goes in one spot, turned to
  * face a square -- so the editor gives them a press-to-place tool of their own
  * and this is the list it offers.
+ *
+ * A sign is the third (spec 259), and it belongs here rather than beside the
+ * fixtures for the same one reason: it goes in **one spot somebody chose**,
+ * turned to face the road it is read from. That is the whole membership test of
+ * this list, and it is why a thing that emits no light and holds nobody's roof
+ * up is still grouped with a hut.
+ *
+ * Appended, never inserted. `PROP_GROUPS` enumerates this list and
+ * {@link FIXTURE_KINDS} in order across a thread boundary, so a kind inserted
+ * ahead of another would hand the worker's matrices to the wrong geometry --
+ * both halves come out of one build, so what this really forbids is a *stored*
+ * index, and there is none: a document names a species by string.
  */
-export const STRUCTURE_KINDS = ['house', 'well'] as const;
+export const STRUCTURE_KINDS = ['house', 'well', 'sign'] as const;
 export type StructureKind = (typeof STRUCTURE_KINDS)[number];
 
 export function isStructureKind(kind: PropKind): kind is StructureKind {
@@ -132,6 +145,66 @@ export const HOUSE_PLAN = { width: 148, depth: 124 } as const;
 export const WELL_RADIUS = 44;
 
 /**
+ * The sign's board and the post under it, at scale 1, in world units (spec 259).
+ *
+ * Here beside the kinds rather than in the renderer, for {@link HOUSE_PLAN}'s
+ * reason: `FOOTPRINT_BASE` derives the collider from `postWidth` and the
+ * renderer builds the board from the other three, and the client's pick volume
+ * is `postHeight + height` tall. Four numbers in three files that have to agree
+ * about one object.
+ *
+ * Sized against the body that reads it -- a unit is about 56 tall -- so the
+ * board's underside sits at chest height and its top a little over head height:
+ * high enough to be a sign rather than a stump, low enough that it does not
+ * read as a gallows at this camera's bearing.
+ */
+export const SIGN_PLAN = {
+  /** The board, across the face somebody reads it from. */
+  width: 84,
+  /** The board, top to bottom. */
+  height: 34,
+  /** How far the post carries the board's *underside* off the ground. */
+  postHeight: 62,
+  /** The post, square in plan. Also what a body cannot walk through. */
+  postWidth: 12,
+} as const;
+
+/**
+ * The longest message a sign may carry, in characters (spec 259).
+ *
+ * A bound rather than a style guide, and it is enforced by the parser: a `str`
+ * on the wire is length-prefixed and a map is a file somebody may hand-edit, so
+ * "how much text can one prop put on the wire" has to have an answer that is not
+ * *whatever was typed*. 240 is about four lines in the bubble at
+ * `BUBBLE_WIDTH`, which is as much as anybody is going to read standing in a
+ * field.
+ */
+export const MAX_SIGN_TEXT = 240;
+
+/**
+ * The words on this prop, or **null** for a sign with nothing on it.
+ *
+ * One answer with three callers -- the editor deciding whether it has anything
+ * to place, the client deciding whether a sign is worth offering to read, and
+ * the parser deciding what to store -- for the reason {@link footprintRadius} is
+ * one: a blank-but-present string and an absent one are the same sign, and three
+ * files each deciding that separately agree until one is edited.
+ *
+ * Trimmed and bounded rather than trusted, because it arrives from a document
+ * somebody may have hand-edited. A kind that is not a sign never has a message,
+ * whatever its record says: an intent a kind does not read is inert rather than
+ * an error, which is the rule `light` on a hut already follows.
+ */
+export function signText(prop: Prop): string | null {
+  if (prop.kind !== 'sign') return null;
+  const raw = prop.text;
+  if (typeof raw !== 'string') return null;
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) return null;
+  return trimmed.length > MAX_SIGN_TEXT ? trimmed.slice(0, MAX_SIGN_TEXT) : trimmed;
+}
+
+/**
  * How long one fence tile runs, in world units at scale 1.
  *
  * The load-bearing number of the whole fence design, which is why it lives here
@@ -184,6 +257,22 @@ export interface Prop {
    * inert rather than an error, which is what keeps `Prop` one shape.
    */
   readonly light?: PropLight;
+  /**
+   * What this sign says (spec 259).
+   *
+   * Absent by default, so no committed map gains a key, no region file's bytes
+   * move and no `mapId` does either -- `light` beside it for the same reason.
+   * Ignored by every kind but `sign`, exactly as `light` is ignored by a kind
+   * that emits nothing: reading it goes through {@link signText}, which answers
+   * null for anything else whatever the record holds.
+   *
+   * The words are here, on the prop, rather than in a table keyed by something:
+   * a sign's whole content *is* its position plus its sentence, so a table would
+   * be a second file to keep in step with a map for no gain. It is also why a
+   * sign is the one prop whose interesting field a person can honestly edit in
+   * `maps/arena.json` by hand.
+   */
+  readonly text?: string;
 }
 
 /** What a fixture burns at. Two numbers, and the two the editor sets. */
@@ -455,6 +544,11 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   campfire: 34,
   'lamp-post': 11,
   'torch-stand': 10,
+  // The post, and the post only (spec 259). The board is a metre of air at
+  // chest height that a body walks under without noticing -- blocking its whole
+  // span would be an invisible wall either side of a stick, and would put the
+  // reach a player has to get inside *behind* the thing they are reading.
+  sign: SIGN_PLAN.postWidth / 2,
 };
 /**
  * Fallback for a kind this build has no footprint for -- a map written by a
