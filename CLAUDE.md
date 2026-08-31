@@ -2957,7 +2957,28 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  grids, `gen` 25 to 155, none refused. It arrived with spec 208
                  rather than with 215, and nothing caught it because every test
                  in the tree drives a client that grows.
-                 net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
+                 net/ is the binary wire format (see net/PROTOCOL.md). Both ends
+                 speak exactly one `PROTOCOL_VERSION` and a mismatch is refused,
+                 so any change to any message is a bump plus a row in
+                 `config.ts`'s ledger -- and since spec 258 that is mechanical
+                 rather than remembered. It had to become mechanical: the number
+                 sat at 20 from spec 226 through **ten** wire changes, and what
+                 that cost was a published client throwing `truncated frame:
+                 wanted 4 bytes, 0 left` out of `readTraits` against a server one
+                 trait behind it. The traits are the tail of `writeStats` and are
+                 all `f32`, so being one ahead is reading four bytes past the end
+                 of a message sent on login -- it throws before the first frame is
+                 drawn. `wire-corpus.ts` is one message per member of both type
+                 enums, asserted exhaustive off the enums themselves;
+                 `wire-fingerprint.ts` hashes their encoded bytes and pins the
+                 hash per version in an append-only ledger, so a wire change now
+                 fails `npm test` naming both files to edit. Worth knowing which
+                 direction is loud: a client **ahead** of its server throws, and a
+                 client **behind** it leaves the spare bytes unread and decodes
+                 without complaint, since no decoder here asserts it consumed the
+                 frame -- so that half is silently wrong, which is the better
+                 argument for refusing at the handshake than for trusting the
+                 codec to notice. sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the

@@ -1,4 +1,4 @@
-# turbo-deck wire protocol v17
+# turbo-deck wire protocol v21
 
 Binary, not JSON. Every frame is a WebSocket **binary** message whose first byte
 is the message type; the rest is a type-specific payload. All multi-byte numbers
@@ -6,6 +6,34 @@ are **little-endian**.
 
 Implemented by `protocol.ts` (type bytes), `codec.ts` (primitives),
 `messages.ts` (game messages) and `admin-messages.ts` (the `admin:*` namespace).
+
+## Changing anything on this page
+
+Both ends speak exactly one version and a mismatch is refused, so **any** change
+to any shape below is a `PROTOCOL_VERSION` bump in `src/server/config.ts` plus a
+row in that file's ledger comment saying what moved.
+
+That was a habit until spec 258, and habits do not survive ten commits by people
+thinking about something else: the number sat at 20 from spec 226 while `Stats`
+lost a field and gained six, `TRAIT_WIRE_ORDER` grew twice, `Effect` and
+`CombatResult` each gained one, and `Talk`/`Conversation` were added. What it
+cost was a published client throwing `truncated frame: wanted 4 bytes, 0 left`
+out of `readTraits` against a server one trait behind it -- the traits are the
+tail of `writeStats` and are all `f32`, so being one ahead is reading four bytes
+past the end of a message that is sent on login.
+
+`wire-fingerprint.ts` is the mechanical half now: `WIRE_FINGERPRINTS` pins a
+hash of the whole message corpus against each version, and
+`wire-fingerprint.test.ts` fails `npm test` when the two disagree. So a wire
+change no longer *can* ship without the number moving, and this page's own
+version marker is the third thing to bring with it -- it had drifted four behind
+by the time anybody looked.
+
+Note which direction is loud. A client **ahead** of its server reads past the end
+and throws. A client **behind** it leaves the extra bytes unread and decodes
+without complaint, because no decoder here asserts it consumed the frame -- so
+that half is silently wrong rather than broken, which is the better reason to
+refuse the connection at the handshake instead of trusting the codec to notice.
 
 ## Where the socket is
 
@@ -56,7 +84,7 @@ cannot address an admin handler at all.
 
 ### `0x01 Hello`
 `u16 protocolVersion` · `str playerId` · `str displayName` · `str token` ·
-`str assetManifest` · `str resumeToken`
+`str assetManifest` · `str resumeToken` · `str authToken`
 
 First message on a connection, and **only** the first: a second one on the same
 socket is refused, because obeying it used to spawn a second body and orphan the
@@ -68,6 +96,14 @@ because since spec 145 it is broadcast to every client in interest.
 for this `playerId` re-attaches to that body instead of spawning a new one
 (spec 150); one that does not match is simply a new login rather than an error,
 because a token that has aged out is the ordinary case.
+
+`authToken` is the session credential `POST /api/auth/{guest,register,login}`
+issued (spec 226). Where the server was built with an auth gate it is
+**required**, and the `playerId` on the frame is then ignored entirely -- which
+is the whole point: who a connection is comes from a credential the server
+issued rather than from a name the client chose for itself. Omitted, the gate is
+absent and the client names itself, which is what the in-tab loopback server, the
+bot harness and the tests all do.
 
 ### `0x02 Input`
 `varuint seq` · `f32 moveX` · `f32 moveY` · `f32 facing` · `u8 buttons` ·

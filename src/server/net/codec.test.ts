@@ -13,7 +13,6 @@ import {
   decodeServerMessage,
   encodeClientMessage,
   encodeServerMessage,
-  type ClientMessage,
   type ServerMessage,
 } from './messages.js';
 import {
@@ -21,37 +20,11 @@ import {
   AdminProgressMode,
   AdminReplyType,
   ClientMessageType,
-  ProgressionTarget,
   EntityField,
   isAdminRequest,
   ServerMessageType,
 } from './protocol.js';
-import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats } from '../state/types.js';
-import { maxStackOf } from '../data/items.js';
-import { NO_ATTACK_SPEED } from '../sim/attack-timing.js';
-import { NO_WEAPON } from '../data/weapon-scaling.js';
-import { NEUTRAL_TRAITS } from '../player/derived.js';
-import { startingBaseStats } from '../player/attributes.js';
-
-const STATS: EffectiveStats = {
-  maxHealth: 137.5,
-  moveSpeed: 152.25,
-  turnRate: 210,
-  attackDamage: 11.5,
-  attackRange: 56,
-  baseAttackTimeTicks: 7,
-  ...NO_ATTACK_SPEED,
-  armor: 0.125,
-  spellPower: 1.5,
-  critChance: 0.0625,
-  maxResource: 30,
-  // f32-exact, so the round-trip is testing the codec and not float precision.
-  resourceRegen: 0.0625,
-  basicAttackId: 'ranged.shot',
-  skillAbilityIds: [],
-  ...NO_WEAPON,
-  traits: NEUTRAL_TRAITS,
-};
+import { CLIENT_CORPUS, SERVER_CORPUS } from './wire-corpus.js';
 
 describe('codec primitives', () => {
   it('round-trips every width, including the signed and float edges', () => {
@@ -109,265 +82,17 @@ describe('codec primitives', () => {
 });
 
 describe('game message round-trip', () => {
-  const clientMessages: ClientMessage[] = [
-    {
-      type: ClientMessageType.Hello,
-      protocolVersion: 1,
-      playerId: 'alice',
-      displayName: 'Alice',
-      token: '',
-      assetManifest: '',
-      resumeToken: 'resume-1',
-      authToken: 'sess-1',
-    },
-    {
-      type: ClientMessageType.Input,
-      seq: 4096,
-      moveX: -0.5,
-      moveY: 0.75,
-      facing: 1.5,
-      buttons: 5,
-      predictedX: -1234.5,
-      predictedY: 987.25,
-      renderLagTicks: 9,
-    },
-    { type: ClientMessageType.Ping, nonce: 123456 },
-    { type: ClientMessageType.Equip, slot: 'mainHand', itemId: 'sword.keen' },
-    { type: ClientMessageType.Unequip, slot: 'offHand' },
-    { type: ClientMessageType.SpendProgressionPoint, target: ProgressionTarget.Specialization, specializationId: 'str.crushingBlows' },
-    { type: ClientMessageType.Chat, text: 'hello world' },
-    {
-      type: ClientMessageType.UseAbility,
-      abilityId: 'melee.slash',
-      targetX: 612.5,
-      targetY: -48.25,
-      // The body it was aimed at (spec 070); 0 would be a point aim.
-      targetEntityId: 44,
-      // The input this request was made on (spec 067), not decoration: the
-      // server commits on that input rather than on arrival.
-      afterInputSeq: 9001,
-    },
-    { type: ClientMessageType.CancelCast, afterInputSeq: 9002 },
-    { type: ClientMessageType.OpenVendor, vendorId: 'vendor.armourer' },
-    { type: ClientMessageType.OpenVendor, vendorId: '' },
-    {
-      type: ClientMessageType.BuyItem,
-      requestId: 3,
-      vendorId: 'vendor.quartermaster',
-      defId: 'potion.minor',
-      count: 5,
-    },
-    {
-      // A negative count is a rule refusal with a reason, so it has to survive
-      // the wire to be refused (spec 126's lesson about a slot index).
-      type: ClientMessageType.SellItem,
-      requestId: 4,
-      vendorId: 'vendor.quartermaster',
-      index: -1,
-      count: -2,
-    },
-    { type: ClientMessageType.BuyBack, requestId: 5, vendorId: 'vendor.quartermaster', index: 0 },
-    {
-      type: ClientMessageType.MoveItem,
-      requestId: 7,
-      from: { container: 'inventory', index: 3 },
-      to: { container: 'equipment', index: 0 },
-      count: 0,
-    },
-    {
-      // An out-of-range index is a *rule* refusal, so it has to survive the
-      // wire to be refused with a reason -- a signed index, not a length.
-      type: ClientMessageType.MoveItem,
-      requestId: 8,
-      from: { container: 'inventory', index: -1 },
-      to: { container: 'inventory', index: 5 },
-      count: 4,
-    },
-    {
-      type: ClientMessageType.DropItem,
-      requestId: 9,
-      at: { container: 'inventory', index: 3 },
-      count: 0,
-      aimX: 512,
-      aimY: -344,
-    },
-    {
-      // A worn item goes on the ground the same way a carried one does, and an
-      // out-of-range index is still a refusal with a reason rather than a
-      // corrupt frame (spec 172).
-      type: ClientMessageType.DropItem,
-      requestId: 10,
-      at: { container: 'equipment', index: -1 },
-      count: 2,
-      aimX: 0,
-      aimY: 0,
-    },
-    // Both halves of one message (spec 246): a body to talk to, and the 0 that
-    // ends it. The zero is the case worth carrying, since it is what a client
-    // leaving sends and what a varuint encodes in its shortest form.
-    { type: ClientMessageType.Talk, entityId: 4242 },
-    { type: ClientMessageType.Talk, entityId: 0 },
-  ];
-
-  it.each(clientMessages.map((m) => [m.type, m] as const))(
+  // The corpus lives in wire-corpus.ts (spec 258), which is also what
+  // wireFingerprint hashes -- one canonical set of message shapes rather than
+  // this test keeping a partial copy that can drift from the fingerprint's.
+  it.each(CLIENT_CORPUS.map((m) => [m.type, m] as const))(
     'client type 0x%s survives encode/decode',
     (_type, message) => {
       expect(decodeClientMessage(encodeClientMessage(message))).toEqual(message);
     },
   );
 
-  const serverMessages: ServerMessage[] = [
-    {
-      type: ServerMessageType.Welcome,
-      protocolVersion: 1,
-      playerId: 'alice',
-      entityId: 3,
-      tick: 900,
-      tickRate: 20,
-      chunkSize: 100,
-      interestRadius: 3,
-      correctionThreshold: 48,
-      worldSeed: 4242,
-      sessionToken: 'sess-1',
-    },
-    {
-      type: ServerMessageType.Delta,
-      tick: 42,
-      ackInputSeq: 17,
-      removed: [],
-      upserts: [],
-    },
-    {
-      type: ServerMessageType.Correction,
-      inputSeq: 9,
-      position: { x: -1600.5, y: 2500.25, z: -12.5 },
-      facing: -3.125,
-      reason: 1,
-    },
-    {
-      type: ServerMessageType.Effect,
-      effectId: 'skill.arcLash.impact',
-      x: 320.5,
-      y: -18.25,
-      z: 4,
-      radius: 300,
-      durationTicks: 24,
-      // Non-zero, and not a round number: a fixture that only ever carries the
-      // default cannot tell a field that survives from one the decoder fills in
-      // (spec 235). This message had no fixture at all until the bearing was
-      // added to it.
-      rotation: -2.5,
-    },
-    {
-      type: ServerMessageType.CombatResult,
-      attackerId: 1,
-      targetId: 2,
-      damage: 12.5,
-      targetHealth: 27.5,
-      flags: 3,
-      // Not 0: a round trip that only ever carries the default cannot tell a
-      // field that survives from one the decoder fills in (spec 232).
-      element: 6,
-    },
-    {
-      type: ServerMessageType.Stats,
-      entityId: 1,
-      level: 7,
-      experience: 340,
-      specializations: [
-        { specializationId: 'str.crushingBlows', tier: 3 },
-        { specializationId: 'agi.quickRecovery', tier: 1 },
-      ],
-      baseStats: startingBaseStats(),
-      attributes: startingBaseStats(),
-      unspentProgressionPoints: 2,
-      stats: STATS,
-    },
-    {
-      // ...and with nothing spent, which is every character's first minute.
-      type: ServerMessageType.Stats,
-      entityId: 1,
-      level: 1,
-      experience: 0,
-      specializations: [],
-      baseStats: startingBaseStats(),
-      attributes: startingBaseStats(),
-      unspentProgressionPoints: 2,
-      stats: STATS,
-    },
-    {
-      type: ServerMessageType.CastState,
-      entityId: 12,
-      abilityId: 'melee.slash',
-      phase: 0,
-      startTick: 470,
-      releaseTick: 4210,
-      endTick: 4222,
-      targetX: 612.5,
-      targetY: -48.25,
-      // What the swing is aimed at (spec 070), which is what makes it single
-      // target on the other side of the wire.
-      targetEntityId: 44,
-    },
-    { type: ServerMessageType.CastEnded, entityId: 12, abilityId: 'melee.slash', reason: 0 },
-    { type: ServerMessageType.Chat, channel: 2, from: 'Server', text: 'be nice' },
-    {
-      type: ServerMessageType.Cooldowns,
-      entries: [
-        { abilityId: 'skill.acidSpray', readyAtTick: 1800 },
-        { abilityId: 'skill.blight', readyAtTick: 2400 },
-      ],
-      resource: 12.5,
-      atTick: 1750,
-    },
-    { type: ServerMessageType.Cooldowns, entries: [], resource: 0, atTick: 0 },
-    // An empty bag, a full one, and a stack at its ceiling (spec 126) -- the
-    // three shapes a container has, and the codec has to carry all of them.
-    {
-      type: ServerMessageType.Inventory,
-      requestId: 0,
-      inventory: emptyInventory(),
-      equipment: EMPTY_EQUIPMENT,
-      coins: 137,
-    },
-    {
-      type: ServerMessageType.Inventory,
-      requestId: 12,
-      inventory: [...emptyInventory()].map(() => ({ defId: 'sword.worn', count: 1 })),
-      equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting', chest: 'chest.leather' },
-      coins: 137,
-    },
-    {
-      type: ServerMessageType.Inventory,
-      requestId: 3,
-      inventory: [...emptyInventory()].map((_, i) =>
-        i === 2 ? { defId: 'potion.minor', count: maxStackOf('potion.minor') } : null,
-      ),
-      equipment: EMPTY_EQUIPMENT,
-      coins: 137,
-    },
-    {
-      type: ServerMessageType.VendorState,
-      vendorId: 'vendor.quartermaster',
-      name: 'Quartermaster',
-      stock: [
-        { defId: 'potion.minor', price: 9 },
-        { defId: 'sword.worn', price: 18 },
-      ],
-      buyback: [{ defId: 'chest.leather', count: 1, price: 8 }],
-    },
-    // A shop with nothing in it, and the empty id that means "closed".
-    { type: ServerMessageType.VendorState, vendorId: '', name: '', stock: [], buyback: [] },
-    { type: ServerMessageType.Pong, nonce: 88, serverTick: 1000, inputQueueFloor: 4 },
-    // Both halves again (spec 246): the body being talked to, and the 0 that is
-    // both a refusal and the end of a conversation.
-    { type: ServerMessageType.Conversation, entityId: 4242 },
-    { type: ServerMessageType.Conversation, entityId: 0 },
-    { type: ServerMessageType.Error, code: 7, message: 'rejected' },
-    { type: ServerMessageType.Disconnect, reason: 'kicked' },
-  ];
-
-  it.each(serverMessages.map((m) => [m.type, m] as const))(
+  it.each(SERVER_CORPUS.map((m) => [m.type, m] as const))(
     'server type 0x%s survives encode/decode',
     (_type, message) => {
       expect(decodeServerMessage(encodeServerMessage(message))).toEqual(message);
