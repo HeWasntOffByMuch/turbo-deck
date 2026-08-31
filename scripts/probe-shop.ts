@@ -177,6 +177,14 @@ async function selfAt(page: Page): Promise<{ x: number; y: number }> {
   return { x: x ?? 0, y: y ?? 0 };
 }
 
+/** What the body has been ordered to do, in `publishOrders`'s fixed vocabulary. */
+async function orders(page: Page): Promise<string> {
+  return page.evaluate(() => {
+    const host = document.querySelector<HTMLElement>('[data-orders]');
+    return host?.dataset['orders'] ?? '';
+  });
+}
+
 /**
  * Hover every body until the game says one of them is somebody to talk to.
  *
@@ -292,71 +300,100 @@ async function main(): Promise<void> {
       waitUntil: 'domcontentloaded',
     });
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });
+
+    // Through the front door first (spec 255). The shipped page opens on the
+    // title screen, and that overlay is `inset: 0` -- so every click below
+    // lands on it rather than on the world until Start has taken it away. This
+    // probe predates it and had been silently clicking a menu: `findTalkable`
+    // still worked, because the crosshair is drawn from pointer *moves* through
+    // a transparent overlay, so the failure read as "the merchant is right
+    // there and right-clicking it does nothing".
+    await page.waitForSelector('[data-title][data-title-ready="true"]', { timeout: 120_000 });
+    await page.click('[data-title-entry="start"]', { position: { x: 6, y: 6 } });
+    await page.waitForSelector('[data-title]', { state: 'detached', timeout: 30_000 });
+    console.log('  through the title screen');
     await waitForTick(page, 30);
 
-    // **One click, from wherever the merchant was first spotted** (spec 256).
+    // **One click, and the walk to the merchant is the game's** (spec 256).
     //
     // This used to walk first, and said so: the client sent a `Talk` whatever
     // the distance, the server refused it past `talkRadius`, and the refusal is
     // silent -- so a right-click from across the square did nothing at all and
-    // the probe had to order its own walk between attempts. That walk is the
-    // thing being checked now, so doing it by hand would hide exactly the
-    // feature this asserts.
-    const found = await findTalkable(page);
-    if (!found) {
-      problems.push('no body on screen answered the pointer with the talk cursor');
-      throw new Error(problems.join('; '));
-    }
-    console.log(`  a merchant is at (${found.x.toFixed(0)}, ${found.y.toFixed(0)}) and the cursor says so`);
-
-    // Back off first, so the one click below is provably from out of range.
+    // the probe had to order its own walk between attempts. That walk is now
+    // the thing being checked, so making it by hand would hide exactly the
+    // feature this asserts. What is retried is the *click*, never the approach.
     //
-    // Without it the run is at the mercy of where the spawn pad sits: land
-    // inside `talkRadius` and the click asks immediately, the bubble opens, and
-    // the probe reports a working approach having never made one -- which is
-    // the shape of check that goes on passing after the feature is removed. The
-    // ground opposite the merchant, because the camera keeps the player in the
-    // middle of the frame, so that is directly away from it.
-    const frame = page.viewportSize() ?? { width: 1280, height: 800 };
-    const behind = {
-      x: Math.min(frame.width - 40, Math.max(40, frame.width - found.x)),
-      y: Math.min(frame.height - 40, Math.max(40, frame.height - found.y)),
-    };
-    const stood = await selfAt(page);
-    await page.mouse.click(behind.x, behind.y, { button: 'right' });
-    await page.waitForTimeout(2500);
-    const walkFrom = await selfAt(page);
-    console.log(
-      `  backed off ${Math.hypot(walkFrom.x - stood.x, walkFrom.y - stood.y).toFixed(0)} units first`,
-    );
-
-    // The merchant has moved on screen, so it is found again rather than
-    // clicked where it used to be.
-    const at = (await findTalkable(page)) ?? found;
+    // Nothing has to be done to get out of range first: `DEFAULT_SPAWN` is 274
+    // units from the nearest shopkeeper's marker and 452 from the merchant's,
+    // against a `talkRadius` of 130. The walk is measured rather than assumed
+    // all the same -- if that ever stops being true the probe says so, because
+    // a run that opened the bubble without walking has not seen this feature at
+    // all and would go on passing after it was removed.
     let bubble = { open: false, replies: [] as Box[], line: '' };
-    await page.mouse.click(at.x, at.y, { button: 'right' });
-    // Poll: this environment paints at about five frames a second under
-    // software GL, every readout is published from the frame, and the order now
-    // has a walk in front of it -- the merchant can be most of the arena away,
-    // so this waits out a walk rather than a round trip.
-    for (let i = 0; i < 120 && !bubble.open; i++) {
-      await page.waitForTimeout(150);
-      bubble = await dialogue(page);
+    let ordered = '';
+    let walked = 0;
+    const deadline = Date.now() + 420_000;
+    // Measured from where the body stood when the *first* order was given, not
+    // per attempt: an attempt that follows a walk starts next to the merchant,
+    // so a per-attempt reading reports a working approach as a 0-unit one.
+    const walkFrom = await selfAt(page);
+    for (let attempt = 0; !bubble.open && Date.now() < deadline; attempt++) {
+      // Found again on every attempt rather than clicked where it used to be:
+      // the merchant wanders, the camera moves with the body, and this
+      // environment paints at about five frames a second under software GL, so
+      // a screen point is stale the moment it is measured. The sweep can also
+      // miss outright -- a body between two 28px samples, or one whose rig has
+      // not finished loading -- which is why this is a loop and not a find.
+      const at = await findTalkable(page);
+      if (!at) {
+        console.log('  (nobody on screen answers the talk cursor yet)');
+        await page.waitForTimeout(1000);
+        continue;
+      }
+      console.log(`  a merchant is at (${at.x.toFixed(0)}, ${at.y.toFixed(0)}) and the cursor says so`);
+      await page.mouse.click(at.x, at.y, { button: 'right' });
+      // `data-orders` is the game's own answer to "the click armed something",
+      // and it is the one reading that tells a missed click from a walk still
+      // in progress -- in a closed bubble the two look identical.
+      for (let i = 0; i < 8 && !ordered.includes('talk'); i++) {
+        await page.waitForTimeout(120);
+        ordered = await orders(page);
+      }
+      // Then wait out a *walk*, not a round trip, and let `data-orders` say
+      // when to stop rather than a constant: the merchant is 450 units off and
+      // this page paints at about five frames a second under software GL, so
+      // the body takes tens of seconds of wall clock to cover ground it crosses
+      // in three. The order going away with no bubble is the honest end of the
+      // attempt -- it is what a missed click and a refused `Talk` both look
+      // like, and it is the only thing that separates either from a walk still
+      // in progress.
+      for (let i = 0; i < 900 && !bubble.open; i++) {
+        await page.waitForTimeout(150);
+        bubble = await dialogue(page);
+        if (bubble.open) break;
+        const now = await orders(page);
+        if (ordered.includes('talk') && !now.includes('talk') && !now.includes('walk')) break;
+      }
+      const to = await selfAt(page);
+      walked = Math.hypot(to.x - walkFrom.x, to.y - walkFrom.y);
+      if (!bubble.open) {
+        // What the attempt did, not just that it failed: "the click armed
+        // nothing", "it walked and the ask was refused" and "it never got
+        // there" are three different bugs and one message names none of them.
+        console.log(
+          `  (no bubble: armed "${ordered}", walked ${walked.toFixed(0)} units, orders now "${await orders(page)}")`,
+        );
+      }
     }
     if (!bubble.open) {
       problems.push('right-clicking the merchant never opened a bubble');
       throw new Error(problems.join('; '));
     }
-    console.log('  the bubble is up');
-    // The walk is the claim, so it is measured rather than assumed: a probe
-    // that happened to spawn inside `talkRadius` would report a working
-    // approach without one having happened, and would go on reporting one if
-    // the order were removed again.
-    const walkedTo = await selfAt(page);
-    const walked = Math.hypot(walkedTo.x - walkFrom.x, walkedTo.y - walkFrom.y);
-    console.log(`  the body walked ${walked.toFixed(0)} units to get there`);
-    if (walked < 1) {
-      problems.push('the bubble opened without the body walking: the approach was never made');
+    console.log(`  the bubble is up: the click armed "${ordered}" and the body walked ${walked.toFixed(0)} units`);
+    if (walked < 50) {
+      problems.push(
+        `the bubble opened after a ${walked.toFixed(0)}-unit walk: the approach was never made`,
+      );
     }
 
     // Wait for the replies, which are withheld while the line is still typing.

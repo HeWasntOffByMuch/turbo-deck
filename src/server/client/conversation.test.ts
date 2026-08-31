@@ -29,7 +29,12 @@ import { buyPrice, vendorById } from '../data/vendors.js';
 import { STARTING_COINS } from '../player/player-manager.js';
 import { EntityKind } from '../net/protocol.js';
 import { GameClient } from './game-client.js';
-import { approachLead, approachOrderFor } from '../../render/iso3d/world/approach.js';
+import {
+  approachLead,
+  approachOrderFor,
+  TALK_MAX_ASKS,
+  TALK_STANDOFF_FRACTION,
+} from '../../render/iso3d/world/approach.js';
 import { SERVER_TICK_RATE } from '../config.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -351,6 +356,7 @@ describe('walking over to talk (spec 256)', () => {
     let asks = 0;
     let walked = 0;
     for (let i = 0; i < ticks && client.view().conversationEntityId === 0; i++) {
+      if (asks >= TALK_MAX_ASKS) break;
       const view = client.view();
       const self = view.entities.find((entity) => entity.id === view.selfEntityId);
       // The merchant is read fresh every tick, because it wanders: an order
@@ -365,9 +371,16 @@ describe('walking over to talk (spec 256)', () => {
         selfHealth: self?.health ?? 1,
         target: { x: mark.x, y: mark.y },
         reach,
-        lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
-        // One order, one request -- `driveTalk` ends the order on the ask, so
-        // there is never a second one to throttle.
+        // `driveTalk`'s margin: the standoff, tightened by every ask already
+        // refused. Not the lead alone -- this comparison has two out-of-date
+        // bodies in it. See `TALK_STANDOFF_FRACTION` and `TALK_MAX_ASKS`.
+        lead: Math.max(
+          reach * (1 - TALK_STANDOFF_FRACTION ** (asks + 1)),
+          approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+        ),
+        // Nothing to throttle: the standoff after an ask is inside where the
+        // body is standing, so the next one cannot be sent until it has walked
+        // further in.
         pending: false,
       });
       if (order.ask) {
@@ -415,9 +428,10 @@ describe('walking over to talk (spec 256)', () => {
   });
 
   /** Already close enough: no walking at all, and the same single ask. */
-  it('asks at once when the click was already in range', async () => {
+  it('asks at once when the click was already inside the standoff', async () => {
     const rig = await harness();
-    const { asks, walked } = await walkAndTalk(rig, merchantNpc().talkRadius - 30);
+    const inside = merchantNpc().talkRadius * TALK_STANDOFF_FRACTION - 10;
+    const { asks, walked } = await walkAndTalk(rig, inside);
     expect(walked).toBe(0);
     expect(asks).toBe(1);
     expect(rig.client.view().conversationEntityId).not.toBe(0);

@@ -96,6 +96,54 @@ export function approachLead(
   return Math.min(reach * 0.5, (moveSpeed * ticks) / tickRate);
 }
 
+/**
+ * How much of an NPC's `talkRadius` a walk-up order closes (spec 256).
+ *
+ * `approachLead` is the margin a pickup gets and it is not enough here, because
+ * it describes **one** body being out of date and this comparison has two in
+ * it. The client's own position is a prediction the server has not caught up
+ * with; the merchant's is a *remote* body, drawn `PLAYBACK_DELAY_TICKS` behind
+ * where the server has it (spec 253) and wandering the whole time. On a
+ * 130-unit radius the lead's floor is 7.75 units, and `probe-shop.ts` measured
+ * the two outcomes that buys: an ask sent at a drawn gap of 122 refused for
+ * range, and one at 100 granted.
+ *
+ * A fraction rather than a second derived distance, and 0.7 rather than
+ * `autoAttack`'s 0.8, for a reason that is this order's own: **it asks once.**
+ * A chase re-asks every time its cooldown comes round, so a refusal there costs
+ * a beat; here a refusal is the click having done nothing, which is the exact
+ * failure this spec exists to remove. The 39 units it gives up are not a cost
+ * worth counting -- standing closer to somebody you are talking to is what you
+ * want anyway, and spec 246's camera pulls in on the pair regardless.
+ *
+ * The lead is still the floor, so a bad connection widens this rather than
+ * being ignored by it.
+ */
+export const TALK_STANDOFF_FRACTION = 0.7;
+
+/**
+ * How many times a talk order may ask before it gives up (spec 256).
+ *
+ * The pickup's rule is **one order, one request**, and it is right there: the
+ * only refusal walking could fix is the range one, and the lead means the ask
+ * is never sent from a distance that produces it. Measured in a browser that
+ * is not true here -- `probe-shop.ts` had an order arm, walk 153 units, ask,
+ * and be refused, which under one ask is a click that did nothing, and that is
+ * the exact failure this spec exists to remove.
+ *
+ * So a refused ask is allowed to **close in**: the standoff is taken to the
+ * power of the number of asks already made, so the three are sent at 70%, 49%
+ * and 34% of the radius. Two things fall out of that, and both are why it is
+ * an exponent rather than a timer. The body **must walk between asks** -- the
+ * usable reach after an ask is inside where the body is standing, so the next
+ * one cannot be sent until it has closed further -- which throttles the retry
+ * without a clock and makes it useless to retry from the same spot. And the
+ * last one is sent from about a body's width away, so a refusal there is one
+ * walking was never going to fix: somebody else is talking to them, or they
+ * died on the way over.
+ */
+export const TALK_MAX_ASKS = 3;
+
 export interface ApproachOrder {
   /** Where to walk to close the gap, or null when there is nothing to close. */
   readonly walkTo: Point | null;

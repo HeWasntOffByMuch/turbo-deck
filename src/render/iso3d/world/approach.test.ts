@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { BROADCAST_EVERY_N_TICKS } from '../../../server/config.js';
-import { approachLead, approachOrderFor } from './approach.js';
+import {
+  approachLead,
+  approachOrderFor,
+  TALK_MAX_ASKS,
+  TALK_STANDOFF_FRACTION,
+} from './approach.js';
 
 /**
  * Walking over to a thing before asking for it (specs 158, 256).
@@ -139,5 +144,50 @@ describe('walking over to it', () => {
     expect(
       approachOrderFor({ self: { x: 100, y: 0 }, selfHealth: 0, target: mark, reach: 50, lead: 0, pending: false }),
     ).toEqual({ walkTo: null, ask: false });
+  });
+});
+
+/**
+ * The talk order's margin (spec 256), asserted as the property it is for rather
+ * than as the two numbers it is made of.
+ */
+describe('closing in on somebody to talk to', () => {
+  const RADIUS = 130;
+  const usableAt = (asks: number): number =>
+    RADIUS - RADIUS * (1 - TALK_STANDOFF_FRACTION ** (asks + 1));
+
+  it('leaves room for two out-of-date bodies on the first ask', () => {
+    // Both ends of this comparison are guesses: our own position is a
+    // prediction the server has not caught up with, and the merchant is a
+    // remote body drawn a playback delay behind. `approachLead` describes one
+    // of them, and on this radius its floor is under 8 units.
+    const lead = approachLead(155, 0, 60, RADIUS);
+    expect(RADIUS - usableAt(0)).toBeGreaterThan(lead * 4);
+  });
+
+  it('makes the body walk between asks', () => {
+    // The property the retry rests on, and the reason it needs no clock: the
+    // reach after an ask is inside where the body was standing when it made
+    // it, so asking again is impossible until it has closed further.
+    for (let asks = 0; asks + 1 < TALK_MAX_ASKS; asks++) {
+      expect(usableAt(asks + 1), `ask ${asks}`).toBeLessThan(usableAt(asks));
+    }
+  });
+
+  it('spends its last ask from arm’s length', () => {
+    // A refusal from here is not one walking was going to fix. Two body radii
+    // is 40 units on this rig, so the last standoff has to be near that rather
+    // than most of the radius away.
+    expect(usableAt(TALK_MAX_ASKS - 1)).toBeLessThan(RADIUS / 2);
+    // ...and never inside the bodies themselves, or the order would ask from a
+    // place it can never reach.
+    expect(usableAt(TALK_MAX_ASKS - 1)).toBeGreaterThan(40);
+  });
+
+  it('never asks from outside the radius, however many times it has tried', () => {
+    for (let asks = 0; asks < TALK_MAX_ASKS; asks++) {
+      expect(usableAt(asks), `ask ${asks}`).toBeLessThan(RADIUS);
+      expect(usableAt(asks), `ask ${asks}`).toBeGreaterThan(0);
+    }
   });
 });

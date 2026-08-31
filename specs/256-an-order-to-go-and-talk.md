@@ -31,16 +31,20 @@ let talkId: number | null = null;
 `drivePickup` runs:
 
 ```ts
-function driveTalk(view, me): void   // walk to the body, then ask once
+function driveTalk(view, me): void   // walk to the body, then ask
 ```
 
-**One order, one request**, which is `drivePickup`'s rule and it is inherited
-whole: the ask clears the order. Nothing in flight is tracked because nothing
-needs to be — a refusal comes back as `Conversation 0`, which is what "not
-talking" already looks like, so an order that kept standing after a refusal
-would re-ask sixty times a second at whatever it was refused for. The one
-refusal walking could have fixed is the range one, and the order no longer asks
-from a distance that produces it.
+The ask is **bounded and closes in**: at most `TALK_MAX_ASKS` of them, each from
+a standoff one power of `TALK_STANDOFF_FRACTION` tighter than the last — 70%,
+49% and 34% of the radius. Nothing in flight is tracked and there is no clock,
+because the exponent is the throttle: the standoff after an ask is *inside*
+where the body is standing, so the next one cannot be sent until it has walked
+further in. The order also ends the moment `conversationEntityId` names the body
+it was given for, which is the server's own answer rather than one remembered
+from the ask.
+
+That is `drivePickup`'s **one order, one request** loosened, and the Corrections
+below record why: measured in a browser, one ask is not enough.
 
 The order is dropped when the body leaves the view or stops being talkable, when
 another order replaces it, and by `dropOrders` — which is the one list of what
@@ -73,14 +77,12 @@ costs no new coupling and nothing new on the wire.
 
 ### What the lead covers, and what it does not
 
-`approachLead` is how far this body's prediction may run ahead of the server, so
-the walk stops at `talkRadius - lead` and the server agrees from a stride
-further back. The residual it does **not** describe is the NPC's own motion: a
-merchant wanders, and the client draws remote bodies `PLAYBACK_DELAY_TICKS`
-behind (spec 253), so the body may have drifted a couple of units from where the
-ask was aimed. That is small against the margin the lead already buys — the
-floor alone is a broadcast interval of player travel — and the cost when it does
-bite is one click, not a wedged order.
+`approachLead` is how far this body's prediction may run ahead of the server —
+**one** body being out of date. This comparison has two in it: the merchant is a
+remote body, drawn `PLAYBACK_DELAY_TICKS` behind where the server has it (spec
+253) and wandering the whole time. So the margin is a standoff fraction of the
+radius, floored by the lead rather than being it, and a refusal is answered by
+closing in rather than by giving up.
 
 ## Corrections
 
@@ -92,6 +94,20 @@ zero — which is not a refusal, it is an order that walks onto the body and the
 stands there never asking. `friendly.test.ts` already asserts the row exists for
 every friendly monster, so this cannot fire; a wedge is a worse thing to leave
 behind than the click that did nothing, which is what the whole spec is about.
+
+**One ask is not enough, and the browser is what said so.** The first cut was
+`drivePickup`'s rule exactly — walk to `talkRadius - approachLead`, ask once,
+end the order. Every Node test passed. `probe-shop.ts` then measured what that
+buys against a real server: an ask sent at a drawn gap of 122 refused for range,
+and one at 100 granted, from the same build on consecutive runs. A refused ask
+under one-ask-per-order is a click that did nothing, which is the exact failure
+this spec exists to remove — so the margin became a standoff (39 units rather
+than 7.75) and a refusal became a reason to walk closer and ask again. After
+that the probe opened the bubble on its first attempt.
+
+The lesson generalises past this order: `approachLead` is the client's lead over
+the server, and it is only the whole margin when the thing being approached does
+not move. A drop does not. A merchant does.
 
 **`pickupId` is not dropped by a held key or by a hotbar cast, and now neither
 is `talkId`.** `onKeyDown`'s movement branch says in a comment that "any manual
@@ -123,8 +139,28 @@ allowed to change what a pickup does.
   another order, and `dropOrders`.
 - `data-orders` carries `talk` while the walk stands, in the fixed vocabulary
   `probe-stop.ts` reads.
+- The margin leaves room for two out-of-date bodies on the first ask, tightens
+  on every one after it so the body must walk between them, and spends its last
+  from arm's length — never from outside the radius, and never from inside the
+  bodies themselves.
 - `scripts/probe-shop.ts` opens the bubble from **one** right-click at whatever
-  distance the merchant is first spotted, with no walking of its own.
+  distance the merchant is first spotted, with no walking of its own, and
+  measures the ground the body covered off `data-self-at`.
+
+## A probe that could not have been passing
+
+`probe-shop.ts` never pressed **Start**. Spec 255 put a title screen in front of
+the shipped page and this probe predates it, so every run since has been
+right-clicking a body through a menu. It goes through the front door now, which
+is what let any of the above be measured at all.
+
+One step past the approach is still failing and is **not** this spec's: the
+press on a reply button does not register in this environment, six attempts
+running, with the bubble up and its three replies published. That is spec 249's
+step, it has had no working run since 255, and diagnosing a UI click at four
+frames a second under software GL is a piece of work with nothing to do with
+walking over to somebody. Written down here rather than left as a red run
+somebody rediscovers.
 
 ## Out of scope
 

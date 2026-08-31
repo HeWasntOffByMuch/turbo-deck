@@ -142,7 +142,12 @@ import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
 import { aligned, moveIntent, RoutePlanner } from './intent.js';
-import { approachLead, approachOrderFor } from './approach.js';
+import {
+  approachLead,
+  approachOrderFor,
+  TALK_MAX_ASKS,
+  TALK_STANDOFF_FRACTION,
+} from './approach.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
 import { pointerCode, wheelCode } from '../../../ui/input/actions.js';
@@ -2437,6 +2442,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * except this one: from across the square the click simply did nothing.
    */
   let talkId: number | null = null;
+  /** How many times the standing talk order has asked. See `TALK_MAX_ASKS`. */
+  let talkAsks = 0;
   /**
    * The skill being aimed but not yet thrown (spec 080).
    *
@@ -2622,6 +2629,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     dropCommitments();
     pickupId = null;
     talkId = null;
+    talkAsks = 0;
     destination = null;
     planner.clear();
   }
@@ -3049,6 +3057,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // comes back as a `Conversation 0` with nothing committed to here.
     if (picked && talkable(picked)) {
       talkId = picked.id;
+      talkAsks = 0;
       targetId = null;
       destination = null;
       planner.clear();
@@ -3638,29 +3647,43 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /**
    * One tick of a talk order (spec 256): close the gap, then ask once.
    *
-   * `drivePickup`'s shape, and it inherits that function's ending whole --
-   * **one order, one request**. Nothing tracks a `Talk` in flight and nothing
-   * needs to: a refusal is a `Conversation 0`, which is exactly what "not
-   * talking" already looks like, so an order that kept standing after one would
-   * re-ask sixty times a second at whatever it was refused for. The only
-   * refusal walking could have fixed is the range one, and the walk above is
-   * what stops it happening; the rest -- somebody else is already talking to
-   * them, they died on the way over -- are things the player has to act on, and
-   * asking again would not help.
+   * `drivePickup`'s shape with that function's ending deliberately loosened.
+   * There, one order is one request; here the ask is **bounded and closes in**
+   * -- at most `TALK_MAX_ASKS` of them, each from a tighter standoff than the
+   * last -- because a refusal under one-ask-per-order is a click that did
+   * nothing, which is the failure this whole order exists to remove.
    *
-   * The order is re-aimed at the body every tick rather than at the point it
-   * was clicked, because a merchant wanders: `sim/idle.ts` moves it right up
-   * until the claim lands, so a walk to a remembered coordinate would arrive
-   * where it used to be.
+   * Nothing tracks a `Talk` in flight and there is no clock, because the
+   * standoff is the throttle: after an ask the usable reach is *inside* where
+   * the body is standing, so the next one cannot be sent until it has walked
+   * further in. What ends the order is the conversation opening, running out of
+   * asks, or the body ceasing to be somebody you can talk to.
+   *
+   * It is re-aimed at the body every tick rather than at the point that was
+   * clicked, because a merchant wanders: `sim/idle.ts` moves it right up until
+   * the claim lands, so a walk to a remembered coordinate would arrive where it
+   * used to be.
    */
   function driveTalk(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     if (talkId === null) return;
+    // Answered: the conversation this order was given for is open, so the order
+    // is over. Read from the replicated field rather than remembered from the
+    // ask, because the server is what decides a conversation exists (spec 246)
+    // and this is the same trigger the bubble itself opens on.
+    if (view.conversationEntityId === talkId) {
+      talkId = null;
+      talkAsks = 0;
+      destination = null;
+      planner.clear();
+      return;
+    }
     const mark = view.entities.find((entity) => entity.id === talkId);
     // Gone, dead, or no longer somebody you can talk to. The same predicate
     // `issueOrder` armed the order with, so the order cannot outlive the reason
     // it was given.
     if (!mark || !talkable(mark)) {
       talkId = null;
+      talkAsks = 0;
       destination = null;
       planner.clear();
       return;
@@ -3679,6 +3702,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const npc = npcById(mark.typeId ?? '');
     if (!npc) {
       talkId = null;
+      talkAsks = 0;
       destination = null;
       planner.clear();
       return;
@@ -3691,12 +3715,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       selfHealth: self?.health ?? 1,
       target: { x: mark.x, y: mark.y },
       reach,
-      // How far in front of the server this body's prediction may be, measured
-      // rather than assumed -- see `approachLead`, and the note there about the
-      // one drift it does not describe, which is this body walking.
-      lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
-      // Nothing to wait on: the ask ends the order, so there is never a second
-      // one to throttle.
+      // The standoff, tightened by every ask already refused and floored by how
+      // far in front of the server this body's prediction may be. See
+      // `TALK_STANDOFF_FRACTION` for why the lead alone is not the margin this
+      // order needs, `TALK_MAX_ASKS` for why a refusal closes in rather than
+      // ending the order, and `approachLead` for the drift it is measured
+      // against.
+      lead: Math.max(
+        reach * (1 - TALK_STANDOFF_FRACTION ** (talkAsks + 1)),
+        approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+      ),
+      // Nothing to wait on. A second ask is throttled by the standoff above
+      // tightening under it rather than by anything in flight, so there is
+      // never a tick where this would have to say "not yet".
       pending: false,
     });
     destination = decision.walkTo;
@@ -3704,7 +3735,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     if (!decision.ask) return;
 
     client.talk(mark.id);
+    talkAsks += 1;
+    // The order stands while it still has asks left, so a refusal is answered
+    // by closing in rather than by the click having done nothing -- and it
+    // cannot ask again from here, because the next standoff is inside where
+    // the body is now standing. Out of asks, it is over: at a third of the
+    // radius the body is a stride away, and a refusal there is not one walking
+    // was ever going to fix.
+    if (talkAsks < TALK_MAX_ASKS) return;
     talkId = null;
+    talkAsks = 0;
     destination = null;
     planner.clear();
   }

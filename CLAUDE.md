@@ -4994,15 +4994,32 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  no walk, no bubble and no word about why. `scripts/probe-shop.ts`
                  had to order its own walk between attempts and said so in a
                  comment.
-                 It inherits the drop's ending whole -- **one order, one
-                 request** -- and nothing tracks a `Talk` in flight, because a
-                 refusal is a `Conversation 0` and that is exactly what "not
-                 talking" already looks like: an order that kept standing after
-                 one would re-ask sixty times a second at whatever it was refused
-                 for. The one refusal walking could have fixed is the range one,
-                 and the walk is what stops it happening. It re-aims at the body
-                 every tick rather than at the point that was clicked, because a
-                 merchant wanders right up until the claim lands.
+                 It re-aims at the body every tick rather than at the point
+                 that was clicked, because a merchant wanders right up until the
+                 claim lands -- and its ask is **bounded and closes in**: at most
+                 `TALK_MAX_ASKS`, each from a standoff one power of
+                 `TALK_STANDOFF_FRACTION` tighter than the last. Nothing tracks a
+                 `Talk` in flight and there is no clock, because the exponent is
+                 the throttle: the standoff after an ask is *inside* where the
+                 body is standing, so the next one cannot be sent until it has
+                 walked further in, and the last is sent from about a body's
+                 width away -- where a refusal is one walking was never going to
+                 fix.
+                 That is the drop's **one order, one request** deliberately
+                 loosened, and the browser is what loosened it. The first cut was
+                 that rule exactly, every Node test passed, and
+                 `probe-shop.ts` then measured what `approachLead` alone buys on
+                 a 130-unit radius against a real server: an ask at a drawn gap
+                 of 122 refused for range and one at 100 granted, same build,
+                 consecutive runs. Under one-ask-per-order a refusal *is* a click
+                 that did nothing, which is the failure the whole spec exists to
+                 remove. The lesson generalises past this order: **`approachLead`
+                 is the client's lead over the server, and it is the whole margin
+                 only when the thing being approached does not move.** A drop
+                 does not. A merchant does -- it is a remote body, drawn
+                 `PLAYBACK_DELAY_TICKS` behind (spec 253) and wandering the whole
+                 time -- so the margin here is a fraction of the reach, floored
+                 by the lead rather than being it.
                  `SpeechSink` beside it is built to `affliction-vfx.ts`'s and
                  `shot-vfx.ts`'s rules because the failure modes are the same:
                  the **stop is owed** (nothing in the synth stops itself), and
