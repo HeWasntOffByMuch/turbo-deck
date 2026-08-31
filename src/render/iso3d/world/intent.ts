@@ -274,10 +274,10 @@ export interface IntentInput {
    * units across its own screen while every other client watched it lie where
    * it fell.
    *
-   * Here rather than in the drivers because there are five doors into a
+   * Here rather than in the drivers because there are six doors into a
    * destination -- a key, a move order, a chase, an aim's approach, a pickup
-   * walk -- and being dead is a fact about the body rather than about any of
-   * them. `autoAttack` and `pickupOrderFor` keep their own death rules because
+   * walk, a walk over to somebody to talk to -- and being dead is a fact about
+   * the body rather than about any of them. `autoAttack` and `approachOrderFor` keep their own death rules because
    * they also decide whether to *ask the server for something*, which a rule at
    * the legs cannot cover.
    */

@@ -1,3 +1,243 @@
+# NPC dialogue / click-to-talk: client-side flow
+
+# UPDATE 2026-08-31: click-to-talk flow, traced against current source
+
+The section below ("0. The load-bearing finding...") is **stale** and describes
+a pre-spec-246 world. Spec 246 shipped: `Temperament: 'friendly'` exists,
+`isFriendlyMonster` (`src/server/data/monsters.ts`) exists, `src/server/data/
+npcs.ts` (the NPC table, keyed by the `MONSTERS` row id) exists, `Talk`/
+`Conversation` are real wire messages, and `dialogue.ts`/`dialogue-driver.ts`
+in this directory are the client-side halves. The rest of the original note
+below (input map, camera, frame loop, `GameClient` send patterns, UI-window
+mount/suppression, world-anchored HUD precedent, audio) is still accurate and
+worth reading; only its NPC-specific claims (its own §0, and "there is no
+world-click-on-an-NPC path anywhere in the tree") are superseded. This update
+answers a caller's exact five questions about the shipped flow; read it
+first for anything NPC/talk-shaped, and skip to the old sections below only
+for camera/input-map/UI-window plumbing that this update doesn't repeat.
+
+## 1. Right-click (or tap) on a friendly NPC -> `Talk` message
+
+`view.ts:2981` `function issueOrder(): void` is **the** router for what a
+right-click/tap on the world means -- one function, reached from both the
+mouse path (`onMouseDown` -> `applyDecision` -> `ORDER_ACTION` ->
+`issueOrder`) and the touch path (`onTap`, view.ts:3109-3120). It checks, in
+order: `collectable` (a drop) -> `talkable` (spec 246, **new**, checked
+*before* `attackable`) -> `attackable` (a monster/player) -> else empty
+ground (move order).
+
+The talk branch, verbatim shape (`view.ts:3018-3028`):
+```ts
+if (picked && talkable(picked)) {
+  targetId = null;
+  destination = null;
+  planner.clear();
+  client.cancelCast();
+  client.talk(picked.id);
+  return;
+}
+```
+`client.talk(entityId)` (`src/server/client/game-client.ts:1297-1300`) sends
+`ClientMessageType.Talk` (`0x1c`) immediately -- **not predicted** (comment at
+:1289-1295: "the answer decides whether a body stops walking"). Handled
+synchronously server-side, the same request/response shape as `OpenVendor`,
+not queued into the 60Hz sim tick: `server.ts:917-920` -> `setConversation`
+(`server.ts:2408-2429`) -> `talkableFor` (`server.ts:2439-2454`, the **one**
+range/liveness/claim gate, `Math.hypot(...) > npc.talkRadius` at :2452) ->
+always answers `ServerMessageType.Conversation { entityId }` (:2428), `0` on
+any refusal, **silently** (doc comment: "a refusal line in the corner for
+walking slightly too far away would be noise"). Client receives it at
+`game-client.ts:2404-2406`, sets `conversationEntityId`; nothing reads a
+refusal -- there is no error-log entry, no retry.
+
+`talkable`/`attackable`/`collectable` (`view.ts:2637-2679`) are the three
+presentational predicates `issueOrder` branches on; `talkable` (:2662-2666)
+is `entity.health > 0 && entity.kind === EntityKind.Monster &&
+isFriendlyMonster(entity.typeId)`, imported from
+`src/server/data/monsters.ts` (`view.ts:126`) -- **not** from `npcs.ts`.
+`attackable` (:2637-2650) explicitly refuses a friendly body (:2648) so the
+two "can never both be true" (both docs say the ordering between them is
+"for clarity rather than for precedence").
+
+## 2. Compare to the attack order -- does it walk-then-attack? Yes, and talk does not.
+
+An attack order is a **standing, per-tick state machine**, unlike talk's
+one-shot send. `issueOrder`'s attack branch (`view.ts:3029-3052`) only sets
+`targetId = picked.id` (plus clears `destination`/`planner`, and
+`cancelCast()`s if the target changed) -- it does **not** walk or attack on
+the click itself. Walking and attacking happen every tick after, in
+`sendInput()` (`view.ts:3619`), via:
+
+- `target.ts` `autoAttack(input: AutoAttackInput): AutoAttack` (pure,
+  target.ts:132) -- given self/target positions, reach, `rooted`/`staggered`/
+  `pending`/`readyAtTick`/`aligned`, returns `{ chaseTo: Point | null, attack:
+  boolean, drop: boolean }`. Chases to `reach * STANDOFF_FRACTION (0.8)`,
+  swings once in reach and off cooldown and aligned, using `HOLD_FRACTION
+  (0.9)` as a looser "still in range to swing" band so the body doesn't
+  straddle one threshold and jitter (target.ts:160-176, the comment on why
+  there are *two* fractions, not one).
+- `view.ts:3344` `function driveAutoAttack(view, me): void` -- the per-tick
+  caller. Reads `targetId`, looks the entity up in `view.entities`, calls
+  `autoAttack(...)`, then: `destination = decision.chaseTo` (re-pointed every
+  tick because the target moves, :3400), and `if (decision.attack)
+  client.useAbility(swingId, entity.x, entity.y, entity.id, targetRadius)`
+  (:3402). `decision.drop` clears `targetId`/`destination`/`planner`
+  (:3390-3395, dead or despawned target).
+- The chase is routed through `RoutePlanner`/`findPath` exactly like a
+  ground move order (`intent.ts`'s `RoutePlanner` class, :371-460) -- "a
+  chase round a tree is routed by the same A* a right-click on the ground
+  uses" (view.ts:3397-3399 comment). It ends via `moveIntent`'s ordinary
+  `destination` handling (`intent.ts:198`), **not** a separate code path.
+- `driveCastOrder` (view.ts:3413-3472) is the same shape again for a
+  *placed* skill/aim order (`order: AimOrder | null`, aim.ts:170-178, one
+  ability id + target + range), via `castOrder()` in `aim.ts:259`. Same
+  chase-then-act pattern, one difference: it fires once and clears `order`
+  rather than standing until the target is dead.
+
+So: **attack order = standing state (`targetId`) + a per-tick driver
+(`driveAutoAttack`) that both walks (via `destination`/`RoutePlanner`) and
+asks to swing.** Talk has neither: no standing state beyond the one-shot
+`client.talk()` call, and no driver in `sendInput()`'s three
+(`driveCastOrder`/`driveAutoAttack`/`drivePickup`) drives it. `talkAim` (see
+§5 below) only turns the body to face the *speaker of an already-open*
+conversation -- it cannot open one and does not walk.
+
+## 3. Compare to the pickup order -- the actual analogue for "click far -> walk -> act"
+
+`src/render/iso3d/world/loot-drop.ts` is where this lives (not `target.ts`):
+
+- `pickupLead(moveSpeed, roundTripTicks, tickRate, reach): number`
+  (loot-drop.ts:388-397) -- how far the client's *predicted* position may
+  run ahead of the server's, so the stop-and-ask distance the client uses is
+  `reach - lead`, not the server's raw reach; floored at one broadcast
+  interval's worth of travel (`BROADCAST_EVERY_N_TICKS`) because a
+  round-trip that measures to ~0 on a fast connection would otherwise make
+  the client ask from exactly the distance the server refuses past.
+- `pickupOrderFor(input: PickupInput): PickupOrder` (loot-drop.ts:418-434) --
+  pure: `{ walkTo: Point | null, ask: boolean }`. `usable = reach -
+  max(0,lead)`; if `gap > usable` -> `{ walkTo: {drop.x,drop.y}, ask: false
+  }`; else -> `{ walkTo: null, ask: !pending }`.
+- `view.ts:3549` `function drivePickup(view, me): void` -- reads `pickupId`
+  (set by `issueOrder`'s collectable branch, :3002-3008, the **only** other
+  place besides ground-move/attack/talk that `issueOrder` can produce),
+  calls `pickupOrderFor`, sets `destination = decision.walkTo` (same
+  `RoutePlanner`-routed destination mechanism as the chase), and `if
+  (decision.ask) client.pickUp(mark.id)` once, then **immediately clears the
+  order** (`pickupId = null` etc., :3601-3603, with a long comment on why a
+  standing order that kept re-asking caused duplicate/stale requests).
+
+This is the shape the user is describing wanting for talk and it does not
+exist for talk today: `pickupOrderFor`/`pickupLead` are the walk-then-act
+primitives, `drivePickup` is the per-tick driver, `pickupId` is the standing
+state. Building the same thing for talk would mean a new `talkOrderFor`-
+shaped pure function (mirroring `pickupOrderFor`'s `{walkTo, ask}` but
+`ask -> client.talk(id)`), a `driveTalk` in `sendInput()`'s driver list, and
+a standing `pendingTalkId`-shaped field -- `talkAim`/`talkAimFor`
+(`view.ts:1937-1939`) are NOT that; they only fire once a conversation is
+already open (driven off `dialogue.speakerId`, itself off
+`view.conversationEntityId`), to turn the body's facing, never to walk it.
+
+## 4. Does the client know `talkRadius`? No -- it's importable but unread.
+
+`src/server/data/npcs.ts` is explicitly **one table both ends read
+different halves of** (its own header, :1-18): "the server reads
+`talkRadius` and `vendorId` and nothing else, the client reads the name, the
+voice and the script." It is not fenced off from the renderer (no lint rule
+against importing it, unlike `src/ui/`'s ban on `server/sim`/`world`/
+`player`/`state`) -- `dialogue-driver.ts:31` imports `npcById` from it and
+`dialogue.ts:34` imports the `NpcDefinition` *type* -- but grepping
+`.talkRadius` under `src/render/` returns **zero hits**. Nothing client-side
+reads or enforces the radius; `talkable()` (view.ts:2662) and the crosshair's
+`overNpc` (view.ts:3164) are purely `isFriendlyMonster(typeId)` checks with
+no distance term, so clicking or hovering a friendly NPC from across the map
+shows the bubble cursor / attempts the click exactly as if adjacent -- the
+server is the only place range is enforced (`talkableFor`, server.ts:2439,
+and re-checked once per broadcast by `sweepConversations`, server.ts:2477-
+2484, called from the 20Hz broadcast loop at :3238, **not** every 60Hz tick).
+
+Crosshair wiring, concretely: `view.ts:3151` `applyCursor()` builds
+`{ aiming, overEnemy: attackable(hovered,...), overDrop: collectable(hovered),
+overNpc: talkable(hovered) }` (:3157-3165) and hands it to `crosshair.ts`'s
+pure `worldMark(input): CrosshairArt | null` (crosshair.ts:261-268):
+`aiming -> 'full'`, else `overNpc -> 'bubble'` (:265), else `overEnemy ->
+'small'`, else `null`. `'bubble'` is a **picture** (a speech-bubble glyph,
+9x9 in `pixel-font.ts`'s register) rather than a reticle -- crosshair.ts's
+doc comment at :86-103 spells out why it differs from the other two marks.
+
+`appearanceOf` (`src/render/iso3d/world/appearance.ts:197-200`) is the other
+consumer of `isFriendlyMonster`: `showsHealth: !isFriendlyMonster(entity
+.typeId)` -- a friendly body draws no health bar, nothing else about its rig
+differs.
+
+## 5. `stopEverything` / `issueOrder` / the standing-order state set
+
+All the order-holding state lives as closure variables inside `mountWorld`
+in `view.ts`, one flat set with no wrapper type:
+
+| Variable | `view.ts` | Set by | Driven by | Cleared by |
+|---|---|---|---|---|
+| `destination: {x,y}\|null` | :2394 | ground click (:3058), or **re-pointed every tick** by `driveAutoAttack`/`driveCastOrder`/`drivePickup` | `moveIntent` (via `planner.next`) | arrival, a new order, `dropOrders`, death |
+| `targetId: number\|null` | :2401 | attack click (:3046) | `driveAutoAttack` | target dead/gone, new order, `dropOrders` |
+| `pickupId: number\|null` | :2411 | drop click (:3003) | `drivePickup` | drop gone/taken, `dropOrders` |
+| `order: AimOrder\|null` | :2434 | a confirmed skill aim (`confirmAim()`) | `driveCastOrder` | cast sent, target gone, `dropOrders` |
+| `talkAim`/`talkAimFor` | :1937/:1939 | `driveDialogue` on the *edge* of `dialogue.speakerId` changing (:3800-3803) | consumed once by `moveIntent` (facing only) | itself, once aligned or a key is pressed (:3694-3696) |
+| `planner: RoutePlanner` | :692 (`intent.ts`) | shared by all of the above via `moveIntent`'s `route` param | -- | `.clear()` alongside `destination` |
+
+`issueOrder()` (view.ts:2981) is the single click/tap-to-order router
+described in §1; it always clears `order = null; pickupId = null;` up front
+(:2994-2995) before deciding which of the four branches (pickup / talk /
+attack / move) applies, and each branch clears the *other* two standing
+orders (`targetId`/`destination`) so only one order type stands at a time.
+
+`stopEverything()` (view.ts:2616-2627, spec 199, bound to `combat.stop` /
+Space) is the "drop everything this body is committed to" control:
+```ts
+function stopEverything(): void {
+  dropOrders();
+  dialogue.leave();
+  held.clear();
+  for (const code of heldKeys) disarmed.add(code);
+}
+```
+`dropOrders()` (:2593-2598) is `dropCommitments(); pickupId = null;
+destination = null; planner.clear();` -- `dropCommitments` (not shown above,
+nearby) is the cast/backswing withdrawal. `dialogue.leave()` is the **only**
+thing that ends a conversation client-side (`DialogueDriver.leave()`,
+dialogue-driver.ts:182-186 -- ends the session locally *and* tells the
+server via `onLeave: () => client.talk(0)`, wired at view.ts:1949). Escape
+does **not** close a conversation (per the dialogue-driver.ts header comment:
+"the bubble is not a window Escape can close" -- confirmed by
+`stopEverything`'s own comment at :2618-2621, "it is the *only* key that ends
+one").
+
+`sendInput()`'s driver order (view.ts:3619-3641) is fixed:
+`withdrawIfMarkGone` -> `driveCastOrder` -> `driveAutoAttack` -> `drivePickup`
+-> `moveIntent`. `driveDialogue` (view.ts:3787, called from `frame()` after
+`scene.render(...)`, not from `sendInput()`/the fixed-tick loop) is the
+**per-frame** (not per-tick) conversation reconciler -- it doesn't drive an
+order, it drives presentation (camera framing via
+`scene.setDialogueFraming`, the bubble via `ui.setDialogue`, and arms
+`talkAim` on the speaker-id edge).
+
+## Net finding
+
+Clicking a **distant** friendly NPC today does nothing walk-toward-then-talk
+shaped: `client.talk(id)` fires once, unconditionally of distance, on the
+click; if outside `npc.talkRadius` (130 units for all three shipped NPCs,
+`data/npcs.ts:185,198,211`) the server answers `Conversation 0` silently and
+nothing further happens (no walk, no bubble, no error-log line, no retry).
+Building "click far -> walk -> talk" means adding a fourth driver
+(`driveTalk`, mirroring `drivePickup`) and a `talkOrderFor`-shaped pure
+function (mirroring `pickupOrderFor`) that walks via `destination` and calls
+`client.talk(id)` once in range -- `pickupLead`'s prediction-drift argument
+applies identically to talk's `talkRadius` gate, so it is the correct
+template to copy rather than `autoAttack`'s (which has no analogous "ask
+once" ending -- an attack order stands until the target dies).
+
+---
+
+# Original pass, 2026-08-27 (pre-spec-246 reconnaissance -- kept for the input-map/camera/frame-loop/GameClient/UI-window/audio background, which is still accurate)
+
 # Tracing for NPC interaction / camera reframe / dialogue (2026-08-27)
 
 Scope: client-side Play tab only (`src/render/iso3d/world/`, `src/render/iso3d/`,

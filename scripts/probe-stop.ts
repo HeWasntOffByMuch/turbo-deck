@@ -23,9 +23,9 @@
  *
  * Two observables, both published by `publishOrders`:
  *
- *  - `data-orders` is what has been asked for -- `walk attack pickup aim cast
- *    keys`, in a fixed order, so a missing word is a specific drop that did not
- *    happen rather than a diff to squint at;
+ *  - `data-orders` is what has been asked for -- `walk attack pickup talk aim
+ *    cast keys`, in a fixed order, so a missing word is a specific drop that did
+ *    not happen rather than a diff to squint at;
  *  - `data-self-at` is whether the body is actually still moving, which is a
  *    fact about the server rather than about this file's bookkeeping. Both,
  *    because a stop that cleared the bookkeeping and left the legs running is
