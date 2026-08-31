@@ -219,49 +219,73 @@ identical solo.
 
 ## The picture
 
-First-pass visuals, and the whole of them is two ground decals and one effect
-already being sent.
+First-pass visuals, and the whole of them is one line drawn two ways, one decal
+under it and one effect already being sent.
 
-**The beam is a ground decal**, `world/scene.ts`'s `syncLances`, driven off
-`view.casts` exactly as the ground-targeted telegraph beside it is. That is the
-one decision worth arguing over, and spec 153's argument settles it: the sim's
-lane damages everything from the muzzle to the far end, so the beam grazes the
-ground for its whole length -- and a flat quad 620 units long is buried by its
-own half-width times the gradient under it. What conforms is what a player can
-trust. Two decals rather than one, because a band of one flat colour reads as a
-painted rectangle and a band with a brighter filament in it reads as something
-shining.
+**The line runs from the head's opening to just off the ground at the far end**,
+and both of its ends are load-bearing. The near end is the opening because that
+is the only part of this machine that turns -- `lowerBodyTurns: false`, so the
+legs plant in a world-fixed frame and only the turret comes round, which makes
+the eye the part of the body that tells you where the shot is going. The far end
+is near the ground because the sim's lane damages everything from the muzzle
+outward: a level beam at head height is a weapon that visibly passes over the
+body it is hurting.
 
-| | width | opacity | what it says |
-|---|---|---|---|
-| lock-on | 6 | 0.32 -> 0.60 as it settles | this way, and soon |
-| firing | 70, the lane's own | 0.55 | this ground, now |
-| the core | 14% of the lane | 0.84, shimmering | it is live |
+| | shape | width | opacity | what it says |
+|---|---|---|---|---|
+| lock-on | 23 dots, `SIGHT_SPACING` 26 apart, sliding outward | 2 raster pixels, unattenuated | 0.38 -> 0.68 as it settles | this way, and soon |
+| firing, the shaft | a box along the line | 34% of the lane, 24 | 0.85 | this line, now |
+| the core | a box inside it | 12% of the lane, 8 | 0.92, shimmering | it is live |
+| firing, the footprint | a ground decal | 70, the lane's own | 0.30 | this ground damages |
 
-The two phases differ by a factor of ten in **width** and not in brightness
-alone, which is deliberate: the retro pass quantizes brightness and cannot
-quantize a shape, so a telegraph that differed only in opacity is a telegraph
-some frames do not show.
+The two phases differ in **shape** and not in brightness alone, which is
+deliberate: the retro pass quantizes brightness and cannot quantize a shape, so
+a telegraph that differed only in opacity is a telegraph some frames do not
+show. Dots against a solid shaft is the largest difference two things drawn
+along the same line can have.
 
-`world/warden-beam.ts` is the pure half and decides all of it from the
-replicated cast through `data/warden.ts`'s own `wardenPhaseOf` -- the same
-function the sim asks, so what is drawn and what is happening cannot be two
-derivations. The direction is the body's **drawn** heading and never the cast's
-aim: they agree while it is firing (the sim keeps them equal and asserts it),
-and during the lock-on they do not -- so drawing the barrel makes the pointer
-sweep onto you where drawing the aim would make it teleport.
+The sight **slides** rather than twinkling. Which dots are lit is not
+information, so a travelling pattern says the machine is scanning where a random
+flicker says the picture is noisy; `sightDotAt` wraps modulo the length, so the
+pattern runs forever out of a fixed number of points and nothing is allocated
+per frame. The count is capped at `LANCE_SIGHT_DOTS` and the surplus is parked on
+the head, because a `Points` cloud rebuilt whenever a dot crosses the end is a
+`Float32Array` sixty times a second for as long as somebody is being aimed at.
+
+The **shaft is narrower than the lane** and the footprint is exactly the lane,
+which is the relationship a fireball already has to its blast: the object you can
+see is smaller than the region it affects, and the mark on the ground is what
+states the region. A shaft drawn at the lane's full width is a girder. That is
+also where "narrower" is spent: `width` is the ground the sim damages and is what
+the fight below was measured against, so it does not move -- what got narrower is
+`SHAFT_FRACTION`, the object. The footprint is the one part that conforms to the
+terrain -- spec 153's argument, since the lane grazes the ground for six hundred
+units and a flat quad that long is buried by its own half-width times the
+gradient under it.
+
+`world/warden-beam.ts` is the pure half and decides all of it from the replicated
+cast through `data/warden.ts`'s own `wardenPhaseOf` -- the same function the sim
+asks, so what is drawn and what is happening cannot be two derivations. The
+*direction* is the body's **drawn** heading and never the cast's aim: they agree
+while it is firing (the sim keeps them equal and asserts it), and during the
+lock-on they do not -- so drawing the barrel makes the sight sweep onto you where
+drawing the aim would make it teleport.
 
 **The sparks are `brushBeam`**, registered as `warden.laser.impact`. Nothing new
-drives them: `landArea` already sends `${ability.id}.impact` at the caster's
-feet with the lane's bearing, once per damage pulse, hit or miss -- so the
-cadence is the sim's own damage tick. Two layers: small marks thrown out of the
-beam's *flanks* with gravity on them, and a flat spray of `brush-mark` on the
-ground under it. The second layer carries `collision`, which is the one part
-that could not be authored as a position: an offset is a point in the effect's
-flat frame, and six hundred units down-range on a slope that is a mark floating
-over a valley -- so it falls onto whatever the scene says the ground is.
+drives them: `landArea` already sends `${ability.id}.impact` at the caster's feet
+with the lane's bearing, once per damage pulse, hit or miss -- so the cadence is
+the sim's own damage tick. Two layers, and the builder takes **two widths**
+because they belong to two different things: sparks are thrown out of the shaft's
+flanks, sized against the shaft, riding the sloping line via `fromHeight`/
+`toHeight` rather than sitting at one altitude; scorch marks are a flat spray of
+`brush-mark` spread across the *lane*, which is the ground that damages.
 
-Nothing is drawn during the lock-on but the line. No flash, no smoke, no mass
+That second layer carries `collision`, which is the one part that could not be
+authored as a position: an offset is a point in the effect's flat frame, and six
+hundred units down-range on a slope that is a mark floating over a valley -- so
+it falls onto whatever the scene says the ground is.
+
+Nothing is drawn during the lock-on but the dots. No flash, no smoke, no mass
 anywhere: the beam is continuous and the sparks are played eight times over it,
 so anything with weight would stack eight deep over the body standing in it.
 

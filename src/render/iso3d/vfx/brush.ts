@@ -1782,22 +1782,32 @@ export interface BrushBeamParams {
   readonly length: number;
   /** The lane's full width -- what the sparks are thrown out of the sides of. */
   readonly width: number;
+  /**
+   * How wide the *drawn* beam is, which is narrower than the lane it burns.
+   *
+   * Two widths because there are two layers and they belong to two things. A
+   * **spark** comes off the shaft, so it is sized and thrown against the object
+   * you can see; a **scorch** lands on the lane, so it is spread across the
+   * ground the sim damages. Sizing both off the lane was right while the beam
+   * *was* the lane and drew sparks two thirds as wide as the shaft the moment
+   * the shaft became a line through the middle of it.
+   */
+  readonly beamWidth: number;
   /** How many places along the run throw marks. */
   readonly nodes?: number;
+  /**
+   * How high the beam is where it leaves the machine, and where it lands.
+   *
+   * The sparks ride the line rather than a constant height, because since the
+   * beam became a shaft out of the head it *slopes*: marks at one height would
+   * be coming off the air under it near the machine and out of the ground under
+   * it at the far end.
+   */
+  readonly fromHeight: number;
+  readonly toHeight: number;
   readonly lifetimeTicks?: number;
   readonly priority?: Priority;
 }
-
-/**
- * How high off the ground the sparks come off the lance.
- *
- * Low, and that is the whole reading of this weapon: the beam grazes the ground
- * for its entire length -- which is what the sim says, since the lane damages
- * everything from the muzzle to the far end -- so the sparks come off at about
- * shin height rather than out of a beam overhead. Anything higher would draw a
- * weapon whose danger zone the ground decal underneath contradicts.
- */
-const BEAM_SPARK_HEIGHT = 9;
 
 /**
  * How high a ground mark is *born*, before it falls onto the real surface.
@@ -1844,6 +1854,7 @@ export function brushBeam(params: BrushBeamParams): EffectDefinition {
   const nodes = Math.max(2, Math.round(params.nodes ?? 6));
   const life = Math.max(4, Math.round(params.lifetimeTicks ?? 20));
   const half = params.width * 0.5;
+  const beamHalf = params.beamWidth * 0.5;
   const emitters: Emitter[] = [];
 
   for (let index = 0; index < nodes; index += 1) {
@@ -1858,14 +1869,21 @@ export function brushBeam(params: BrushBeamParams): EffectDefinition {
 
     emitters.push({
       id: `spark_${index}`,
-      offset: { x: distance, y: BEAM_SPARK_HEIGHT, z: 0 },
+      // On the beam, which slopes: the cue is played at the machine's feet, so
+      // this is a height above them and the line runs from the head's opening
+      // down to just off the ground at the far end.
+      offset: {
+        x: distance,
+        y: params.fromHeight + (params.toHeight - params.fromHeight) * along,
+        z: 0,
+      },
       // Thrown **sideways**, out of the lane, at about a third of its
       // half-width. `bearing` is in the effect's own frame and the effect's
       // rotation turns it, so one definition serves every aim.
       shape: {
         kind: 'fan',
         angle: 0.8,
-        radius: half * 0.3,
+        radius: beamHalf * 0.7,
         rise: 0.5,
         bearing: (flank * Math.PI) / 2,
       },
@@ -1889,11 +1907,11 @@ export function brushBeam(params: BrushBeamParams): EffectDefinition {
       // `addEffect` at `scale: 1`, so a number authored on the affliction's
       // scale is a mark a fifteenth of the size it was meant to be.
       //
-      // About a fifth of the lane. A spark has to be a *speck against the beam*
-      // -- the mark is not the weapon, the band under it is -- and `brushLane`'s
-      // 0.78 of its own width is right for a bolt that fills its lane and would
-      // be a hedge here.
-      size: { keys: [[0, half * 0.34], [0.25, half * 0.46], [1, half * 0.28]] },
+      // About half the shaft, and against the *shaft* rather than the lane. A
+      // spark has to be a speck coming off the beam -- the mark is not the
+      // weapon -- and `brushLane`'s 0.78 of its own width is right for a bolt
+      // that fills its lane and would be a hedge here.
+      size: { keys: [[0, beamHalf * 0.6], [0.25, beamHalf * 0.8], [1, beamHalf * 0.5]] },
       alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
       // Hot to ember, which is the ramp `sparkHot`/`sparkWarm`/`sparkEmber`
       // exists for. Not the fire ramp: a spark struck off something is metal

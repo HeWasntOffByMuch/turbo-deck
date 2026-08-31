@@ -12,11 +12,12 @@
 // deterministic rasteriser over the same heightfield the server loads answers it
 // exactly, with no GPU.
 //
-// It draws the decals the way `decalMaterial` really configures them --
-// translucent, depth-*tested*, never depth-writing -- over terrain built from
-// the chunks the server streams. And it draws a player and the machine as discs,
-// because the question this picture exists to answer is not "is the beam
-// pretty": it is **can you still see yourself standing in it**.
+// It draws all three pictures the way the scene really configures them: the
+// sight as pixels along the line, the shaft as a solid box out of the head, and
+// the lane under it as a depth-tested decal that never writes depth. And it
+// draws a player and the machine as blocks, because the question this picture
+// exists to answer is not "is the beam pretty": it is **can you still see
+// yourself standing in it**.
 //
 // ## What it measures
 //
@@ -41,14 +42,21 @@ import { WARDEN_LASER } from '../src/server/data/warden.js';
 import { CastPhase } from '../src/server/sim/types.js';
 import {
   SampledGround,
-  discTemplate,
   laneTemplate,
   projectDecal,
   vertexCount,
   type DecalTemplate,
   type HeightAt,
 } from '../src/render/iso3d/world/ground-decal.js';
-import { beamLookFor, type BeamCast } from '../src/render/iso3d/world/warden-beam.js';
+import {
+  SHAFT_FRACTION,
+  SIGHT_SPACING,
+  beamLookFor,
+  sightDotAt,
+  sightDotCount,
+  type BeamCast,
+  type SightLook,
+} from '../src/render/iso3d/world/warden-beam.js';
 import { loadMap } from '../src/terrain/map-world.js';
 import { loadMapFile } from '../src/server/world/map-file.js';
 
@@ -67,6 +75,7 @@ const AMBIENT = 0.55;
 /** `scene.ts`'s own, so the picture and the game cannot come to two colours. */
 const LANCE: RGB = [0xff / 255, 0x33 / 255, 0x23 / 255];
 const LANCE_CORE: RGB = [0xff / 255, 0xc0 / 255, 0x7a / 255];
+const LANCE_SIGHT: RGB = [0xff / 255, 0x4a / 255, 0x33 / 255];
 const GRASS: RGB = [0.14, 0.2, 0.09];
 const BODY: RGB = [0.62, 0.66, 0.72];
 const MECH: RGB = [0.35, 0.38, 0.42];
@@ -95,6 +104,85 @@ const cross = (a: readonly number[], b: readonly number[]): [number, number, num
   (a[2] ?? 0) * (b[0] ?? 0) - (a[0] ?? 0) * (b[2] ?? 0),
   (a[0] ?? 0) * (b[1] ?? 0) - (a[1] ?? 0) * (b[0] ?? 0),
 ];
+
+type Vec3 = readonly [number, number, number];
+
+/**
+ * The twelve triangles of a box, from its eight corners.
+ *
+ * A fixed-length tuple rather than an array, which is the whole reason this is
+ * one function with two callers: under `noUncheckedIndexedAccess` an array index
+ * is `Vec3 | undefined` and every face would need a fallback vertex -- which is
+ * a silently wrong triangle standing in for an index that cannot be out of
+ * range. The corners are named, so nothing is indexed at all.
+ *
+ * Winding is `near, far, left, right, top, bottom` over the same lattice both
+ * callers build: 0-3 the near face counter-clockwise, 4-7 the far one.
+ */
+type BoxCorners = readonly [Vec3, Vec3, Vec3, Vec3, Vec3, Vec3, Vec3, Vec3];
+
+function hullTris(v: BoxCorners): Tri[] {
+  const quad = (a: Vec3, b: Vec3, c: Vec3, d: Vec3): Tri[] => [
+    { a, b, c },
+    { a, b: c, c: d },
+  ];
+  return [
+    ...quad(v[0], v[1], v[2], v[3]), ...quad(v[5], v[4], v[7], v[6]),
+    ...quad(v[4], v[0], v[3], v[7]), ...quad(v[1], v[5], v[6], v[2]),
+    ...quad(v[3], v[2], v[6], v[7]), ...quad(v[4], v[5], v[1], v[0]),
+  ];
+}
+
+/** The twelve triangles of an axis-aligned box, from its centre and half-extents. */
+function boxTris(centreAt: Vec3, half: Vec3): Tri[] {
+  const [cx, cy, cz] = centreAt;
+  const [hx, hy, hz] = half;
+  return hullTris([
+    [cx - hx, cy - hy, cz - hz], [cx + hx, cy - hy, cz - hz],
+    [cx + hx, cy + hy, cz - hz], [cx - hx, cy + hy, cz - hz],
+    [cx - hx, cy - hy, cz + hz], [cx + hx, cy - hy, cz + hz],
+    [cx + hx, cy + hy, cz + hz], [cx - hx, cy + hy, cz + hz],
+  ]);
+}
+
+/** A body, as a block standing on the ground: a footprint and a height. */
+function block(feet: Vec3, radius: number, height: number): Tri[] {
+  return boxTris([feet[0], feet[1] + height / 2, feet[2]], [radius, height / 2, radius]);
+}
+
+/** One of the sight's pixels, as a small cube on the line. */
+function cube(at: Vec3, side: number): Tri[] {
+  return boxTris(at, [side / 2, side / 2, side / 2]);
+}
+
+/**
+ * The shaft: a box of square section laid along `from -> to`.
+ *
+ * Built by rotating the box's corners rather than by an axis-aligned box at the
+ * midpoint, because the beam slopes and a lance drawn axis-aligned would be a
+ * staircase. The frame is the segment plus world up, which is what
+ * `layBeamBox`'s quaternion comes to for any direction that is not vertical --
+ * and this one never is.
+ */
+function beamBox(from: Vec3, to: Vec3, thickness: number): Tri[] {
+  const ax = to[0] - from[0];
+  const ay = to[1] - from[1];
+  const az = to[2] - from[2];
+  const length = Math.hypot(ax, ay, az) || 1;
+  const f: Vec3 = [ax / length, ay / length, az / length];
+  const right = normalize(cross(f, [0, 1, 0]));
+  const upv = normalize(cross(right, f));
+  const h = thickness / 2;
+  const corner = (along: number, u: number, w: number): Vec3 => [
+    from[0] + f[0] * along + right[0] * u + upv[0] * w,
+    from[1] + f[1] * along + right[1] * u + upv[1] * w,
+    from[2] + f[2] * along + right[2] * u + upv[2] * w,
+  ];
+  return hullTris([
+    corner(0, -h, -h), corner(length, -h, -h), corner(length, h, -h), corner(0, h, -h),
+    corner(0, -h, h), corner(length, -h, h), corner(length, h, h), corner(0, h, h),
+  ]);
+}
 
 const map = loadMap(loadMapFile().doc);
 const rawHeight: HeightAt = (x, z) => map.world.heightAt(x, z);
@@ -286,14 +374,32 @@ const LOCK_ON: BeamCast = {
 };
 const FIRING: BeamCast = { ...LOCK_ON, phase: CastPhase.Channel };
 
+/**
+ * How high the head's opening sits over the mech's feet.
+ *
+ * `rigs.ts`'s `BODY_Y` (40) times the Warden look's own `sizeScale` (1.1), which
+ * is where `MechRig` puts the eye -- and the eye *is* the opening, since spec 259
+ * made `buildBody` hand it back. Stated here rather than imported because the rig
+ * module is three.js and this script rasterises in software; nothing checks the
+ * two agree, so it is a number to re-derive if either moves, and what it costs if
+ * it drifts is a preview whose beam leaves the block a few units off.
+ */
+const MUZZLE_HEIGHT = 44;
+
 /** Bodies: the machine, somebody standing in the beam, somebody beside it. */
-const BODIES: readonly { at: readonly [number, number]; radius: number; color: RGB }[] = [
-  { at: [0, 0], radius: 30, color: MECH },
-  // Down the middle at half reach: the readability question in one disc.
-  { at: [WARDEN_LASER.range * 0.5, 0], radius: 16, color: BODY },
+const BODIES: readonly {
+  at: readonly [number, number];
+  radius: number;
+  height: number;
+  color: RGB;
+}[] = [
+  { at: [0, 0], radius: 30, height: MUZZLE_HEIGHT + 12, color: MECH },
+  // Down the middle at half reach: the readability question in one body.
+  { at: [WARDEN_LASER.range * 0.5, 0], radius: 16, height: 34, color: BODY },
   // Clear of the lane by a body's width, which is what escaping looks like.
-  { at: [WARDEN_LASER.range * 0.34, WARDEN_LASER.width * 0.5 + 34], radius: 16, color: BODY },
+  { at: [WARDEN_LASER.range * 0.34, WARDEN_LASER.width * 0.5 + 34], radius: 16, height: 34, color: BODY },
 ];
+
 
 interface Shot {
   readonly label: string;
@@ -309,33 +415,64 @@ function render(shot: Shot): { cell: Cell; cover: number; lift: readonly number[
 
   const look = beamLookFor('warden', shot.cast, shot.tick);
   if (look) {
-    const place = { x: MECH_AT.x, z: MECH_AT.z, heading: HEADING, lift: 1.55 };
-    draw(cell, decalTriangles(laneTemplate(look.length, look.width), place), LANCE, look.opacity, centre, true);
-    if (look.coreWidth > 0) {
+    // The line: out of the head's opening, down to just off the ground at the
+    // far end. The origin's height is `MechRig`'s in the game and a constant
+    // here, because this harness draws blocks rather than rigs -- and what is
+    // being judged is the line, which is the same line either way.
+    const from: Vec3 = [MECH_AT.x, rawHeight(MECH_AT.x, MECH_AT.z) + MUZZLE_HEIGHT, MECH_AT.z];
+    const endX = MECH_AT.x + dirX * look.length;
+    const endZ = MECH_AT.z + dirZ * look.length;
+    const to: Vec3 = [endX, rawHeight(endX, endZ) + look.endLift, endZ];
+
+    if (look.kind === 'firing') {
+      // The lane first: it is under the shaft, and drawing it after would put a
+      // translucent decal over the solid thing standing on it.
       draw(
         cell,
-        decalTriangles(laneTemplate(look.length, look.coreWidth), { ...place, lift: 1.58 }),
-        LANCE_CORE,
-        look.coreOpacity,
+        decalTriangles(laneTemplate(look.length, look.footprintWidth), {
+          x: MECH_AT.x,
+          z: MECH_AT.z,
+          heading: HEADING,
+          lift: 1.55,
+        }),
+        LANCE,
+        look.footprintOpacity,
         centre,
         true,
       );
+      draw(cell, beamBox(from, to, look.width), LANCE, look.opacity, centre, true);
+      draw(cell, beamBox(from, to, look.coreWidth), LANCE_CORE, look.coreOpacity, centre, true);
+    } else {
+      const dots = sightDotCount(look);
+      for (let i = 0; i < dots; i++) {
+        const along = sightDotAt(look, i) / look.length;
+        const at: Vec3 = [
+          from[0] + (to[0] - from[0]) * along,
+          from[1] + (to[1] - from[1]) * along,
+          from[2] + (to[2] - from[2]) * along,
+        ];
+        // A cube about `pixel` cells across, which is what a
+        // `sizeAttenuation: false` point comes out as at this framing. Doubled
+        // because a cube is drawn *cornerwise* at this camera and the projected
+        // width of one `pixel` on a side is well under a raster cell, so an
+        // undoubled dot is rounded away by the very sampler this sheet is meant
+        // to be judging the line through. Not the same thing the game draws --
+        // that one is the same size at every distance and this one is not -- and
+        // near enough for the question the sheet asks, which is whether a dotted
+        // line reads as a sight.
+        draw(cell, cube(at, (look.pixel * 2 * HALF) / CELL), LANCE_SIGHT, look.opacity, centre, true);
+      }
     }
   }
 
-  // The bodies last, so a player standing in the beam is drawn over it -- which
-  // is what the scene does, the beam being a decal on the ground and a body
-  // being a solid standing on it.
+  // The bodies last, so a player standing in the beam is drawn over it where the
+  // beam is on the ground and behind it where the beam is in the air -- which is
+  // the whole readability question, and is why they are blocks rather than discs.
   for (const body of BODIES) {
     const x = MECH_AT.x + dirX * (body.at[0] ?? 0) - dirZ * (body.at[1] ?? 0);
     const z = MECH_AT.z + dirZ * (body.at[0] ?? 0) + dirX * (body.at[1] ?? 0);
-    draw(
-      cell,
-      decalTriangles(discTemplate(body.radius), { x, z, heading: 0, lift: 3 }),
-      body.color,
-      0.92,
-      centre,
-    );
+    const base = rawHeight(x, z);
+    draw(cell, block([x, base, z], body.radius, body.height), body.color, 1, centre);
   }
 
   let painted = 0;
@@ -403,10 +540,12 @@ cells.forEach((entry, index) => {
 mkdirSync(outDir, { recursive: true });
 writeFileSync(join(outDir, 'warden-lance.png'), PNG.sync.write(png));
 
+const sight = beamLookFor('warden', LOCK_ON, 0) as SightLook;
 console.log(`the lance over ${MECH_AT.x.toFixed(0)},${MECH_AT.z.toFixed(0)}, heading ${HEADING}`);
 console.log(
-  `beam ${WARDEN_LASER.range} long, ${WARDEN_LASER.width} wide; ` +
-    `the lock-on line is ${(beamLookFor('warden', LOCK_ON, 0)?.width ?? 0).toFixed(0)} wide\n`,
+  `beam ${WARDEN_LASER.range} long, lane ${WARDEN_LASER.width} wide, ` +
+    `shaft ${(WARDEN_LASER.width * SHAFT_FRACTION).toFixed(0)}; ` +
+    `the sight is ${sightDotCount(sight)} pixels ${SIGHT_SPACING} apart\n`,
 );
 console.log('  phase                     cover   lift (r/g/b, in retro bands)');
 for (const entry of cells) {

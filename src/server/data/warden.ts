@@ -132,6 +132,14 @@ export const WARDEN_LASER: LaserCycle = {
   range: 620,
   // A little over two player bodies. Wide enough to be a place rather than a
   // line, narrow enough that walking out of it is a walk rather than a sprint.
+  //
+  // Deliberately *not* narrowed when the beam became a shaft out of the head
+  // (spec 259's second pass). The thing that had to get narrower is the thing
+  // you can see, and that is `SHAFT_FRACTION` in `world/warden-beam.ts`; this is
+  // the ground the sim damages, it is what the fight was measured against, and
+  // moving it moves the encounter. Measured: at 40 a strafing player takes two
+  // pulses at every range and **none** at 520, so the beam stops being a threat
+  // exactly where it is fired from most often.
   width: 70,
   damage: 4,
   guardDamage: 5,

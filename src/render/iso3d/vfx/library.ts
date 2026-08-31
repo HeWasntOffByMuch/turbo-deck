@@ -23,6 +23,7 @@
 
 import { ORDER_MARK_ARM, brushBeam, brushCross, brushExplosion, brushLane, brushShards, brushSwing } from './brush.js';
 import { WARDEN_LASER } from '../../../server/data/warden.js';
+import { BEAM_END_LIFT, SHAFT_FRACTION } from '../world/warden-beam.js';
 import type { EffectDefinition, Emitter, Priority } from './types.js';
 import type { PaletteKey } from './palette.js';
 import type { Gradient } from './curve.js';
@@ -1142,6 +1143,19 @@ export const LIBRARY: readonly EffectDefinition[] = [
     id: `${WARDEN_LASER.abilityId}.impact`,
     length: WARDEN_LASER.range,
     width: WARDEN_LASER.width,
+    // The lane above and the shaft here, which is what the two layers are each
+    // about: scorch marks are spread across the ground that damages, sparks come
+    // off the object you can see. `SHAFT_FRACTION` rather than a second number,
+    // so narrowing the beam narrows what flies off it.
+    beamWidth: WARDEN_LASER.width * SHAFT_FRACTION,
+    // The line the shaft is drawn along, so the sparks come off the beam rather
+    // than off a height somebody typed. `BEAM_END_LIFT` is the renderer's, and
+    // the muzzle is `MechRig`'s `BODY_Y` at the Warden's own `sizeScale` -- one
+    // number this table cannot import, because the rig is three.js and this is
+    // the pure half. Being a few units out is a spark that leaves the beam
+    // slightly high, which is what a spark does.
+    fromHeight: 44,
+    toHeight: BEAM_END_LIFT,
     // Six along six hundred units is a spark cluster every hundred, which at
     // four pulses a second is a beam that crackles along its whole length
     // without any one place on it becoming a bonfire.
