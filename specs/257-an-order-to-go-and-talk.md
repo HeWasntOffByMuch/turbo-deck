@@ -1,4 +1,4 @@
-# 256 — an order to go and talk
+# 257 — an order to go and talk
 
 ## Problem
 
@@ -155,12 +155,18 @@ right-clicking a body through a menu. It goes through the front door now, which
 is what let any of the above be measured at all.
 
 One step past the approach is still failing and is **not** this spec's: the
-press on a reply button does not register in this environment, six attempts
-running, with the bubble up and its three replies published. That is spec 249's
-step, it has had no working run since 255, and diagnosing a UI click at four
-frames a second under software GL is a piece of work with nothing to do with
-walking over to somebody. Written down here rather than left as a red run
-somebody rediscovers.
+press on a reply button does not register, six attempts running, with the bubble
+up and its three replies published at boxes this probe reads out of the game's
+own `data-ui-dialogue`. That is spec 249's step and it has had no working run
+since 255.
+
+Spec 256 is the obvious suspect and is **not** the cause, which is worth writing
+down because it is the first thing the next person will try: that spec found the
+whole interface layer -- the bar, the chat log and this bubble -- arranged into
+no rects at all after Start, which is exactly the shape of a press that lands on
+nothing. Rebased onto it and re-run, the press fails identically. So what is
+left is a click at four or five frames a second under software GL, and that is a
+piece of work with nothing to do with walking over to somebody.
 
 ## Out of scope
 

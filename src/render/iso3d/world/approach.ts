@@ -1,11 +1,11 @@
 /**
- * Go and stand next to a thing, then ask for it (specs 158, 236, 256).
+ * Go and stand next to a thing, then ask for it (specs 158, 236, 257).
  *
  * Three of the four readings of `world.order` are the same sentence with a
  * different verb on the end: walk until the server would agree we are close
  * enough, then send one request. It was written for the drop (spec 158),
  * borrowed by a placed cast for its margin (spec 236) and wanted whole by a
- * conversation (spec 256), so it lives out here rather than inside any of them
+ * conversation (spec 257), so it lives out here rather than inside any of them
  * -- a second copy of "how close is close enough before asking" is a second
  * answer that agrees with the first until one of them is edited.
  *
@@ -78,7 +78,7 @@ export interface ApproachInput {
  * and the guess is always forward.
  *
  * What it does **not** describe is the *other* body moving. It is the client's
- * own lead, so a target that walks -- a wandering merchant (spec 256) -- adds a
+ * own lead, so a target that walks -- a wandering merchant (spec 257) -- adds a
  * drift of its own, bounded by that body's pace over the playback delay
  * (spec 253) and a couple of units against a margin measured in tens. The cost
  * when it does bite is one refused request, which is what the caller's retry is
@@ -97,7 +97,7 @@ export function approachLead(
 }
 
 /**
- * How much of an NPC's `talkRadius` a walk-up order closes (spec 256).
+ * How much of an NPC's `talkRadius` a walk-up order closes (spec 257).
  *
  * `approachLead` is the margin a pickup gets and it is not enough here, because
  * it describes **one** body being out of date and this comparison has two in
@@ -122,7 +122,7 @@ export function approachLead(
 export const TALK_STANDOFF_FRACTION = 0.7;
 
 /**
- * How many times a talk order may ask before it gives up (spec 256).
+ * How many times a talk order may ask before it gives up (spec 257).
  *
  * The pickup's rule is **one order, one request**, and it is right there: the
  * only refusal walking could fix is the range one, and the lead means the ask
@@ -152,7 +152,7 @@ export interface ApproachOrder {
 }
 
 /**
- * Walk to the thing, then ask for it (specs 158, 256).
+ * Walk to the thing, then ask for it (specs 158, 257).
  *
  * The same shape `target.ts` uses for an attack order and for the same reason:
  * routing the walk client-side is what keeps prediction exact, and the decision

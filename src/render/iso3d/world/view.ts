@@ -2427,7 +2427,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   let pickupId: number | null = null;
   /**
-   * The friendly body being walked over to, to talk to (spec 256).
+   * The friendly body being walked over to, to talk to (spec 257).
    *
    * Beside {@link pickupId} and ending the same way -- the walk closes the gap
    * and the ask is one message, after which there is no order left. What is
@@ -3049,7 +3049,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // than for precedence: `attackable` already refuses a friendly body, so the
     // two can never both be true.
     //
-    // It arms an order rather than asking (spec 256), which is the drop's shape
+    // It arms an order rather than asking (spec 257), which is the drop's shape
     // one body over: nothing here measures the range, and `driveTalk` walks
     // until the server would agree before it sends anything. Everything else
     // about it is still the server's -- whether the body is already talking to
@@ -3645,7 +3645,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
-   * One tick of a talk order (spec 256): close the gap, then ask once.
+   * One tick of a talk order (spec 257): close the gap, then ask.
    *
    * `drivePickup`'s shape with that function's ending deliberately loosened.
    * There, one order is one request; here the ask is **bounded and closes in**

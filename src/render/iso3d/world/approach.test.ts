@@ -9,7 +9,7 @@ import {
 } from './approach.js';
 
 /**
- * Walking over to a thing before asking for it (specs 158, 256).
+ * Walking over to a thing before asking for it (specs 158, 257).
  *
  * These were `loot-drop.test.ts`'s while the drop was the only caller. They
  * moved with the decision rather than being copied beside it, so a pickup and a
@@ -148,7 +148,7 @@ describe('walking over to it', () => {
 });
 
 /**
- * The talk order's margin (spec 256), asserted as the property it is for rather
+ * The talk order's margin (spec 257), asserted as the property it is for rather
  * than as the two numbers it is made of.
  */
 describe('closing in on somebody to talk to', () => {

@@ -162,7 +162,7 @@ async function bodies(page: Page): Promise<{ id: string; x: number; y: number }[
 }
 
 /**
- * Where the body is, in world units (spec 256).
+ * Where the body is, in world units (spec 257).
  *
  * `data-self-at` is the sim's own answer -- what the *server* moved the body to,
  * rather than this file's arithmetic on a click -- and it is rounded to whole
@@ -314,7 +314,7 @@ async function main(): Promise<void> {
     console.log('  through the title screen');
     await waitForTick(page, 30);
 
-    // **One click, and the walk to the merchant is the game's** (spec 256).
+    // **One click, and the walk to the merchant is the game's** (spec 257).
     //
     // This used to walk first, and said so: the client sent a `Talk` whatever
     // the distance, the server refused it past `talkRadius`, and the refusal is

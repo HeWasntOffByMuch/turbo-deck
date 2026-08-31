@@ -331,7 +331,7 @@ describe('the shop behind it', () => {
   });
 });
 
-describe('walking over to talk (spec 256)', () => {
+describe('walking over to talk (spec 257)', () => {
   /**
    * The order driven end to end, through the same pure `approachOrderFor` the
    * view uses -- so this is the approach a player actually makes rather than a
@@ -339,7 +339,7 @@ describe('walking over to talk (spec 256)', () => {
    *
    * The click itself is not here and cannot be: `issueOrder` needs a cursor and
    * a scene. What is here is everything after it, which is the half that was
-   * missing -- before spec 256 the click sent a `Talk` from wherever the player
+   * missing -- before spec 257 the click sent a `Talk` from wherever the player
    * stood, the server refused it past `talkRadius`, and the refusal is silent.
    */
   async function walkAndTalk(
@@ -407,7 +407,10 @@ describe('walking over to talk (spec 256)', () => {
     const rig = await harness();
     const { asks, walked } = await walkAndTalk(rig, merchantNpc().talkRadius + 400);
     expect(walked, 'the order should have walked').toBeGreaterThan(0);
-    // One order, one request: the ask that opened it is the only one sent.
+    // The standoff is wide enough that the first ask is granted, so the retry
+    // `TALK_MAX_ASKS` allows is never spent. That is the point of it being a
+    // *bound* rather than a cadence: on a wire that does not disagree with
+    // itself, walking up to somebody is still one message.
     expect(asks).toBe(1);
     expect(rig.client.view().conversationEntityId).toBe(merchantOf(rig.client)?.id);
   });
