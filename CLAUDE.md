@@ -75,7 +75,7 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
-| `npx tsx scripts/preview-unit-plate.ts` | The two overhead shapes side by side -- a player's plate and a monster's bar -- photographed at four times life size, with every box measured (spec 256). A plate is 76x16 CSS pixels and every way it fails is a way a stylesheet fails: a row negotiated down to nothing by a flex parent, marks placed at percentages of a width the plate never had, a level box the digits spill out of. All of those are visible in a rectangle, which is why it reads the boxes as well as taking the picture |
+| `npx tsx scripts/preview-unit-plate.ts` | The two overhead shapes side by side -- a player's plate and a monster's bar -- photographed at four times life size, with every box measured (spec 256). A plate is 84x16 CSS pixels and every way it fails is a way a stylesheet fails: a row negotiated down to nothing by a flex parent, a level box the digits spill out of, a ring creeping back around them. All of those are visible in a rectangle, which is why it reads the boxes as well as taking the picture |
 | `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 252). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
 | `npx tsx scripts/bench-tick-scale.ts` | What a tick costs against how much world there is *elsewhere*, at fixed residency. Flat is the invariant (spec 206) |
@@ -5306,45 +5306,57 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  with chunks held at 0. What is scaled is the gap between
                  stamps, never the origin, so slowing the flinch down is
                  unaffected),
-                 player-plate.ts (how big a player's overhead plate is and where
-                 the marks across its two rows fall, spec 256. Pure; `hud.ts`
-                 owns the elements, the division `health-bar.ts` beside it
-                 already has. There are **two overhead shapes** now: a monster
-                 keeps spec 145's bar unchanged, and a player gets a level box,
-                 a marked health row and a guard row that is part of the frame.
-                 The marks are the decision. Health is replicated as an absolute
-                 so its marks are absolute -- one every `healthPerSegment` points
-                 -- and that step **doubles rather than capping**, because a cap
-                 on the count leaves seven even marks and one long remainder,
-                 which reads as a bar that stopped being drawn. Doubling keeps
-                 every segment the same width *and* worth a stated amount, so a
-                 mark still means something on a level-60 body; the price, stated
-                 rather than hidden, is that a step is always a power-of-two
-                 multiple of ten. Guard is marked in **quarters**, and that is
-                 forced rather than chosen: `ReplicatedEntity.poise` is a
-                 fraction and nothing else, so deriving an absolute from it would
-                 be the client inventing a number the server never sent -- out of
-                 `maxHealth * monsterPoiseFraction`, a formula that does not even
-                 apply to a player. Two rules the plate reverses on purpose. The
-                 guard row is drawn **whether or not it is dented**, because on a
-                 plate it is a row of the frame and an empty-looking one says the
-                 body has no guard rather than all of it -- spec 147's rule still
-                 stands for a monster, and `probe-health-flash.ts` is told which
-                 shape it is looking at rather than having the rule loosened for
-                 both. And the local player's **own name** is drawn, which spec
-                 145 withheld on the grounds that you know who you are: right
-                 about a bar, wrong about a nameplate, since one missing its name
-                 on exactly one body in the world reads as a hole rather than as
-                 restraint. No new colour -- the level box takes the ring of its
-                 own health fill, so self-green and other-red say it once.
+                 player-plate.ts (how big a player's overhead plate is and how
+                 big the parts inside it are, spec 256. Pure; `hud.ts` owns the
+                 elements, the division `health-bar.ts` beside it already has.
+                 There are **two overhead shapes** now: a monster keeps spec
+                 145's bar unchanged, and a player gets a level box, a health row
+                 and a guard row, all inside one frame. `PLATE_WIDTH` and
+                 `PLATE_HEIGHT` are **summed from the parts** rather than typed
+                 beside them, because the holder is sized from the totals and the
+                 rows are laid out from the parts, so two numbers that had to
+                 agree are one number that cannot disagree.
+                 **Neither row is subdivided**, and the marks that were there
+                 first are worth recording. Health was marked every
+                 `healthPerSegment(maxHealth)` points on a step that doubled
+                 rather than capping, and guard in quarters; the argument was
+                 that an unmarked bar can only be read as "about half". Against
+                 this game's health totals it does not survive contact -- a fresh
+                 character is around 40 health, so marks every ten of it are
+                 three lines nobody would ever act on, and quarters on a row that
+                 is *already* a fraction are a fraction cut into fractions. They
+                 went **with their arithmetic** rather than being switched off,
+                 which is the rule spec 250 set when it took the fixture shadows
+                 out: a socket with nothing plugged into it is what this repo
+                 keeps rediscovering a hundred specs later.
+                 The **level box holds the number and nothing else**. It carried
+                 a 1px ring in the health fill's colour, which said what the fill
+                 beside it was already saying and spent two pixels of a fifteen-
+                 pixel box on saying it -- and those two pixels are the
+                 difference between a level a player can read over a body and one
+                 they have to lean in for. `PLATE_LEVEL_PX` is what the box holds
+                 without them: two digits (`MAX_PLAYER_LEVEL` is 60) at a
+                 monospace advance of about 0.6em, which is also the face the name
+                 above the plate is set in.
+                 Two rules the plate reverses on purpose. The guard row is drawn
+                 **whether or not it is dented**, because on a plate it is a row
+                 of the frame and an empty-looking one says the body has no guard
+                 rather than all of it -- spec 147's rule still stands for a
+                 monster, and `probe-health-flash.ts` is told which shape it is
+                 looking at rather than having the rule loosened for both. And the
+                 local player's **own name** is drawn, which spec 145 withheld on
+                 the grounds that you know who you are: right about a bar, wrong
+                 about a nameplate, since one missing its name on exactly one body
+                 in the world reads as a hole rather than as restraint. No new
+                 colour anywhere -- self-green and other-red are the one
+                 distinction the floating bar already made.
                  `npx tsx scripts/preview-unit-plate.ts` is the picture and the
-                 measurement, at four times life size because a plate is 76x16
+                 measurement, at four times life size because a plate is 84x16
                  CSS pixels: every way this fails is a way a stylesheet fails --
-                 a row negotiated down to nothing by a flex parent, marks placed
-                 at percentages of a width the plate never had, a level box the
-                 digits spill out of -- and all of them are visible in a
-                 rectangle, which is why it reads the boxes as well as taking the
-                 photograph),
+                 a row negotiated down to nothing by a flex parent, a level box
+                 the digits spill out of, a ring creeping back around them -- and
+                 all of those are visible in a rectangle, which is why it reads
+                 the boxes as well as taking the photograph),
                  ground-decal.ts (an indicator laid on the ground rather than
                  over it, spec 153: the aim's shape, its range ring and the
                  telegraph a committed cast draws. Each used to be one flat

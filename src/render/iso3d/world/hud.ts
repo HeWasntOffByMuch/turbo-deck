@@ -63,10 +63,9 @@ import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.j
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
 import {
-  GUARD_TICKS,
-  healthTicks,
   PLATE,
   PLATE_LEVEL_HEIGHT,
+  PLATE_LEVEL_PX,
   PLATE_WIDTH,
 } from './player-plate.js';
 import {
@@ -210,18 +209,13 @@ interface Bar {
   readonly health: HTMLElement;
   /** The level, in its box on the left of a plate. Null on a monster's bar. */
   readonly level: HTMLElement | null;
-  /** The marks across the health row, and across the guard row. Null on a bar. */
-  readonly healthTickRow: HTMLElement | null;
-  readonly guardTickRow: HTMLElement | null;
   /**
-   * The health total the marks were last drawn for, and the colour the fill and
-   * the level box's ring were last painted in.
+   * The colour the health fill was last painted in.
    *
-   * Both move about as often as a level does, and both are strings written into
-   * the DOM -- so they are compared here rather than written every frame for
+   * It changes once in a body's life, if at all, and it is a string written
+   * into the DOM -- so it is compared here rather than written every frame for
    * every body on screen.
    */
-  drawnTicks: string;
   drawnFill: string;
   /** The white band behind the fill: the ground a blow just took (spec 145). */
   readonly ghost: HTMLElement;
@@ -305,15 +299,6 @@ const BAR_WIDTH = 52;
  */
 const PLATE_FRAME = '#22262e';
 const PLATE_EDGE = 'rgba(0,0,0,.85)';
-/**
- * The marks across a row.
- *
- * Black at nearly three quarters rather than a flat colour, and it is the one
- * place this file has to blend: a mark crosses the fill, the white chunk a blow
- * left and the empty track in one stroke, and nothing opaque is legible against
- * all three of those at once.
- */
-const PLATE_TICK = 'rgba(0,0,0,.72)';
 /** The level, which is a number to read rather than a quantity to judge. */
 const PLATE_LEVEL_TEXT = '#f0ead8';
 /**
@@ -336,39 +321,6 @@ const STATUS_BOON = BAR_GUARD;
 const STATUS_AFFLICTION = '#d0796f';
 /** Small enough that eight fit over a body, big enough to tell apart. */
 const STATUS_ICON_PX = 13;
-
-/**
- * The layer a row's marks are drawn on (spec 256).
- *
- * Its own element rather than marks appended straight to the track, so the
- * track's children stay ghost, then fill, then this: `probe-health-flash.ts`
- * reads the two bands by index, and a mark landing between them would have it
- * sampling a 1px sliver as the fill for the rest of the run.
- */
-function tickLayer(): HTMLElement {
-  const row = document.createElement('div');
-  row.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
-  return row;
-}
-
-/**
- * Draw the marks across one row of a plate.
- *
- * Rebuilt rather than pooled, and that is affordable only because it is rebuilt
- * almost never: where the marks fall is a function of the body's *max* health,
- * which moves on a level and an equip and on nothing else. The caller compares
- * before it calls, so a fight costs none of these.
- */
-function paintTicks(row: HTMLElement, at: readonly number[]): void {
-  row.replaceChildren();
-  for (const fraction of at) {
-    const mark = document.createElement('div');
-    mark.style.cssText =
-      `position:absolute;top:0;bottom:0;left:${(fraction * 100).toFixed(3)}%;` +
-      `width:1px;background:${PLATE_TICK};`;
-    row.append(mark);
-  }
-}
 
 /**
  * What hovering an ability says (spec 191).
@@ -1383,11 +1335,6 @@ export function createHud(project: Projector): HudHandle {
     const health = document.createElement('div');
     health.style.cssText = `position:absolute;left:0;top:0;height:100%;width:100%;background:${BAR_ENEMY};`;
     healthTrack.append(ghost, health);
-    // Third, and after both bands rather than over one of them: the marks read
-    // across the fill, the chunk and the empty track alike, and the index the
-    // probe reads the bands by must not move.
-    const healthTickRow = player ? tickLayer() : null;
-    if (healthTickRow) healthTrack.append(healthTickRow);
 
     // Guard, immediately under health (spec 147).
     //
@@ -1408,18 +1355,16 @@ export function createHud(project: Projector): HudHandle {
     const guardFill = document.createElement('div');
     guardFill.style.cssText = `height:100%;width:100%;background:${BAR_GUARD};`;
     guard.append(guardFill);
-    // Quarters, and drawn once here rather than per frame: guard is replicated
-    // as a fraction, so unlike the health row there is nothing about a
-    // particular body that could move them.
-    const guardTickRow = player ? tickLayer() : null;
-    if (guardTickRow) {
-      guard.append(guardTickRow);
-      paintTicks(guardTickRow, GUARD_TICKS);
-    }
 
     // The level (spec 256), in its own box on the left of the plate. Replicated
     // for every player since the delta encoder was written, and until now drawn
     // nowhere in the world.
+    //
+    // The box holds the number and nothing else. It carried a 1px ring in the
+    // health fill's colour, which said what the fill beside it was already
+    // saying and spent two pixels of a fifteen-pixel box on saying it -- and
+    // those two pixels are the difference between a level somebody can read
+    // over a body and one they have to lean in for.
     const level = player ? document.createElement('div') : null;
     if (level) {
       level.dataset['plateLevel'] = '';
@@ -1430,7 +1375,7 @@ export function createHud(project: Projector): HudHandle {
         'align-items:center',
         'justify-content:center',
         `background:${BAR_EMPTY}`,
-        'font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace',
+        `font:${PLATE_LEVEL_PX}px/1 ui-monospace,SFMono-Regular,Menlo,monospace`,
         `color:${PLATE_LEVEL_TEXT}`,
         'overflow:hidden',
       ].join(';');
@@ -1600,9 +1545,6 @@ export function createHud(project: Projector): HudHandle {
       health,
       ghost,
       level,
-      healthTickRow,
-      guardTickRow,
-      drawnTicks: '',
       drawnFill: '',
       guard,
       guardFill,
@@ -1799,14 +1741,11 @@ export function createHud(project: Projector): HudHandle {
       element.ghost.style.width = `${fill.ghost * 100}%`;
 
       // Green for your own health and red for anybody else's, which is the one
-      // distinction the floating bar has always made -- and, on a plate, the
-      // ring round the level box, so the two say the same thing rather than the
-      // plate inventing a fourth colour to say it again (spec 256).
+      // distinction the floating bar has always made.
       const fillColor = entity.id === view.selfEntityId ? BAR_SELF : BAR_ENEMY;
       if (element.drawnFill !== fillColor) {
         element.drawnFill = fillColor;
         element.health.style.background = fillColor;
-        if (element.level) element.level.style.boxShadow = `inset 0 0 0 1px ${fillColor}`;
       }
 
       // The level (spec 256). Defended for the reason the guard below reads
@@ -1819,14 +1758,6 @@ export function createHud(project: Projector): HudHandle {
         if (element.level.textContent !== shown) element.level.textContent = shown;
       }
 
-      // Where the marks across the health row fall -- one every
-      // `healthPerSegment` points, so a segment is worth a stated amount rather
-      // than a fraction of whatever this body happens to have. Repainted only
-      // when the total moves, which is a level or an equip and never a blow.
-      if (element.healthTickRow && element.drawnTicks !== String(entity.maxHealth)) {
-        element.drawnTicks = String(entity.maxHealth);
-        paintTicks(element.healthTickRow, healthTicks(entity.maxHealth));
-      }
 
       // On a monster's bar, shown only once the guard is dented: a full guard is
       // the resting state of every body in the world and a bar that is always

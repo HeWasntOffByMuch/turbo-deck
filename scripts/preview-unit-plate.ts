@@ -7,9 +7,9 @@
  * and none of it is what could be wrong here. A plate is a frame with two rows
  * and a box in it, and every way it fails is a way a stylesheet fails: a row
  * negotiated down to nothing by a flex parent (which is what happened to the
- * status row until spec 186's probe caught it), marks placed at percentages of
- * a width the plate never had, a level box the digits spill out of, an inner
- * rule that does not show because the frame and the track are the same dark.
+ * status row until spec 186's probe caught it), a level box the digits spill
+ * out of, an inner rule that does not show because the frame and the track are
+ * the same dark.
  *
  * So this mounts the real `createHud` over `src/render/hud-probe.html`, anchors
  * two players and a monster beside each other, and photographs them -- through a
@@ -31,10 +31,9 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
 import {
-  healthPerSegment,
-  healthTicks,
   PLATE,
   PLATE_HEIGHT,
+  PLATE_LEVEL_PX,
   PLATE_WIDTH,
 } from '../src/render/iso3d/world/player-plate.js';
 
@@ -114,7 +113,10 @@ async function stage(page: Page): Promise<void> {
           health: 96,
           maxHealth: 140,
           poise: 0.62,
-          level: 7,
+          // Sixty, which is `MAX_PLAYER_LEVEL` and so the widest number the box
+          // ever holds. A one-digit level tells you nothing about whether the
+          // box is big enough for the face it is set in.
+          level: 60,
           statuses: [{ wire: 1, stacks: 2, expiresAtTick: now + 200 }],
         },
         {
@@ -131,7 +133,7 @@ async function stage(page: Page): Promise<void> {
           health: 24,
           maxHealth: 40,
           poise: 1,
-          level: 1,
+          level: 7,
           statuses: [],
         },
         {
@@ -166,8 +168,10 @@ interface Measured {
   readonly guardShown: boolean;
   readonly levelWidth: number;
   readonly levelText: string;
+  readonly levelFontPx: number;
   readonly levelOverflows: boolean;
-  readonly ticks: readonly number[];
+  readonly levelRing: string;
+  readonly rowMarks: number;
   readonly name: string;
   readonly isPlate: boolean;
 }
@@ -183,17 +187,7 @@ async function plateOf(page: Page, id: number): Promise<Measured | null> {
     const named = holder.querySelector<HTMLElement>('[data-name]');
     const frame = (plate ?? track)?.getBoundingClientRect();
     const trackBox = track?.getBoundingClientRect();
-    // Where each mark really landed, as a fraction of the row it is on --
-    // measured off the page rather than recomputed here, which is the whole
-    // point of asking a browser rather than asserting in Node.
-    const ticks: number[] = [];
-    if (track && trackBox && trackBox.width > 0) {
-      // The marks are the track's third child: ghost, then fill, then them.
-      for (const mark of Array.from(track.children[2]?.children ?? [])) {
-        const at = mark.getBoundingClientRect();
-        ticks.push((at.x - trackBox.x) / trackBox.width);
-      }
-    }
+    const levelStyle = level ? getComputedStyle(level) : null;
     return {
       width: frame?.width ?? 0,
       height: frame?.height ?? 0,
@@ -202,10 +196,18 @@ async function plateOf(page: Page, id: number): Promise<Measured | null> {
       guardShown: guard ? getComputedStyle(guard).visibility === 'visible' : false,
       levelWidth: level?.getBoundingClientRect().width ?? 0,
       levelText: level?.textContent ?? '',
+      levelFontPx: levelStyle ? parseFloat(levelStyle.fontSize) : 0,
       // The digits against the box holding them. A level box the number spills
-      // out of is the one failure a fixed width invites.
+      // out of is the one failure a fixed width invites, and the bigger the
+      // face the likelier it gets.
       levelOverflows: level ? level.scrollWidth > level.clientWidth : false,
-      ticks,
+      // Anything the box draws around the number. It carried a coloured ring
+      // and now carries nothing, which is what bought the digits their size --
+      // a ring that came back would cost it silently.
+      levelRing: levelStyle ? levelStyle.boxShadow : '',
+      // Anything left inside either row past the two bands. Both rows were
+      // divided by marks and are not any more.
+      rowMarks: (track ? track.children.length - 2 : 0) + (guard ? guard.children.length - 1 : 0),
       name: named?.textContent ?? '',
       isPlate: holder.dataset['plate'] === 'player',
     };
@@ -242,7 +244,7 @@ async function main(): Promise<void> {
     ]);
     await page.waitForTimeout(120);
 
-    console.log('the local player, level 7, 96/140, guard at 62%');
+    console.log('the local player, level 60, 96/140, guard at 62%');
     const self = await plateOf(page, PLAYER_AT.id);
     check(self !== null, 'has a holder on screen');
     check(self?.isPlate === true, 'wears a plate rather than a bar');
@@ -261,41 +263,38 @@ async function main(): Promise<void> {
         `(${(self?.healthHeight ?? 0).toFixed(1)} / ${(self?.guardHeight ?? 0).toFixed(1)})`,
     );
     check(self?.guardShown === true, 'the guard row is drawn without waiting to be dented');
-    check(self?.levelText === '7', `the level box says 7 (${self?.levelText ?? ''})`);
-    check(self?.levelOverflows === false, 'and the digits fit inside it');
     check(self?.name === 'Player', `our own name is drawn (${self?.name ?? ''})`);
 
-    // The marks, against the arithmetic. Measured off the page, so a plate that
-    // laid its rows out at a width the marks were not placed against reads as
-    // marks in the wrong place rather than as a passing test.
-    const wanted = healthTicks(140);
+    // The level, at the widest number it ever holds. The box has no ring and no
+    // border, which is what bought the digits their size, so both halves of
+    // that are checked: the face is the one the module states, and nothing is
+    // drawn around it.
+    check(self?.levelText === '60', `the level box says 60 (${self?.levelText ?? ''})`);
     check(
-      (self?.ticks.length ?? 0) === wanted.length,
-      `${wanted.length} marks across the health row, one every ` +
-        `${healthPerSegment(140)} health (${self?.ticks.length ?? 0})`,
+      Math.abs((self?.levelFontPx ?? 0) - PLATE_LEVEL_PX) < 0.5,
+      `set at ${PLATE_LEVEL_PX}px (${(self?.levelFontPx ?? 0).toFixed(1)})`,
     );
-    const drift = Math.max(
-      0,
-      ...(self?.ticks ?? []).map((at, index) => Math.abs(at - (wanted[index] ?? 0))),
+    check(self?.levelOverflows === false, 'and two digits still fit inside the box');
+    check(
+      self?.levelRing === 'none' || self?.levelRing === '',
+      `with nothing drawn around them (${self?.levelRing ?? ''})`,
     );
-    check(drift < 0.02, `and they land where the arithmetic says (worst ${drift.toFixed(4)})`);
 
-    console.log('another player, level 1, 24/40, guard untouched');
+    // Both rows are two bands and nothing else now.
+    check(self?.rowMarks === 0, `neither row is divided (${self?.rowMarks ?? 0} extra children)`);
+
+    console.log('another player, level 7, 24/40, guard untouched');
     const other = await plateOf(page, OTHER_AT.id);
     check(other?.isPlate === true, 'wears a plate too');
-    check(other?.levelText === '1', `its level box says 1 (${other?.levelText ?? ''})`);
+    check(other?.levelText === '7', `its level box says 7 (${other?.levelText ?? ''})`);
+    check(other?.levelOverflows === false, 'and one digit fits as well as two');
     check(other?.name === 'Ada', `and their name is over it (${other?.name ?? ''})`);
     check(other?.guardShown === true, 'its guard row is drawn at a full guard');
-    check(
-      (other?.ticks.length ?? 0) === healthTicks(40).length,
-      `a level-1 bar is marked too (${other?.ticks.length ?? 0} marks)`,
-    );
 
     console.log('a monster');
     const mob = await plateOf(page, MONSTER_AT.id);
     check(mob?.isPlate === false, 'keeps the bar spec 145 shipped');
     check(mob?.levelWidth === 0, 'with no level box on it');
-    check(mob?.ticks.length === 0, 'and no marks across it');
     check(mob?.name === '', 'and no name over it');
     check(
       Math.abs((mob?.healthHeight ?? 0) - 5) < 0.5,
