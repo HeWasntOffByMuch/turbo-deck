@@ -186,7 +186,7 @@ function swingAndCancel(
   const slash = abilityById('melee.slash');
   if (!slash) throw new Error('no melee.slash');
   const timing = attackTimingFor(slash, { stats: entityOf(state, playerId).stats });
-  // The first frame the follow-through may be walked out of (spec 256). It used
+  // The first frame the follow-through may be walked out of (spec 257). It used
   // to be one tick past the attack point, which is where a backswing became
   // cancellable before there was a cancel point at all -- asked there now the
   // sim refuses, the cast stays live, and Mobile Offense never fires. Derived
@@ -559,7 +559,7 @@ describe('what must not trigger it', () => {
     expect(live.committed).toBe(true);
 
     // Taken **inside** the committed window, which is where an interrupt is the
-    // only thing that can end a follow-through at all (spec 256). Dying and
+    // only thing that can end a follow-through at all (spec 257). Dying and
     // having your guard broken are not decisions, so they are exempt from the
     // cancel point -- and they still pay nothing.
     expect(mayCancelBackswing(live, current.tick)).toBe(false);

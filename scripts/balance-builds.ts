@@ -287,7 +287,7 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
     seq += 1;
     // Asking to move is how a body walks out of a follow-through (spec 079),
     // and one tick of it is the whole gesture -- but only from the **cancel
-    // point** on (spec 256), because before that the sim refuses and the swing
+    // point** on (spec 257), because before that the sim refuses and the swing
     // runs to its end. Alternating, so a fight that cancels forty swings ends
     // where a fight that cancels none does -- a constant direction would walk
     // the build out of its own duel and measure the leash rather than the

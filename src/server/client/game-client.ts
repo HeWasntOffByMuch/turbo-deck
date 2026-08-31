@@ -140,7 +140,7 @@ import { refundsBetween, type CooldownRefund } from './cooldown-refund.js';
 import { ReplicatedWorld } from './replica.js';
 
 /**
- * The wire index Flow rides under (spec 256), looked up rather than typed.
+ * The wire index Flow rides under (spec 257), looked up rather than typed.
  *
  * `StatusVisual.wire` is append-only protocol and the table is the one place it
  * is decided; a literal here would be a second copy of a number whose whole
@@ -519,7 +519,7 @@ export interface ClientView {
   readonly selfDead: boolean;
   /**
    * True while this body is inside the **committed** part of a follow-through
-   * it may not yet walk out of (spec 256).
+   * it may not yet walk out of (spec 257).
    *
    * Beside {@link selfStaggered} because it is the same shape of fact -- the
    * legs are held and asking will not help -- and separate from
@@ -1051,7 +1051,7 @@ export class GameClient {
     // server moved them -- a correction on every tick of the step away, and a
     // bar still draining for a blow that has been called off.
     //
-    // Unless the follow-through is still committed (spec 256), in which case the
+    // Unless the follow-through is still committed (spec 257), in which case the
     // server will refuse the withdrawal and hold the body, and a client that
     // withdrew anyway would spend the committed window walking against a server
     // standing still. Read **once**, up here, because `withdrawLocally` clears
@@ -1082,7 +1082,7 @@ export class GameClient {
     // caller, which is the half `moveIntent` cannot reach: the bot harness and
     // the tests build an input themselves.
     //
-    // A committed follow-through is the third (spec 256), and it is the one the
+    // A committed follow-through is the third (spec 257), and it is the one the
     // server *would* read: `asksToMove` is what makes it try to cancel, so
     // sending the vector before the cancel point is asking for a refusal. Zeroed
     // rather than sent-and-ignored so that the input this client predicts and
@@ -1589,7 +1589,7 @@ export class GameClient {
     // outstanding: it will still be answered, and that answer still has a
     // cooldown and a cost to give back.
     //
-    // Unless the follow-through is still committed (spec 256), where the server
+    // Unless the follow-through is still committed (spec 257), where the server
     // will refuse and the cast goes on. Dropping it here would be worse than
     // the mispredicted step `sendInput` guards against: the cast lives in this
     // client's own map and no later message puts one back, so the body would
@@ -1710,7 +1710,7 @@ export class GameClient {
   }
 
   /**
-   * Flow stacks this body is visibly carrying, off the replica (spec 256).
+   * Flow stacks this body is visibly carrying, off the replica (spec 257).
    *
    * Replicated since spec 186, so this is the client agreeing with the server
    * rather than modelling anything. The stale entry is refused on read, which is
@@ -1731,7 +1731,7 @@ export class GameClient {
   }
 
   /**
-   * Whether a follow-through is holding this body right now (spec 256).
+   * Whether a follow-through is holding this body right now (spec 257).
    *
    * Rebuilt from the **replicated** release and end ticks rather than from the
    * timing `selfCast` reconstructs, because those two ticks are what the server

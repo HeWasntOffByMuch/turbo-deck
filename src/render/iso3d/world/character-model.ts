@@ -278,7 +278,7 @@ const STAT_ROWS: readonly {
     // better -- and so the label is the controlled term for the act rather than
     // *recovery*, which `docs/mechanics-vocabulary.md` bans outright and which
     // this row used to be called. The Backswing itself is the same length for
-    // everybody since spec 256; what Agility buys is the exit.
+    // everybody since spec 257; what Agility buys is the exit.
     label: 'Break off',
     of: (s) => `${Math.round((1 - s.traits.backswingCancelPct) * 100)}%`,
     hint: 'How much of your Backswing you may break off and walk away from. You are free to move sooner; you do not attack more often. Agility.',

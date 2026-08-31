@@ -27,7 +27,7 @@
  *     back.
  *   - After it, `cancelBackswing` gives back the root and nothing else. **The
  *     attack already happened**; only the tail of the animation was skipped --
- *     and only from the **cancel point** onward (spec 256), because a
+ *     and only from the **cancel point** onward (spec 257), because a
  *     follow-through is committed for a while before it may be left.
  *
  * That asymmetry is the feature: skipping a backswing buys movement, never
@@ -203,7 +203,7 @@ export function attackTimingFor(
         baseAttackTimeTicks: ability.cooldownTicks * cooldownScaleFor(ability, entity, tick),
         baseAttackPointTicks: ability.windupTicks * shaped,
         baseAttackBackswingTicks: ability.backswingTicks ?? 0,
-        // The same threshold a basic attack gets (spec 256). A follow-through is
+        // The same threshold a basic attack gets (spec 257). A follow-through is
         // a follow-through: a skill that has one is left on the same rule, and
         // the rows that have none are unaffected because a backswing of zero has
         // no cancel point.
@@ -220,13 +220,13 @@ export function attackTimingFor(
   return resolveAttackTiming(
     {
       // **Untouched by Agility, and that is the design** (spec 147). Agility
-      // reaches the attack point and, since spec 256, the tick a follow-through
+      // reaches the attack point and, since spec 257, the tick a follow-through
       // may be left on -- never this number, so the fast stat cannot become the
       // damage stat however far it is pushed. Walking out early gives back the
       // legs and nothing else: the next attack is due when this says it is.
       baseAttackTimeTicks: entity.stats.baseAttackTimeTicks,
       baseAttackPointTicks: ability.windupTicks * shaped * entity.stats.traits.attackPointScale,
-      // **The authored length, whole** (spec 256). Agility used to divide this
+      // **The authored length, whole** (spec 257). Agility used to divide this
       // and no longer touches it at all: what it buys is the cancel point
       // below, so the phase every other body has is the phase an agile body
       // has -- they differ in how early they may leave it.
@@ -295,7 +295,7 @@ export function windupScaleFor(
 
 /**
  * How much of a follow-through is committed before it may be walked out of
- * (spec 256): the character's own threshold, less what Flow is taking off it.
+ * (spec 257): the character's own threshold, less what Flow is taking off it.
  *
  * The stacking rule, in one expression and nowhere else:
  *
@@ -334,7 +334,7 @@ export function backswingCancelPointFor(entity: TimingSubject, tick: number): nu
 }
 
 /**
- * The tick this cast may first be voluntarily walked out of (spec 256).
+ * The tick this cast may first be voluntarily walked out of (spec 257).
  *
  * Off the snapshot rather than off the traits, so a Flow stack that expired
  * mid-swing cannot move a boundary the player is already timing against -- the
@@ -929,7 +929,7 @@ export function cancelCast(entity: ServerEntity, tick: number, reason: number): 
   const cast = entity.cast;
   if (!cast) return NOT_CANCELLED(entity);
   if (cast.committed) {
-    // **The cancel point** (spec 256). A follow-through is a phase with two
+    // **The cancel point** (spec 257). A follow-through is a phase with two
     // halves: committed, then leavable. Before this tick the answer to "may I
     // walk away" is no, and refusing is the whole of it -- the body keeps its
     // cast, and `resolveMovement` goes on dropping the movement components of

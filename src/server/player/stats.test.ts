@@ -286,7 +286,7 @@ describe('effective stats', () => {
       ).critChance,
     ).toBeGreaterThan(slow.critChance);
     // And Agility's own payoff, which is the commitment and never the interval
-    // (spec 256): the follow-through is the same length, and it may be left
+    // (spec 257): the follow-through is the same length, and it may be left
     // sooner.
     expect(quick.traits.backswingCancelPct).toBeLessThan(slow.traits.backswingCancelPct);
   });

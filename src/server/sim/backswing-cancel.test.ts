@@ -1,5 +1,5 @@
 /**
- * The follow-through you may leave (spec 256).
+ * The follow-through you may leave (spec 257).
  *
  * A follow-through has two halves now -- committed, then leavable -- and every
  * Agility source that used to make the phase *shorter* makes the boundary
@@ -119,7 +119,7 @@ const traitsWith = (over: Partial<TraitStats>): TraitStats => ({ ...NEUTRAL_TRAI
 // The threshold itself: arithmetic, with no sim under it.
 // ===========================================================================
 
-describe('the cancel threshold (spec 256)', () => {
+describe('the cancel threshold (spec 257)', () => {
   it('is the base for a body that has bought nothing', () => {
     expect(backswingCancelPointOf(NEUTRAL_TRAITS, 0)).toBe(SCALING.agility.backswingCancelBase);
     expect(backswingCancelPointFor({ stats: statsFor() }, 0)).toBe(
@@ -213,7 +213,7 @@ describe('the cancel threshold (spec 256)', () => {
 // The length of the phase, and the cadence. Neither may move.
 // ===========================================================================
 
-describe('what the cancel point must never touch (spec 256)', () => {
+describe('what the cancel point must never touch (spec 257)', () => {
   const BUILDS: readonly { readonly name: string; readonly stats: EffectiveStats; readonly flow: number }[] = [
     { name: 'nothing', stats: statsFor(20), flow: 0 },
     { name: 'quick recovery 3', stats: statsFor(20, [{ specializationId: QUICK_RECOVERY, tier: 3 }]), flow: 0 },
@@ -389,7 +389,7 @@ function swingInto(run: Fight): Fight {
   return current;
 }
 
-describe('a follow-through in the real tick (spec 256)', () => {
+describe('a follow-through in the real tick (spec 257)', () => {
   it('refuses a walk-out before the cancel point, and honours it at it', () => {
     let run = swingInto(fight(statsFor(20)));
     const cancelTick = backswingCancelTickOf(castOf(selfOf(run)));
@@ -539,7 +539,7 @@ describe('a follow-through in the real tick (spec 256)', () => {
   });
 
   it('leaves Perfect Exit alone, because it reads the wind-up', () => {
-    // Audited against the new model (spec 256) rather than redesigned: its
+    // Audited against the new model (spec 257) rather than redesigned: its
     // window is the *wind-up*, which the backswing gate never touches, so it
     // remains the one escape that pays -- and a backswing cancel still pays
     // nothing, which is what keeps the two distinct.

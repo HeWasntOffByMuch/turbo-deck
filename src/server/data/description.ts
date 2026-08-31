@@ -687,7 +687,7 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
 
   // Both of these move a **threshold**, so the quantity is "how much of the
   // Backswing you may break off", not "how much shorter the Backswing is"
-  // (spec 256). Named for what moves rather than for the number, because a
+  // (spec 257). Named for what moves rather than for the number, because a
   // player reading "-5% Backswing" would reasonably expect to be attacking more
   // often, and they are not. `Backswing` and `break off` are the controlled
   // terms (`docs/mechanics-vocabulary.md` §1), which is also why neither line

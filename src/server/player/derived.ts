@@ -55,7 +55,7 @@ function growth(total: number): number {
  * had before this spec existed.
  *
  * `backswingCancelPct` is the same idea for a threshold rather than a scale
- * (spec 256): neutral is the *base*, because zero would say "walk out whenever
+ * (spec 257): neutral is the *base*, because zero would say "walk out whenever
  * you like" -- which is not the absence of the mechanic, it is the behaviour the
  * mechanic replaced.
  */
@@ -236,7 +236,7 @@ export function deriveTraits(
     0.25,
     1,
   );
-  // The follow-through's cancel point, not its length (spec 256). Subtractive
+  // The follow-through's cancel point, not its length (spec 257). Subtractive
   // and clamped **once** at the end, so two sources of "a tenth sooner" are a
   // fifth sooner rather than 0.19 -- and so that a source cannot be silently
   // cancelled by another source having already reached the floor.

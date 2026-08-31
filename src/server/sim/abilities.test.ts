@@ -598,7 +598,7 @@ describe('wind-up', () => {
     // withdrawal that refunds -- and the interval stamped at the attack point
     // is untouched, to the tick.
     //
-    // From the cancel point on, since spec 256: a follow-through is committed
+    // From the cancel point on, since spec 257: a follow-through is committed
     // for a while before it may be left, and asking earlier is refused rather
     // than honoured. Walked forward to that tick rather than assuming it,
     // because the threshold is a fraction of a phase whose length is content.

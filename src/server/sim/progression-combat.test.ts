@@ -176,7 +176,7 @@ describe('Agility shortens the wind-up and never the interval', () => {
   it('holds at every investment, for the basic attack', () => {
     // The load-bearing assertion of spec 147. `intervalTicks` must be bit
     // identical across the whole range of Agility, while the wind-up shrinks and
-    // -- since spec 256 -- the follow-through's cancel point comes forward, so a
+    // -- since spec 257 -- the follow-through's cancel point comes forward, so a
     // high-Agility character attacks exactly as often as anyone else and spends
     // far less of each cycle rooted.
     const base = attackTimingFor(SLASH, { stats: statsFor() });
@@ -188,7 +188,7 @@ describe('Agility shortens the wind-up and never the interval', () => {
       expect(timing.intervalTicks, `interval@${agility}`).toBe(base.intervalTicks);
       expect(timing.attacksPerSecond, `rate@${agility}`).toBe(base.attacksPerSecond);
       expect(timing.attackPointTicks, `point@${agility}`).toBeLessThanOrEqual(previousPoint);
-      // The phase itself does **not** move (spec 256). Agility buys the exit,
+      // The phase itself does **not** move (spec 257). Agility buys the exit,
       // not the length, or every point spent would shrink the window the rest of
       // its own tree is played in.
       expect(timing.backswingTicks, `swing@${agility}`).toBe(base.backswingTicks);
@@ -233,7 +233,7 @@ describe('Agility shortens the wind-up and never the interval', () => {
     const still = backswingCancelPointFor({ stats, statuses: NO_STATUSES }, 0);
     expect(backswingCancelPointFor({ stats, statuses: flowing }, 0)).toBeLessThan(still);
 
-    // Not the follow-through's length, and not the interval (spec 256). Flow
+    // Not the follow-through's length, and not the interval (spec 257). Flow
     // used to divide the phase, which is what made it fight Mobile Offense.
     const dry = attackTimingFor(SLASH, { stats, statuses: NO_STATUSES }, 0);
     const wet = attackTimingFor(SLASH, { stats, statuses: flowing }, 0);

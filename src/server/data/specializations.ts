@@ -112,7 +112,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Nothing takes you off a blow you have committed to. Only while you are committed.'),
 
   // ======================= AGILITY ========================
-  // The three rows below are one mechanic seen three ways (spec 256): a
+  // The three rows below are one mechanic seen three ways (spec 257): a
   // follow-through is committed until its cancel point, Quick Recovery moves
   // that point earlier, Flow moves it earlier again while it is held, and Mobile
   // Offense is what pays for the cancel itself. None of them shortens the
@@ -129,7 +129,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   // the trigger is read in, since a shorter backswing is fewer ticks in which
   // `cancelBackswing` can be reached at all.
   //
-  // Spec 256 closed the other half of that circle: the follow-through is a
+  // Spec 257 closed the other half of that circle: the follow-through is a
   // fixed length now and what Agility buys is the tick it may be *left* on, so
   // nothing in this tree can shrink the window the trigger is read in any more.
   // The trigger itself is unchanged and is the right one: leaving a
@@ -146,7 +146,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('agi.rapidHandling', 'agility', 'Rapid Handling', T2, 3, 'casting an ability that launches something',
     { traits: { handlingReduction: 0.12 } },
     'Draw, load and release. The cadence does not move.'),
-  // 0.01 a tier rather than 0.005 (spec 256, after 254). Flow's contribution to
+  // 0.01 a tier rather than 0.005 (spec 257, after 254). Flow's contribution to
   // the cancel point is 0.05 a stack in total and it now comes from **two**
   // sources rather than four: this and the milestone that introduces Flow at
   // all. Mobile Offense used to be one of the other two and buys cooldown now,

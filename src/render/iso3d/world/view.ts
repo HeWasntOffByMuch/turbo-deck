@@ -2299,7 +2299,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           hud.element.style.display = '';
           ui.setHudShown(true);
           if (loadControlsSeen(bindingStorage)) return;
-          // Seeded rather than assumed unchecked (spec 256): this only ever
+          // Seeded rather than assumed unchecked (spec 257): this only ever
           // reaches `false` today, since a `true` returned above -- but the
           // checkbox is asking what storage holds, not what this branch
           // already knows, and the two must not quietly drift apart.
@@ -2321,7 +2321,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     ui.setHudShown(false);
   }
 
-  // The X only puts the card away for this session (spec 256): it used to
+  // The X only puts the card away for this session (spec 257): it used to
   // also mean "seen", so a reflex close cost a player the card forever with
   // no way back. It is `setControlsShown(false)` and nothing else now.
   ui.onControlsDismissed = (): void => {
@@ -3662,7 +3662,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // server has confirmed and one we have only asked for (spec 067) -- and it
       // can end without us asking, because being hit interrupts one.
       castAim: view.selfRoot,
-      // And whether that root may be walked out of yet (spec 256). A wind-up
+      // And whether that root may be walked out of yet (spec 257). A wind-up
       // always may; a follow-through only from its cancel point on, so this is
       // what keeps a held key from predicting a step the server is about to
       // refuse.
