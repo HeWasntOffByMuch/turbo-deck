@@ -231,7 +231,7 @@ async function main(): Promise<void> {
       if (message.type() === 'error' && /shader|GL_|WebGL/i.test(text)) problems.push(text);
     });
 
-    // The built page is the game client since spec 253 and builds none of the tuning
+    // The built page is the game client since spec 254 and builds none of the tuning
     // popovers; this harness drives "Weather", so it asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?seed=${SEED}&client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');

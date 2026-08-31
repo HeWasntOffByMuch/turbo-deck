@@ -95,7 +95,7 @@ change a game outcome.
 | `npm run server` | The authoritative server, plus the admin console. Opens and migrates `data/game.db` itself (spec 226); there is no database to start. Runs as `node --import tsx`, so it is **one** process rather than a `tsx` supervisor in front of the real one -- the wrapper cost a second runtime and swallowed signal bursts before the shutdown handler saw them |
 | `npx tsx scripts/db-status.ts` | What is in `data/game.db`: schema version, row counts, and which migrations have run (spec 226). Never prints a token or a hash |
 | `npm run build && npx tsx scripts/probe-shop.ts` | Talk to a merchant and open its shop in the shipped page (spec 249). Runs against a **real `npm run server`** rather than the in-tab loopback, which is the whole point: the two bugs it was written for -- a window sized before its stock arrived, and a stale shop answer landing on a window that had just opened -- are both invisible over a loopback, where every answer lands before the next frame is drawn. It finds the merchant with the cursor (`data-crosshair` reading `bubble` is the game's own answer to "that is somebody you can talk to"), walks until it is close enough, presses a reply, and measures the window's **box** as well as its openness -- because "open" and "readable" are two claims and the bug shipped green against the first one |
-| `npm run build && npx tsx scripts/probe-production-client.ts` | Whether the page that ships is the game rather than the workbench (spec 253). Everything that spec *decides* is pure and asserted in Node, and this is the half no headless test can reach -- the **wiring**, which is what this repo keeps rediscovering: `visibleTabs` had a complete test file for sixty specs while spec 176 found the editor saving into a world nothing could load, and `layout-store.ts` passed every one of its own tests while nothing in the shipped build imported it. Runs twice, `probe-map-editor.ts`'s shape: once with no query, where every bench, popover and readout must be **gone**, and once with `?client=workbench`, where all of them must come back. The second pass is what makes the first mean anything -- every check in it is an *absence*, so a page that failed to mount, or a tab label misspelled in the probe's own list, scores a flawless zero on the first pass alone. It also checks the hidden meter is still publishing `data-fps-*`, since that is what made the default safe to move, and since spec 254 the **front door**: the shipped page must open on the title screen, `?client=workbench` must not, and Start must take it away -- an `inset:0` element left behind eats every click of the game underneath it, which is the failure `loading-overlay.ts` names |
+| `npm run build && npx tsx scripts/probe-production-client.ts` | Whether the page that ships is the game rather than the workbench (spec 254). Everything that spec *decides* is pure and asserted in Node, and this is the half no headless test can reach -- the **wiring**, which is what this repo keeps rediscovering: `visibleTabs` had a complete test file for sixty specs while spec 176 found the editor saving into a world nothing could load, and `layout-store.ts` passed every one of its own tests while nothing in the shipped build imported it. Runs twice, `probe-map-editor.ts`'s shape: once with no query, where every bench, popover and readout must be **gone**, and once with `?client=workbench`, where all of them must come back. The second pass is what makes the first mean anything -- every check in it is an *absence*, so a page that failed to mount, or a tab label misspelled in the probe's own list, scores a flawless zero on the first pass alone. It also checks the hidden meter is still publishing `data-fps-*`, since that is what made the default safe to move, and since spec 255 the **front door**: the shipped page must open on the title screen, `?client=workbench` must not, and Start must take it away -- an `inset:0` element left behind eats every click of the game underneath it, which is the failure `loading-overlay.ts` names |
 | `npm run build && npx tsx scripts/probe-account.ts` | Claim a guest character through the shipped page and read the database back to check the account owns *that* character (spec 226) |
 | `npm run server:bots` | Headless bot clients, for load and for watching prediction. Each mints its own guest character over `POST /api/auth/guest` first (spec 226), since a gated server refuses a `Hello` with no session token -- so a run leaves that many disposable players in the database |
 
@@ -2197,7 +2197,7 @@ src/render/      the client: a tab shell over the play view, the two tuning
                  without a phone in your hand. And an unrecognised value
                  **defers** rather than picking a side, so a misspelling costs
                  the flag and not the frame.
-                 iso3d/world/title-overlay.ts is the front door (spec 254),
+                 iso3d/world/title-overlay.ts is the front door (spec 255),
                  and it is DOM for `loading-overlay.ts`'s reason one file over:
                  `src/ui/` has six methods and `drawSprite` takes a rectangle in
                  the theme atlas, so the framework cannot draw a painting and is
@@ -2223,6 +2223,18 @@ src/render/      the client: a tab shell over the play view, the two tuning
                  by the wordmark in the game's own face rather than by a
                  broken-image glyph -- a title screen with no title on it being
                  the worse of the two failures.
+                 Two of its boxes are **reserved rather than sized by what is
+                 in them**: an `<img>` has no height until its bytes arrive, and
+                 the menu is taller than the progress line it replaces, so a
+                 column centred on its own content was laid out three times and
+                 the logotype moved at the moment somebody was looking at it.
+                 Fixed heights with `object-fit:contain` inside reserve the space
+                 without this file knowing the art's aspect ratio, so a logotype
+                 of any shape drops in and nothing moves. Start **fades** rather
+                 than cutting, and the element is still removed at the end of it,
+                 which is `loading-overlay.ts`'s rule and not a tidy-up: a
+                 half-transparent `inset:0` overlay is a hole in the world where
+                 START used to be.
                  What it costs is written down rather than hidden: the world
                  behind it is mounted and running, which is what it already did
                  at that point in the mount, so a player who leaves the menu open
@@ -2231,7 +2243,7 @@ src/render/      the client: a tab shell over the play view, the two tuning
                  to a socket, and what a *remote* server does about a body whose
                  client has stopped asking for anything.
                  iso3d/client-build.ts is the same question about the *build*
-                 rather than about the device (spec 253), and it exists because
+                 rather than about the device (spec 254), and it exists because
                  the page deployed to Pages was the workbench: seven tab
                  buttons across the top of the world, eight tuning popovers down
                  the opposite corner, a diagnostic readout over the grass and a

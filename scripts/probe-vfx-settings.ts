@@ -309,7 +309,7 @@ async function main(): Promise<void> {
     });
     await waitForServer(`http://localhost:${PORT}/`);
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-    // The built page is the game client since spec 253 and builds none of the tuning
+    // The built page is the game client since spec 254 and builds none of the tuning
     // popovers; this harness drives "Effects", so it asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?seed=7&client=workbench`);
     await page.waitForSelector('[data-world-ready="true"]', { timeout: 60_000 });

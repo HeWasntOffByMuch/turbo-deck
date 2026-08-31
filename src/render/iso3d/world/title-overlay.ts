@@ -1,5 +1,5 @@
 /**
- * The front door (spec 254).
+ * The front door (spec 255).
  *
  * DOM rather than the UI canvas, and the reason is the same one
  * `loading-overlay.ts` gives one file over: `src/ui/` can draw the theme atlas
@@ -53,11 +53,23 @@ export const TITLE_FALLBACK_WORDMARK = 'HALFSWING';
 /** The line under the wordmark. */
 export const TITLE_TAGLINE = 'A COZY ADVENTURE AWAITS';
 
+/**
+ * How long the title screen takes to fade once Start is pressed.
+ *
+ * Longer than `loading-overlay.ts`'s 260, and for the opposite reason: that one
+ * is getting out of the way of something the player is waiting for, and this one
+ * is a beat between deciding to play and playing. Short enough that it is never
+ * something to sit through -- the world is already live underneath, and the
+ * interface comes back on the frame Start is pressed rather than at the end of
+ * this.
+ */
+export const TITLE_FADE_MS = 420;
+
 export interface TitleOverlayOptions {
   /**
    * Begin play. The overlay hides itself before this is called, so a caller
    * with nothing to add may leave it out -- pressing Start is complete on its
-   * own, and the first-run controls card (spec 254) is what hangs off it.
+   * own, and the first-run controls card (spec 255) is what hangs off it.
    */
   readonly onStart?: (() => void) | undefined;
   /** Open the options window, which is drawn on the canvas above this. */
@@ -132,11 +144,34 @@ export function createTitleOverlay(
     'z-index:35',
   ].join(';');
 
+  /**
+   * The logotype's slot, and it is a **reserved box** rather than something the
+   * logotype sizes (spec 255).
+   *
+   * An `<img>` has no height until its bytes have arrived, so a column centred
+   * on its own content is laid out twice: once around a logotype 0 pixels tall,
+   * and again around one 253 pixels tall when the PNG lands. Everything on the
+   * screen jumps at the moment the art appears, which is exactly the frame a
+   * player is looking at it.
+   *
+   * A fixed height with `object-fit:contain` inside reserves the space before
+   * there is anything to put in it, and does it without this file knowing the
+   * art's aspect ratio -- so a logotype of any shape drops in and nothing here
+   * moves. It is also what the fallback wordmark hangs in, so the two are the
+   * same size on screen rather than the same font size.
+   */
+  const logoSlot = document.createElement('div');
+  logoSlot.dataset['titleLogoSlot'] = '';
+  logoSlot.style.cssText =
+    'height:min(26vh,240px);width:min(62%,760px);display:flex;align-items:center;' +
+    'justify-content:center;';
+
   const wordmark = document.createElement('img');
   wordmark.alt = TITLE_FALLBACK_WORDMARK;
   wordmark.src = withBase(TITLE_LOGO_URL, base);
   wordmark.style.cssText =
-    'width:min(62%,760px);height:auto;image-rendering:pixelated;display:block;';
+    'max-width:100%;max-height:100%;width:auto;height:auto;object-fit:contain;' +
+    'image-rendering:pixelated;display:block;';
   wordmark.dataset['titleLogo'] = 'image';
   // A logotype nobody has supplied yet falls back to the game's own face rather
   // than to a broken-image glyph. Replaced rather than hidden, because a title
@@ -144,6 +179,7 @@ export function createTitleOverlay(
   wordmark.addEventListener('error', () => {
     const drawn = document.createElement('div');
     drawn.dataset['titleLogo'] = 'text';
+    drawn.style.cssText = 'max-width:100%;max-height:100%;display:flex;';
     drawn.innerHTML = pixelTextSvg(TITLE_FALLBACK_WORDMARK, {
       scale: 8,
       fill: '#f4c95d',
@@ -151,7 +187,8 @@ export function createTitleOverlay(
     });
     wordmark.replaceWith(drawn);
   });
-  root.append(wordmark);
+  logoSlot.append(wordmark);
+  root.append(logoSlot);
 
   const tagline = document.createElement('div');
   tagline.dataset['titleTagline'] = '';
@@ -162,6 +199,21 @@ export function createTitleOverlay(
     outline: '#221a12',
   });
   root.append(tagline);
+
+  /**
+   * The slot the progress line and then the menu stand in.
+   *
+   * Reserved for the logotype's reason one block up: the menu is taller than
+   * the progress line it replaces, so a column centred on its own content is
+   * re-laid-out at the moment the world becomes ready -- which moves the
+   * logotype somebody is looking at. Fixed here, the swap changes what is in
+   * the box and nothing about where the box is.
+   */
+  const actionSlot = document.createElement('div');
+  actionSlot.dataset['titleActions'] = '';
+  actionSlot.style.cssText =
+    'height:120px;display:flex;align-items:center;justify-content:center;';
+  root.append(actionSlot);
 
   // What stands where the menu will be until the world has arrived.
   const progress = document.createElement('div');
@@ -185,23 +237,49 @@ export function createTitleOverlay(
   fill.style.cssText = 'width:0%;height:100%;background:#f4c95d;transition:width 180ms linear;';
   track.append(fill);
   progress.append(progressWord, track);
-  root.append(progress);
+  actionSlot.append(progress);
 
   const menu = document.createElement('div');
   menu.dataset['titleMenu'] = '';
   menu.style.cssText = 'display:none;flex-direction:column;align-items:center;gap:12px;';
-  root.append(menu);
+  actionSlot.append(menu);
 
   let dismissed = false;
-  const dismiss = (): void => {
+  let fadeTimer = 0;
+
+  /**
+   * Take the screen down.
+   *
+   * `fade` is what Start does and what a teardown does not: leaving the title
+   * screen is a moment the player made and is worth a beat, where a tab switch
+   * is somebody already looking at something else.
+   *
+   * Either way the element is **removed** at the end rather than left at zero
+   * opacity -- `loading-overlay.ts`'s rule, and the reason it gives: an element
+   * with `inset:0` still eats every pointer event that lands on it, and a title
+   * screen that silently swallows the first click of the game is worse than one
+   * that never went away. Here it would swallow only the presses its own menu
+   * re-armed, which is worse still: a hole in the world where START used to be.
+   *
+   * The keyboard goes on the first frame of the fade rather than at the end of
+   * it, because the menu is on its way out from the moment it is asked to be:
+   * an Enter during the fade would press an entry the player can barely see.
+   */
+  const dismiss = (fade = true): void => {
     if (dismissed) return;
     dismissed = true;
-    // Removed rather than left transparent, `loading-overlay.ts`'s rule: an
-    // element with `inset:0` still eats every pointer event that lands on it,
-    // and a title screen that silently swallows the first click of the game is
-    // worse than one that never went away.
-    root.remove();
     window.removeEventListener('keydown', onKeyDown, true);
+    if (!fade) {
+      root.remove();
+      return;
+    }
+    root.style.transition = `opacity ${TITLE_FADE_MS}ms ease-out`;
+    root.style.opacity = '0';
+    // Nothing under a fading title screen should be reachable *through* it
+    // either: the menu's buttons re-armed the pointer, and a half-transparent
+    // START is still a button until it is gone.
+    root.style.pointerEvents = 'none';
+    fadeTimer = window.setTimeout(() => root.remove(), TITLE_FADE_MS);
   };
 
   const entries: readonly Entry[] = [
@@ -321,9 +399,11 @@ export function createTitleOverlay(
       progress.remove();
       menu.style.display = 'flex';
     },
-    dismiss,
+    dismiss: () => dismiss(),
     dispose(): void {
-      dismiss();
+      window.clearTimeout(fadeTimer);
+      dismiss(false);
+      root.remove();
     },
   };
 }

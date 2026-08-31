@@ -1,5 +1,5 @@
 /**
- * Whether the page that ships is the game rather than the workbench (spec 253).
+ * Whether the page that ships is the game rather than the workbench (spec 254).
  *
  * Everything the spec *decides* is pure and asserted in Node -- which build a
  * URL asks for, which tabs survive the filter, when the tuning popovers are
@@ -120,7 +120,7 @@ interface Frame {
   readonly readout: string;
   /** Whether a tab strip was drawn at all, game tab included. */
   readonly playTab: boolean;
-  /** Whether the title screen is up (spec 254). */
+  /** Whether the title screen is up (spec 255). */
   readonly title: boolean;
   /** Whether it has finished loading and is offering its menu. */
   readonly titleReady: boolean;
@@ -263,7 +263,7 @@ async function main(): Promise<void> {
     if (!shipped.frame.readoutPresent) {
       problems.push('the readout element is gone entirely, and half the harnesses use it as a clock');
     }
-    // The front door (spec 254). Checked before anything is pressed, because
+    // The front door (spec 255). Checked before anything is pressed, because
     // its whole claim is that it is what the page opens on.
     if (!shipped.frame.title) {
       problems.push('the shipped page did not open on the title screen');
@@ -283,10 +283,41 @@ async function main(): Promise<void> {
         problems.push('the DOM HUD was on screen behind the title screen');
       }
 
+      // Nothing on the title screen may move while it loads (spec 255). Two
+      // things used to: an `<img>` has no height until its bytes arrive, and
+      // the menu is taller than the progress line it replaces -- so a column
+      // centred on its own content was laid out around a logotype 0 pixels
+      // tall, then around one 208 tall, then again when the menu landed.
+      //
+      // Sampled from *inside* the page rather than by polling from here, and
+      // that is the only way this can be measured: the shift lasts one frame,
+      // and this environment paints about four a second, so a harness watching
+      // from outside would step straight over the frame it is looking for.
+      await shipped.page.evaluate(() => {
+        const seen = new Set<number>();
+        (globalThis as unknown as { __titleTops: Set<number> }).__titleTops = seen;
+        // An interval with the callback passed inline, and no named inner
+        // function anywhere: `tsx` compiles this closure with esbuild, and a
+        // function it can put a name to arrives in the page referencing a
+        // `__name` helper that was left behind on this side of the boundary.
+        setInterval(() => {
+          const slot = document.querySelector('[data-title-logo-slot]');
+          if (slot) seen.add(Math.round(slot.getBoundingClientRect().top));
+        }, 50);
+      });
+
       const ready = await waitFor(shipped.page, (frame) => frame.titleReady, 120_000);
       if (!ready) {
         problems.push('the title screen never finished loading, so Start never appeared');
       } else {
+        const tops = await shipped.page.evaluate(() => [
+          ...((globalThis as unknown as { __titleTops: Set<number> }).__titleTops ?? []),
+        ]);
+        console.log(`  logotype tops   ${tops.join(', ') || 'none'}`);
+        if (tops.length !== 1) {
+          problems.push(`the title screen moved while it loaded: logotype top was ${tops.join(', ')}`);
+        }
+
         // Options has to *work* from the menu, which is the whole reason the
         // overlay is transparent to the pointer and sits under the interface
         // canvas: the window is drawn above the title art and hears the pointer
@@ -313,12 +344,20 @@ async function main(): Promise<void> {
         // Start has to reach the world, and the overlay has to go: an `inset:0`
         // element that stays behind eats every click of the game underneath it,
         // which is the failure `loading-overlay.ts` names.
-        // Pressed off-centre for a reason worth keeping: a word set in
-        // `pixelTextSvg` is an SVG path hit-tested against its filled geometry,
-        // so a press at the exact middle of START can land in the gap between
-        // two letters. The button takes its own box now (its children are out
-        // of the hit test), and this stays as the harder case.
-        await shipped.page.click('[data-title-entry="start"]', { position: { x: 6, y: 6 } });
+        // Start fades rather than cutting (spec 255). Read out of the click's
+        // own handler, because the transition is set and the element removed
+        // inside one 420ms window that a harness sampling at four frames a
+        // second cannot be relied on to land in.
+        const fade = await shipped.page.evaluate(() => {
+          document.querySelector<HTMLElement>('[data-title-entry="start"]')?.click();
+          const el = document.querySelector<HTMLElement>('[data-title]');
+          return el === null
+            ? { present: false, duration: '' }
+            : { present: true, duration: getComputedStyle(el).transitionDuration };
+        });
+        if (!fade.present || fade.duration === '' || fade.duration.startsWith('0s')) {
+          problems.push(`Start removed the title screen instead of fading it (${fade.duration || 'gone at once'})`);
+        }
         const gone = await waitFor(shipped.page, (f) => !f.title, 15_000);
         if (!gone) problems.push('pressing Start left the title screen up');
         const back = await waitFor(shipped.page, (f) => f.uiHud === 'shown', 15_000);
@@ -326,7 +365,7 @@ async function main(): Promise<void> {
       }
     }
 
-    // Started, not forbidden (spec 253): the readout opens hidden and the
+    // Started, not forbidden (spec 254): the readout opens hidden and the
     // binding still reaches it, so a player who is asked for numbers can
     // produce them. Worth pressing rather than reasoning about, because
     // "opens hidden" and "cannot be shown" are the same first frame.

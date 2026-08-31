@@ -1,5 +1,5 @@
 /**
- * The controls card (spec 254).
+ * The controls card (spec 255).
  *
  * The two claims that would be broken without a test and that nothing else
  * can see: that a row's content comes from the *live* `InputMap` rather than

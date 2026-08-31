@@ -1,6 +1,6 @@
 /**
  * The controls card: what the featured buttons do, in one dismissable panel
- * (spec 254).
+ * (spec 255).
  *
  * Furniture in the chat's register -- translucent, docked, never dragged,
  * nothing in the layout store -- but it swallows the pointer rather than
@@ -19,7 +19,7 @@
  *
  * **A chord becomes a picture or a keycap, and the split is a table.** Three
  * pointer controls have art (`control:mouseLeft/mouseRight/mouseWheel`,
- * spec 254's own addition to the atlas); everything else -- including a
+ * spec 255's own addition to the atlas); everything else -- including a
  * pointer code with no picture, like the middle button -- is a keycap
  * carrying `chordLabel`'s own text, the same abbreviation the keybinding
  * window already shows. The mapping from code to sprite is a small table
@@ -106,7 +106,7 @@ const FEATURED_ROWS: readonly FeaturedRow[] = [
 ];
 
 /**
- * Which pointer codes have art, and which sprite (spec 254).
+ * Which pointer codes have art, and which sprite (spec 255).
  *
  * Four codes rather than every entry `POINTER_CODES` carries: this game has
  * three pointer pictures, one per button and one shared by both wheel
@@ -165,7 +165,7 @@ const KEYCAP_H_PAD = 3;
 const GLYPH_GAP = 2;
 
 /**
- * One control, drawn as a keycap or as the mouse picture (spec 254).
+ * One control, drawn as a keycap or as the mouse picture (spec 255).
  *
  * A single class rather than two, since the two kinds share everything that
  * is not the paint: both are a fixed-height box in a row of them, and
@@ -199,7 +199,7 @@ class GlyphChip extends Widget {
     if (glyph.kind === 'pointer') {
       const src = context.atlas.sprite(`control:${glyph.sprite}`);
       // White: the identity tint. `CONTROL_ICONS` bakes its own palette
-      // colours (spec 254's `atlas-source.ts` comment states the rule this
+      // colours (spec 255's `atlas-source.ts` comment states the rule this
       // follows), so nothing here recolours it.
       out.sprite(
         src,

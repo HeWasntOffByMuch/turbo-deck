@@ -1,4 +1,4 @@
-# Title art (spec 254)
+# Title art (spec 255)
 
 Two drop-in files. Neither is required — the title screen falls back to a flat
 background and the wordmark in the game's own 5x7 face — but both are what it is

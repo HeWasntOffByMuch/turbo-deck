@@ -19,7 +19,7 @@
 import type { StorageLike } from '../core/layout-store.js';
 
 /**
- * What an unwritten profile means for the frame-time meter (spec 253).
+ * What an unwritten profile means for the frame-time meter (spec 254).
  *
  * `false`, so nothing opens with a frame-time graph and a draw-call counter
  * over the world. It was `true`, which made spec 165's developer instrumentation
@@ -63,7 +63,7 @@ export const SCALE_CHOICES: readonly ScaleChoice[] = ['auto', 1, 2, 3, 4];
  * `'supported'`, which is what every profile written before the setting existed
  * meant by saying nothing.
  *
- * `controlsSeen` (spec 254) does not move this number at all, and that is the
+ * `controlsSeen` (spec 255) does not move this number at all, and that is the
  * pattern the two additions above already establish generalised: a field whose
  * absence has an honest reading -- here, "this profile predates the card, so
  * nobody has dismissed it" -- costs no version bump, because a version exists to
@@ -91,7 +91,7 @@ export interface StoredDisplay {
   /** See {@link MaxZoomChoice}. */
   readonly maxZoom: MaxZoomChoice;
   /**
-   * Whether the controls card has been dismissed once already (spec 254).
+   * Whether the controls card has been dismissed once already (spec 255).
    *
    * **Off by default**, which here means "never seen": an unwritten profile is a
    * fresh session, and the card is the one place a new player learns the five

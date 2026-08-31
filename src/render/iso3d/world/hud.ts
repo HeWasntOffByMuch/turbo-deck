@@ -537,7 +537,7 @@ export function createHud(project: Projector): HudHandle {
     'position:absolute;left:12px;top:52px;font:12px ui-monospace,Menlo,monospace;color:#cfd6e0;' +
     'background:rgba(10,14,20,.72);padding:8px 10px;border-radius:6px;line-height:1.6;white-space:pre;';
   /**
-   * Whether the player has asked for the readout (specs 183, 253). Nothing about
+   * Whether the player has asked for the readout (specs 183, 254). Nothing about
    * it is persisted -- the *binding* outlives a session, where the switch does
    * not -- so what it opens at is the only question, and the build answers it:
    * the bench opens showing it, which is what every session before the toggle

@@ -1,8 +1,8 @@
-# 254 — A front door, and a first lesson
+# 255 — A front door, and a first lesson
 
 ## Problem
 
-Spec 253 made the shipped page the game rather than the workbench, and what it
+Spec 254 made the shipped page the game rather than the workbench, and what it
 left is a game that begins by dropping you into a field. There is no title
 screen — no name, no menu, nothing that says what this is before it starts —
 and there is nothing anywhere that says what the controls are. Every binding
@@ -105,6 +105,14 @@ a player who has not seen the card rather than a document to throw away.
 - `probe-production-client.ts` gains the wiring half: the shipped page opens on
   the title screen, `?client=workbench` does not, and pressing Start reaches the
   world.
+- **Nothing on the title screen moves while it loads.** The logotype's box is
+  reserved before the PNG has a height, and the menu stands in the same box the
+  progress line did — so the logotype's top is one number from the first frame
+  to the last. Sampled from inside the page, because the shift lasted one frame
+  and a harness watching from outside steps over it.
+- Start **fades** rather than cutting, and the element is still removed at the
+  end of the fade: a half-transparent `inset:0` overlay is still a hole in the
+  world where START used to be.
 
 ## Out of scope
 

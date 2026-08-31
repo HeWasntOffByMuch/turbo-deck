@@ -92,7 +92,7 @@ async function propState(page: Page): Promise<PropState | null> {
 }
 
 async function openEditor(page: Page): Promise<void> {
-  // The built page is the game client since spec 253 and builds no tab strip at
+  // The built page is the game client since spec 254 and builds no tab strip at
   // all; this harness drives the Map editor tab, so it asks the workbench back.
   await page.goto(`http://localhost:${String(PORT)}/?client=workbench`, { waitUntil: 'load' });
   await page.click('button:has-text("Map editor")');

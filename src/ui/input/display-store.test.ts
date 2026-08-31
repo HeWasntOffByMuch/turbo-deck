@@ -108,10 +108,10 @@ describe('what the store refuses', () => {
   });
 });
 
-describe('the frame-rate preference (specs 165, 253)', () => {
+describe('the frame-rate preference (specs 165, 254)', () => {
   it('is off unless somebody turned it on', () => {
     // Spec 165 defaulted this on, because it shipped behind a checkbox two
-    // pages in and the first thing anybody asked was where it was. Spec 253
+    // pages in and the first thing anybody asked was where it was. Spec 254
     // turns it back off: "anybody" there was a developer, and on the page a
     // player opens it is a frame-time graph and a draw-call counter over the
     // world before the first frame is drawn.
@@ -238,7 +238,7 @@ describe('the widest-zoom preference (spec 202)', () => {
   });
 });
 
-describe('whether the controls card has been dismissed (spec 254)', () => {
+describe('whether the controls card has been dismissed (spec 255)', () => {
   it('is not seen when nothing was ever written', () => {
     expect(loadControlsSeen(storage())).toBe(false);
   });
@@ -267,7 +267,7 @@ describe('whether the controls card has been dismissed (spec 254)', () => {
   });
 
   it('reads a document written before the card existed as not yet seen', () => {
-    // What every profile written before spec 254 looks like. It has a scale in
+    // What every profile written before spec 255 looks like. It has a scale in
     // it that the player chose, and reading the absent field as "dismissed"
     // would skip the card for a player who has never once been shown it.
     const store = storage();

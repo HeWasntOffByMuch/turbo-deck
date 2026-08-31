@@ -279,7 +279,7 @@ describe('the one thing that does blend', () => {
 
   /**
    * ...and the controls card's plate is the same exception, reusing the same
-   * pair rather than a second chosen alpha (spec 254). Its border is opaque
+   * pair rather than a second chosen alpha (spec 255). Its border is opaque
    * -- `drawNineSlice` tinted with `edgeLight`, every channel of which is 255
    * -- so it must not turn up here at all; if it does, the border stopped
    * being opaque and the two-backend guarantee is gone with it.

@@ -127,7 +127,7 @@ export interface ControlsGoldenCase {
 }
 
 /**
- * The controls card (spec 254), in the two states worth a picture.
+ * The controls card (spec 255), in the two states worth a picture.
  *
  * Two rather than the usual handful: everything else worth knowing about it
  * -- an unbound row dropping out, the pool compacting -- is a claim about

@@ -160,7 +160,7 @@ export function bakeAtlas(theme: Theme, width = 256): Atlas {
     placements.push(gridPlacement(`ability:${name}`, rows, ABILITY_ICON_SIZE, ABILITY_ICON_SIZE, resolve));
   }
   // A pointer button is a picture of a device rather than an icon in a row of
-  // icons (spec 254), so it gets the size it needs and a namespace of its own,
+  // icons (spec 255), so it gets the size it needs and a namespace of its own,
   // for the reason `item:` has one.
   for (const [name, rows] of Object.entries(CONTROL_ICONS)) {
     placements.push(gridPlacement(`control:${name}`, rows, CONTROL_ICON_SIZE, CONTROL_ICON_SIZE, resolve));

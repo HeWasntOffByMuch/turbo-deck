@@ -117,7 +117,7 @@ async function main(): Promise<void> {
     });
     page.on('pageerror', (error) => consoleErrors.push(`uncaught: ${error.message}`));
 
-    // The built page is the game client since spec 253 and builds no tab strip at
+    // The built page is the game client since spec 254 and builds no tab strip at
     // all; this harness drives five of them, so it asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?client=workbench`);
     await page.waitForTimeout(1500);

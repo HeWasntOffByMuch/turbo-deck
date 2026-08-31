@@ -36,7 +36,7 @@ jobs:
       # `?server=local` turns it off again on a build that has one.
       #
       # What this builds is the **game client** and not the workbench
-      # (spec 253): a `vite build` sets `import.meta.env.PROD`, and
+      # (spec 254): a `vite build` sets `import.meta.env.PROD`, and
       # `src/render/iso3d/client-build.ts` reads it to decide that the six
       # benches, the eight tuning popovers and the developer readout are not
       # offered. There is deliberately nothing to set here for it -- keying it

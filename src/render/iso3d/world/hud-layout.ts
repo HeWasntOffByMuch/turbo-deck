@@ -539,7 +539,7 @@ export function readoutShown(layout: HudLayout, enabled: boolean): boolean {
 }
 
 /**
- * Whether the tuning popovers in the top-right corner are built (specs 140, 253).
+ * Whether the tuning popovers in the top-right corner are built (specs 140, 254).
  *
  * Two decisions answered together, exactly as {@link readoutShown} answers its
  * two: what the layout allows, and whether this page carries the benches at all.

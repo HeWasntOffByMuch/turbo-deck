@@ -302,7 +302,7 @@ async function markerCountUntil(page: Page, want: number, timeoutMs = 8000): Pro
 }
 
 async function openEditor(page: Page, query: string, port = PORT): Promise<void> {
-  // The built page is the game client since spec 253 and builds no tab strip at
+  // The built page is the game client since spec 254 and builds no tab strip at
   // all; this harness drives the Map editor tab, so it asks the workbench back --
   // on both the dev and the dist pass, since the dev server is the workbench
   // already and the param is harmless there.

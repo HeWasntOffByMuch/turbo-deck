@@ -192,7 +192,7 @@ async function main(): Promise<void> {
       if (message.type() === 'error') problems.push(message.text());
     });
 
-    // The built page is the game client since spec 253 and builds no tab strip at
+    // The built page is the game client since spec 254 and builds no tab strip at
     // all; this harness drives both the Movement sandbox and Rig debug tabs, so it
     // asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?client=workbench`, { waitUntil: 'load' });

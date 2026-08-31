@@ -1256,7 +1256,7 @@ export interface ControlsRenderOptions {
 }
 
 /**
- * The controls card, rasterised (spec 254).
+ * The controls card, rasterised (spec 255).
  *
  * Its own scene rather than a corner of the six-window one, `renderKeybindings`'s
  * reason: that scene exists to measure a frame budget, and a seventh thing in it

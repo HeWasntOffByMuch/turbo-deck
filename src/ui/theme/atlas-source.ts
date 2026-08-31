@@ -101,7 +101,7 @@ export const PATCHES: Readonly<Record<string, PatchSource>> = {
     border: 2,
   },
   /**
-   * A keycap (spec 254), for the controls card.
+   * A keycap (spec 255), for the controls card.
    *
    * A **patch** rather than one sprite per key, and that is the decision the
    * whole card rests on: a sprite per key is twenty-six letters plus the digits
@@ -429,7 +429,7 @@ export const ITEM_ICONS: Readonly<Record<string, readonly string[]>> = {
  * silhouette rather than detail: a wedge, a ring, a crack.
  */
 /**
- * The mouse, for the controls card (spec 254).
+ * The mouse, for the controls card (spec 255).
  *
  * Its own namespace and its own size, the reason `item:` has one: a pointer
  * button is not an icon a widget puts in a row of icons, it is a **picture of a

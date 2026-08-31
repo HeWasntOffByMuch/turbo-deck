@@ -767,7 +767,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const pendingInserts = new Map<string, HeldChunk>();
   const gate = new LoadGate();
-  // One of these, never both (spec 254). The shipped client greets somebody
+  // One of these, never both (spec 255). The shipped client greets somebody
   // with the title screen and shows the load *on* it; a bench has no title
   // screen, so it keeps the bar it has always had. Built here because this is
   // where it has to exist -- before the first `MapInfo` -- and decided by the
@@ -1566,7 +1566,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
   // gets the defaults and the options window (spec 135) instead.
   //
-  // Nor in the shipped client (spec 253), for a second reason: they are
+  // Nor in the shipped client (spec 254), for a second reason: they are
   // workbench controls, and the options window is what a player is offered
   // instead. `?client=workbench` on a built page brings them back, which is
   // what every harness that clicks one of these buttons passes.
@@ -1575,7 +1575,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * How much blood the effects panel is currently asking for (spec 182).
    *
    * Held out here because the panel is not built on a handheld -- nor in the
-   * shipped client since spec 253 -- and `onCombatResult` is registered either
+   * shipped client since spec 254 -- and `onCombatResult` is registered either
    * way, so both keep `VFX_DEFAULTS`, which is the same answer spec 140 gives
    * for every other setting in this corner. It is the *blow* this feeds, not the decal field:
    * that half was already wired and was never the half anybody could see.
@@ -2244,7 +2244,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   });
 
   /**
-   * The front door (spec 254).
+   * The front door (spec 255).
    *
    * The shipped client only: a bench is a thing somebody opened to work on the
    * game, and a menu in front of it every reload is a click between a developer
@@ -2265,7 +2265,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * do about a body whose client has stopped asking for anything).
    */
   /**
-   * Whether the front door is still up (spec 254).
+   * Whether the front door is still up (spec 255).
    *
    * Read by every input handler below. The overlay itself is transparent to the
    * pointer -- it has to be, or the options window it opens could not be
@@ -2278,7 +2278,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     ? null
     : createTitleOverlay(root, {
         base: import.meta.env?.BASE_URL ?? '/',
-        // The first-run lesson (spec 254). Shown when play actually begins
+        // The first-run lesson (spec 255). Shown when play actually begins
         // rather than at the mount, because a card explaining the controls
         // behind a title screen is a card nobody reads -- and only to somebody
         // who has not put it away before.
@@ -2299,7 +2299,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // through `ui` from above, and pushed once here so a session that opened
   // holding an account's token says so before anybody presses anything.
   // Both halves of the interface are put away for as long as the front door is
-  // (spec 254): the DOM one -- pool bars, the experience strip, the weapon
+  // (spec 255): the DOM one -- pool bars, the experience strip, the weapon
   // switch, the window buttons -- and the framework's `hud` layer, which is
   // where the skill bar lives since spec 196. The `windows` layer above it is
   // deliberately left alone, so Options still opens over the title art.
@@ -2708,7 +2708,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       return;
     }
 
-    // Nothing the game does is reachable from the front door (spec 254). After
+    // Nothing the game does is reachable from the front door (spec 255). After
     // the interface has been offered the key, so the options window's own
     // keyboard still works, and before anything is recorded as held -- a `W`
     // banked here would walk the body the moment Start was pressed.
@@ -2936,7 +2936,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   const onMouseDown = (event: MouseEvent): void => {
     if (offerPress(pointIn(event), event.button, mouseModifiers(event))) return;
     // Offered to the interface first and then dropped, for as long as the front
-    // door is up (spec 254): the title overlay is pointer-transparent so the
+    // door is up (spec 255): the title overlay is pointer-transparent so the
     // options window it opens can be used, which means a press on the painting
     // arrives here as an ordinary press on the world.
     if (titleUp) return;
@@ -4127,7 +4127,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Last, so what it reports is a whole frame's work rather than the part of
     // one that happens before the world is drawn (spec 165).
     //
-    // `stats()` is computed whether or not the meter is drawn (spec 253), which
+    // `stats()` is computed whether or not the meter is drawn (spec 254), which
     // reverses spec 165's "only when somebody is looking": the probes that read
     // `data-fps-*` are somebody looking, and they cannot tick a checkbox. The
     // sort over the window is not free, but it ran on every frame of every
@@ -4258,7 +4258,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     },
     stop(): void {
       cancelAnimationFrame(raf);
-      // The front door goes with the tab (spec 254). Its keydown listener is on
+      // The front door goes with the tab (spec 255). Its keydown listener is on
       // the window with `capture`, so a title screen left behind by a tab switch
       // would go on swallowing the arrow keys of whatever was switched to.
       title?.dispose();

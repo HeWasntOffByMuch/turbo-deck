@@ -55,7 +55,7 @@ export interface FpsOverlay {
    * Publish, and draw when `shown`. Nothing at all when `stats` is null, which
    * means no frame has been measured yet.
    *
-   * `shown` is a *drawing* decision and never a publishing one (spec 253): the
+   * `shown` is a *drawing* decision and never a publishing one (spec 254): the
    * `data-fps-*` attributes go out either way, so the harnesses that read them
    * do not depend on a preference they cannot set.
    *

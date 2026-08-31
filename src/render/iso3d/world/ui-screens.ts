@@ -716,8 +716,8 @@ export class UiScreens {
     this.chatDock.place(this.chat, 'bottomLeft');
     this.layers.place('hud', this.chatDock);
 
-    // The first-run controls card (spec 254). Top right, which is the corner
-    // the shipped client leaves empty: spec 253 took the eight tuning popovers
+    // The first-run controls card (spec 255). Top right, which is the corner
+    // the shipped client leaves empty: spec 254 took the eight tuning popovers
     // out of it, and the card only ever shows in that build. Its dock passes
     // the pointer through and the card does not -- the dialogue bubble's split,
     // and for its reason: the empty three-quarters of a dock must not eat
@@ -1509,7 +1509,7 @@ export class UiScreens {
   }
 
   /**
-   * Show or hide the game's own interface (spec 254).
+   * Show or hide the game's own interface (spec 255).
    *
    * The `hud` layer and nothing else: the action bar, the chat log, the
    * selected-unit readout, the dialogue bubble and the controls card. The
@@ -1522,7 +1522,7 @@ export class UiScreens {
   }
 
   /**
-   * The player closed the controls card (spec 254). Reported rather than acted
+   * The player closed the controls card (spec 255). Reported rather than acted
    * on here too: remembering that it has been seen is `display-store.ts`'s, and
    * this class has no storage.
    */

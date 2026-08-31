@@ -207,7 +207,7 @@ try {
   page.on('console', (m) => logs.push(m.text()));
   page.on('pageerror', (e) => logs.push(String(e)));
 
-  // The built page is the game client since spec 253 and builds none of the tuning
+  // The built page is the game client since spec 254 and builds none of the tuning
   // popovers; this harness drives "Hike look" and "Retro filter", so it asks the
   // workbench back.
   await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });

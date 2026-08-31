@@ -107,7 +107,7 @@ async function main(): Promise<void> {
     // world -- its extent, its empty corners, its part list. The editor opens
     // `maps/arena.json` by default since spec 176, and the shipped map is
     // already 210 chunks with six parts in it.
-    // The built page is the game client since spec 253 and builds no tab strip at
+    // The built page is the game client since spec 254 and builds no tab strip at
     // all; this harness drives the Map editor tab, so it asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?seed=20260806&map=generated&client=workbench`, { waitUntil: 'load' });
     await page.click('button:has-text("Map editor")');

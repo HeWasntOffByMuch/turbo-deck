@@ -80,7 +80,7 @@ function main(): void {
   ];
 
   // A phone gets the game and nothing else (spec 140), and so does the shipped
-  // client (spec 253) -- two reasons, one filter, because two would be two
+  // client (spec 254) -- two reasons, one filter, because two would be two
   // answers to which tabs are the game. `showsTabButtons` then draws no strip at
   // all, so the game build opens with nothing across the top of the world.
   const tabs = visibleTabs(all, isHandheldDevice() || !showsWorkbenches());

@@ -120,10 +120,10 @@ describe('the options window', () => {
   });
 });
 
-describe('the frame-rate switch (specs 165, 253)', () => {
+describe('the frame-rate switch (specs 165, 254)', () => {
   it('opens off, because nothing ships with a frame-time graph over the world', () => {
     // Spec 165 opened this on, so that a meter behind a checkbox two pages in
-    // could be found at all. Spec 253 turns it off: the page a player opens is
+    // could be found at all. Spec 254 turns it off: the page a player opens is
     // not the page that argument was about, and the row is still right here.
     const display = screen();
     expect(display.frameRateShown).toBe(DEFAULT_SHOW_FPS);
