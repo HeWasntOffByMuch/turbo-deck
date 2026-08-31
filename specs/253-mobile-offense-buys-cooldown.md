@@ -182,6 +182,50 @@ rule about the interface *answering* something, and nothing waits on a notice.
 `RESPONSE_TIMINGS` and `NOTICE_TIMINGS` are asserted to cover `MOTION` exactly,
 so a timing added later has to be classified rather than escape both checks.
 
+## The bug the feedback uncovered
+
+Drawing the mark made a second report possible — *the number on the button does
+not change* — and that one was real, older than this spec, and had been invisible
+because nothing in the game could previously make a cooldown go **down**.
+
+`visibleCooldowns()` raises the server's table by what this client has spent and
+not yet been told about, and retires a guess once the server has caught up with
+it. It tested that by comparing the two **values** (`entry.readyAtTick >=
+predicted.readyAtTick`), which is wrong by a tick whenever the client's lookahead
+and the tick the server actually committed on differ at all — and a guess one
+tick *above* the truth is never retired, so `max(server, guess)` goes on
+returning it and everything the server says about that ability afterwards is
+masked.
+
+Harmless while the server could only raise a cooldown: the button greyed out a
+tick long and nobody could see it. Not harmless once one can come down. Measured
+over a **zero-latency loopback** — the case nobody would think to check — the
+refund landed correctly on the server, the mark was drawn, and the number on the
+button sat **1.22s behind the truth** for the rest of the cooldown:
+
+```
+delay  0t: server=646 client=719   the bar is 1.22s behind
+delay  3t: server=669 client=669   0.00s
+delay  6t: server=693 client=693   0.00s
+```
+
+**The obvious repair is wrong, and the suite said so.** Retiring the guess when
+the server has stamped *anything* for that cast (`> predicted.fromTick`) is what
+the rule reads as though it means, and it fixes the masking — and it also takes
+`combat-latency.test.ts`'s bars-without-commits gap from one to **eleven** over a
+run. The value comparison is load-bearing by accident: keeping a guess that is a
+tick above the truth alive for that tick is what stops a press landing on the
+boundary of an expiring cooldown from being predicted and then refused, which is
+a bar that flashes and goes. Fixing the masking that way trades a stale number
+for eleven phantom swings.
+
+So the value rule stays exactly as it was, and a **refund retires the guess
+outright** as a narrow exception ahead of it — the one case where the server has
+said something strictly *newer* than the guess rather than merely caught up with
+it. `mobile-offense-session.test.ts` sweeps the latency, because one point of it
+is not evidence about the others: the version that shipped passed at 3, 6 and 12
+ticks and failed only at 0.
+
 ## Out of scope
 
 - **No replacement Flow mechanic.** Flow keeps the backswing reduction it has,

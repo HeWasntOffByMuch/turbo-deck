@@ -176,9 +176,13 @@ export const MOTION = {
    * pixels -- the three above move panels, whose size is their content's, and
    * this moves a label off a square whose side is set by how big a finger is. A
    * fixed rise that cleared a 46-pixel slot would leave a 20-pixel one behind
-   * before it had been read.
+   * before it had been read. A whole side of travel, so what the eye catches is
+   * the *movement*: at 0.9 the label still cleared the box, but it began flush
+   * against the slot's own top edge and read as stuck to it for the first few
+   * frames -- which is the half of "it should move up off the slot" that a
+   * clearance alone does not fix.
    */
-  refund: { durationMs: 800, easing: 'outQuad' as Easing, riseFraction: 0.9 },
+  refund: { durationMs: 800, easing: 'outQuad' as Easing, riseFraction: 1 },
 } as const;
 
 /**

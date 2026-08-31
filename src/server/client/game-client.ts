@@ -2611,12 +2611,39 @@ export class GameClient {
         // was spent.
         this.serverResource = message.resource;
         this.serverResourceTick = message.atTick;
+        // **A refund retires the guess outright** (spec 253), ahead of the
+        // ordinary rule below and by a different test, because it is the one
+        // case where the server has said something *strictly newer* than the
+        // guess rather than merely catching up with it. Without this the
+        // reduction is invisible: `visibleCooldowns` returns `max(server,
+        // guess)`, so a guess still standing hides a cooldown that went down.
+        //
+        // Which it very often is, and at **zero latency** rather than at high
+        // -- the case nobody would think to check. The rule below compares the
+        // two *values*, and the client's lookahead is a tick ahead of where the
+        // server commits over a loopback, so the guess sits one tick above the
+        // truth and never satisfies it. Measured before this line existed: the
+        // refund landed correctly on the server, the mark was drawn over the
+        // slot, and the number on the button stayed 1.22s behind for the rest
+        // of the cooldown.
+        for (const refund of refunded) this.predictedCooldowns.delete(refund.abilityId);
+
         // A guess is retired only once the server's own number has caught up
         // with it. Dropping it on any cooldown message at all was worse than
         // not guessing: the message that arrives while a request is in flight
         // is the state from *before* it, so the guess was wiped by the very
         // staleness it exists to cover, and the next press predicted a root the
         // server was always going to refuse.
+        //
+        // Comparing the values -- rather than asking whether the server has
+        // stamped anything at all for this cast -- is deliberate and is
+        // **measured**, not merely inherited. It keeps a guess that is a tick
+        // above the truth alive for that tick, and that extra tick of grey is
+        // what stops a press landing on the boundary of an expiring cooldown
+        // from being predicted and then refused: `combat-latency.test.ts` holds
+        // the bars-without-commits gap at one over a whole run, and retiring on
+        // "the server has spoken" instead took it to eleven. The refund above
+        // is the one exception, and it is a narrow one.
         for (const entry of message.entries) {
           const predicted = this.predictedCooldowns.get(entry.abilityId);
           if (predicted !== undefined && entry.readyAtTick >= predicted.readyAtTick) {

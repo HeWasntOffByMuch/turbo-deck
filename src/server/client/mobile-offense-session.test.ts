@@ -23,6 +23,8 @@ import { abilityById } from '../data/abilities.js';
 import { SKILL_SWAP } from '../data/skill-effects.js';
 import { AdminProgressMode } from '../net/protocol.js';
 import { LoopbackTransport } from '../net/transport-loop.js';
+import { PERFECT_WIRE, UnreliableChannel } from '../net/unreliable.js';
+import { Rng } from '../../shared/prng.js';
 import { equipmentAddress } from '../player/inventory.js';
 import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
@@ -56,25 +58,42 @@ interface Session {
  * behind -- `session.test.ts` records that trap for the equip, and it is the
  * same trap for a purchase.
  */
-async function session(tiers: number): Promise<Session> {
+async function session(tiers: number, delayTicks = 0): Promise<Session> {
   const transport = new LoopbackTransport();
   const server = new GameServer({ seed: 5, transport });
   server.liveConfig.set('spawnRateMultiplier', 0);
   transport.onConnection((channel) => server.accept(channel));
-  const client = new GameClient(transport.connect(), { playerId: 'alice', displayName: 'alice' });
+  // Over a *delayable* line rather than the bare loopback, because the bug this
+  // file exists to pin is a function of how far the client's lookahead is from
+  // the tick the server actually commits on -- and a harness that cannot vary
+  // that measures one arbitrary point of it. At `delayTicks: 0` this is the
+  // loopback, one explicit delivery at a time.
+  const line = new UnreliableChannel(
+    transport.connect(),
+    () => ({ ...PERFECT_WIRE, delayTicks }),
+    Rng.fromSeed(1),
+    () => undefined,
+  );
+  const client = new GameClient(line, { playerId: 'alice', displayName: 'alice' });
   const welcomed = client.connect();
   await settle();
-  await welcomed;
+  line.deliver(0);
+  await settle();
 
+  let tick = 0;
   let asking = { moveX: 0, moveY: 0, facing: 0 };
   const advance = async (): Promise<void> => {
+    tick += 1;
+    line.deliver(tick);
     await settle();
     server.tick();
     client.advanceTick();
     if (client.view().self) client.sendInput({ ...asking, buttons: 0 });
+    line.deliver(tick);
     await settle();
   };
-  for (let i = 0; i < 20; i++) await advance();
+  for (let i = 0; i < 40 + delayTicks * 4; i++) await advance();
+  await welcomed;
 
   const manager = server.playerManager;
   const levelled = await manager.setProgress('alice', AdminProgressMode.SetLevel, LEVEL);
@@ -99,7 +118,7 @@ async function session(tiers: number): Promise<Session> {
   if (index < 0) throw new Error(`${SIGIL} did not land in the bag`);
   client.moveItem({ container: 'inventory', index }, equipmentAddress('skill1'), 1);
   await settle();
-  for (let i = 0; i <= SKILL_SWAP.durationTicks; i++) await advance();
+  for (let i = 0; i <= SKILL_SWAP.durationTicks + delayTicks * 3; i++) await advance();
   if (manager.get('alice')?.record.equipment.skill1 !== SIGIL) throw new Error('sigil never equipped');
 
   return {
@@ -131,7 +150,7 @@ async function cancelAfterAttack(
   if (!arc || !me) throw new Error('no ability or no body');
 
   test.client.useAbility(SKILL, me.x + arc.range * 0.5, me.y);
-  for (let i = 0; i < 60; i++) await test.advance();
+  for (let i = 0; i < 90; i++) await test.advance();
   if ((test.server.world.entities.get(test.selfId)?.cooldowns[SKILL] ?? 0) <= 0) {
     throw new Error('the skill never went on cooldown');
   }
@@ -224,6 +243,32 @@ describe('Mobile Offense, bought and used through the wire', () => {
 
     await cancelAfterAttack(test, 'walk');
     expect(heard).toEqual([{ abilityId: SKILL, ticks: 3 * PER_TIER }]);
+  });
+
+  /**
+   * **The bar has to follow the refund, at every latency.**
+   *
+   * `visibleCooldowns` raises the server's table by what this client has spent
+   * and not been told about, and a guess is retired when the server has stamped
+   * a cooldown for the cast it was guessing at. That test used to compare the
+   * two *values*, which is wrong by a tick whenever the client's lookahead and
+   * the tick the server committed on differ at all -- and a guess one tick above
+   * the truth is never retired, so it goes on being returned and masks
+   * everything the server says afterwards.
+   *
+   * Measured over a **zero-latency** loopback, which is the case that broke and
+   * the last one anybody would have thought to check: the refund landed
+   * correctly on the server, the mark was drawn, and the number on the button
+   * sat 1.22s behind the truth for the rest of the cooldown. Latency is swept
+   * because the offset is a function of it, and one point of the sweep is not
+   * evidence about the others -- the version that shipped passed at 3, 6 and 12
+   * ticks and failed only at 0.
+   */
+  it.each([0, 1, 3, 6, 12])('shows the reduced cooldown at %i ticks of latency', async (delay) => {
+    const test = await session(3, delay);
+    const { before, after, shown } = await cancelAfterAttack(test, 'walk');
+    expect(before - after).toBe(3 * PER_TIER);
+    expect(shown).toBe(after);
   });
 
   it('tells it nothing when nothing was refunded', async () => {

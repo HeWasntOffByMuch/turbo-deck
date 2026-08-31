@@ -290,7 +290,13 @@ export class SkillSlot extends StyledWidget {
       context.now,
       context.motion,
     );
-    const top = this.rect.y - font.height - Math.round(rise);
+    // Clear of the box before it has moved at all, by the same gap the row puts
+    // *between* slots -- the interface's own unit of "just clear of something".
+    // Without it the label's first frames sit on the slot's own top border, and
+    // a number that starts touching the box it came from reads as part of the
+    // box rather than as something leaving it.
+    const clearance = context.theme.spacing.xs;
+    const top = this.rect.y - font.height - clearance - Math.round(rise);
     const width = measureText(font, refund.label);
     // **Unclipped**, which is the one place this widget draws outside its own
     // rect: the whole point of the mark is that it leaves the slot, and the row
