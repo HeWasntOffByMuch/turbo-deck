@@ -599,6 +599,82 @@ const AUTHORED: readonly AuthoredMonster[] = [
       basicAttackId: 'ranged.star',
     },
   },
+  {
+    // The one body in this table that fights by *committing to a direction*
+    // (spec 259). Everything else here closes to its own standoff and swings at
+    // whatever it is standing next to; the Warden aims, fires down a lane, and
+    // is helpless afterwards -- so the answer to it is where you are standing
+    // rather than how hard you hit.
+    //
+    // The laser is not in this row. It is `data/warden.ts`, keyed by this id,
+    // for the reason `data/npcs.ts` is keyed by a shopkeeper's: a row here says
+    // what a body *is*, and what this one does is a cycle with eleven numbers
+    // in it that a stat block has nowhere to put.
+    id: 'warden',
+    name: 'Warden',
+    // The ravager's, and reused rather than chosen: `ROUTING_RADII` builds one
+    // nav grid per *distinct* radius at boot, so a body that fits an existing
+    // one is free and a body two units off costs a whole grid. 30 is already
+    // the widest in the table, which is what a mech wants.
+    radius: 30,
+    // Two and a half ravagers, which is roughly what it costs to learn: the
+    // first Warden a player meets is several cycles of finding out what the
+    // beam does, and the reward has to be worth the funeral.
+    experience: 140,
+    // Territorial, and the alert is the *second* telegraph rather than a
+    // duplicate of the first: a body that stops and looks at you before it
+    // commits is the encounter's grammar stated once at the top, before the
+    // laser states it again with a beam behind it. Notice range short of the
+    // laser's 620 reach on purpose -- once it has engaged you, you are always
+    // inside the beam, so the fight is never about backing out of range.
+    temperament: { kind: 'territorial', noticeRange: 420, alertTicks: seconds(1.2) },
+    // The second row in the table to declare one, and for the training dummy's
+    // reason inverted: that one must not wander off, and this one is a *warden*.
+    // It also spends the whole initiator budget on the notice range --
+    // `idle.test.ts` bounds notice plus roam at 500, and 420 leaves 80.
+    idle: { kind: 'sentinel' },
+    stats: {
+      // Under two ravagers, and deliberately not more. The brief's rule is that
+      // a player who understands the cycle should kill it substantially faster
+      // than one who face-tanks it, and health is exactly the wrong lever for
+      // that -- it lengthens both fights equally. What separates them is the
+      // overheat: three seconds a cycle of free, amplified damage against a
+      // body that cannot answer, and a face-tanker spends the same three
+      // seconds standing in a beam.
+      maxHealth: 56,
+      // Slower than a ravager and much slower than a player. It has to be
+      // out-walked: the whole answer to a committed beam is repositioning, and
+      // a mech that could stay on top of you would make the walk pointless.
+      moveSpeed: 85,
+      // The number the encounter's *fairness* rests on, from the other end.
+      // This is what the lock-on tracks at, and it has to comfortably beat a
+      // player circling at 155: at any radius a body can stand at, that is
+      // under 150 deg/s, so there is no orbit that keeps you behind it. It is
+      // also 25x `firingTurnRateDeg`, which is what makes the commitment read
+      // as a commitment rather than as a slightly worse tracking beam.
+      turnRate: 200,
+      // A stomp, for the four seconds a cycle it spends being a monster. Heavy
+      // and slow, and deliberately not the thing that kills you: at 2 seconds a
+      // swing it out-trades a fresh character's 1.2-second sword by about a
+      // third, which is enough that standing in front of it is a losing
+      // proposition and not enough that the beam stops being the threat. It was
+      // measured at 5 first, where the encounter was unwinnable at level 1 by
+      // any play at all -- see the tuning note in spec 259.
+      attackDamage: 4,
+      attackRange: 100,
+      baseAttackTimeTicks: seconds(2),
+      ...NO_ATTACK_SPEED,
+      // Between the ravager's 0.18 and the stalker's 0.05. Armour plate, and
+      // low enough that the punish window is worth taking rather than being
+      // eaten by mitigation.
+      armor: 0.15,
+      spellPower: 1,
+      critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
+      basicAttackId: 'melee.slash',
+    },
+  },
   shopkeeper('npc.merchant', 'Rell'),
   // The two shops that used to be invisible coordinates near the spawn
   // (spec 247). They were reached by standing on the spot and pressing a key,

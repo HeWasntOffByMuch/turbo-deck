@@ -1574,7 +1574,15 @@ function landAbility(
         ? landOnTarget(ability, caster, cast, candidates, tick, rng)
         : landCone(ability, caster, cast, candidates, tick, rng);
     case 'channel':
-      return landCone(ability, caster, cast, candidates, tick, rng);
+      // A channel with a shape sweeps that shape (spec 259), and one without is
+      // the cone it has always been. One branch rather than a new kind, because
+      // `kind` answers *when* an ability lands -- once, or repeatedly -- and
+      // `area` answers *who* it lands on, which is a question every kind is
+      // entitled to have an opinion about. A beam is the first row that wants
+      // both: repeating, and a lane rather than a wedge.
+      return ability.area
+        ? landArea(ability, caster, cast, candidates, tick, rng)
+        : landCone(ability, caster, cast, candidates, tick, rng);
     case 'ground':
       return landBlast(ability, caster, cast.targetX, cast.targetY, candidates, tick, rng);
     case 'self':

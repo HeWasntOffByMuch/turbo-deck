@@ -217,6 +217,41 @@ identical solo.
   says the rear vent in the brief is unnecessary: there is no standing position
   a player can hold that the next lock-on does not simply turn to face.
 
+## Tuning, measured
+
+Not balance -- the brief asks for a first pass -- but the two numbers that were
+*not* free were found by fighting rather than by arithmetic, so they are written
+down with what they were measured against.
+
+Three play styles were driven through the real tick against a level-1 character
+in the starter kit (68 health, a 1-3 sword, no flask use modelled):
+
+- **pressure** -- fight it normally, and walk out of the beam when it commits.
+- **facetank** -- stand in front of it and trade.
+- **rhythm** -- disengage entirely, and only attack during the overheat.
+
+At the first cut (56 health, a 5-damage stomp) *every* style lost: pressure got
+it to 9 health and died. The stomp is now **4**, which still out-trades a fresh
+character's sword by about a third, and the result is:
+
+| | outcome | time | player left | beam pulses taken |
+|---|---|---|---|---|
+| pressure | **wins** | 38s | 9 / 68 | 16 |
+| facetank | dies | 18s | 0 | 19, and the Warden at 43% |
+| rhythm | dies | 56s | 0 | 19 |
+
+Two findings worth keeping. **The winning play is pressure, not disengagement**:
+giving up the four seconds a cycle the Warden spends being an ordinary monster
+costs more than the beam does, so "bait and punish" here means *stay on it and
+respect the lance* rather than kiting. And **the beam is the threat, as asked**:
+16 of the 19 pulses a losing player takes are most of their health bar, where
+the stomp alone would be a fight they win.
+
+Against a level-6 character with a few points spent, pressure wins in 27s with
+72% of its health -- and facetank now survives with 12. That gap is the shape
+section 9 asks for: the tool makes it easier, and understanding it still makes
+it safer.
+
 ## Out of scope
 
 - **The vent / backblast.** Built only if rear camping is optimal, and the
