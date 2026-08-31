@@ -77,7 +77,10 @@ sample(id: number): DrawnPose | null;
   is 6, which is five intervals — 250ms of history, at four numbers each.
 - **One playback clock for the whole wire**, in fractional sim ticks, because
   there is one broadcast cadence and every entity rides it. It free-runs at one
-  tick per tick off the frame's own `dt`.
+  tick per tick off the frame's own `dt`. One clock rather than one per body is
+  also what keeps the scene internally consistent: every remote thing — bodies,
+  projectiles, the drops they leave — is drawn at the same instant, so an arrow
+  and what it is flying at never disagree about when now is.
 - **Interpolation by tick, not by fraction.** `t` is
   `(clock - lo.tick) / (hi.tick - lo.tick)` over the pair that brackets the
   clock, so a six-tick gap takes twice as long to play back as a three-tick one
@@ -100,7 +103,30 @@ less is asymmetric — early arrivals have room and late ones clamp.
 
 A jump past `RESYNC_TICKS` (eight intervals) is not a late wire, it is a
 different one — a hidden tab, a reconnect, a stall — and the clock is set rather
-than steered.
+than steered, dropping the samples behind it: they describe a session that is
+over, and interpolating out of one walks the body across the map from wherever
+it used to be.
+
+Two rules in that, and both were learned by writing the version without them.
+**The head is only ever set forward.** A head past its target is the ordinary
+case rather than a fault — it is what "the server has nothing to say" looks like
+from here, and every body is correctly held at its newest sample throughout.
+Setting it *back*, which is what an `abs(error)` test does, rewinds it into
+samples it has already played: a body that stops being reported draws its last
+movement again, and again, for as long as the wire stays quiet. And **the lead
+is bounded by the same number that forgives a stall**, because an unbounded lead
+is an unbounded recovery — minutes of running 15% slow to work off a silence
+nobody watched.
+
+The clock also has to follow the wire **back down**. `newestTick` left to grow
+only is a head parked permanently in the future of a server that restarted, so
+every remote body is drawn at its newest sample unsmoothed — the 20Hz stutter
+back for good, and only for the players who reconnected. A tick more than a
+resync below the newest is a different server: the head comes down with it and
+the rings are cleared, because an id that exists in both sessions holds samples
+from ticks far in the new one's future and `observe` drops anything older than
+a track's newest — that body would refuse every sample the new server sent and
+stand still for the session.
 
 `FrameInfo.alpha` goes, along with `sinceDelta` and `lastDeltaTick` in
 `view.ts`. It had exactly one consumer.
@@ -151,8 +177,20 @@ playtesting says the recency is worth more than the smoothness.
   observation never makes a body walk backwards.
 - `retain` drops a departed entity's ring, and a reused id does not inherit a
   pose.
-- Drawn speed over a straight-line walk: sd under 20 and **no frozen frame** on
-  every row of the table above.
+- Drawn speed over a straight-line walk: sd under 20, no frame drawn at double
+  speed, and **no frozen frame** on every row of the table above except the
+  ±30ms one, whose budget is 0.2% and which measures 0.1%. Thirty milliseconds
+  is 60% of a whole broadcast interval, so past the 75ms the head sits back by
+  there is genuinely nowhere further to draw the body; the ramp this replaces
+  froze 19% of frames on that row. The budget is stated per wire rather than as
+  one threshold, because a threshold wide enough for the worst row forgives
+  every other one.
+- A head past its target is held there rather than set back, and a body nobody
+  is describing does not replay its last movement.
+- A wire that comes back counting from zero is followed down rather than waited
+  out: both a surviving id and a fresh one are played back out of the new
+  session. Checked by putting the bug back — that one test fails and the other
+  eighteen pass.
 
 ## Out of scope
 
