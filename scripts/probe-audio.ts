@@ -439,7 +439,7 @@ async function main(): Promise<void> {
     const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
     page.on('pageerror', (error) => problems.push(String(error)));
     await installPannerRecorder(page);
-    // The built page is the game client since spec 252 and builds no tab strip at
+    // The built page is the game client since spec 253 and builds no tab strip at
     // all; this harness drives the SFX tab (only on this dist pass -- `devHalf`
     // above runs against the dev server, which is the workbench already), so it
     // asks the workbench back.

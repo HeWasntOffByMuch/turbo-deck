@@ -1,10 +1,10 @@
 /**
- * Which tabs a page is offered (specs 140, 252).
+ * Which tabs a page is offered (specs 140, 253).
  *
  * `main.ts` is DOM from its first line and cannot be reached from Vitest, which
  * is exactly why this one decision was lifted out of it: a seventh workbench
  * added without a `game` flag should fail here rather than turn up on a phone --
- * or, since spec 252, in front of a player.
+ * or, since spec 253, in front of a player.
  */
 
 import type { ViewHandle } from './view-handle.js';
@@ -28,7 +28,7 @@ describe('the tabs a page is offered', () => {
   });
 
   it('offers only the game on a finger, and in the shipped client', () => {
-    // One filter over both reasons (spec 252). The argument is `gameOnly`
+    // One filter over both reasons (spec 253). The argument is `gameOnly`
     // rather than `compact` precisely so that there is no second rule here to
     // disagree with this one about which tabs are the game.
     expect(visibleTabs(TABS, true).map((tab) => tab.label)).toEqual(['Play']);
@@ -58,7 +58,7 @@ describe('the tabs a page is offered', () => {
 
   it('draws no tab buttons when there is only one tab to be on', () => {
     // Which is what takes the strip off the top of the world in the game build
-    // (spec 252): the buttons are not hidden, there is nothing left to draw.
+    // (spec 253): the buttons are not hidden, there is nothing left to draw.
     expect(showsTabButtons(visibleTabs(TABS, true))).toBe(false);
     expect(showsTabButtons(visibleTabs(TABS, false))).toBe(true);
   });

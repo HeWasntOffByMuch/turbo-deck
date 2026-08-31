@@ -1,5 +1,5 @@
 /**
- * Whether the page that ships is the game rather than the workbench (spec 252).
+ * Whether the page that ships is the game rather than the workbench (spec 253).
  *
  * Everything the spec *decides* is pure and asserted in Node -- which build a
  * URL asks for, which tabs survive the filter, when the tuning popovers are
@@ -221,7 +221,7 @@ async function main(): Promise<void> {
     if (!shipped.frame.readoutPresent) {
       problems.push('the readout element is gone entirely, and half the harnesses use it as a clock');
     }
-    // Started, not forbidden (spec 252): the readout opens hidden and the
+    // Started, not forbidden (spec 253): the readout opens hidden and the
     // binding still reaches it, so a player who is asked for numbers can
     // produce them. Worth pressing rather than reasoning about, because
     // "opens hidden" and "cannot be shown" are the same first frame.

@@ -1,5 +1,5 @@
 /**
- * Which client a page is (spec 252).
+ * Which client a page is (spec 253).
  *
  * Two rules and no state, so this is the whole of what decides whether the
  * benches, the tuning popovers and the instrumentation are on screen. The cases

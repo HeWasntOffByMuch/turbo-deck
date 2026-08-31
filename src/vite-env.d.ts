@@ -38,7 +38,7 @@ interface ImportMeta {
      */
     readonly BASE_URL?: string;
     /**
-     * Whether this is a production bundle (spec 252) -- true under
+     * Whether this is a production bundle (spec 253) -- true under
      * `vite build`, false under `vite`, and *absent* in Node, where nothing
      * ever replaced it. Which client the page is keys off this, so that the
      * thing CI builds is the thing that ships.

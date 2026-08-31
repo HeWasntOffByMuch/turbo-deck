@@ -179,7 +179,7 @@ describe('the HUD layout', () => {
   });
 
   /**
-   * And none in the shipped client either (spec 252), for a second reason: they
+   * And none in the shipped client either (spec 253), for a second reason: they
    * are workbench controls, and what a player is offered instead is the options
    * window. Two rules over one answer, exactly as `readoutShown` has two.
    */
@@ -191,7 +191,7 @@ describe('the HUD layout', () => {
   it('keeps the compact rule whatever the build says', () => {
     // The device half still wins on its own: a phone running a bench build has
     // no room for eight panels twenty rows deep, which is spec 140's finding
-    // and is not what spec 252 is about.
+    // and is not what spec 253 is about.
     expect(tuningMenusShown(compact, true)).toBe(false);
     expect(tuningMenusShown(compact, false)).toBe(false);
   });

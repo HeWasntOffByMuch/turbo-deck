@@ -52,7 +52,7 @@ try {
     ...(existsSync(CHROMIUM_PATH) ? { executablePath: CHROMIUM_PATH } : {}),
   });
   const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
-  // The built page is the game client since spec 252 and builds none of the tuning
+  // The built page is the game client since spec 253 and builds none of the tuning
   // popovers; this harness drives "Hike look" directly, so it asks the workbench back.
   await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
   await page.waitForSelector('canvas');

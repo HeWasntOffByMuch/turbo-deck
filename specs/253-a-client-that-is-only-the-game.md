@@ -1,4 +1,4 @@
-# 252 — A client that is only the game
+# 253 — A client that is only the game
 
 ## Problem
 

@@ -385,7 +385,7 @@ async function main(): Promise<void> {
       window.localStorage.removeItem(key);
     }, AUTOSAVE_KEY);
 
-    // The built page is the game client since spec 252 and builds no tab strip at
+    // The built page is the game client since spec 253 and builds no tab strip at
     // all; this harness drives the Map editor tab, so it asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
     await page.click('button:has-text("Map editor")');

@@ -257,7 +257,7 @@ async function probeDesktopSiteMode(
   try {
     const page = await context.newPage();
     page.on('pageerror', (error) => problems.push(String(error)));
-    // `client=workbench` is what keeps this probe *about* anything (spec 252).
+    // `client=workbench` is what keeps this probe *about* anything (spec 253).
     // Every check below is an absence -- no tab buttons, no popovers, a readout
     // written but not drawn -- and the shipped client hides all three on any
     // device, so against the game build they would pass with handheld detection

@@ -1557,7 +1557,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // `orbitBy` writes them -- it simply has nowhere to be pressed, so a phone
   // gets the defaults and the options window (spec 135) instead.
   //
-  // Nor in the shipped client (spec 252), for a second reason: they are
+  // Nor in the shipped client (spec 253), for a second reason: they are
   // workbench controls, and the options window is what a player is offered
   // instead. `?client=workbench` on a built page brings them back, which is
   // what every harness that clicks one of these buttons passes.
@@ -1566,7 +1566,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * How much blood the effects panel is currently asking for (spec 182).
    *
    * Held out here because the panel is not built on a handheld -- nor in the
-   * shipped client since spec 252 -- and `onCombatResult` is registered either
+   * shipped client since spec 253 -- and `onCombatResult` is registered either
    * way, so both keep `VFX_DEFAULTS`, which is the same answer spec 140 gives
    * for every other setting in this corner. It is the *blow* this feeds, not the decal field:
    * that half was already wired and was never the half anybody could see.
@@ -4049,7 +4049,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Last, so what it reports is a whole frame's work rather than the part of
     // one that happens before the world is drawn (spec 165).
     //
-    // `stats()` is computed whether or not the meter is drawn (spec 252), which
+    // `stats()` is computed whether or not the meter is drawn (spec 253), which
     // reverses spec 165's "only when somebody is looking": the probes that read
     // `data-fps-*` are somebody looking, and they cannot tick a checkbox. The
     // sort over the window is not free, but it ran on every frame of every

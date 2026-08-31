@@ -104,10 +104,10 @@ describe('what the store refuses', () => {
   });
 });
 
-describe('the frame-rate preference (specs 165, 252)', () => {
+describe('the frame-rate preference (specs 165, 253)', () => {
   it('is off unless somebody turned it on', () => {
     // Spec 165 defaulted this on, because it shipped behind a checkbox two
-    // pages in and the first thing anybody asked was where it was. Spec 252
+    // pages in and the first thing anybody asked was where it was. Spec 253
     // turns it back off: "anybody" there was a developer, and on the page a
     // player opens it is a frame-time graph and a draw-call counter over the
     // world before the first frame is drawn.

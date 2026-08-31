@@ -1,5 +1,5 @@
 /**
- * Which tabs a page is offered (specs 140, 252).
+ * Which tabs a page is offered (specs 140, 253).
  *
  * The tab bar has grown to six entries and five of them are workbenches: the map
  * editor is a three-button drag model (spec 049), and the two sandboxes and the
@@ -12,7 +12,7 @@
  * a property of the tab: which tabs are the game is a fact about the tabs, not
  * about their order in the bar.
  *
- * Since spec 252 the shipped client asks the same thing for a second reason --
+ * Since spec 253 the shipped client asks the same thing for a second reason --
  * a bench is not something a player has any use for -- and the flag was already
  * the whole answer, which is what makes that spec a filter argument rather than
  * a new rule here.
@@ -36,7 +36,7 @@ export interface ShellTab {
  *
  * Two reasons to be offered the game alone, and deliberately one filter over
  * both: a finger cannot drive a bench (spec 140), and the shipped client does
- * not carry one (spec 252). `gameOnly` rather than `compact` because the rule
+ * not carry one (spec 253). `gameOnly` rather than `compact` because the rule
  * stopped being about the device -- two filters could disagree about which tabs
  * are the game, and there is nothing here that has to know *why* it was asked.
  *

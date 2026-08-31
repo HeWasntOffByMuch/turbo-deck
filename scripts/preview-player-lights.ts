@@ -429,7 +429,7 @@ async function main(): Promise<void> {
 
     // Pinned, like every other harness here: without a seed the view falls back
     // to the clock and the body stands somewhere different every run.
-    // The built page is the game client since spec 252 and builds none of the tuning
+    // The built page is the game client since spec 253 and builds none of the tuning
     // popovers; this harness drives three of them, so it asks the workbench back.
     await page.goto(`http://localhost:${PORT}/?seed=20260806&client=workbench`, { waitUntil: 'load' });
     await page.waitForSelector('canvas');

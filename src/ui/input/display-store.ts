@@ -19,7 +19,7 @@
 import type { StorageLike } from '../core/layout-store.js';
 
 /**
- * What an unwritten profile means for the frame-time meter (spec 252).
+ * What an unwritten profile means for the frame-time meter (spec 253).
  *
  * `false`, so nothing opens with a frame-time graph and a draw-call counter
  * over the world. It was `true`, which made spec 165's developer instrumentation
