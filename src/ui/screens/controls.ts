@@ -32,10 +32,24 @@
  * corner, so a width that followed its content would move its own edge
  * every time a rebind changed a label's length.
  *
- * Pure. No DOM, no clock: the view arrives from the caller, and dismissal is
- * reported through {@link ControlsScreen.onDismiss} rather than acted on --
- * this screen does not know what closing it means, the same rule every
- * other screen here follows.
+ * **The close button is square** (spec 256), sized off the same body-font
+ * height the heading's own text sits in, rather than off `Button`'s
+ * ordinary label-plus-icon formula -- which reserved trailing space for a
+ * label this button does not have, and drew a wide box with the X sitting
+ * off to one side of it instead of in the middle.
+ *
+ * **Closing is two separate decisions** (spec 256). The X discards the card
+ * for the session and nothing more; it used to also mean "never again",
+ * which cost a player the card forever for one reflex close. The
+ * `DON'T SHOW` checkbox is the other half, and only it speaks for "seen" --
+ * both are reported through {@link ControlsScreen.onDismiss} and
+ * {@link ControlsScreen.onRemember} and neither is acted on here, this
+ * screen having no storage either way.
+ *
+ * Pure. No DOM, no clock: the view arrives from the caller, and both of
+ * those decisions are reported rather than acted on -- this screen does not
+ * know what closing it means, the same rule every other screen here
+ * follows.
  */
 
 import { WHITE } from '../core/color.js';
@@ -49,6 +63,7 @@ import type { InputMap } from '../input/input-map.js';
 import { fontById, measureText } from '../text/font.js';
 import type { Theme } from '../theme/theme.js';
 import { Button, Separator } from '../widgets/button.js';
+import { Checkbox } from '../widgets/checkbox.js';
 import { Label } from '../widgets/label.js';
 import { PLATE_ALPHA, PLATE_TOKEN } from './chat.js';
 
@@ -280,8 +295,53 @@ class HintRow extends Row {
  * beside its pointer picture, or `Skills` beside four keycaps -- with the
  * card's own padding either side. See the file header for why it is fixed
  * rather than measured.
+ *
+ * 148 rather than 140 since spec 256, and the eight pixels are the footer's.
+ * `DON'T SHOW AGAIN` with its box and gap is 125px against a 124px interior --
+ * one pixel over, and the card moved rather than the words, because a card is
+ * a thing this file sizes and not a constraint it is handed. Nothing above the
+ * footer moved: the longest row is `Move / attack` at 105px.
  */
-export const CARD_WIDTH = 140;
+export const CARD_WIDTH = 148;
+
+/**
+ * `Button`, square (spec 256).
+ *
+ * `Button.measureSelf` is `max(minWidth, measureText(font, label) +
+ * padding*2 + ICON_ADVANCE)` wide -- right when an icon sits *before* a
+ * label, wrong for a close button with no label at all: `ICON_ADVANCE`
+ * reserved trailing space for text that was never going to be drawn, which
+ * widened the button and left the X sitting near its left edge rather than
+ * centred in it. The fix is not a new width, it is *no* width of its own --
+ * `Button.measureSelf`'s own height, `font.height` plus the button style's
+ * padding either side, is already exactly what a label-less icon button
+ * should measure on both axes, the same square spec 251's window title-bar
+ * X derives off `closeSide()`. So this reuses that height for the width
+ * too, rather than typing a number that could drift from either.
+ *
+ * A subclass of `Button` rather than of `WindowCloseButton`: see the
+ * comment on {@link ControlsScreen.closeButton} for why this card wants the
+ * former's `onPress` and not the latter's `owner.requestClose()`.
+ */
+class SquareIconButton extends Button {
+  protected override measureSelf(constraint: Constraint, context: LayoutContext): Size {
+    const size = super.measureSelf(constraint, context);
+    return { width: size.height, height: size.height };
+  }
+}
+
+/**
+ * "Don't show again"'s label (spec 256).
+ *
+ * 16 characters at this face's 7px advance is `16 * 7 - 1` = 111px
+ * (`measureText` drops the trailing gap), plus the checkbox's own 10px box and
+ * 4px gap: 125px.
+ *
+ * That was one pixel over a 140px card, and {@link CARD_WIDTH} is what moved.
+ * `DON'T SHOW` fits and does not say *what* it will stop showing, and losing
+ * the one word carrying the meaning to save a pixel is the wrong trade.
+ */
+const REMEMBER_LABEL = "DON'T SHOW AGAIN";
 
 export interface ControlsOptions {
   readonly theme: Theme;
@@ -290,11 +350,25 @@ export interface ControlsOptions {
 export class ControlsScreen extends Column {
   /**
    * The player asked to close this. Reported, not acted on: what dismissing
-   * this card means -- discarding it for the session, remembering "seen" to
-   * `display-store.ts` -- lives with whoever mounts it, the same split
-   * `ChatScreen.onSubmit` and `UiWindow.onClose` already keep.
+   * this card means -- discarding it for the session -- lives with whoever
+   * mounts it, the same split `ChatScreen.onSubmit` and `UiWindow.onClose`
+   * already keep.
+   *
+   * It says nothing about "seen" (spec 256). It used to: closing the card
+   * once meant never seeing it again, with nothing between "every session"
+   * and "never again" for a player who dismissed it by reflex. That choice
+   * is {@link onRemember}'s now, reported separately and never implied by
+   * this one.
    */
   onDismiss: (() => void) | null = null;
+
+  /**
+   * The player toggled "don't show again" (spec 256). Reported, not acted
+   * on, for the reason {@link onDismiss} is: this screen has no storage, so
+   * whether -- and where -- the choice is persisted is `display-store.ts`'s
+   * question, answered by whoever mounts the card.
+   */
+  onRemember: ((remember: boolean) => void) | null = null;
 
   /**
    * Not reused from `UiWindow`'s title bar (spec 251): that button's
@@ -302,10 +376,26 @@ export class ControlsScreen extends Column {
    * `owner.hasFocusWithin()` directly, so it is a window's close button and
    * not a close button that happens to live in a window. This card is not a
    * `UiWindow` -- no drag, no resize, no place in the layout store -- so it
-   * gets the framework's ordinary `Button` with the same `icon:close`
-   * sprite instead, rather than a second bespoke close-button class.
+   * gets the framework's ordinary `Button` press handling with the same
+   * `icon:close` sprite, rather than a second bespoke close-button class
+   * built around an `owner`.
+   *
+   * It is a {@link SquareIconButton} rather than a bare `Button`, though
+   * (spec 256) -- see that class's comment for why an icon with no label
+   * needs a shape `Button.measureSelf` does not produce on its own.
    */
-  readonly closeButton = new Button('', 'controls:close');
+  readonly closeButton = new SquareIconButton('', 'controls:close');
+
+  /**
+   * "Don't show again" (spec 256), its own row at the bottom of the card
+   * rather than beside `CONTROLS` on the heading -- that row was measured
+   * and does not have room: it already holds the title and the close button
+   * with nothing to spare, and even the shortened {@link REMEMBER_LABEL}
+   * would have to share it with both. A row of its own is `Column`'s
+   * default `layoutAlign: 'stretch'` for free, so it draws the full width
+   * of the card with no `Row` wrapper needed to ask for it.
+   */
+  readonly rememberCheckbox = new Checkbox(REMEMBER_LABEL, 'controls:remember');
 
   private readonly list = new Column('controls:list');
   private readonly rowWidgets: HintRow[] = [];
@@ -334,7 +424,15 @@ export class ControlsScreen extends Column {
       this.list.add(row);
     }
 
-    this.addAll([heading, new Separator('row'), this.list]);
+    // The widget owns its own checked state (spec 256): toggling it is the
+    // player's own action, not a change a server or a mount could refuse, so
+    // there is nothing here to put back the way `DisplayScreen`'s exclusive
+    // rows do after theirs.
+    this.rememberCheckbox.onToggle = (checked) => {
+      this.onRemember?.(checked);
+    };
+
+    this.addAll([heading, new Separator('row'), this.list, new Separator('row'), this.rememberCheckbox]);
   }
 
   /**
@@ -348,6 +446,16 @@ export class ControlsScreen extends Column {
   setView(view: ControlsView): void {
     for (const [index, row] of this.rowWidgets.entries()) row.setHint(view.hints[index]);
     this.invalidateMeasure();
+  }
+
+  /**
+   * Seed the checkbox from storage without notifying (spec 256) -- what the
+   * mount calls when the card is shown, so the box reflects whatever
+   * `display-store.ts` already holds rather than always opening unchecked.
+   * `Checkbox.setChecked` already has exactly this shape.
+   */
+  setRemember(value: boolean): void {
+    this.rememberCheckbox.setChecked(value);
   }
 
   /**

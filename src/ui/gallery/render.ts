@@ -1270,6 +1270,8 @@ export interface ControlsRenderOptions {
   readonly viewport?: Size;
   /** Rebind this action's primary chord first, so a rebound cap is in the frame. */
   readonly rebind?: { readonly actionId: string; readonly code: string };
+  /** Seed the "don't show again" checkbox (spec 256), unchecked by default. */
+  readonly remember?: boolean;
 }
 
 /**
@@ -1295,6 +1297,7 @@ export function renderControls(options: ControlsRenderOptions = {}): ControlsFra
 
   const screen = new ControlsScreen({ theme });
   screen.setView({ hints: controlHints(map) });
+  screen.setRemember(options.remember ?? false);
   // Docked the way the mount would dock it: a corner, inside an anchor that
   // fills the frame. See `renderPlay` for why the anchor is not optional --
   // the root's own top-level content is always arranged to the whole

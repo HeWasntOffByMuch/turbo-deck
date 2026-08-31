@@ -274,14 +274,25 @@ export class UiLayer {
     this.element.dataset['uiHud'] = shown ? 'shown' : 'hidden';
   }
 
-  /** Show or hide the first-run controls card (spec 255). */
-  setControlsShown(shown: boolean): void {
-    this.screens.setControlsShown(shown);
+  /**
+   * Show or hide the first-run controls card (spec 255).
+   *
+   * `remembered` seeds the "don't show again" checkbox (spec 256) from
+   * whatever the mount already knows was last saved -- passed rather than
+   * read here, since this layer has no storage of its own either.
+   */
+  setControlsShown(shown: boolean, remembered = false): void {
+    this.screens.setControlsShown(shown, remembered);
   }
 
-  /** Told when the player closes that card. */
+  /** Told when the player closes that card for the session. */
   set onControlsDismissed(handler: (() => void) | null) {
     this.screens.onControlsDismissed = handler;
+  }
+
+  /** Told when the player toggles "don't show again" on that card (spec 256). */
+  set onControlsRemember(handler: ((remember: boolean) => void) | null) {
+    this.screens.onControlsRemember = handler;
   }
 
   /** The audio mix as it actually stands (spec 229). See `AudioScreen`. */

@@ -2299,7 +2299,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
           hud.element.style.display = '';
           ui.setHudShown(true);
           if (loadControlsSeen(bindingStorage)) return;
-          ui.setControlsShown(true);
+          // Seeded rather than assumed unchecked (spec 256): this only ever
+          // reaches `false` today, since a `true` returned above -- but the
+          // checkbox is asking what storage holds, not what this branch
+          // already knows, and the two must not quietly drift apart.
+          ui.setControlsShown(true, loadControlsSeen(bindingStorage));
         },
         onOptions: () => ui.toggle('options'),
       });
@@ -2317,11 +2321,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     ui.setHudShown(false);
   }
 
-  // Closing the card is what "seen" means: remembered here rather than in the
-  // screen, which has no storage and decides nothing.
+  // The X only puts the card away for this session (spec 256): it used to
+  // also mean "seen", so a reflex close cost a player the card forever with
+  // no way back. It is `setControlsShown(false)` and nothing else now.
   ui.onControlsDismissed = (): void => {
     ui.setControlsShown(false);
-    saveControlsSeen(bindingStorage, true);
+  };
+  // "Don't show again" is the only thing that writes to storage. Persisted
+  // here rather than in the screen, which has no storage and decides
+  // nothing -- the same split `onControlsDismissed` keeps.
+  ui.onControlsRemember = (remember): void => {
+    saveControlsSeen(bindingStorage, remember);
   };
   accountSink.push = (view): void => ui.setAccount(view);
   // Through `setAuthState` rather than straight at `ui`, so the initial state

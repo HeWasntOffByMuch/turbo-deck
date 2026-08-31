@@ -737,6 +737,10 @@ export class UiScreens {
     this.controls = new ControlsScreen({ theme: THEME });
     this.controls.visible = false;
     this.controls.onDismiss = () => this.onControlsDismissed?.();
+    // The other half of dismissal (spec 256): reported the same way, and
+    // just as unacted-on here -- whether this is written to
+    // `display-store.ts` is the mount's question, not this class's.
+    this.controls.onRemember = (remember) => this.onControlsRemember?.(remember);
     this.controlsDock.pointerTransparent = true;
     this.controlsDock.padding = uniformInsets(THEME.spacing.md);
     this.controlsDock.place(this.controls, 'topRight');
@@ -1566,11 +1570,19 @@ export class UiScreens {
   }
 
   /**
-   * The player closed the controls card (spec 255). Reported rather than acted
-   * on here too: remembering that it has been seen is `display-store.ts`'s, and
-   * this class has no storage.
+   * The player closed the controls card for this session (spec 255). Reported
+   * rather than acted on here too: this class has no storage, and since
+   * spec 256 closing it no longer implies remembering that it has been seen --
+   * see {@link onControlsRemember}.
    */
   onControlsDismissed: (() => void) | null = null;
+
+  /**
+   * The player toggled "don't show again" on the controls card (spec 256).
+   * Reported for the same reason {@link onControlsDismissed} is: persisting
+   * it to `display-store.ts` is the mount's question, not this class's.
+   */
+  onControlsRemember: ((remember: boolean) => void) | null = null;
 
   /**
    * Show or hide the first-run controls card.
@@ -1579,9 +1591,16 @@ export class UiScreens {
    * thing that can change them is a rebind -- and the keybindings window is
    * open in the same session that would do it. Cheap: eight rows off a map
    * this class already has, once per show.
+   *
+   * The checkbox is seeded on the same way in (spec 256), from whatever the
+   * mount already knows was last saved -- passed rather than read here,
+   * since this class has no storage of its own to read it from.
    */
-  setControlsShown(shown: boolean): void {
-    if (shown) this.controls.setView({ hints: controlHints(this.options.map) });
+  setControlsShown(shown: boolean, remembered = false): void {
+    if (shown) {
+      this.controls.setView({ hints: controlHints(this.options.map) });
+      this.controls.setRemember(remembered);
+    }
     this.controls.visible = shown;
     this.controlsDock.invalidateArrange();
   }
