@@ -130,8 +130,32 @@ export const INTEREST_CHUNK_RADIUS = 3;
  * bump rather than an append somebody could get away with. What it is *for* is
  * that the server can now decide which player a connection is from a credential
  * it issued, instead of from a name the client chose for itself.
+ * 21: everything the wire did between spec 226 and spec 257 while this number
+ * stood still (spec 258). Ten commits moved server->client shapes and none of
+ * them came back here: `Stats` lost `unspentSkillPoints`, renamed
+ * `unspentAttributePoints` to `unspentProgressionPoints` and turned skill
+ * allocations into specialization ones (spec 244), and gained
+ * `skillAbilityIds`, `weaponScaling`, `weaponDamageMin/Max`,
+ * `scalingModifiers` and `scalingAttributes` (specs 188, 216, 217, 238);
+ * `TRAIT_WIRE_ORDER` gained `staggerImmuneBelow` (spec 232) and
+ * `mobileOffenseCooldownTicks` (spec 254); `Effect` gained `rotation` (spec
+ * 235); `CombatResult` gained `element` (spec 229); `Talk` and `Conversation`
+ * were added (spec 246).
+ *
+ * What that cost is one report and an exact reproduction: the traits are the
+ * **tail** of `writeStats` and are all `f32`, so a client one trait ahead of
+ * its server reads four bytes past the end of every `Stats` frame -- and
+ * `Stats` is sent on login, so it throws `truncated frame: wanted 4 bytes, 0
+ * left` out of `readTraits` before the first frame is drawn. This entry is
+ * therefore not a description of one change; it is the ledger being made
+ * honest again.
+ *
+ * That it went unnoticed for ten commits is the thing spec 258 actually fixes.
+ * The rule was a habit and nothing checked it, so `wire-fingerprint.ts` pins a
+ * hash of the whole message corpus against this number: the next wire change
+ * fails `npm test` until somebody adds a row here.
  */
-export const PROTOCOL_VERSION = 20;
+export const PROTOCOL_VERSION = 21;
 
 /**
  * How far from a map chunk a player may be and still be sent it (spec 072).
