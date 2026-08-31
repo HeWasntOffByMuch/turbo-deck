@@ -124,6 +124,7 @@ import { hudLayout, tuningMenusShown } from './hud-layout.js';
 import { isHandheldDevice } from '../device.js';
 import { showsWorkbenches } from '../client-build.js';
 import { isFriendlyMonster } from '../../../server/data/monsters.js';
+import { npcById } from '../../../server/data/npcs.js';
 import { DialogueDriver, SpeechSink } from './dialogue-driver.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
 import { weaponTypeFor } from './weapon-look.js';
@@ -141,7 +142,12 @@ import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
 import { aligned, moveIntent, RoutePlanner } from './intent.js';
-import { pickupLead, pickupOrderFor } from './loot-drop.js';
+import {
+  approachLead,
+  approachOrderFor,
+  TALK_MAX_ASKS,
+  TALK_STANDOFF_FRACTION,
+} from './approach.js';
 import { PICKUP_RANGE } from '../../../server/sim/world.js';
 import { decideControlDown, decideControlUp, type ControlDecision } from './control-actions.js';
 import { pointerCode, wheelCode } from '../../../ui/input/actions.js';
@@ -1379,6 +1385,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       destination !== null ? 'walk' : '',
       targetId !== null ? 'attack' : '',
       pickupId !== null ? 'pickup' : '',
+      talkId !== null ? 'talk' : '',
       pendingAim !== null ? 'aim' : '',
       order !== null ? 'cast' : '',
       held.size > 0 ? 'keys' : '',
@@ -2420,6 +2427,24 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   let pickupId: number | null = null;
   /**
+   * The friendly body being walked over to, to talk to (spec 257).
+   *
+   * Beside {@link pickupId} and ending the same way -- the walk closes the gap
+   * and the ask is one message, after which there is no order left. What is
+   * different is only where the reach comes from: a drop is `PICKUP_RANGE` plus
+   * a body radius, and this is the NPC's own `talkRadius`, which
+   * `talkableFor` compares two centres against and adds nothing to.
+   *
+   * Before it, a click on a merchant sent a `Talk` from wherever the player
+   * happened to be standing and the server refused it past the radius -- and
+   * refused it *silently*, on the stated grounds that the reasons a
+   * conversation cannot start are all things a player can see. Which they are,
+   * except this one: from across the square the click simply did nothing.
+   */
+  let talkId: number | null = null;
+  /** How many times the standing talk order has asked. See `TALK_MAX_ASKS`. */
+  let talkAsks = 0;
+  /**
    * The skill being aimed but not yet thrown (spec 080).
    *
    * A hotbar press stops being the commitment and becomes this: the shape of
@@ -2603,6 +2628,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   function dropOrders(): void {
     dropCommitments();
     pickupId = null;
+    talkId = null;
+    talkAsks = 0;
     destination = null;
     planner.clear();
   }
@@ -3003,6 +3030,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // attack target.
     order = null;
     pickupId = null;
+    talkId = null;
 
     const hovered = scene.pickUnitAt(cursor.x, cursor.y);
     const picked = hovered === null ? null : client.view().entities.find((e) => e.id === hovered);
@@ -3021,11 +3049,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // than for precedence: `attackable` already refuses a friendly body, so the
     // two can never both be true.
     //
-    // The order is dropped first, and everything else about it is the server's:
-    // whether the player is close enough, whether the body is already talking to
-    // somebody, and whether the merchant then stops walking. A refusal comes
-    // back as a `Conversation 0` and nothing has been committed to here.
+    // It arms an order rather than asking (spec 257), which is the drop's shape
+    // one body over: nothing here measures the range, and `driveTalk` walks
+    // until the server would agree before it sends anything. Everything else
+    // about it is still the server's -- whether the body is already talking to
+    // somebody, and whether the merchant then stops walking -- and a refusal
+    // comes back as a `Conversation 0` with nothing committed to here.
     if (picked && talkable(picked)) {
+      talkId = picked.id;
+      talkAsks = 0;
       targetId = null;
       destination = null;
       planner.clear();
@@ -3033,7 +3065,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // merchant to talk is a change of mind about the swing, exactly as a new
       // mark or a click on the ground is.
       client.cancelCast();
-      client.talk(picked.id);
       return;
     }
     if (picked && attackable(picked, client.view().selfEntityId)) {
@@ -3436,7 +3467,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // against the last input the server applied, so a placed cast sent from
       // exactly the edge can be refused for drift nobody can see. A distance a
       // body travels, not a fraction of the range.
-      castLead: pickupLead(
+      castLead: approachLead(
         view.stats?.moveSpeed ?? 0,
         view.roundTripTicks,
         SERVER_TICK_RATE,
@@ -3550,7 +3581,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * The same shape as `driveAutoAttack` and `driveCastOrder` -- a destination
    * into `moveIntent` and a request to the server, which validates it exactly as
    * it validates the other two. The decision itself is
-   * `pickupOrderFor`, so "does the player stop walking once they are close
+   * `approachOrderFor`, so "does the player stop walking once they are close
    * enough" is a question answered in Node.
    *
    * The order is dropped the moment the drop leaves the view, which covers all
@@ -3568,10 +3599,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
     const self = view.entities.find((entity) => entity.id === view.selfEntityId);
     const reach = PICKUP_RANGE + SERVER_PLAYER_RADIUS;
-    const decision = pickupOrderFor({
+    const decision = approachOrderFor({
       self: me,
       selfHealth: self?.health ?? 1,
-      drop: { entityId: mark.id, x: mark.x, y: mark.y },
+      target: { x: mark.x, y: mark.y },
       // The server's own reach, plus our body radius, because it measures from
       // the same two centres.
       reach,
@@ -3579,7 +3610,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // measured rather than assumed. Without it the walk stopped at the
       // client's copy of the reach and the server refused from a stride
       // further back.
-      lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+      lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
       // Cleared by whichever `Inventory` answers it, so a refusal is asked
       // again on the next tick rather than leaving the order standing there.
       pending: view.awaitingPickup,
@@ -3606,9 +3637,114 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     //
     // Nothing is lost by stopping. The one refusal walking could have fixed is
     // the range one, and the order no longer asks from a distance that produces
-    // it (see `pickupLead`); every other refusal -- not yours, bag full, gone --
+    // it (see `approachLead`); every other refusal -- not yours, bag full, gone --
     // is one the player has to act on, and asking again would not help.
     pickupId = null;
+    destination = null;
+    planner.clear();
+  }
+
+  /**
+   * One tick of a talk order (spec 257): close the gap, then ask.
+   *
+   * `drivePickup`'s shape with that function's ending deliberately loosened.
+   * There, one order is one request; here the ask is **bounded and closes in**
+   * -- at most `TALK_MAX_ASKS` of them, each from a tighter standoff than the
+   * last -- because a refusal under one-ask-per-order is a click that did
+   * nothing, which is the failure this whole order exists to remove.
+   *
+   * Nothing tracks a `Talk` in flight and there is no clock, because the
+   * standoff is the throttle: after an ask the usable reach is *inside* where
+   * the body is standing, so the next one cannot be sent until it has walked
+   * further in. What ends the order is the conversation opening, running out of
+   * asks, or the body ceasing to be somebody you can talk to.
+   *
+   * It is re-aimed at the body every tick rather than at the point that was
+   * clicked, because a merchant wanders: `sim/idle.ts` moves it right up until
+   * the claim lands, so a walk to a remembered coordinate would arrive where it
+   * used to be.
+   */
+  function driveTalk(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
+    if (talkId === null) return;
+    // Answered: the conversation this order was given for is open, so the order
+    // is over. Read from the replicated field rather than remembered from the
+    // ask, because the server is what decides a conversation exists (spec 246)
+    // and this is the same trigger the bubble itself opens on.
+    if (view.conversationEntityId === talkId) {
+      talkId = null;
+      talkAsks = 0;
+      destination = null;
+      planner.clear();
+      return;
+    }
+    const mark = view.entities.find((entity) => entity.id === talkId);
+    // Gone, dead, or no longer somebody you can talk to. The same predicate
+    // `issueOrder` armed the order with, so the order cannot outlive the reason
+    // it was given.
+    if (!mark || !talkable(mark)) {
+      talkId = null;
+      talkAsks = 0;
+      destination = null;
+      planner.clear();
+      return;
+    }
+
+    // The server's own comparison: `talkableFor` measures two centres against
+    // `talkRadius` and adds no body radius, so neither does this.
+    //
+    // A friendly body without a row is refused rather than walked to. It cannot
+    // happen -- `friendly.test.ts` asserts every friendly monster has one, on
+    // the grounds that a body nothing can fight and nobody can talk to is
+    // scenery that looks like a character -- and the alternative to refusing is
+    // a reach of zero, which is an order that walks onto the body and then
+    // stands there never asking. A wedge is worse than a click that did
+    // nothing, which is what this whole change is about.
+    const npc = npcById(mark.typeId ?? '');
+    if (!npc) {
+      talkId = null;
+      talkAsks = 0;
+      destination = null;
+      planner.clear();
+      return;
+    }
+
+    const self = view.entities.find((entity) => entity.id === view.selfEntityId);
+    const reach = npc.talkRadius;
+    const decision = approachOrderFor({
+      self: me,
+      selfHealth: self?.health ?? 1,
+      target: { x: mark.x, y: mark.y },
+      reach,
+      // The standoff, tightened by every ask already refused and floored by how
+      // far in front of the server this body's prediction may be. See
+      // `TALK_STANDOFF_FRACTION` for why the lead alone is not the margin this
+      // order needs, `TALK_MAX_ASKS` for why a refusal closes in rather than
+      // ending the order, and `approachLead` for the drift it is measured
+      // against.
+      lead: Math.max(
+        reach * (1 - TALK_STANDOFF_FRACTION ** (talkAsks + 1)),
+        approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+      ),
+      // Nothing to wait on. A second ask is throttled by the standoff above
+      // tightening under it rather than by anything in flight, so there is
+      // never a tick where this would have to say "not yet".
+      pending: false,
+    });
+    destination = decision.walkTo;
+    if (!decision.walkTo) planner.clear();
+    if (!decision.ask) return;
+
+    client.talk(mark.id);
+    talkAsks += 1;
+    // The order stands while it still has asks left, so a refusal is answered
+    // by closing in rather than by the click having done nothing -- and it
+    // cannot ask again from here, because the next standoff is inside where
+    // the body is now standing. Out of asks, it is over: at a third of the
+    // radius the body is a stride away, and a refusal there is not one walking
+    // was ever going to fix.
+    if (talkAsks < TALK_MAX_ASKS) return;
+    talkId = null;
+    talkAsks = 0;
     destination = null;
     planner.clear();
   }
@@ -3649,6 +3785,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     driveCastOrder(view, me);
     driveAutoAttack(view, me);
     drivePickup(view, me);
+    driveTalk(view, me);
     const intent = moveIntent({
       held,
       self: me,

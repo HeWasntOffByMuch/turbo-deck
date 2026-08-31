@@ -26,7 +26,7 @@ import { RevealPhase } from '../sim/loot.js';
 import { INVENTORY_SLOTS } from '../state/types.js';
 import { PICKUP_RANGE } from '../sim/world.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
-import { pickupLead, pickupOrderFor } from '../../render/iso3d/world/loot-drop.js';
+import { approachLead, approachOrderFor } from '../../render/iso3d/world/approach.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -369,7 +369,7 @@ describe('asking for it', () => {
    * answered it against the last input it had *applied* while the client had
    * asked from its prediction some ticks further on; the first ask was refused
    * and the retry a tick later took the item. The order is driven here through
-   * the same pure `pickupOrderFor` the view uses, so this is the approach a
+   * the same pure `approachOrderFor` the view uses, so this is the approach a
    * player actually makes rather than a teleport and a click.
    */
   it('walks over from far away and takes it without a word', async () => {
@@ -399,12 +399,12 @@ describe('asking for it', () => {
       // be asking the server where it thinks we are, which is the one thing a
       // client does not do while it is walking.
       const me = view.self ?? { x: self?.x ?? 0, y: self?.y ?? 0 };
-      const order = pickupOrderFor({
+      const order = approachOrderFor({
         self: me,
         selfHealth: self?.health ?? 1,
-        drop: { entityId: drop.entityId, x: target.x, y: target.y },
+        target: { x: target.x, y: target.y },
         reach,
-        lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+        lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
         pending: view.awaitingPickup,
       });
       if (order.ask && !asked) {
@@ -472,12 +472,12 @@ describe('asking for it', () => {
       if (standing !== null && !mark) standing = null;
       if (mark) {
         const self = view.entities.find((e) => e.id === view.selfEntityId);
-        const order = pickupOrderFor({
+        const order = approachOrderFor({
           self: view.self ?? { x: self?.x ?? 0, y: self?.y ?? 0 },
           selfHealth: self?.health ?? 1,
-          drop: { entityId: mark.id, x: target.x, y: target.y },
+          target: { x: target.x, y: target.y },
           reach,
-          lead: pickupLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
+          lead: approachLead(view.stats?.moveSpeed ?? 0, view.roundTripTicks, SERVER_TICK_RATE, reach),
           pending: view.awaitingPickup,
         });
         if (order.ask) {

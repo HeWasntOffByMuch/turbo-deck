@@ -189,8 +189,9 @@ export interface CastOrderInput {
    * agrees", and it is a *distance a body can travel* rather than a fraction of
    * the range, because that is what the disagreement is made of: the request is
    * sent from the prediction and checked against the last input the server
-   * applied. `pickupLead` derives the same number for the same reason one system
-   * over, and this takes it from there rather than inventing a second answer.
+   * applied. `approachLead` derives the same number for the same reason one
+   * system over, and this takes it from there rather than inventing a second
+   * answer.
    *
    * A named order does not use it -- see the comment at the comparison.
    */
@@ -302,8 +303,8 @@ export function castOrder(input: CastOrderInput): CastOrderStep {
   // left is the only real reason a placed cast needs any margin at all: the
   // client asks from its **prediction** and the server checks against the last
   // input it **applied**, so a request sent at exactly the edge can be refused
-  // for a drift the player cannot see. That is `pickupLead`'s problem exactly,
-  // and it takes `pickupLead`'s answer rather than a tenth of the range -- which
+  // for a drift the player cannot see. That is `approachLead`'s problem exactly,
+  // and it takes `approachLead`'s answer rather than a tenth of the range -- which
   // on Blight's 380 was 38 units of ground a player could stand on, click
   // inside their own range ring, and be walked forward from.
   const hold = named ? reach * HOLD_FRACTION : Math.max(0, reach - input.castLead);
