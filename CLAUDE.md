@@ -58,6 +58,8 @@ change a game outcome.
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
+| `npm run spec:next` | The number a new spec takes, read from **every branch** rather than from `specs/` (spec 266). `specs/` holds only what has merged, and 105 of the 319 specs on `main` share a number with another one because every session read it anyway. Also prints who holds what, including branches sitting on a number `main` already uses — nine of them the day it was written |
+| `npm run check:specs` | The same report with an exit code, and what CI gates on: a branch may not **introduce** a duplicate number. The 48 already on `main` are reported and never failed on — renumbering them would break every `spec NNN` reference in the tree |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
@@ -70,6 +72,7 @@ change a game outcome.
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
 | `npx tsx scripts/probe-warden.ts` | What the Warden is doing, tick by tick (spec 262): the state it is in, the body its lance is committed to, where that lance points against where the body does, the state's own clock, both Guard pools and every pulse that lands. It exists because the encounter *is* timing, which is the one thing a pass/fail test says nothing about -- `warden.test.ts` asserts that stepping aside works, and only this says whether stepping aside is a half-second decision or a two-second one. `--strafe` reacts once the beam is live, `--orbit` never stops moving, `--at N` fights it from further out. On the shipped numbers one beam costs a body that stands still all **eight** of its pulses and a body that moves **two** -- and the gap widens with range rather than closing, because a lane sweeps its tip faster the further out you are: at 400 units the same reaction costs six |
+| `npx tsx scripts/probe-already-casting.ts` | Where `alreadyCasting` comes from in an ordinary fight (spec 264). Drives the shipped loop against a real server over a delayed wire -- `autoAttack` deciding the swings, `startAim` deciding the presses -- and counts every refusal by reason beside the phase the caster's **own** cast was in when the press was made. It has to run both halves at once, which is why no existing harness could have found this: `auto-attack-wire.test.ts` swings and asserts the refusals are `staggered` and nothing else, and that still holds. Add the presses and thirteen of them were refused thirteen times, a third during a *follow-through*. `--now` is the control, sending on the press as `castNow` did; `--no-press` is the swings-only half |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
@@ -86,10 +89,12 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
-| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
-| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 260). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
+| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224), plus a grave and a row of them (spec 263). The grave is the one prop here whose risk runs *opposite* to the sign's: it has to be unmistakably shorter than the person looking at it and still read from the game's own bearing, so the block it is drawn beside is the measurement rather than a courtesy |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well, a sign and a grave in the real editor and read them back out of the saved file (specs 224, 260, 263). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message. The grave is the opposite case and earns a step for it: it has **nothing** of its own, so every part of being placeable is derived, and the whole feature is a button nobody wrote and geometry nobody dispatched to -- both silent. It is also why `placed()` derives its pattern from `PLACED_KINDS` instead of listing the kinds: written by hand it printed `said nothing` for a grave that really had been placed, which is exactly what one that had **not** been placed prints |
 | `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 260). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
 | `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
+| `npx tsx scripts/preview-day-night.ts` | What the day/night cycle actually does (spec 264). A `preview-` rather than a `probe-` because what is being judged is a **schedule**: a thumbnail of a sunset says nothing about whether the sunset takes four seconds or forty, and forty is the whole question. Four sheets -- the segment table with the hours-per-second rate that falls out of it, the four seams with the rate either side of each as a ratio, a whole cycle walked through the real `worldClockAt` and the real `skyAt`, and the acceptance numbers. The pair worth reading is on the seams sheet: a piecewise clock can only show a kink where its rate jumps, and beside each ratio it prints **how fast the colour was moving there** -- so day->dusk speeding up 4.89x reads as 0.000005 to 0.000256 of a channel per frame, which is a large multiple of nothing. The last sheet answers the question the segment names cannot: the Day and Night *phases* are 10m00s and 2m00s, and the *sun* is up 10m43s and down 2m47s, because dawn and dusk divide their 45s each between light and dark |
+| `npm run build && npx tsx scripts/probe-day-night.ts` | Whether the world clock is wired to anything (spec 264). Every rule about the cycle is asserted in Node and all of it would go on passing beside a `scene.ts` that never called `resolveSkyHours` -- and that failure is **invisible**, because a scene still lit by `FIXED_DAYLIGHT` looks correct, just permanently mid-afternoon, which is the bug the spec exists to fix. So it drives the shipped `dist/` past the title screen and asks the three things a green suite cannot: that the default is the *world's* clock and says `pinned` nowhere, that `?clock=` reaches the frame (`data-world-clock` is published from the clock the frame **drew with**, so a pin that parsed and reached nothing reads as absent), and -- the only one that matters -- that the picture is actually darker, measured off the canvas. Night comes out at **0.44x** noon. Its first cut sampled the canvas with `drawImage` and read `0.0000` at every hour: this renderer builds its context without `preserveDrawingBuffer`, so there is nothing left in the drawing buffer once the frame is composited. Every check passed except the one that mattered, and that one failed *identically* at noon and midnight, which is what measuring nothing looks like when the comparison is a ratio. It screenshots, like `probe-exempt.ts` |
 | `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
 | `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
 | `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
@@ -114,6 +119,37 @@ point. A spec should be short: problem statement, data/API shape, the
 invariants that will be tested, and explicit out-of-scope notes. Specs are
 numbered in build order; implementation PRs/commits should reference the
 spec they implement.
+
+### Picking the number
+
+**Never read `specs/` to find the next number.** Run `npm run spec:next`, and
+take what it says. Then write the spec, commit it on its own, and **push it
+before you start building.**
+
+Those are two rules and they are the same rule: `specs/` holds only what has
+**merged**, and this repo runs 184 branches at once, so a number that looks free
+in the working tree is a number several other sessions are also looking at.
+`spec:next` reads every ref instead — a pushed branch has published its claim,
+and reading all of them costs half a second. Pushing early is your half of that
+bargain; until you push, your claim is invisible to everybody else, and the
+window in which somebody takes your number is the whole time you spend building
+rather than the minute it takes to push a markdown file.
+
+The cost of not doing this is measured rather than hypothetical: **105 of the
+319 specs on `main` share a number with another spec** (spec 266). Spec 254 is
+two different specs, 139 is four, and every `spec NNN` reference to a contested
+number — in this file, in the specs, in the source comments — is ambiguous. When
+you meet one, disambiguate by slug; they are not being renumbered, because the
+references pointing at them outnumber the files.
+
+If you do collide — you will occasionally, since a session that has picked a
+number and not pushed cannot be seen — **run `npm run spec:next` again and take
+that number.** Do not renumber to "one past the one I hit". That is read off
+`main`, which is the same view that caused the collision, so two sessions
+colliding on the same day pick the same replacement: it is why `main` has two
+spec 257s, and how 263 and 264 each came to hold two. `npm run check:specs` is
+the gate, and CI runs it — a branch cannot merge while it duplicates a number
+`main` already uses.
 
 ## Branching
 
@@ -379,6 +415,15 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  enforce. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
+src/tooling/     rules about the repo rather than about the game (spec 266).
+                 spec-numbers.ts is which spec number is free and which one a
+                 branch is about to take twice, and it is under `src/` for
+                 `src/render/bundle-budget.ts`'s reason: vitest collects
+                 `src/**/*.test.ts`, so the pure half of a `check:` gate lives
+                 here to be covered by `npm test` while the script beside it in
+                 `scripts/` stays git plumbing and an exit code. Nothing in the
+                 game imports it, and no lint fence reaches it -- it is not the
+                 deterministic core, it is a thing that reads filenames.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
@@ -428,6 +473,36 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  to hand-edit: `maps/arena.json` is committed so the world
                  reviews as a diff, and a sentence is the one thing in a prop
                  record that reads as a sentence rather than a coordinate.
+                 Since spec 263 there is a **grave** beside it -- a grey
+                 headstone on a plinth over a mound of turned earth -- and it is
+                 the first member of that list that is not something a village
+                 *built*, which changes nothing about how it is placed and is the
+                 point: it passes the same membership test, going in one spot
+                 somebody chose and turned to face the path it is walked up to
+                 from, so a graveyard is a layout rather than a distribution.
+                 Two things about it are decisions rather than defaults.
+                 `GRAVE_PLAN.stoneHeight` is **44 against a body's 56**, and
+                 that bound is the design: a marker taller than the person
+                 reading it stops being a grave and becomes a monument, which is
+                 a different prop with a different reason to exist. And the
+                 collider is the **headstone and only the headstone**, which is
+                 the sign's rule applied to the other half of an object -- a
+                 mound is loose earth a stride high, and a circle wide enough to
+                 cover the plot would take a body and a half of walkable ground
+                 out of the world around every grave, which in a graveyard is
+                 most of the graveyard. Its three palette tones are new rather
+                 than borrowed for one stated reason: every stone in that palette
+                 is deliberately *warm* limestone, tuned so a wall belongs to the
+                 ground it stands on, and a grave marker is the one piece of
+                 stonework here that has to read as cold against it.
+                 The mound runs *into* the plinth rather than up to it, because
+                 `rockGeometry` knocks every vertex inward by up to half its
+                 roughness -- so earth laid exactly against the base comes out
+                 several units short of it, and a grave with daylight between the
+                 stone and the soil reads as two props that happen to be near
+                 each other. Found by looking at `preview-structures.ts`'s sheet
+                 and pinned by the test that now fails when the overlap is
+                 removed.
                  Since spec 250 it also holds the **light fixtures**: a campfire,
                  a street lamp on a stake, and a standing torch. The same
                  argument one system further along -- a fixture is written into
@@ -464,6 +539,39 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  subject *moves*, so a static solid can only ever be a picture
                  of one instant of it -- and it fought the paint rather than
                  sitting under it.
+                 Spec 265 is that sentence collected for the **standing torch**,
+                 which kept its cone for thirteen specs: `fire_torch` is the same
+                 `brushFire` row played a fraction as wide and a body's height
+                 up, and what is left in the bowl is a coal -- the campfire's
+                 ember bed one prop over, and there for that part's two reasons,
+                 since it is what the paint's root sits in and what is still
+                 burning when a distant torch's paint is culled. `FIXTURE_ART`
+                 says how wide and how far up as well as which effect, and the
+                 second of those is a **fraction of the height the fixture's own
+                 light hangs at** rather than a world number: it scales with the
+                 prop for free, and a flame tied to its light by one number
+                 cannot come apart from it the way two constants in two files
+                 can.
+                 The other half of that spec is that **the part a light comes out
+                 of emits**, and it is worth knowing because the argument against
+                 it was plausible and wrong. props.ts held that a pale colour was
+                 enough since these parts stand inside their own point light --
+                 and a point light at a part's own centre lights *none* of it,
+                 since for every outward-facing triangle the vector to the light
+                 points inward. A lamp's mantle spans 110 to 134 about a light
+                 hung at 122, so that light is behind its four sides, under its
+                 top face and over its bottom one: **every face of the one object
+                 in the frame that was emitting light took ambient alone**, over
+                 a street the same light had made bright. `PropPart.emissive` is
+                 the fix and costs no batch, because a batch builds its own
+                 material anyway (spec 181) and an emissive is a uniform on it --
+                 where the `MeshBasicMaterial` the *carried* torch uses would be
+                 a fifth kind of batch. What a fixture emits is
+                 `FIXTURE_LIGHTS[kind].color`, the colour it lights with, so
+                 retuning a lamp's light retunes the thing the light comes out
+                 of; the intensity is under 1, or the sum with any daylight clips
+                 to white on every channel and the warm gold that says "lamp" is
+                 the first thing lost.
                  `fixtureLight` is the one answer to "does this glow, and how",
                  with three callers -- the worker composing a region, the editor
                  drawing its ghost, the panel offering the sliders -- for the
@@ -3012,6 +3120,92 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  grids, `gen` 25 to 155, none refused. It arrived with spec 208
                  rather than with 215, and nothing caught it because every test
                  in the tree drives a client that grows.
+                 `data/day-night.ts` is what time it is (spec 264), and it is
+                 the half spec 047 said would need a spec of its own: that one
+                 built the whole cycle -- the sun's arc, the nine-key colour
+                 ramp, the terminator fade -- and drove it from a slider in a
+                 tuning panel, which spec 254 then hid in the shipped build. So
+                 the game people play had no day and no night, only a permanent
+                 mid-afternoon; and a clock in a panel is a **per-client** clock,
+                 which is the one thing a shared cycle cannot be.
+                 **The clock is a pure function of the tick, and nothing crosses
+                 the wire.** The client already holds one -- `estimatedTick` is
+                 the server's clock re-synced to every delta with half the round
+                 trip added -- so both ends compute the same hour from the same
+                 number, and the feature costs no message, no protocol version
+                 and no state to persist, replicate or forget to clear. It is the
+                 pattern the loot reveal's phase, the stun swirl's angle and the
+                 affliction beat already use, and spec 215 states it outright:
+                 *the beat is derived, not sent*. What it costs is one round
+                 trip's worth of hour, which at the fastest the clock ever runs is
+                 under a hundredth of an hour on a 200ms connection.
+                 Ten minutes of day and two of night are **not expressible under
+                 one rate** -- `advanceTimeOfDay` is linear in `dt`, so day and
+                 night are each half a cycle whatever the day length -- so the
+                 cycle is four segments with a rate each: Day 07:30-16:30 in
+                 600s, Dusk 16:30-19:48 in 45s, Night 19:48-04:30 in 120s, Dawn
+                 04:30-07:30 in 45s. 24 hours, 810 seconds, 48,600 ticks, every
+                 count an integer, so the phase is integer arithmetic on the tick
+                 with no drift to accumulate over a session.
+                 **The boundaries are `SKY_KEYS` entries**, and that is the point
+                 rather than a coincidence: the ramp already has keys at 4.5, 7.5,
+                 16.5 and 19.8, so the segments *are* its own structure and a
+                 seam -- the one place a piecewise clock can show a kink, because
+                 the rate jumps there -- always lands on a keyframe and never
+                 mid-transition. Two of the four seams do step by about 5x, and
+                 both sit at the ends of the long daylight stretch where the
+                 colour is barely moving: measured through the real ramp,
+                 day->dusk speeds up 4.89x at a point where the sky is moving
+                 0.000005 of a channel per frame. The largest step the whole
+                 cycle takes between two frames is 0.0066 of a retro colour band.
+                 Day and night are authored **independently**, so 600 and 120 are
+                 exactly the ten minutes and the two minutes and moving one does
+                 not silently move the other or eat the sunrise. The cycle is
+                 therefore 13m30s rather than 12m, which is stated rather than
+                 hidden -- and measured against the *horizon* instead of the
+                 segment names the sun is up 10m43s and down 2m47s, since dawn
+                 and dusk divide their 45s each between light and dark. Dawn spans
+                 a real sunrise (04:30 to 07:30 crosses the horizon at 06:00), and
+                 it is the same 45s as dusk because asymmetry would need a reason
+                 and there is not one: what makes it the payoff for a short night
+                 is that it is 45 seconds against night's 120.
+                 **Tick 0 is the first tick of Day**, which is why the table is
+                 authored starting at Day -- the cycle's own order from its own
+                 epoch, so there is no offset constant to keep in step. A fresh
+                 server opens in morning light with the full ten minutes ahead of
+                 it, and every harness that boots a server and photographs it
+                 inside a minute is photographing daylight. The cost is that the
+                 game no longer opens on spec 045's tuned 15:00 framing; with the
+                 clock always running that is an hour the world passes through
+                 rather than the hour it sits at.
+                 **`worldClockAt(tick)` is the whole hook surface**, and every
+                 pass in the sim already has the tick in hand. Deliberately not a
+                 `ServerWorldState` field, a `StepContext` member or a
+                 `ServerSimEvent`: each would be a socket sitting un-plugged in a
+                 dozen places -- a field to persist and replicate, a context
+                 member every test fixture has to supply, a `switch` arm in every
+                 consumer -- to say something derivable from a number those
+                 callers were handed anyway. `phaseBeganAt` is the edge for a
+                 mechanic that wants to act once at nightfall, and being a
+                 comparison rather than a fired event there is nothing to forget
+                 to raise. It memoizes its last answer on the tick, which is pure
+                 by construction since the tick is its only input.
+                 `darkness` is the hook that is a *number*: 0 through Day,
+                 smoothstepped up across Dusk, 1 through Night, smoothstepped down
+                 across Dawn. Deliberately **not** derived from the sky's light
+                 intensity -- that is presentation, tuned by eye and free to be
+                 retuned, and this is a gameplay quantity with a stated shape; a
+                 mechanic reading the ramp would be a rule that moves when
+                 somebody adjusts a colour. There is deliberately **no
+                 `isNight`**, because it would mean two different things -- the
+                 Night *phase* (19:48-04:30) and the sun being *down*
+                 (18:00-06:00) -- and a caller would get whichever the author
+                 happened to pick; `phase` and `sunUp` are each unambiguous.
+                 **No game rule reads any of it yet**, which is what the spec asked
+                 for rather than an omission: the renderer's sky is the consumer
+                 that proves the path end to end. The obvious next one is spec
+                 250's fixtures, which burn at a constant intensity, so a lamp is
+                 lit at noon.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -5435,6 +5629,41 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  with it is the fallback rather than the plan"* -- to a `{2, 5}`
                  between the bow and the keen sword, because since 217 that
                  range **is** what an Ember Shot hits for)
+                 sky-source.ts (whose clock the sky follows, spec 264).
+                 `carried-light.ts`'s shape one system along, and it holds that
+                 module's rule for that module's reason -- **the panel wins where
+                 it is asking for something, and the game decides where it is
+                 not** -- because two things drive this sun now and one of them is
+                 not in the tab at all. `view-controls.ts` states its settings and
+                 this decides; a panel that answered a `SkyState` outright would
+                 be the panel deciding for the game.
+                 The `Day/night cycle` checkbox opens **ticked** since 263, which
+                 reverses a decision rather than drifting from one: it opened
+                 unticked because the cycle was a toy whose clock lived in that
+                 panel, and the clock is the server's now. `Override the clock`
+                 beside it takes it back and drives the sky from the `Time`
+                 slider, which is spec 047's behaviour byte for byte -- and is
+                 what keeps the panel useful for the thing it is for, looking at
+                 an hour on purpose. Unticking the cycle still hands the sun to
+                 the manual `Direction`/`Elevation` sliders, which is what it has
+                 always meant and what spec 033 built them for. A panel with no
+                 Sky section is not a panel asking for a cycle, so `lighting`
+                 gates it: the sandboxes and the Studio preview keep the single
+                 fixed light they have had since spec 045.
+                 `?clock=15`, `?clock=night` pins the hour, in the register of
+                 `?seed=` and `?field=`, and it is needed rather than convenient:
+                 a sky that moves is a sky no harness can photograph twice, which
+                 is why `probe-living-ground.ts` already stills the weather clock.
+                 It resolves to a **cycle tick**, so a pin is a real `WorldClock`
+                 with a phase and a darkness rather than a second path; an
+                 unrecognised value **defers** (`device.ts`'s rule, so a
+                 misspelling costs the flag and not the frame); and it pins **what
+                 this client draws and nothing else**, since the honest line for a
+                 shared cycle is that one player cannot make it night for
+                 everybody. `data-world-clock` is published from the clock the
+                 frame actually drew with rather than from the tick, which is the
+                 only way to tell a working pin from one that parsed and reached
+                 nothing.
                  carried-light.ts (what the player is holding, and what that
                  means for the two lights the scene already owns, spec 250).
                  Pure, and worth being a module because **two things now decide
@@ -6234,6 +6463,59 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  request; correcting for it would mean replicating a monster's
                  move speed to say something the broadcast-interval floor already
                  covers),
+                 press-queue.ts (a press that waits for the swing, spec 262. Of
+                 the four things that can ask for a cast, three hold while the
+                 body is committed -- `autoAttack` and `castOrder` both take
+                 `rooted`, `staggered` and `pending`, and a confirmed aim is held
+                 as an `AimOrder` until the swing ends -- and the fourth, a
+                 hotbar press, was gated on the cooldown and nothing else. A
+                 `'none'` gesture is `targeting: 'self'`, so the press *is* the
+                 commitment and went straight out mid-swing: measured through
+                 the shipped loop, **thirteen presses and thirteen
+                 `alreadyCasting`**, a third of them made during a
+                 *follow-through*, where the blow has already landed and the
+                 refusal is a lie. It did not self-limit either, because a
+                 refusal stamps no cooldown, so the local gate never closed. The
+                 five self-casts are the flask everybody carries plus Whirlwind,
+                 Rime Touch, Scorched Earth and Conjure Light -- which is to say
+                 the things a player mashes in a fight.
+                 **There is no expiry, and that is derived rather than skipped**:
+                 each of the three gates is already bounded by machinery that
+                 exists -- `rooted` by the cast's own `endTick`, `staggered` by
+                 the replicated `activityUntilTick`, `pending` by
+                 `PREDICTED_CAST_TIMEOUT_TICKS` -- so a fourth bound would be a
+                 number to keep in step with all of them, and it would be the one
+                 deciding how long a press lives. What ends one early is what
+                 already ends every other order: the stop key, Escape, death, and
+                 the next press. Starvation is prevented by the **order the frame
+                 loop drains them in** rather than by a timeout, which needed one
+                 more thing to be true: the drivers all read one `view` taken at
+                 the top of the frame, so a request sent by the first is not in
+                 the `awaitingCast` the rest read, and two requests on one frame
+                 is the server taking the first and refusing the second.
+                 Two rules were put there by the measurement rather than by
+                 reasoning, and both replaced one refusal with another until they
+                 were. **Ready is re-asked at the send** -- with the queue in and
+                 nothing else, `alreadyCasting` disappeared and `onCooldown` took
+                 its place, because a *second* press made during the first one's
+                 wind-up is still ready by `startAim`'s reading and waited that
+                 whole cast out to be refused at the end of it; dropped instead
+                 and silently, which is `castOrder`'s own rule (*"in reach, and
+                 not ready: the order is dropped rather than parked"*), since
+                 **what a press waits for is the body, never the timer**. And the
+                 **swing hold moved to the send**: spec 258's edge is consumed on
+                 the frame it is raised and carried forward only while
+                 `casting && !committed`, which is the *previous* swing, so
+                 raised at the press it is gone before the cast it belongs to has
+                 started and a player walking on WASD is back to 258's own
+                 measurement of every press refused as `withdrawn`. It carries
+                 the set it was made with rather than re-reading it, which is the
+                 difference between two right answers and one -- a direction held
+                 **at the press** is one the press means to stop, and one pressed
+                 **after** it is a withdrawal (spec 079), which is exactly what
+                 the player is asking for by pressing it. Only the *explicit*
+                 press raises it; `driveCastOrder` and `driveAutoAttack` still do
+                 not, which is 258's rule unchanged),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks

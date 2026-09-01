@@ -24,7 +24,9 @@ import { PLAYER_RADIUS } from '../../sim/constants.js';
 import {
   FENCE_KINDS,
   FENCE_TILE_LENGTH,
+  FIXTURE_LIGHTS,
   footprintRadius,
+  GRAVE_PLAN,
   HOUSE_PLAN,
   SIGN_PLAN,
   STRUCTURE_KINDS,
@@ -609,7 +611,14 @@ describe('the buildings as they are actually built (spec 224)', () => {
       // *specifically* is asserted per kind below, which is where a number that
       // tight belongs.
       expect(parts.length).toBeGreaterThan(1);
-      expect(span(parts).max.y).toBeGreaterThan(60);
+      // The height floor is the same story a spec later. It read `> 60`, which
+      // is a fact about the things you look at from across a square -- spec
+      // 263's grave comes to chest height on a body **on purpose**, a marker
+      // taller than the person reading it being a monument rather than a grave.
+      // What this still catches is the failure it was written for: a kind whose
+      // parts never left their own origin, or one built flat. Each kind's real
+      // height is pinned in its own test below.
+      expect(span(parts).max.y).toBeGreaterThan(PLAYER_RADIUS);
     }
   });
 
@@ -697,6 +706,68 @@ describe('the buildings as they are actually built (spec 224)', () => {
     // moves which side of the post it is on.
     expect(upright.max.z).toBeGreaterThan(0);
     expect(turned.max.x).toBeGreaterThan(0);
+  });
+
+  it('stands the grave stone to its plan, and blocks that and nothing else (spec 263)', () => {
+    // `GRAVE_PLAN` is read by two files -- this geometry and `FOOTPRINT_BASE`
+    // -- and the collider is deliberately the *stone alone*, so the two claims
+    // have to be checked together or "the mound is walkable" and "the stone is
+    // not" become one number nobody is measuring.
+    const stone = span(toned(partsOf(structure('grave')), PALETTE.graveStone));
+    expect(stone.max.x - stone.min.x).toBeCloseTo(GRAVE_PLAN.stoneWidth, 3);
+    // `stoneHeight` is measured from the ground, which is what somebody means
+    // by how tall a headstone is -- the plinth under it is part of that, not
+    // extra on top of it.
+    expect(stone.max.y).toBeCloseTo(GRAVE_PLAN.stoneHeight, 3);
+    expect(footprintRadius(structure('grave'))).toBeCloseTo(
+      Math.hypot(GRAVE_PLAN.stoneWidth, GRAVE_PLAN.stoneThickness) / 2,
+      6,
+    );
+  });
+
+  it('keeps the stone shorter than the body reading it, and the mound lower still', () => {
+    // The whole of why this prop is short. A body is about 56 tall (the number
+    // `preview-structures.ts` draws its scale block at), so a marker over that
+    // is a monument -- and the mound has to stay a bump underfoot rather than
+    // becoming a second object standing up out of the ground.
+    const BODY_HEIGHT = 56;
+    const stone = span(toned(partsOf(structure('grave')), PALETTE.graveStone));
+    const mound = span(toned(partsOf(structure('grave')), PALETTE.graveEarth));
+    expect(stone.max.y).toBeLessThan(BODY_HEIGHT);
+    expect(mound.max.y).toBeLessThan(stone.max.y / 2);
+    expect(mound.max.y).toBeGreaterThan(0);
+  });
+
+  it('lays the mound in front of the stone, against it, and turns both together', () => {
+    // A reader stands at the *foot* of a grave, so the earth is between them
+    // and the stone -- local +Z, the axis the editor's Facing slider turns and
+    // the side the hut's door and the sign's board already face. A mound put
+    // behind it draws a plot running away into the hedge.
+    const parts = partsOf(structure('grave'));
+    const stone = span(toned(parts, PALETTE.graveStone));
+    const mound = span(toned(parts, PALETTE.graveEarth));
+    const plinth = span(toned(parts, PALETTE.graveStoneDeep));
+    // Its mass is in front: the whole heap is on the reader's side of the
+    // stone, whatever its near end is doing.
+    expect((mound.min.z + mound.max.z) / 2).toBeGreaterThan(stone.max.z);
+    // ...and that near end runs *into* the plinth rather than up to it.
+    // `rockGeometry` knocks every vertex inward, so a mound laid exactly against
+    // the base comes out several units short of it -- and a grave with daylight
+    // between the stone and the earth reads as two props that happen to be near
+    // each other. This is the assertion that caught exactly that.
+    expect(mound.min.z).toBeLessThan(plinth.max.z);
+    // ...without spilling out the back of the stone, which would draw a plot
+    // running both ways at once.
+    expect(mound.min.z).toBeGreaterThan(plinth.min.z);
+    // And it is long down the plot rather than across it, or the grave reads as
+    // a doormat.
+    expect(mound.max.z - mound.min.z).toBeGreaterThan(mound.max.x - mound.min.x);
+
+    // A quarter turn swaps which axis it runs down, which is what says the
+    // mound is placed in the prop's own frame rather than in the world's.
+    const turned = span(toned(partsOf(structure('grave', Math.PI / 2)), PALETTE.graveEarth));
+    expect(turned.max.x - turned.min.x).toBeGreaterThan(turned.max.z - turned.min.z);
+    expect((turned.min.x + turned.max.x) / 2).toBeGreaterThan(0);
   });
 
   it('turns the whole building, walls and roof together', () => {
@@ -1517,5 +1588,62 @@ describe('a deferred prop field (spec 211)', () => {
     field.adoptRegion(key, buildRegionInstances(buckets.get(key) ?? [], heightAt, normalAt));
     expect(batchesOf(field.group)).toEqual(once);
     field.dispose();
+  });
+});
+
+/**
+ * The parts a light comes out of (spec 265).
+ *
+ * The bug this is written against is one every offscreen check in this repo
+ * would have passed: the geometry was right, the colour was right, the light was
+ * right, and the mantle was a grey box -- because a point light hung at a part's
+ * own centre is *behind every face of it*, so the brightest object in the frame
+ * was the one taking ambient alone. What is asserted is that the emissive
+ * reaches the material `buildPropField` really builds, since that seam is the
+ * whole of the change and a part-level field nothing reads is exactly what this
+ * repo keeps finding a hundred specs later.
+ */
+describe('a fixture emits its own light (spec 265)', () => {
+  const fixture = (kind: 'campfire' | 'lamp-post' | 'torch-stand'): Prop => ({
+    kind,
+    x: 40,
+    y: 40,
+    scale: 1,
+    rotation: 0,
+    tint: 0,
+  });
+
+  const materials = (kind: 'campfire' | 'lamp-post' | 'torch-stand'): THREE.MeshLambertMaterial[] =>
+    batchesOf([fixture(kind)]).map((mesh) => mesh.material as THREE.MeshLambertMaterial);
+
+  const glowing = (kind: 'campfire' | 'lamp-post' | 'torch-stand'): THREE.MeshLambertMaterial[] =>
+    materials(kind).filter((material) => material.emissive.getHex() !== 0x000000);
+
+  it("gives a lamp's mantle the colour the lamp lights with", () => {
+    const lit = glowing('lamp-post');
+    // Exactly one: the stake, the brace and the iron cage are things the light
+    // falls on, and a lantern whose ironwork glowed would be a lantern made of
+    // light rather than one with a light in it.
+    expect(lit).toHaveLength(1);
+    expect(lit[0]?.emissive.getHex()).toBe(FIXTURE_LIGHTS['lamp-post'].color);
+    // Under full, or the sum with any daylight clips to white on every channel
+    // and the warm gold that says "lamp" is the first thing lost.
+    expect(lit[0]?.emissiveIntensity).toBeGreaterThan(0);
+    expect(lit[0]?.emissiveIntensity).toBeLessThan(1);
+  });
+
+  it("gives a torch's coal the colour the torch lights with", () => {
+    const lit = glowing('torch-stand');
+    expect(lit).toHaveLength(1);
+    expect(lit[0]?.emissive.getHex()).toBe(FIXTURE_LIGHTS['torch-stand'].color);
+  });
+
+  it('leaves everything that is not a light alone', () => {
+    // The campfire included: its bed sits on the ground under a light hung 34 up,
+    // so it is one of the few parts of a fixture its own lamp genuinely reaches.
+    for (const kind of ['campfire'] as const) expect(glowing(kind)).toHaveLength(0);
+    for (const mesh of batchesOf([tree(40, 40, 0.3)])) {
+      expect((mesh.material as THREE.MeshLambertMaterial).emissive.getHex()).toBe(0x000000);
+    }
   });
 });

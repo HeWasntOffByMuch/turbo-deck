@@ -52,7 +52,8 @@ import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
 import { loadMapFile } from '../src/server/world/map-file.js';
 import { loadMap } from '../src/terrain/map-world.js';
-import { isFixtureKind, type Prop } from '../src/terrain/vegetation.js';
+import { isFixtureKind, type FixtureKind, type Prop } from '../src/terrain/vegetation.js';
+import { FIXTURE_ART } from '../src/render/iso3d/world/fire-vfx.js';
 import { WORLD_LIGHT_DEFAULTS } from '../src/render/iso3d/world-lights.js';
 import { DEFAULT_SPAWN } from '../src/server/player/player-manager.js';
 
@@ -220,7 +221,11 @@ async function main(): Promise<void> {
     console.error('nothing to measure. Run `npx tsx scripts/light-the-square.ts --write` first.');
     process.exit(1);
   }
-  const campfires = fixtures.filter((one) => one.kind === 'campfire').length;
+  // Which of them *burn*, from the renderer's own art table rather than from a
+  // list of kinds repeated here (spec 265): a campfire and a standing torch both
+  // do and a lamp post does not, and a probe carrying its own copy of that
+  // answer would go on passing the day a fourth fixture is added.
+  const burners = fixtures.filter((one) => FIXTURE_ART[one.kind as FixtureKind] !== undefined).length;
   const nearestToSpawn = [...fixtures].sort(
     (a, b) => Math.hypot(a.x - SPAWN.x, a.y - SPAWN.y) - Math.hypot(b.x - SPAWN.x, b.y - SPAWN.y),
   )[0];
@@ -277,12 +282,13 @@ async function main(): Promise<void> {
     check(there.lit > 0, 'and the pool is lighting them');
     check(there.lit <= there.offered, 'never more lit than were offered');
     check(there.lit <= POOL_SLOTS, `never more lit than the pool has slots (${String(POOL_SLOTS)})`);
-    // The paint (spec 250). A campfire's prop is stones and charred logs since
-    // this spec, so a fire that did not start is a cold ring of stones -- which
-    // looks exactly like a campfire nobody has lit and would never be reported.
+    // The paint (specs 250, 265). A campfire's prop is stones and charred logs
+    // since 250 and a torch's is a stake with a coal in it since 265, so a fire
+    // that did not start is a cold ring of stones or an unlit brand -- which
+    // looks exactly like one nobody has lit and would never be reported.
     check(
-      there.fires === campfires,
-      `every campfire on drawn ground is burning: ${String(campfires)} on the map,` +
+      there.fires === burners,
+      `every fixture that burns is burning on drawn ground: ${String(burners)} on the map,` +
         ` ${String(there.fires)} alight`,
     );
 

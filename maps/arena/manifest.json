@@ -410,90 +410,6 @@
       }
     },
     {
-      "id": "east-shelf-5",
-      "layer": "ground",
-      "rect": {
-        "minCx": -3,
-        "minCz": -3,
-        "maxCx": -1,
-        "maxCz": 7
-      },
-      "seed": 1,
-      "recipe": {
-        "features": [
-          {
-            "kind": "rolling",
-            "amplitude": 46
-          },
-          {
-            "kind": "plateau",
-            "x": 3900,
-            "z": 400,
-            "radius": 620,
-            "edge": 280,
-            "height": 180,
-            "terraceStep": 26,
-            "terraceStrength": 0.85,
-            "rockyAbove": 0.6
-          },
-          {
-            "kind": "basin",
-            "x": 3500,
-            "z": 1600,
-            "radius": 700,
-            "edge": 320,
-            "depth": 130
-          },
-          {
-            "kind": "ridge",
-            "from": [
-              4200,
-              -1200
-            ],
-            "to": [
-              4400,
-              900
-            ],
-            "width": 460,
-            "height": 240,
-            "terraceStep": 26,
-            "terraceStrength": 0.7
-          },
-          {
-            "kind": "path",
-            "points": [
-              [
-                2800,
-                700
-              ],
-              [
-                3300,
-                620
-              ],
-              [
-                3850,
-                900
-              ],
-              [
-                4200,
-                1500
-              ]
-            ],
-            "width": 60,
-            "depth": 8
-          }
-        ],
-        "elevation": 0,
-        "terrace": {
-          "step": 26,
-          "strength": 0.8
-        },
-        "vegetation": {
-          "density": 1
-        }
-      }
-    },
-    {
       "id": "east-shelf-6",
       "layer": "ground",
       "rect": {
@@ -746,342 +662,6 @@
       }
     },
     {
-      "id": "east-shelf-9",
-      "layer": "ground",
-      "rect": {
-        "minCx": -3,
-        "minCz": -7,
-        "maxCx": 15,
-        "maxCz": -4
-      },
-      "seed": 1,
-      "recipe": {
-        "features": [
-          {
-            "kind": "rolling",
-            "amplitude": 46
-          },
-          {
-            "kind": "plateau",
-            "x": 3900,
-            "z": 400,
-            "radius": 620,
-            "edge": 280,
-            "height": 180,
-            "terraceStep": 26,
-            "terraceStrength": 0.85,
-            "rockyAbove": 0.6
-          },
-          {
-            "kind": "basin",
-            "x": 3500,
-            "z": 1600,
-            "radius": 700,
-            "edge": 320,
-            "depth": 130
-          },
-          {
-            "kind": "ridge",
-            "from": [
-              4200,
-              -1200
-            ],
-            "to": [
-              4400,
-              900
-            ],
-            "width": 460,
-            "height": 240,
-            "terraceStep": 26,
-            "terraceStrength": 0.7
-          },
-          {
-            "kind": "path",
-            "points": [
-              [
-                2800,
-                700
-              ],
-              [
-                3300,
-                620
-              ],
-              [
-                3850,
-                900
-              ],
-              [
-                4200,
-                1500
-              ]
-            ],
-            "width": 60,
-            "depth": 8
-          }
-        ],
-        "elevation": 0,
-        "terrace": {
-          "step": 26,
-          "strength": 0.8
-        },
-        "vegetation": {
-          "density": 1
-        }
-      }
-    },
-    {
-      "id": "east-shelf-10",
-      "layer": "ground",
-      "rect": {
-        "minCx": -3,
-        "minCz": -11,
-        "maxCx": 15,
-        "maxCz": -8
-      },
-      "seed": 1,
-      "recipe": {
-        "features": [
-          {
-            "kind": "rolling",
-            "amplitude": 46
-          },
-          {
-            "kind": "plateau",
-            "x": 3900,
-            "z": 400,
-            "radius": 620,
-            "edge": 280,
-            "height": 180,
-            "terraceStep": 26,
-            "terraceStrength": 0.85,
-            "rockyAbove": 0.6
-          },
-          {
-            "kind": "basin",
-            "x": 3500,
-            "z": 1600,
-            "radius": 700,
-            "edge": 320,
-            "depth": 130
-          },
-          {
-            "kind": "ridge",
-            "from": [
-              4200,
-              -1200
-            ],
-            "to": [
-              4400,
-              900
-            ],
-            "width": 460,
-            "height": 240,
-            "terraceStep": 26,
-            "terraceStrength": 0.7
-          },
-          {
-            "kind": "path",
-            "points": [
-              [
-                2800,
-                700
-              ],
-              [
-                3300,
-                620
-              ],
-              [
-                3850,
-                900
-              ],
-              [
-                4200,
-                1500
-              ]
-            ],
-            "width": 60,
-            "depth": 8
-          }
-        ],
-        "elevation": 0,
-        "terrace": {
-          "step": 26,
-          "strength": 0.8
-        },
-        "vegetation": {
-          "density": 1
-        }
-      }
-    },
-    {
-      "id": "east-shelf-11",
-      "layer": "ground",
-      "rect": {
-        "minCx": -6,
-        "minCz": -11,
-        "maxCx": -4,
-        "maxCz": 10
-      },
-      "seed": 1,
-      "recipe": {
-        "features": [
-          {
-            "kind": "rolling",
-            "amplitude": 46
-          },
-          {
-            "kind": "plateau",
-            "x": 3900,
-            "z": 400,
-            "radius": 620,
-            "edge": 280,
-            "height": 180,
-            "terraceStep": 26,
-            "terraceStrength": 0.85,
-            "rockyAbove": 0.6
-          },
-          {
-            "kind": "basin",
-            "x": 3500,
-            "z": 1600,
-            "radius": 700,
-            "edge": 320,
-            "depth": 130
-          },
-          {
-            "kind": "ridge",
-            "from": [
-              4200,
-              -1200
-            ],
-            "to": [
-              4400,
-              900
-            ],
-            "width": 460,
-            "height": 240,
-            "terraceStep": 26,
-            "terraceStrength": 0.7
-          },
-          {
-            "kind": "path",
-            "points": [
-              [
-                2800,
-                700
-              ],
-              [
-                3300,
-                620
-              ],
-              [
-                3850,
-                900
-              ],
-              [
-                4200,
-                1500
-              ]
-            ],
-            "width": 60,
-            "depth": 8
-          }
-        ],
-        "elevation": 0,
-        "terrace": {
-          "step": 26,
-          "strength": 0.8
-        },
-        "vegetation": {
-          "density": 1
-        }
-      }
-    },
-    {
-      "id": "east-shelf-12",
-      "layer": "ground",
-      "rect": {
-        "minCx": -8,
-        "minCz": -11,
-        "maxCx": -7,
-        "maxCz": 10
-      },
-      "seed": 1,
-      "recipe": {
-        "features": [
-          {
-            "kind": "rolling",
-            "amplitude": 46
-          },
-          {
-            "kind": "plateau",
-            "x": 3900,
-            "z": 400,
-            "radius": 620,
-            "edge": 280,
-            "height": 180,
-            "terraceStep": 26,
-            "terraceStrength": 0.85,
-            "rockyAbove": 0.6
-          },
-          {
-            "kind": "basin",
-            "x": 3500,
-            "z": 1600,
-            "radius": 700,
-            "edge": 320,
-            "depth": 130
-          },
-          {
-            "kind": "ridge",
-            "from": [
-              4200,
-              -1200
-            ],
-            "to": [
-              4400,
-              900
-            ],
-            "width": 460,
-            "height": 240,
-            "terraceStep": 26,
-            "terraceStrength": 0.7
-          },
-          {
-            "kind": "path",
-            "points": [
-              [
-                2800,
-                700
-              ],
-              [
-                3300,
-                620
-              ],
-              [
-                3850,
-                900
-              ],
-              [
-                4200,
-                1500
-              ]
-            ],
-            "width": 60,
-            "depth": 8
-          }
-        ],
-        "elevation": 0,
-        "terrace": {
-          "step": 26,
-          "strength": 0.8
-        },
-        "vegetation": {
-          "density": 1
-        }
-      }
-    },
-    {
       "id": "shore",
       "layer": "ground",
       "rect": {
@@ -1177,10 +757,263 @@
       "id": "shore-5",
       "layer": "ground",
       "rect": {
-        "minCx": -8,
+        "minCx": -6,
         "minCz": 11,
         "maxCx": -1,
         "maxCz": 13
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-6",
+      "layer": "ground",
+      "rect": {
+        "minCx": -6,
+        "minCz": 8,
+        "maxCx": -4,
+        "maxCz": 10
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-7",
+      "layer": "ground",
+      "rect": {
+        "minCx": -6,
+        "minCz": 5,
+        "maxCx": -1,
+        "maxCz": 7
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-8",
+      "layer": "ground",
+      "rect": {
+        "minCx": -3,
+        "minCz": -3,
+        "maxCx": -1,
+        "maxCz": 4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-9",
+      "layer": "ground",
+      "rect": {
+        "minCx": 16,
+        "minCz": -3,
+        "maxCx": 18,
+        "maxCz": 3
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-10",
+      "layer": "ground",
+      "rect": {
+        "minCx": 16,
+        "minCz": -6,
+        "maxCx": 18,
+        "maxCz": -4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-11",
+      "layer": "ground",
+      "rect": {
+        "minCx": 13,
+        "minCz": -6,
+        "maxCx": 15,
+        "maxCz": -4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-12",
+      "layer": "ground",
+      "rect": {
+        "minCx": 10,
+        "minCz": -6,
+        "maxCx": 12,
+        "maxCz": -4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-13",
+      "layer": "ground",
+      "rect": {
+        "minCx": 7,
+        "minCz": -6,
+        "maxCx": 9,
+        "maxCz": -4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-14",
+      "layer": "ground",
+      "rect": {
+        "minCx": 4,
+        "minCz": -6,
+        "maxCx": 6,
+        "maxCz": -4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-15",
+      "layer": "ground",
+      "rect": {
+        "minCx": 1,
+        "minCz": -6,
+        "maxCx": 3,
+        "maxCz": -4
+      },
+      "seed": 1,
+      "recipe": {
+        "features": [
+          {
+            "kind": "rolling",
+            "amplitude": 14
+          }
+        ],
+        "elevation": -150,
+        "vegetation": {
+          "density": 0
+        }
+      }
+    },
+    {
+      "id": "shore-16",
+      "layer": "ground",
+      "rect": {
+        "minCx": -3,
+        "minCz": -6,
+        "maxCx": 0,
+        "maxCz": -4
       },
       "seed": 1,
       "recipe": {
@@ -1201,6 +1034,7 @@
     "bush",
     "campfire",
     "fence-boards",
+    "fence-rubble",
     "fence-wood",
     "house",
     "lamp-post",
@@ -1217,8 +1051,8 @@
         "z": -1600
       },
       "bounds": {
-        "minX": -6528,
-        "minZ": -8376,
+        "minX": -5296,
+        "minZ": -5296,
         "maxX": 10104,
         "maxZ": 7024
       },
@@ -1226,506 +1060,6 @@
       "waterLevel": -60,
       "coords": [
         {
-          "cx": -8,
-          "cz": -11
-        },
-        {
-          "cx": -7,
-          "cz": -11
-        },
-        {
-          "cx": -6,
-          "cz": -11
-        },
-        {
-          "cx": -5,
-          "cz": -11
-        },
-        {
-          "cx": -4,
-          "cz": -11
-        },
-        {
-          "cx": -3,
-          "cz": -11
-        },
-        {
-          "cx": -2,
-          "cz": -11
-        },
-        {
-          "cx": -1,
-          "cz": -11
-        },
-        {
-          "cx": 0,
-          "cz": -11
-        },
-        {
-          "cx": 1,
-          "cz": -11
-        },
-        {
-          "cx": 2,
-          "cz": -11
-        },
-        {
-          "cx": 3,
-          "cz": -11
-        },
-        {
-          "cx": 4,
-          "cz": -11
-        },
-        {
-          "cx": 5,
-          "cz": -11
-        },
-        {
-          "cx": 6,
-          "cz": -11
-        },
-        {
-          "cx": 7,
-          "cz": -11
-        },
-        {
-          "cx": 8,
-          "cz": -11
-        },
-        {
-          "cx": 9,
-          "cz": -11
-        },
-        {
-          "cx": 10,
-          "cz": -11
-        },
-        {
-          "cx": 11,
-          "cz": -11
-        },
-        {
-          "cx": 12,
-          "cz": -11
-        },
-        {
-          "cx": 13,
-          "cz": -11
-        },
-        {
-          "cx": 14,
-          "cz": -11
-        },
-        {
-          "cx": 15,
-          "cz": -11
-        },
-        {
-          "cx": -8,
-          "cz": -10
-        },
-        {
-          "cx": -7,
-          "cz": -10
-        },
-        {
-          "cx": -6,
-          "cz": -10
-        },
-        {
-          "cx": -5,
-          "cz": -10
-        },
-        {
-          "cx": -4,
-          "cz": -10
-        },
-        {
-          "cx": -3,
-          "cz": -10
-        },
-        {
-          "cx": -2,
-          "cz": -10
-        },
-        {
-          "cx": -1,
-          "cz": -10
-        },
-        {
-          "cx": 0,
-          "cz": -10
-        },
-        {
-          "cx": 1,
-          "cz": -10
-        },
-        {
-          "cx": 2,
-          "cz": -10
-        },
-        {
-          "cx": 3,
-          "cz": -10
-        },
-        {
-          "cx": 4,
-          "cz": -10
-        },
-        {
-          "cx": 5,
-          "cz": -10
-        },
-        {
-          "cx": 6,
-          "cz": -10
-        },
-        {
-          "cx": 7,
-          "cz": -10
-        },
-        {
-          "cx": 8,
-          "cz": -10
-        },
-        {
-          "cx": 9,
-          "cz": -10
-        },
-        {
-          "cx": 10,
-          "cz": -10
-        },
-        {
-          "cx": 11,
-          "cz": -10
-        },
-        {
-          "cx": 12,
-          "cz": -10
-        },
-        {
-          "cx": 13,
-          "cz": -10
-        },
-        {
-          "cx": 14,
-          "cz": -10
-        },
-        {
-          "cx": 15,
-          "cz": -10
-        },
-        {
-          "cx": -8,
-          "cz": -9
-        },
-        {
-          "cx": -7,
-          "cz": -9
-        },
-        {
-          "cx": -6,
-          "cz": -9
-        },
-        {
-          "cx": -5,
-          "cz": -9
-        },
-        {
-          "cx": -4,
-          "cz": -9
-        },
-        {
-          "cx": -3,
-          "cz": -9
-        },
-        {
-          "cx": -2,
-          "cz": -9
-        },
-        {
-          "cx": -1,
-          "cz": -9
-        },
-        {
-          "cx": 0,
-          "cz": -9
-        },
-        {
-          "cx": 1,
-          "cz": -9
-        },
-        {
-          "cx": 2,
-          "cz": -9
-        },
-        {
-          "cx": 3,
-          "cz": -9
-        },
-        {
-          "cx": 4,
-          "cz": -9
-        },
-        {
-          "cx": 5,
-          "cz": -9
-        },
-        {
-          "cx": 6,
-          "cz": -9
-        },
-        {
-          "cx": 7,
-          "cz": -9
-        },
-        {
-          "cx": 8,
-          "cz": -9
-        },
-        {
-          "cx": 9,
-          "cz": -9
-        },
-        {
-          "cx": 10,
-          "cz": -9
-        },
-        {
-          "cx": 11,
-          "cz": -9
-        },
-        {
-          "cx": 12,
-          "cz": -9
-        },
-        {
-          "cx": 13,
-          "cz": -9
-        },
-        {
-          "cx": 14,
-          "cz": -9
-        },
-        {
-          "cx": 15,
-          "cz": -9
-        },
-        {
-          "cx": -8,
-          "cz": -8
-        },
-        {
-          "cx": -7,
-          "cz": -8
-        },
-        {
-          "cx": -6,
-          "cz": -8
-        },
-        {
-          "cx": -5,
-          "cz": -8
-        },
-        {
-          "cx": -4,
-          "cz": -8
-        },
-        {
-          "cx": -3,
-          "cz": -8
-        },
-        {
-          "cx": -2,
-          "cz": -8
-        },
-        {
-          "cx": -1,
-          "cz": -8
-        },
-        {
-          "cx": 0,
-          "cz": -8
-        },
-        {
-          "cx": 1,
-          "cz": -8
-        },
-        {
-          "cx": 2,
-          "cz": -8
-        },
-        {
-          "cx": 3,
-          "cz": -8
-        },
-        {
-          "cx": 4,
-          "cz": -8
-        },
-        {
-          "cx": 5,
-          "cz": -8
-        },
-        {
-          "cx": 6,
-          "cz": -8
-        },
-        {
-          "cx": 7,
-          "cz": -8
-        },
-        {
-          "cx": 8,
-          "cz": -8
-        },
-        {
-          "cx": 9,
-          "cz": -8
-        },
-        {
-          "cx": 10,
-          "cz": -8
-        },
-        {
-          "cx": 11,
-          "cz": -8
-        },
-        {
-          "cx": 12,
-          "cz": -8
-        },
-        {
-          "cx": 13,
-          "cz": -8
-        },
-        {
-          "cx": 14,
-          "cz": -8
-        },
-        {
-          "cx": 15,
-          "cz": -8
-        },
-        {
-          "cx": -8,
-          "cz": -7
-        },
-        {
-          "cx": -7,
-          "cz": -7
-        },
-        {
-          "cx": -6,
-          "cz": -7
-        },
-        {
-          "cx": -5,
-          "cz": -7
-        },
-        {
-          "cx": -4,
-          "cz": -7
-        },
-        {
-          "cx": -3,
-          "cz": -7
-        },
-        {
-          "cx": -2,
-          "cz": -7
-        },
-        {
-          "cx": -1,
-          "cz": -7
-        },
-        {
-          "cx": 0,
-          "cz": -7
-        },
-        {
-          "cx": 1,
-          "cz": -7
-        },
-        {
-          "cx": 2,
-          "cz": -7
-        },
-        {
-          "cx": 3,
-          "cz": -7
-        },
-        {
-          "cx": 4,
-          "cz": -7
-        },
-        {
-          "cx": 5,
-          "cz": -7
-        },
-        {
-          "cx": 6,
-          "cz": -7
-        },
-        {
-          "cx": 7,
-          "cz": -7
-        },
-        {
-          "cx": 8,
-          "cz": -7
-        },
-        {
-          "cx": 9,
-          "cz": -7
-        },
-        {
-          "cx": 10,
-          "cz": -7
-        },
-        {
-          "cx": 11,
-          "cz": -7
-        },
-        {
-          "cx": 12,
-          "cz": -7
-        },
-        {
-          "cx": 13,
-          "cz": -7
-        },
-        {
-          "cx": 14,
-          "cz": -7
-        },
-        {
-          "cx": 15,
-          "cz": -7
-        },
-        {
-          "cx": -8,
-          "cz": -6
-        },
-        {
-          "cx": -7,
-          "cz": -6
-        },
-        {
-          "cx": -6,
-          "cz": -6
-        },
-        {
-          "cx": -5,
-          "cz": -6
-        },
-        {
-          "cx": -4,
-          "cz": -6
-        },
-        {
           "cx": -3,
           "cz": -6
         },
@@ -1802,24 +1136,16 @@
           "cz": -6
         },
         {
-          "cx": -8,
-          "cz": -5
+          "cx": 16,
+          "cz": -6
         },
         {
-          "cx": -7,
-          "cz": -5
+          "cx": 17,
+          "cz": -6
         },
         {
-          "cx": -6,
-          "cz": -5
-        },
-        {
-          "cx": -5,
-          "cz": -5
-        },
-        {
-          "cx": -4,
-          "cz": -5
+          "cx": 18,
+          "cz": -6
         },
         {
           "cx": -3,
@@ -1898,24 +1224,16 @@
           "cz": -5
         },
         {
-          "cx": -8,
-          "cz": -4
+          "cx": 16,
+          "cz": -5
         },
         {
-          "cx": -7,
-          "cz": -4
+          "cx": 17,
+          "cz": -5
         },
         {
-          "cx": -6,
-          "cz": -4
-        },
-        {
-          "cx": -5,
-          "cz": -4
-        },
-        {
-          "cx": -4,
-          "cz": -4
+          "cx": 18,
+          "cz": -5
         },
         {
           "cx": -3,
@@ -1994,24 +1312,16 @@
           "cz": -4
         },
         {
-          "cx": -8,
-          "cz": -3
+          "cx": 16,
+          "cz": -4
         },
         {
-          "cx": -7,
-          "cz": -3
+          "cx": 17,
+          "cz": -4
         },
         {
-          "cx": -6,
-          "cz": -3
-        },
-        {
-          "cx": -5,
-          "cz": -3
-        },
-        {
-          "cx": -4,
-          "cz": -3
+          "cx": 18,
+          "cz": -4
         },
         {
           "cx": -3,
@@ -2090,24 +1400,16 @@
           "cz": -3
         },
         {
-          "cx": -8,
-          "cz": -2
+          "cx": 16,
+          "cz": -3
         },
         {
-          "cx": -7,
-          "cz": -2
+          "cx": 17,
+          "cz": -3
         },
         {
-          "cx": -6,
-          "cz": -2
-        },
-        {
-          "cx": -5,
-          "cz": -2
-        },
-        {
-          "cx": -4,
-          "cz": -2
+          "cx": 18,
+          "cz": -3
         },
         {
           "cx": -3,
@@ -2186,24 +1488,16 @@
           "cz": -2
         },
         {
-          "cx": -8,
-          "cz": -1
+          "cx": 16,
+          "cz": -2
         },
         {
-          "cx": -7,
-          "cz": -1
+          "cx": 17,
+          "cz": -2
         },
         {
-          "cx": -6,
-          "cz": -1
-        },
-        {
-          "cx": -5,
-          "cz": -1
-        },
-        {
-          "cx": -4,
-          "cz": -1
+          "cx": 18,
+          "cz": -2
         },
         {
           "cx": -3,
@@ -2282,24 +1576,16 @@
           "cz": -1
         },
         {
-          "cx": -8,
-          "cz": 0
+          "cx": 16,
+          "cz": -1
         },
         {
-          "cx": -7,
-          "cz": 0
+          "cx": 17,
+          "cz": -1
         },
         {
-          "cx": -6,
-          "cz": 0
-        },
-        {
-          "cx": -5,
-          "cz": 0
-        },
-        {
-          "cx": -4,
-          "cz": 0
+          "cx": 18,
+          "cz": -1
         },
         {
           "cx": -3,
@@ -2378,24 +1664,16 @@
           "cz": 0
         },
         {
-          "cx": -8,
-          "cz": 1
+          "cx": 16,
+          "cz": 0
         },
         {
-          "cx": -7,
-          "cz": 1
+          "cx": 17,
+          "cz": 0
         },
         {
-          "cx": -6,
-          "cz": 1
-        },
-        {
-          "cx": -5,
-          "cz": 1
-        },
-        {
-          "cx": -4,
-          "cz": 1
+          "cx": 18,
+          "cz": 0
         },
         {
           "cx": -3,
@@ -2474,24 +1752,16 @@
           "cz": 1
         },
         {
-          "cx": -8,
-          "cz": 2
+          "cx": 16,
+          "cz": 1
         },
         {
-          "cx": -7,
-          "cz": 2
+          "cx": 17,
+          "cz": 1
         },
         {
-          "cx": -6,
-          "cz": 2
-        },
-        {
-          "cx": -5,
-          "cz": 2
-        },
-        {
-          "cx": -4,
-          "cz": 2
+          "cx": 18,
+          "cz": 1
         },
         {
           "cx": -3,
@@ -2570,24 +1840,16 @@
           "cz": 2
         },
         {
-          "cx": -8,
-          "cz": 3
+          "cx": 16,
+          "cz": 2
         },
         {
-          "cx": -7,
-          "cz": 3
+          "cx": 17,
+          "cz": 2
         },
         {
-          "cx": -6,
-          "cz": 3
-        },
-        {
-          "cx": -5,
-          "cz": 3
-        },
-        {
-          "cx": -4,
-          "cz": 3
+          "cx": 18,
+          "cz": 2
         },
         {
           "cx": -3,
@@ -2666,24 +1928,16 @@
           "cz": 3
         },
         {
-          "cx": -8,
-          "cz": 4
+          "cx": 16,
+          "cz": 3
         },
         {
-          "cx": -7,
-          "cz": 4
+          "cx": 17,
+          "cz": 3
         },
         {
-          "cx": -6,
-          "cz": 4
-        },
-        {
-          "cx": -5,
-          "cz": 4
-        },
-        {
-          "cx": -4,
-          "cz": 4
+          "cx": 18,
+          "cz": 3
         },
         {
           "cx": -3,
@@ -2772,14 +2026,6 @@
         {
           "cx": 18,
           "cz": 4
-        },
-        {
-          "cx": -8,
-          "cz": 5
-        },
-        {
-          "cx": -7,
-          "cz": 5
         },
         {
           "cx": -6,
@@ -2882,14 +2128,6 @@
           "cz": 5
         },
         {
-          "cx": -8,
-          "cz": 6
-        },
-        {
-          "cx": -7,
-          "cz": 6
-        },
-        {
           "cx": -6,
           "cz": 6
         },
@@ -2988,14 +2226,6 @@
         {
           "cx": 18,
           "cz": 6
-        },
-        {
-          "cx": -8,
-          "cz": 7
-        },
-        {
-          "cx": -7,
-          "cz": 7
         },
         {
           "cx": -6,
@@ -3098,14 +2328,6 @@
           "cz": 7
         },
         {
-          "cx": -8,
-          "cz": 8
-        },
-        {
-          "cx": -7,
-          "cz": 8
-        },
-        {
           "cx": -6,
           "cz": 8
         },
@@ -3204,14 +2426,6 @@
         {
           "cx": 18,
           "cz": 8
-        },
-        {
-          "cx": -8,
-          "cz": 9
-        },
-        {
-          "cx": -7,
-          "cz": 9
         },
         {
           "cx": -6,
@@ -3314,14 +2528,6 @@
           "cz": 9
         },
         {
-          "cx": -8,
-          "cz": 10
-        },
-        {
-          "cx": -7,
-          "cz": 10
-        },
-        {
           "cx": -6,
           "cz": 10
         },
@@ -3420,14 +2626,6 @@
         {
           "cx": 18,
           "cz": 10
-        },
-        {
-          "cx": -8,
-          "cz": 11
-        },
-        {
-          "cx": -7,
-          "cz": 11
         },
         {
           "cx": -6,
@@ -3530,14 +2728,6 @@
           "cz": 11
         },
         {
-          "cx": -8,
-          "cz": 12
-        },
-        {
-          "cx": -7,
-          "cz": 12
-        },
-        {
           "cx": -6,
           "cz": 12
         },
@@ -3636,14 +2826,6 @@
         {
           "cx": 18,
           "cz": 12
-        },
-        {
-          "cx": -8,
-          "cz": 13
-        },
-        {
-          "cx": -7,
-          "cz": 13
         },
         {
           "cx": -6,
@@ -3894,537 +3076,309 @@
       ],
       "regions": [
         {
-          "rx": -4,
-          "rz": -6,
-          "hash": "9c9df61e",
-          "cells": 1568
-        },
-        {
-          "rx": -3,
-          "rz": -6,
-          "hash": "1f569313",
-          "cells": 1568
-        },
-        {
           "rx": -2,
-          "rz": -6,
-          "hash": "2daceed1",
+          "rz": -3,
+          "hash": "6672e5c5",
           "cells": 1568
         },
         {
           "rx": -1,
-          "rz": -6,
-          "hash": "415a89dd",
-          "cells": 1568
-        },
-        {
-          "rx": 0,
-          "rz": -6,
-          "hash": "b7fb1501",
-          "cells": 1568
-        },
-        {
-          "rx": 1,
-          "rz": -6,
-          "hash": "b6cc0f20",
-          "cells": 1568
-        },
-        {
-          "rx": 2,
-          "rz": -6,
-          "hash": "ea6e18c1",
-          "cells": 1568
-        },
-        {
-          "rx": 3,
-          "rz": -6,
-          "hash": "f0690068",
-          "cells": 1568
-        },
-        {
-          "rx": 4,
-          "rz": -6,
-          "hash": "99b2a5af",
-          "cells": 1568
-        },
-        {
-          "rx": 5,
-          "rz": -6,
-          "hash": "18703c09",
-          "cells": 1568
-        },
-        {
-          "rx": 6,
-          "rz": -6,
-          "hash": "46cc59d4",
-          "cells": 1568
-        },
-        {
-          "rx": 7,
-          "rz": -6,
-          "hash": "2dc5d555",
-          "cells": 1568
-        },
-        {
-          "rx": -4,
-          "rz": -5,
-          "hash": "b31b35fe",
-          "cells": 3136
-        },
-        {
-          "rx": -3,
-          "rz": -5,
-          "hash": "21121d0f",
-          "cells": 3136
-        },
-        {
-          "rx": -2,
-          "rz": -5,
-          "hash": "68fe8644",
-          "cells": 3136
-        },
-        {
-          "rx": -1,
-          "rz": -5,
-          "hash": "4bf82322",
-          "cells": 3136
-        },
-        {
-          "rx": 0,
-          "rz": -5,
-          "hash": "988609c8",
-          "cells": 3136
-        },
-        {
-          "rx": 1,
-          "rz": -5,
-          "hash": "e556877f",
-          "cells": 3136
-        },
-        {
-          "rx": 2,
-          "rz": -5,
-          "hash": "fa001ccf",
-          "cells": 3136
-        },
-        {
-          "rx": 3,
-          "rz": -5,
-          "hash": "eadb9371",
-          "cells": 3136
-        },
-        {
-          "rx": 4,
-          "rz": -5,
-          "hash": "d5e36b12",
-          "cells": 3136
-        },
-        {
-          "rx": 5,
-          "rz": -5,
-          "hash": "f4242d83",
-          "cells": 3136
-        },
-        {
-          "rx": 6,
-          "rz": -5,
-          "hash": "a7faa191",
-          "cells": 3136
-        },
-        {
-          "rx": 7,
-          "rz": -5,
-          "hash": "47446ff6",
-          "cells": 3136
-        },
-        {
-          "rx": -4,
-          "rz": -4,
-          "hash": "3868ef2c",
-          "cells": 3136
-        },
-        {
-          "rx": -3,
-          "rz": -4,
-          "hash": "6bdab98c",
-          "cells": 3136
-        },
-        {
-          "rx": -2,
-          "rz": -4,
-          "hash": "9397c182",
-          "cells": 3136
-        },
-        {
-          "rx": -1,
-          "rz": -4,
-          "hash": "99d1ef69",
-          "cells": 3136
-        },
-        {
-          "rx": 0,
-          "rz": -4,
-          "hash": "2ade5508",
-          "cells": 3136
-        },
-        {
-          "rx": 1,
-          "rz": -4,
-          "hash": "45fc620a",
-          "cells": 3136
-        },
-        {
-          "rx": 2,
-          "rz": -4,
-          "hash": "96ab59cb",
-          "cells": 3136
-        },
-        {
-          "rx": 3,
-          "rz": -4,
-          "hash": "1fc05d84",
-          "cells": 3136
-        },
-        {
-          "rx": 4,
-          "rz": -4,
-          "hash": "b7f8686e",
-          "cells": 3136
-        },
-        {
-          "rx": 5,
-          "rz": -4,
-          "hash": "0bf8f1bd",
-          "cells": 3136
-        },
-        {
-          "rx": 6,
-          "rz": -4,
-          "hash": "d665554b",
-          "cells": 3136
-        },
-        {
-          "rx": 7,
-          "rz": -4,
-          "hash": "06f31c89",
-          "cells": 3136
-        },
-        {
-          "rx": -4,
           "rz": -3,
-          "hash": "f4706c74",
-          "cells": 3136
-        },
-        {
-          "rx": -3,
-          "rz": -3,
-          "hash": "34f4dd17",
-          "cells": 3136
-        },
-        {
-          "rx": -2,
-          "rz": -3,
-          "hash": "f55e689c",
-          "cells": 3136
-        },
-        {
-          "rx": -1,
-          "rz": -3,
-          "hash": "d9796c77",
+          "hash": "80f2e6c2",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": -3,
-          "hash": "7ef50491",
+          "hash": "ac8654af",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": -3,
-          "hash": "30065d7a",
+          "hash": "227bcb6a",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": -3,
-          "hash": "94d7a181",
+          "hash": "9cab5233",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": -3,
-          "hash": "fe2e9e68",
+          "hash": "9e4389cd",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": -3,
-          "hash": "2a65c7e4",
+          "hash": "dec799f8",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": -3,
-          "hash": "864b4385",
+          "hash": "c628c1f7",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": -3,
-          "hash": "128f519e",
+          "hash": "e8002e72",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": -3,
-          "hash": "e1544d39",
+          "hash": "4cadacb8",
           "cells": 3136
         },
         {
-          "rx": -4,
-          "rz": -2,
-          "hash": "49967ec3",
+          "rx": 8,
+          "rz": -3,
+          "hash": "04c7d972",
           "cells": 3136
         },
         {
-          "rx": -3,
-          "rz": -2,
-          "hash": "51394921",
-          "cells": 3136
+          "rx": 9,
+          "rz": -3,
+          "hash": "f0bed686",
+          "cells": 1568
         },
         {
           "rx": -2,
           "rz": -2,
-          "hash": "5dd1f3f1",
-          "cells": 3136
+          "hash": "afc78430",
+          "cells": 1568
         },
         {
           "rx": -1,
           "rz": -2,
-          "hash": "b242e4cb",
+          "hash": "b0ce75be",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": -2,
-          "hash": "18d96b4e",
+          "hash": "004ce825",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": -2,
-          "hash": "e3b1d89a",
+          "hash": "a1979f27",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": -2,
-          "hash": "12992eca",
+          "hash": "04c72da0",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": -2,
-          "hash": "ab0e168d",
+          "hash": "037e7a7c",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": -2,
-          "hash": "f51552ea",
+          "hash": "18ebfd25",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": -2,
-          "hash": "ee3fe293",
+          "hash": "49f6976e",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": -2,
-          "hash": "f12fd1bd",
+          "hash": "5555e87a",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": -2,
-          "hash": "71573aa9",
+          "hash": "81fbea4a",
           "cells": 3136
         },
         {
-          "rx": -4,
-          "rz": -1,
-          "hash": "c7a22de2",
+          "rx": 8,
+          "rz": -2,
+          "hash": "12e6fd23",
           "cells": 3136
         },
         {
-          "rx": -3,
-          "rz": -1,
-          "hash": "a139d206",
-          "cells": 3136
+          "rx": 9,
+          "rz": -2,
+          "hash": "295ced16",
+          "cells": 1568
         },
         {
           "rx": -2,
           "rz": -1,
-          "hash": "3d2fa1f2",
-          "cells": 3136
+          "hash": "2ef845d5",
+          "cells": 1568
         },
         {
           "rx": -1,
           "rz": -1,
-          "hash": "3422f3f9",
+          "hash": "e4237907",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": -1,
-          "hash": "3b5f96ea",
+          "hash": "1afac7bf",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": -1,
-          "hash": "dc703550",
+          "hash": "2931b1d4",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": -1,
-          "hash": "80513303",
+          "hash": "6979bd55",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": -1,
-          "hash": "75bad574",
+          "hash": "516a615e",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": -1,
-          "hash": "8c65f891",
+          "hash": "3d530baf",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": -1,
-          "hash": "8eea2666",
+          "hash": "fe41579f",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": -1,
-          "hash": "7bae22bf",
+          "hash": "b653ebbe",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": -1,
-          "hash": "70fd8934",
+          "hash": "263415a9",
           "cells": 3136
         },
         {
-          "rx": -4,
-          "rz": 0,
-          "hash": "9a1054cc",
+          "rx": 8,
+          "rz": -1,
+          "hash": "bdc3ac7e",
           "cells": 3136
         },
         {
-          "rx": -3,
-          "rz": 0,
-          "hash": "20c37e3c",
-          "cells": 3136
+          "rx": 9,
+          "rz": -1,
+          "hash": "29e3cd5e",
+          "cells": 1568
         },
         {
           "rx": -2,
           "rz": 0,
-          "hash": "6b924126",
-          "cells": 3136
+          "hash": "e70ae3e7",
+          "cells": 1568
         },
         {
           "rx": -1,
           "rz": 0,
-          "hash": "f47d51c5",
+          "hash": "c4a5e509",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": 0,
-          "hash": "a23abe37",
+          "hash": "f812900e",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 0,
-          "hash": "e065eb82",
+          "hash": "dfad98d1",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 0,
-          "hash": "e96edfa7",
+          "hash": "b418a994",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": 0,
-          "hash": "b6bcc175",
+          "hash": "394f5322",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": 0,
-          "hash": "2bb90553",
+          "hash": "26368ff0",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": 0,
-          "hash": "d17d2936",
+          "hash": "14283bd3",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": 0,
-          "hash": "bc28088f",
+          "hash": "236be41f",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": 0,
-          "hash": "82627439",
+          "hash": "585246ed",
           "cells": 3136
         },
         {
-          "rx": -4,
-          "rz": 1,
-          "hash": "d5281f8e",
+          "rx": 8,
+          "rz": 0,
+          "hash": "c0f034f8",
           "cells": 3136
         },
         {
-          "rx": -3,
-          "rz": 1,
-          "hash": "a01efffc",
-          "cells": 3136
+          "rx": 9,
+          "rz": 0,
+          "hash": "e1da3a03",
+          "cells": 1568
         },
         {
           "rx": -2,
           "rz": 1,
-          "hash": "c9af2031",
-          "cells": 3136
+          "hash": "c7347885",
+          "cells": 1568
         },
         {
           "rx": -1,
           "rz": 1,
-          "hash": "d6176995",
+          "hash": "fe833f64",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": 1,
-          "hash": "7b689685",
+          "hash": "5e0b4fd3",
           "cells": 3136
         },
         {
@@ -4448,13 +3402,13 @@
         {
           "rx": 4,
           "rz": 1,
-          "hash": "216d7c57",
+          "hash": "a7c3cc34",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": 1,
-          "hash": "2614a64b",
+          "hash": "c32913e7",
           "cells": 3136
         },
         {
@@ -4466,37 +3420,43 @@
         {
           "rx": 7,
           "rz": 1,
-          "hash": "18a87a16",
+          "hash": "5c269bd8",
           "cells": 3136
         },
         {
-          "rx": -4,
-          "rz": 2,
-          "hash": "8aa1ba20",
+          "rx": 8,
+          "rz": 1,
+          "hash": "95a4af13",
           "cells": 3136
+        },
+        {
+          "rx": 9,
+          "rz": 1,
+          "hash": "28e99b66",
+          "cells": 1568
         },
         {
           "rx": -3,
           "rz": 2,
-          "hash": "631978fa",
-          "cells": 3136
+          "hash": "41904e46",
+          "cells": 1568
         },
         {
           "rx": -2,
           "rz": 2,
-          "hash": "739e66f9",
-          "cells": 3136
+          "hash": "bab38cb6",
+          "cells": 2352
         },
         {
           "rx": -1,
           "rz": 2,
-          "hash": "8117749c",
+          "hash": "2acd1ddc",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": 2,
-          "hash": "d4031612",
+          "hash": "b3d8de36",
           "cells": 3136
         },
         {
@@ -4514,37 +3474,37 @@
         {
           "rx": 3,
           "rz": 2,
-          "hash": "691e71e4",
+          "hash": "79018335",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": 2,
-          "hash": "df358dc3",
+          "hash": "70a4a9b0",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": 2,
-          "hash": "9b1c5d24",
+          "hash": "4de42e9a",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": 2,
-          "hash": "53cd2c83",
+          "hash": "8e5867e1",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": 2,
-          "hash": "5d0b1a19",
+          "hash": "416631a4",
           "cells": 3136
         },
         {
           "rx": 8,
           "rz": 2,
-          "hash": "b45a9cb1",
+          "hash": "2d944d91",
           "cells": 3136
         },
         {
@@ -4554,33 +3514,27 @@
           "cells": 1568
         },
         {
-          "rx": -4,
-          "rz": 3,
-          "hash": "6fdc531a",
-          "cells": 3136
-        },
-        {
           "rx": -3,
           "rz": 3,
-          "hash": "0c20c0e3",
+          "hash": "c1c81f17",
           "cells": 3136
         },
         {
           "rx": -2,
           "rz": 3,
-          "hash": "38a62194",
+          "hash": "edaea64e",
           "cells": 3136
         },
         {
           "rx": -1,
           "rz": 3,
-          "hash": "907a5b00",
+          "hash": "df43e98e",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": 3,
-          "hash": "7402138f",
+          "hash": "0843bcb2",
           "cells": 3136
         },
         {
@@ -4598,13 +3552,13 @@
         {
           "rx": 3,
           "rz": 3,
-          "hash": "bea83de4",
+          "hash": "9b3a3cba",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": 3,
-          "hash": "38b75c53",
+          "hash": "7be7b86d",
           "cells": 3136
         },
         {
@@ -4616,7 +3570,7 @@
         {
           "rx": 6,
           "rz": 3,
-          "hash": "e7c7b6f1",
+          "hash": "d040a565",
           "cells": 3136
         },
         {
@@ -4638,33 +3592,27 @@
           "cells": 1568
         },
         {
-          "rx": -4,
-          "rz": 4,
-          "hash": "6e0c5bc1",
-          "cells": 3136
-        },
-        {
           "rx": -3,
           "rz": 4,
-          "hash": "f76e8263",
+          "hash": "98479471",
           "cells": 3136
         },
         {
           "rx": -2,
           "rz": 4,
-          "hash": "1b2b0e35",
+          "hash": "f43dce9a",
           "cells": 3136
         },
         {
           "rx": -1,
           "rz": 4,
-          "hash": "aa617486",
+          "hash": "ab67ac5f",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": 4,
-          "hash": "d254f35f",
+          "hash": "26635f4a",
           "cells": 3136
         },
         {
@@ -4688,7 +3636,7 @@
         {
           "rx": 4,
           "rz": 4,
-          "hash": "c80ba91b",
+          "hash": "2a56c875",
           "cells": 3136
         },
         {
@@ -4722,39 +3670,33 @@
           "cells": 1568
         },
         {
-          "rx": -4,
-          "rz": 5,
-          "hash": "b15ca0ea",
-          "cells": 3136
-        },
-        {
           "rx": -3,
           "rz": 5,
-          "hash": "d8532375",
+          "hash": "38b9a3b9",
           "cells": 3136
         },
         {
           "rx": -2,
           "rz": 5,
-          "hash": "7c6c55e7",
+          "hash": "85ad2f99",
           "cells": 3136
         },
         {
           "rx": -1,
           "rz": 5,
-          "hash": "db7090f4",
+          "hash": "165abaf8",
           "cells": 3136
         },
         {
           "rx": 0,
           "rz": 5,
-          "hash": "21794a36",
+          "hash": "f06bcace",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 5,
-          "hash": "9f3cbf00",
+          "hash": "6b5d0de3",
           "cells": 3136
         },
         {
@@ -4806,12 +3748,6 @@
           "cells": 1568
         },
         {
-          "rx": -4,
-          "rz": 6,
-          "hash": "de2a7daf",
-          "cells": 3136
-        },
-        {
           "rx": -3,
           "rz": 6,
           "hash": "dcf67a2c",
@@ -4820,13 +3756,13 @@
         {
           "rx": -2,
           "rz": 6,
-          "hash": "b93069b3",
+          "hash": "5618f25b",
           "cells": 3136
         },
         {
           "rx": -1,
           "rz": 6,
-          "hash": "8fd1e96d",
+          "hash": "125c5c5b",
           "cells": 3136
         },
         {
@@ -4892,5 +3828,5 @@
       ]
     }
   ],
-  "mapId": "86e3b8e7"
+  "mapId": "5afc9c10"
 }

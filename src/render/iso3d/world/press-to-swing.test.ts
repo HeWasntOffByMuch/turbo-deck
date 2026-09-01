@@ -41,7 +41,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const hold = swingHold({
       previous: NO_HOLD,
       held: held(MOVE_NORTH, MOVE_EAST),
-      pressed: true,
+      pressed: held(MOVE_NORTH, MOVE_EAST),
       casting: true,
       committed: false,
     });
@@ -54,7 +54,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const hold = swingHold({
       previous: NO_HOLD,
       held: held('skill.1', 'camera.rotateLeft'),
-      pressed: true,
+      pressed: held('skill.1', 'camera.rotateLeft'),
       casting: true,
       committed: false,
     });
@@ -68,7 +68,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const hold = swingHold({
       previous: NO_HOLD,
       held: held(MOVE_NORTH),
-      pressed: false,
+      pressed: null,
       casting: true,
       committed: false,
     });
@@ -79,7 +79,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const first = swingHold({
       previous: NO_HOLD,
       held: held(MOVE_NORTH),
-      pressed: true,
+      pressed: held(MOVE_NORTH),
       casting: true,
       committed: false,
     });
@@ -88,7 +88,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const released = swingHold({
       previous: first,
       held: held(),
-      pressed: false,
+      pressed: null,
       casting: true,
       committed: false,
     });
@@ -97,7 +97,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const again = swingHold({
       previous: released,
       held: held(MOVE_NORTH),
-      pressed: false,
+      pressed: null,
       casting: true,
       committed: false,
     });
@@ -112,7 +112,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const during = swingHold({
       previous: held(MOVE_NORTH),
       held: held(MOVE_NORTH),
-      pressed: false,
+      pressed: null,
       casting: true,
       committed: true,
     });
@@ -127,7 +127,7 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
       swingHold({
         previous: held(MOVE_NORTH),
         held: held(MOVE_NORTH),
-        pressed: false,
+        pressed: null,
         casting: false,
         committed: false,
       }).size,
@@ -138,14 +138,14 @@ describe('what a press takes out of the player’s hands (spec 258)', () => {
     const first = swingHold({
       previous: NO_HOLD,
       held: held(MOVE_NORTH),
-      pressed: true,
+      pressed: held(MOVE_NORTH),
       casting: true,
       committed: false,
     });
     const again = swingHold({
       previous: first,
       held: held(MOVE_NORTH, MOVE_WEST),
-      pressed: true,
+      pressed: held(MOVE_NORTH, MOVE_WEST),
       casting: true,
       committed: false,
     });
@@ -207,7 +207,7 @@ async function walkAndSwing(pressAt: number, ticks: number): Promise<Walked> {
   const { server, client } = await wire();
   const down = new Set<string>([MOVE_NORTH]);
   let hold: ReadonlySet<string> = NO_HOLD;
-  let pressed = false;
+  let pressed: ReadonlySet<string> | null = null;
   let facing = 0;
   let started = 0;
   let refused = 0;
@@ -234,7 +234,10 @@ async function walkAndSwing(pressAt: number, ticks: number): Promise<Walked> {
       continue;
     }
     if (i === pressAt) {
-      pressed = true;
+      // The set the press was made with (spec 264). Immediate here, so it is
+      // simply what is down -- a *queued* press carries the set it was made
+      // with several frames earlier.
+      pressed = down;
       client.useAbility('melee.slash', me.x, me.y - 1000);
     }
     const own = view.casts.find((cast) => cast.entityId === view.selfEntityId) ?? null;
@@ -245,7 +248,7 @@ async function walkAndSwing(pressAt: number, ticks: number): Promise<Walked> {
       casting: view.selfRoot !== null,
       committed: own !== null && committedPhase(own.phase),
     });
-    pressed = false;
+    pressed = null;
     const intent = moveIntent({
       held: heldAfterHold(down, hold),
       self: me,
