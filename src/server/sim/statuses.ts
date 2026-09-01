@@ -109,7 +109,7 @@ export const StatusId = {
   /** Agility: this body took a hit recently, which is what Perfect Exit reads. */
   RecentlyHit: 'recentlyHit',
   /**
-   * This body has been in a fight and is not yet due back to full (spec 259).
+   * This body has been in a fight and is not yet due back to full (spec 261).
    *
    * The one status here whose **expiry is the fact**: it is stamped for the
    * combat window plus a whole recovery, so `expiresAtTick` is the tick the

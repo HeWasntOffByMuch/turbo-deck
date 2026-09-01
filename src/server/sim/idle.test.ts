@@ -38,7 +38,7 @@ function activeAround(): Set<string> {
 
 /**
  * A context over a **given** active set, so a test can take a body out of the
- * simulated world and put it back (spec 259).
+ * simulated world and put it back (spec 261).
  *
  * The set is handed in live rather than copied, which is what `ChunkManager`
  * does too (spec 193): the server refreshes it between ticks, so a test that
@@ -409,7 +409,7 @@ describe('recovery', () => {
 });
 
 /**
- * Spec 259. Recovery is measured on the clock, not in ticks somebody was near
+ * Spec 261. Recovery is measured on the clock, not in ticks somebody was near
  * enough to watch.
  */
 describe('recovery is a comparison, not a counter', () => {
@@ -503,7 +503,7 @@ describe('recovery is a comparison, not a counter', () => {
     const ctx = contextWith(active);
     state = run(state, due + SERVER_TICK_RATE, ctx);
     // Frozen, which is the bug this closes: `world.ts` steps nothing outside
-    // `activeChunks`, so before spec 259 the sliver was still there whenever
+    // `activeChunks`, so before spec 261 the sliver was still there whenever
     // the player got back.
     expect(at(state, ravager.id).health).toBe(1);
 

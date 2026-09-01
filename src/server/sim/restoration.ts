@@ -164,7 +164,7 @@ export function enterCombat(statuses: Statuses, tick: number): Statuses {
 
 /**
  * Ticks until this body is due back to full, or `null` if nothing is owed
- * (spec 259).
+ * (spec 261).
  *
  * **It reads the entry whether or not it is still live**, and is the one place
  * in the sim that wants a lapsed status. That does not bend `statuses.ts`'s rule

@@ -25,7 +25,7 @@
  * because both ends of "regenerate to full along the route" are gone the moment
  * the body takes its first step.
  *
- * **And recovery is measured on the clock rather than in ticks** (spec 259).
+ * **And recovery is measured on the clock rather than in ticks** (spec 261).
  * `world.ts` steps nothing outside `activeChunks`, so a body nobody is near is
  * not slowed but frozen -- which made {@link restore} a counter of how long
  * somebody was *watching* rather than of how long the body was left alone, and
@@ -253,7 +253,7 @@ function clamp01(value: number): number {
  * healed in those gaps would be a monster you cannot finish.
  *
  * **Recovery is measured on the clock, not in ticks somebody was near enough to
- * watch** (spec 259), and that is what the floor below is for. `world.ts` steps
+ * watch** (spec 261), and that is what the floor below is for. `world.ts` steps
  * nothing outside `activeChunks`, so a body nobody is near is not slowed but
  * *frozen* -- and dying is the fastest way there is to make one unwatched,
  * since a respawn teleports the player away. The one situation this function

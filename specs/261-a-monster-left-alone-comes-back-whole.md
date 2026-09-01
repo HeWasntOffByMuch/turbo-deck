@@ -1,4 +1,4 @@
-# 259 — A monster left alone comes back whole
+# 261 — A monster left alone comes back whole
 
 ## Problem
 

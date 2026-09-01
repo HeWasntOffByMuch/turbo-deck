@@ -217,7 +217,7 @@ export const RESTORATION = {
     combatTicks: seconds(8),
     /**
      * How long a monster nobody is fighting takes to come back from nothing to
-     * full, once {@link combatTicks} has closed (specs 213, 259).
+     * full, once {@link combatTicks} has closed (specs 213, 261).
      *
      * Here rather than in `sim/idle.ts` because two files need it and they are
      * on opposite sides of an import: `restore` ramps over it, and
