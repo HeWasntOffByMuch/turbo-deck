@@ -229,6 +229,17 @@ phase, the hour, darkness, the sun's elevation and the sky's colour — and the
 two acceptance numbers a table hides: the largest per-frame step in any sky
 channel, and the rate ratio across each of the four boundaries.
 
+### `scripts/probe-day-night.ts`
+
+The wiring half, and the one no headless test can reach: every rule above is
+asserted in Node and all of it would pass beside a `scene.ts` that never called
+`resolveSkyHours`. That failure is invisible — a scene still lit by
+`FIXED_DAYLIGHT` looks *correct*, just permanently mid-afternoon, which is the
+bug this spec exists to fix. It drives the shipped `dist/` past the title screen
+and checks the default is the world's clock, that `?clock=` reaches the frame,
+and — the only one that says an hour reached a *light* rather than a readout —
+that the picture is darker, measured off the canvas.
+
 ## Invariants tested
 
 - The segments sum to exactly 24 clock hours, 810 real seconds and 48,600 ticks,
