@@ -210,6 +210,10 @@ export class DeltaTracker {
             (named === null ? 0 : EntityField.Identity),
           kind: entity.kind,
           typeId: entity.typeId,
+          // When this body was made, so a client can tell an arrival from a
+          // body it has walked up to (spec 263). It rides first sight because
+          // it never changes, which is what the `Spawn` field is for.
+          spawnTick: entity.spawnTick,
           position: entity.position,
           facing: entity.facing,
           health: entity.health,

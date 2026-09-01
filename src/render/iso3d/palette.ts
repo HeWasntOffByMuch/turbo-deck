@@ -134,6 +134,29 @@ export const PALETTE = {
   emberBed: 0xd2582a,
   ironDark: 0x4a4a52,
   lampMantle: 0xffe6b4,
+  // A grave (spec 263): a headstone on a plinth over turned earth.
+  //
+  // Three new tones rather than three borrowed ones, and the argument is the
+  // same for the stone and the soil. **Every stone in this palette is warm
+  // limestone on purpose** -- `drystone` and its pair were chosen so a wall
+  // belongs to the ground it stands on, and the comment above them says so -- and
+  // a grave marker is the one piece of stonework here that has to read as *cold*
+  // against that ground. It is the only way a slab in a meadow says "somebody
+  // put this here" rather than "this fell off the hill".
+  //
+  // And there is no soil tone at all: `trunkDark` is bark, and
+  // `TERRAIN_COLORS.dirt` is the orange of a trodden path, not the dark of earth
+  // that was turned this morning. The mound is the darkest thing on the ground
+  // for that reason -- freshly dug earth against grass is a value gap before it
+  // is a hue one, which is what makes the bump read as a bump at this camera's
+  // distance rather than as a patch of different-coloured lawn.
+  graveStone: 0x9aa2ab,
+  // The plinth, and every face of the stone that is not catching the sun. A
+  // clear step darker rather than a shade, because the retro pass quantizes each
+  // channel to a handful of steps -- two greys a few points apart land in one
+  // band and the plinth stops existing.
+  graveStoneDeep: 0x6e767f,
+  graveEarth: 0x6b4c30,
 } as const;
 
 /**

@@ -408,6 +408,29 @@ export interface ServerEntity {
   readonly typeId: string;
   /** Set for player entities, null for everything the server spawned itself. */
   readonly ownerPlayerId: string | null;
+  /**
+   * The tick this body was **created** (spec 263).
+   *
+   * Recorded so a client can tell a body that came into existence from one it
+   * has merely walked up to. `EntityField.Spawn` cannot answer that: it is set
+   * "the first time an entity enters this client's interest set", which fires
+   * identically for a fresh monster and for one the player has walked toward
+   * for a minute. This is `LootDrop.spawnTick`'s decision one level out and for
+   * its stated reason -- a client's own "when did I first see this" would
+   * restart an arrival for somebody who turned up halfway through it.
+   *
+   * Read by nothing in the sim. It is a fact about the body that rides the
+   * `Spawn` field, and the renderer decides what an arrival looks like.
+   *
+   * **A respawn does not move it.** `GameServer.respawn` heals and moves the
+   * body it already has -- no body is created, the id survives -- so a player
+   * coming back is not a body being made. The client reads that edge instead,
+   * the way `stagger-flinch.ts` reads a break.
+   *
+   * 0 for a body built by {@link blankEntity} with no tick to hand -- a drop and
+   * a mote, both of which carry their own arrival on their own message.
+   */
+  readonly spawnTick: number;
   readonly position: Vec3;
   readonly facing: number;
   readonly health: number;

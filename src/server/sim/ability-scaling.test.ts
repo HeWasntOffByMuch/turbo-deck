@@ -88,6 +88,7 @@ function body(effective: EffectiveStats, overrides: Partial<ServerEntity> = {}):
     kind: EntityKindValue.Player,
     typeId: 'p',
     ownerPlayerId: null,
+    spawnTick: 0,
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     health: effective.maxHealth,

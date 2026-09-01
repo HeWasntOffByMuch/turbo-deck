@@ -183,6 +183,16 @@ const SKY_KEYS: readonly SkyKey[] = [
   { hours: 21, skyColor: rgbFromHex(0x0b1226), lightColor: rgbFromHex(0x8fa8d8), lightIntensity: 0.3, ambientColor: rgbFromHex(0x2a3a5c), ambientIntensity: 0.55 },
 ];
 
+/**
+ * The hours the ramp is authored at, in clock order.
+ *
+ * Exported so the thing that *drives* this clock can assert it lands its own
+ * segment boundaries on keyframes (spec 263). That is not tidiness: a boundary
+ * is where a piecewise clock's rate jumps, and one landing in the middle of a
+ * colour transition is the one way such a clock shows a kink.
+ */
+export const SKY_KEY_HOURS: readonly number[] = SKY_KEYS.map((key) => key.hours);
+
 /** Bring any hour onto the clock face, including negatives. */
 export function wrapHours(hours: number): number {
   if (!Number.isFinite(hours)) return DEFAULT_TIME_OF_DAY;

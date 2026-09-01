@@ -86,10 +86,12 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
-| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
-| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 260). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
+| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224), plus a grave and a row of them (spec 263). The grave is the one prop here whose risk runs *opposite* to the sign's: it has to be unmistakably shorter than the person looking at it and still read from the game's own bearing, so the block it is drawn beside is the measurement rather than a courtesy |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well, a sign and a grave in the real editor and read them back out of the saved file (specs 224, 260, 263). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message. The grave is the opposite case and earns a step for it: it has **nothing** of its own, so every part of being placeable is derived, and the whole feature is a button nobody wrote and geometry nobody dispatched to -- both silent. It is also why `placed()` derives its pattern from `PLACED_KINDS` instead of listing the kinds: written by hand it printed `said nothing` for a grave that really had been placed, which is exactly what one that had **not** been placed prints |
 | `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 260). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
 | `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
+| `npx tsx scripts/preview-day-night.ts` | What the day/night cycle actually does (spec 263). A `preview-` rather than a `probe-` because what is being judged is a **schedule**: a thumbnail of a sunset says nothing about whether the sunset takes four seconds or forty, and forty is the whole question. Four sheets -- the segment table with the hours-per-second rate that falls out of it, the four seams with the rate either side of each as a ratio, a whole cycle walked through the real `worldClockAt` and the real `skyAt`, and the acceptance numbers. The pair worth reading is on the seams sheet: a piecewise clock can only show a kink where its rate jumps, and beside each ratio it prints **how fast the colour was moving there** -- so day->dusk speeding up 4.89x reads as 0.000005 to 0.000256 of a channel per frame, which is a large multiple of nothing. The last sheet answers the question the segment names cannot: the Day and Night *phases* are 10m00s and 2m00s, and the *sun* is up 10m43s and down 2m47s, because dawn and dusk divide their 45s each between light and dark |
+| `npm run build && npx tsx scripts/probe-day-night.ts` | Whether the world clock is wired to anything (spec 263). Every rule about the cycle is asserted in Node and all of it would go on passing beside a `scene.ts` that never called `resolveSkyHours` -- and that failure is **invisible**, because a scene still lit by `FIXED_DAYLIGHT` looks correct, just permanently mid-afternoon, which is the bug the spec exists to fix. So it drives the shipped `dist/` past the title screen and asks the three things a green suite cannot: that the default is the *world's* clock and says `pinned` nowhere, that `?clock=` reaches the frame (`data-world-clock` is published from the clock the frame **drew with**, so a pin that parsed and reached nothing reads as absent), and -- the only one that matters -- that the picture is actually darker, measured off the canvas. Night comes out at **0.44x** noon. Its first cut sampled the canvas with `drawImage` and read `0.0000` at every hour: this renderer builds its context without `preserveDrawingBuffer`, so there is nothing left in the drawing buffer once the frame is composited. Every check passed except the one that mattered, and that one failed *identically* at noon and midnight, which is what measuring nothing looks like when the comparison is a ratio. It screenshots, like `probe-exempt.ts` |
 | `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
 | `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
 | `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
@@ -428,6 +430,36 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  to hand-edit: `maps/arena.json` is committed so the world
                  reviews as a diff, and a sentence is the one thing in a prop
                  record that reads as a sentence rather than a coordinate.
+                 Since spec 263 there is a **grave** beside it -- a grey
+                 headstone on a plinth over a mound of turned earth -- and it is
+                 the first member of that list that is not something a village
+                 *built*, which changes nothing about how it is placed and is the
+                 point: it passes the same membership test, going in one spot
+                 somebody chose and turned to face the path it is walked up to
+                 from, so a graveyard is a layout rather than a distribution.
+                 Two things about it are decisions rather than defaults.
+                 `GRAVE_PLAN.stoneHeight` is **44 against a body's 56**, and
+                 that bound is the design: a marker taller than the person
+                 reading it stops being a grave and becomes a monument, which is
+                 a different prop with a different reason to exist. And the
+                 collider is the **headstone and only the headstone**, which is
+                 the sign's rule applied to the other half of an object -- a
+                 mound is loose earth a stride high, and a circle wide enough to
+                 cover the plot would take a body and a half of walkable ground
+                 out of the world around every grave, which in a graveyard is
+                 most of the graveyard. Its three palette tones are new rather
+                 than borrowed for one stated reason: every stone in that palette
+                 is deliberately *warm* limestone, tuned so a wall belongs to the
+                 ground it stands on, and a grave marker is the one piece of
+                 stonework here that has to read as cold against it.
+                 The mound runs *into* the plinth rather than up to it, because
+                 `rockGeometry` knocks every vertex inward by up to half its
+                 roughness -- so earth laid exactly against the base comes out
+                 several units short of it, and a grave with daylight between the
+                 stone and the soil reads as two props that happen to be near
+                 each other. Found by looking at `preview-structures.ts`'s sheet
+                 and pinned by the test that now fails when the overlap is
+                 removed.
                  Since spec 250 it also holds the **light fixtures**: a campfire,
                  a street lamp on a stake, and a standing torch. The same
                  argument one system further along -- a fixture is written into
@@ -3012,6 +3044,92 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  grids, `gen` 25 to 155, none refused. It arrived with spec 208
                  rather than with 215, and nothing caught it because every test
                  in the tree drives a client that grows.
+                 `data/day-night.ts` is what time it is (spec 263), and it is
+                 the half spec 047 said would need a spec of its own: that one
+                 built the whole cycle -- the sun's arc, the nine-key colour
+                 ramp, the terminator fade -- and drove it from a slider in a
+                 tuning panel, which spec 254 then hid in the shipped build. So
+                 the game people play had no day and no night, only a permanent
+                 mid-afternoon; and a clock in a panel is a **per-client** clock,
+                 which is the one thing a shared cycle cannot be.
+                 **The clock is a pure function of the tick, and nothing crosses
+                 the wire.** The client already holds one -- `estimatedTick` is
+                 the server's clock re-synced to every delta with half the round
+                 trip added -- so both ends compute the same hour from the same
+                 number, and the feature costs no message, no protocol version
+                 and no state to persist, replicate or forget to clear. It is the
+                 pattern the loot reveal's phase, the stun swirl's angle and the
+                 affliction beat already use, and spec 215 states it outright:
+                 *the beat is derived, not sent*. What it costs is one round
+                 trip's worth of hour, which at the fastest the clock ever runs is
+                 under a hundredth of an hour on a 200ms connection.
+                 Ten minutes of day and two of night are **not expressible under
+                 one rate** -- `advanceTimeOfDay` is linear in `dt`, so day and
+                 night are each half a cycle whatever the day length -- so the
+                 cycle is four segments with a rate each: Day 07:30-16:30 in
+                 600s, Dusk 16:30-19:48 in 45s, Night 19:48-04:30 in 120s, Dawn
+                 04:30-07:30 in 45s. 24 hours, 810 seconds, 48,600 ticks, every
+                 count an integer, so the phase is integer arithmetic on the tick
+                 with no drift to accumulate over a session.
+                 **The boundaries are `SKY_KEYS` entries**, and that is the point
+                 rather than a coincidence: the ramp already has keys at 4.5, 7.5,
+                 16.5 and 19.8, so the segments *are* its own structure and a
+                 seam -- the one place a piecewise clock can show a kink, because
+                 the rate jumps there -- always lands on a keyframe and never
+                 mid-transition. Two of the four seams do step by about 5x, and
+                 both sit at the ends of the long daylight stretch where the
+                 colour is barely moving: measured through the real ramp,
+                 day->dusk speeds up 4.89x at a point where the sky is moving
+                 0.000005 of a channel per frame. The largest step the whole
+                 cycle takes between two frames is 0.0066 of a retro colour band.
+                 Day and night are authored **independently**, so 600 and 120 are
+                 exactly the ten minutes and the two minutes and moving one does
+                 not silently move the other or eat the sunrise. The cycle is
+                 therefore 13m30s rather than 12m, which is stated rather than
+                 hidden -- and measured against the *horizon* instead of the
+                 segment names the sun is up 10m43s and down 2m47s, since dawn
+                 and dusk divide their 45s each between light and dark. Dawn spans
+                 a real sunrise (04:30 to 07:30 crosses the horizon at 06:00), and
+                 it is the same 45s as dusk because asymmetry would need a reason
+                 and there is not one: what makes it the payoff for a short night
+                 is that it is 45 seconds against night's 120.
+                 **Tick 0 is the first tick of Day**, which is why the table is
+                 authored starting at Day -- the cycle's own order from its own
+                 epoch, so there is no offset constant to keep in step. A fresh
+                 server opens in morning light with the full ten minutes ahead of
+                 it, and every harness that boots a server and photographs it
+                 inside a minute is photographing daylight. The cost is that the
+                 game no longer opens on spec 045's tuned 15:00 framing; with the
+                 clock always running that is an hour the world passes through
+                 rather than the hour it sits at.
+                 **`worldClockAt(tick)` is the whole hook surface**, and every
+                 pass in the sim already has the tick in hand. Deliberately not a
+                 `ServerWorldState` field, a `StepContext` member or a
+                 `ServerSimEvent`: each would be a socket sitting un-plugged in a
+                 dozen places -- a field to persist and replicate, a context
+                 member every test fixture has to supply, a `switch` arm in every
+                 consumer -- to say something derivable from a number those
+                 callers were handed anyway. `phaseBeganAt` is the edge for a
+                 mechanic that wants to act once at nightfall, and being a
+                 comparison rather than a fired event there is nothing to forget
+                 to raise. It memoizes its last answer on the tick, which is pure
+                 by construction since the tick is its only input.
+                 `darkness` is the hook that is a *number*: 0 through Day,
+                 smoothstepped up across Dusk, 1 through Night, smoothstepped down
+                 across Dawn. Deliberately **not** derived from the sky's light
+                 intensity -- that is presentation, tuned by eye and free to be
+                 retuned, and this is a gameplay quantity with a stated shape; a
+                 mechanic reading the ramp would be a rule that moves when
+                 somebody adjusts a colour. There is deliberately **no
+                 `isNight`**, because it would mean two different things -- the
+                 Night *phase* (19:48-04:30) and the sun being *down*
+                 (18:00-06:00) -- and a caller would get whichever the author
+                 happened to pick; `phase` and `sunUp` are each unambiguous.
+                 **No game rule reads any of it yet**, which is what the spec asked
+                 for rather than an omission: the renderer's sky is the consumer
+                 that proves the path end to end. The obvious next one is spec
+                 250's fixtures, which burn at a constant intensity, so a lamp is
+                 lit at noon.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -4351,6 +4469,110 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  take `staggered` as their own field, and the `moveIntent`
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
+                 `world/spawn-presentation.ts` is what a body's **arrival**
+                 looks like (spec 263), and it is the flinch's shape one event
+                 earlier: a `read` per body per frame, an offset added to the
+                 drawn transform, `forget`/`retain` for its own bookkeeping, and
+                 nothing it returns reaching a decision. Until it existed nothing
+                 in this game arrived -- a monster was a coordinate that did not
+                 have a body on it and did on the next frame, and a player who
+                 pressed Respawn was standing on the pad between one frame and
+                 the next.
+                 There are **two presentations and no more**, and the split is a
+                 fact about the *rigs* rather than a list of type ids.
+                 `MechRig` is the only rig here with **world-locked feet** --
+                 `stabilise` draws each leg from a hip carried through
+                 `carriage.matrix` to a foot that is independent of it -- so it
+                 is the only one that can plant its feet while the body they
+                 carry is still underground. The spider and the Warden share
+                 that rig, so they share the **burrow**; a critter's legs are
+                 sine-driven bone rotations of one skeleton with no plant to
+                 hold, and an authored unit would need a clip nobody has
+                 authored, so everything else gets the **poof**.
+                 `MechRig.burrow` is the whole rig change: one public number,
+                 0..1, subtracted from the carriage *outside* the sway clamp
+                 (that clamp is sized for a chassis bobbing on its suspension and
+                 this is a body height), with `hiddenDepth` beside it as a
+                 **getter** for `openingWorld`'s reason -- how tall a mech is, is
+                 `(BODY_Y + half the body) * sizeScale * bodySize`, and a caller
+                 carrying its own copy would bury the spider correctly and leave
+                 the Warden's turret in the grass the first time somebody
+                 retuned it. At 0 it draws what it drew before, joint for joint,
+                 which `rigs-burrow.test.ts` asserts against a lockstep control
+                 rather than trusting that a term multiplied by zero is zero.
+                 The one thing the **server** had to add is `spawnTick`: the tick
+                 a body was created, riding the `Spawn` field. `EntityField.Spawn`
+                 is set "the first time an entity enters this client's interest
+                 set", which is the same delta for a monster made a moment ago
+                 and one the player has walked toward for a minute -- so an
+                 arrival drawn off that bit alone would poof every body on the
+                 map as you approached it. It is `LootDrop.spawnTick`'s decision
+                 verbatim and for its stated reason, on the field whose own
+                 comment is "sent once": four bytes per body per client, nothing
+                 per tick. **A respawn is deliberately not a spawn tick** --
+                 `respawn` heals and moves the body it already has, so no body is
+                 created and the field is not re-sent -- and the client reads the
+                 dead-to-alive edge it watched instead, which is
+                 `stagger-flinch.ts`'s rule (*the window is replicated, the start
+                 is observed*) with the same consequence: a client that turns up
+                 after somebody else's respawn draws nothing, which is right.
+                 **No gameplay timing moved.** There is no spawn state on
+                 `ServerEntity` and this adds none: a body is targetable, can
+                 move and can attack on exactly the tick it always could. The
+                 presentation **yields** instead -- a body that dies or commits
+                 to a cast settles on that frame, so nothing is ever drawn
+                 swinging from under the ground. Walking is deliberately not a
+                 commitment, because a monster's idle plan sets off on its second
+                 tick and a rule that yielded to it would be a rule under which
+                 the emergence never plays at all.
+                 Interruption costs nothing to unwind, and that is structural
+                 rather than careful: `scene.ts` writes the whole position and
+                 the whole `burrow` every frame -- the rule `rotation.z = flinch.pitch`
+                 beside it already follows -- so a settled body reads `SETTLED`,
+                 whose offsets are zero, and there is no state to put back.
+                 The staging has one number that was **measured rather than
+                 chosen**, and `preview-emergence.ts` is what measured it. A leg
+                 has a fixed reach, so how far a knee can arch above the ground is
+                 what is left after spanning from a sunken hip to a planted foot
+                 -- and at a drop deep enough to hide the body outright there is
+                 almost none. Photographed at the full depth every leg came out
+                 *straight*: the spider's knees cleared the ground by about a unit
+                 and the Warden's did not clear it at all, so the stage whose
+                 entire job is *legs, no body yet* drew nothing on the larger
+                 body. `DIG_DROP` is 0.78 for that, and what it costs is that the
+                 body's top edge breaks the surface during the dig instead of
+                 staying under it -- the better picture anyway, since a thing
+                 clawing out of a hole is not invisible. What it cannot fix is
+                 recorded rather than papered over: the Warden's reach is 60
+                 against a 34-unit foot offset and a body 56 tall, so there is
+                 **no** drop at which its body is hidden and any part of its leg
+                 is above ground. It is a box on short legs and it heaves up with
+                 its shoulders and knees together; the staging is tuned to the
+                 spider, which can lead with its legs.
+                 The two effects are `brushPoof` and `brushDirt` in
+                 `vfx/brush.ts`, both one-shots (so nothing owes a stop) and both
+                 on mesh shapes and blends the registry **already batches** --
+                 `brush-blot`, `brush-dab` and `brush-flick` in `alpha` -- so
+                 `library.test.ts`'s 25-batch ceiling did not move. The dirt is
+                 the one effect in that file with a *shape over time*: a hit is
+                 an instant and digging is a job, so it is `emission: 'ramp'`,
+                 the one emission kind whose rate is a curve, peaking a third of
+                 the way in where the feet are through and ending at exactly zero
+                 -- a ramp that stopped short would leave its last marks born on
+                 the final tick and still airborne after the body was standing.
+                 Neither invents a colour: `dustSnow`/`dustPale`/`smokeLight` and
+                 `dustEarth`/`paintBrown`/`paintSoot` were all already there.
+                 `npx tsx scripts/preview-emergence.ts` is the instrument, and the
+                 thing that makes it one rather than a screenshot is that **it
+                 draws the ground**: being underground here is not a material or a
+                 clip plane, it is the terrain being in front of you, so a preview
+                 without an opaque floor would show the whole rig hanging in the
+                 air at every phase and prove nothing. It prints what fraction of
+                 the body and of the legs is above the ground at each phase, and
+                 the knee's height against the body's top -- which is the number
+                 readability actually turns on, since a leg with no slack left is
+                 drawn straight and a straight leg from a sunken hip is almost
+                 entirely buried however far out its foot is.
                  `world/status-marks.ts` is that same swirl generalised to the
                  rest of the progression (spec 186), and it is built to the
                  stun icon's three rules on purpose, because they were the right
@@ -5331,6 +5553,41 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  with it is the fallback rather than the plan"* -- to a `{2, 5}`
                  between the bow and the keen sword, because since 217 that
                  range **is** what an Ember Shot hits for)
+                 sky-source.ts (whose clock the sky follows, spec 263).
+                 `carried-light.ts`'s shape one system along, and it holds that
+                 module's rule for that module's reason -- **the panel wins where
+                 it is asking for something, and the game decides where it is
+                 not** -- because two things drive this sun now and one of them is
+                 not in the tab at all. `view-controls.ts` states its settings and
+                 this decides; a panel that answered a `SkyState` outright would
+                 be the panel deciding for the game.
+                 The `Day/night cycle` checkbox opens **ticked** since 263, which
+                 reverses a decision rather than drifting from one: it opened
+                 unticked because the cycle was a toy whose clock lived in that
+                 panel, and the clock is the server's now. `Override the clock`
+                 beside it takes it back and drives the sky from the `Time`
+                 slider, which is spec 047's behaviour byte for byte -- and is
+                 what keeps the panel useful for the thing it is for, looking at
+                 an hour on purpose. Unticking the cycle still hands the sun to
+                 the manual `Direction`/`Elevation` sliders, which is what it has
+                 always meant and what spec 033 built them for. A panel with no
+                 Sky section is not a panel asking for a cycle, so `lighting`
+                 gates it: the sandboxes and the Studio preview keep the single
+                 fixed light they have had since spec 045.
+                 `?clock=15`, `?clock=night` pins the hour, in the register of
+                 `?seed=` and `?field=`, and it is needed rather than convenient:
+                 a sky that moves is a sky no harness can photograph twice, which
+                 is why `probe-living-ground.ts` already stills the weather clock.
+                 It resolves to a **cycle tick**, so a pin is a real `WorldClock`
+                 with a phase and a darkness rather than a second path; an
+                 unrecognised value **defers** (`device.ts`'s rule, so a
+                 misspelling costs the flag and not the frame); and it pins **what
+                 this client draws and nothing else**, since the honest line for a
+                 shared cycle is that one player cannot make it night for
+                 everybody. `data-world-clock` is published from the clock the
+                 frame actually drew with rather than from the tick, which is the
+                 only way to tell a working pin from one that parsed and reached
+                 nothing.
                  carried-light.ts (what the player is holding, and what that
                  means for the two lights the scene already owns, spec 250).
                  Pure, and worth being a module because **two things now decide

@@ -35,6 +35,9 @@ import {
   MIN_LIGHT_RANGE,
   TORCH_DEFAULTS,
 } from './player-lights.js';
+// Type-only, and it has to stay that way: `sky-source.ts` is driven in Node and
+// this module builds DOM. An `import type` is erased at compile time.
+import type { SkySettings } from './world/sky-source.js';
 import { createMenuGroup, type MenuGroup } from './menu-group.js';
 import { createSettingsMenu, resetButton, section, type Resettable } from './settings-menu.js';
 import {
@@ -172,15 +175,21 @@ export interface ViewControls {
    */
   hike(): HikeSettings;
   /**
-   * Whether the day/night cycle owns the sun (spec 047). When false the
-   * `Direction`/`Elevation` sliders above drive it, exactly as in spec 033.
+   * What the Sky section is asking for (specs 047, 263).
+   *
+   * The panel states its settings and `sky-source.ts` decides, rather than the
+   * panel answering a `SkyState` itself: since spec 263 **two** things drive
+   * this sun -- the server's clock and this panel -- and one of them is not in
+   * the tab at all. A panel that answered outright would be the panel deciding
+   * for the game.
    */
-  dayNightEnabled(): boolean;
-  /** The sky at the panel's current hour, or null when the cycle is switched off. */
-  sky(): SkyState | null;
+  skySettings(): SkySettings;
+  /** The sky at an hour, for whoever has decided which hour that is. */
+  skyAtHours(hours: number): SkyState;
   /**
-   * Advance the clock by a frame of real time. The scene calls this once per
-   * rendered frame; it does nothing while the cycle is paused or switched off.
+   * Advance the *panel's* clock by a frame of real time. The scene calls this
+   * once per rendered frame; it does nothing unless the panel is overriding the
+   * world's clock, since otherwise the hour is the server's to advance.
    */
   advanceClock(dtSeconds: number): void;
   /** The player's torch and floating magic light (spec 047). */
@@ -461,23 +470,34 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // The day/night cycle (spec 047). While it is on it owns the sun and the two
   // manual light sliders below are inert; unticking it hands them the sun back,
   // which is what spec 033 built them for.
-  // Off by default. The cycle is still the interesting thing to look at, but it
-  // owns the sun, and a sun that moves is a shadow frame that keeps going stale
-  // -- so the tab now opens on the fixed daylight `applyManualSun` gives it, and
-  // the clock is something you switch on. `lighting` still decides whether the
-  // row exists at all; it stopped deciding whether it starts ticked.
-  const dayNight = makeCheckbox('Day/night cycle', false,
+  //
+  // **Ticked by default since spec 263**, which reverses a decision rather than
+  // drifting from one. It opened unticked because the cycle was a toy whose
+  // clock lived in this panel, and spec 254 then hid this panel in the shipped
+  // build -- so the game people play had no day and no night, only a permanent
+  // mid-afternoon. The clock is the server's now, so the cycle is the game's
+  // default state and the panel is where you go to argue with it.
+  const dayNight = makeCheckbox('Day/night cycle', true,
     'Drive the sun, sky and ambient light from a clock. Unticked, the Direction and ' +
     'Elevation sliders below place the sun by hand instead.');
+  // The panel taking the clock back off the server (spec 263). Unticked, the
+  // three rows below are inert and the world's own clock is what is drawn --
+  // which is what everybody who never opens this panel gets.
+  const overrideClock = makeCheckbox('Override the clock', false,
+    'Ignore the shared world clock and drive the sky from the Time slider below instead. ' +
+    'Only changes what you see: everybody else stays on the world\'s own clock.');
   const timeOfDay = makeSlider('Time', 0, 24, 'any', DEFAULT_TIME_OF_DAY, '',
-    'The hour of the in-game day. Dawn is around 06:00 and dusk around 18:00; ' +
-    'drag it while the clock runs to jump the sky to another hour.',
+    'The hour of the in-game day, while Override the clock is ticked. Dawn is around ' +
+    '06:00 and dusk around 18:00; drag it while the clock runs to jump the sky to ' +
+    'another hour.',
     formatClock);
   const clockRunning = makeCheckbox('Run the clock', true,
-    'Let time pass. Unticked, the sky holds at whatever hour the Time slider is set to.');
+    'Let the overridden time pass. Unticked, the sky holds at whatever hour the Time ' +
+    'slider is set to.');
   const dayLength = makeSlider('Day length', MIN_DAY_LENGTH_MINUTES, MAX_DAY_LENGTH_MINUTES, 1,
     DEFAULT_DAY_LENGTH_MINUTES, 'min',
-    'How long one full in-game day takes in real minutes.');
+    'How long one full overridden day takes in real minutes. The world\'s own clock is ' +
+    'not this: it runs a ten-minute day and a two-minute night.');
 
   const lightAz = makeSlider('Direction', 0, 360, 1, wrapDeg(lightOrbit.azimuth), '°',
     'Compass direction the sunlight comes from, in degrees. Only used when the ' +
@@ -720,7 +740,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     fontSize: 17,
   });
   fill(sun.panel, 'Restore the clock and the sun to their defaults.', [
-    ...(lighting ? [section('Sky'), dayNight, timeOfDay, clockRunning, dayLength] : []),
+    ...(lighting ? [section('Sky'), dayNight, overrideClock, timeOfDay, clockRunning, dayLength] : []),
     section('Sun'), lightAz, lightEl,
   ]);
 
@@ -868,13 +888,26 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
         debug: debugView.value() as HikeDebugView,
       };
     },
-    dayNightEnabled: () => dayNight.checked(),
-    sky: () => (dayNight.checked() ? skyAt(timeOfDay.value()) : null),
-    // The slider *is* the clock: writing the advanced hour back to it keeps one
-    // source of truth, and means dragging it mid-cycle simply jumps the sky to
-    // that hour and carries on from there.
+    skySettings: () => ({
+      // `lighting` decides whether the Sky rows exist at all, so a panel without
+      // them is not a panel asking for a cycle -- the sandboxes and the Studio
+      // preview have kept their single fixed light since spec 045, and a default
+      // that reached them through a section they do not draw would be the panel
+      // deciding something it is not showing.
+      cycleOn: lighting && dayNight.checked(),
+      overrideClock: overrideClock.checked(),
+      panelHours: timeOfDay.value(),
+    }),
+    skyAtHours: (hours: number) => skyAt(hours),
+    // The slider *is* the panel's clock: writing the advanced hour back to it
+    // keeps one source of truth, and means dragging it mid-cycle simply jumps
+    // the sky to that hour and carries on from there.
+    //
+    // It only runs while the panel is overriding (spec 263). Left running
+    // underneath the world's clock it would be a second clock nobody is looking
+    // at, quietly walking the slider away from the hour it would resume at.
     advanceClock: (dtSeconds: number) => {
-      if (!dayNight.checked() || !clockRunning.checked()) return;
+      if (!dayNight.checked() || !overrideClock.checked() || !clockRunning.checked()) return;
       timeOfDay.setValue(advanceTimeOfDay(timeOfDay.value(), dtSeconds, dayLength.value()));
     },
     playerLights: () => ({
