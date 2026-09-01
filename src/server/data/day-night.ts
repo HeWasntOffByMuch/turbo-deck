@@ -1,5 +1,5 @@
 /**
- * The world clock (spec 263): what time it is, as a pure function of the
+ * The world clock (spec 264): what time it is, as a pure function of the
  * server's tick.
  *
  * Spec 047 built the whole day/night cycle -- the sun's arc, the nine-key

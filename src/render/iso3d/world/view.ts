@@ -659,7 +659,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
   let fieldAgainAtTick = 0;
   /**
-   * `?clock=` -- pin the sky to one hour for this client (spec 263).
+   * `?clock=` -- pin the sky to one hour for this client (spec 264).
    *
    * Parsed once here rather than per frame, because it is a decision somebody
    * took in a URL and not something that can change while the tab is open. Null
@@ -1263,7 +1263,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the driver's own held set, so one refused by the effect budget or evicted
     // by the instance pool reads as absent.
     const firesLit = scene.heldFires().length;
-    // What time the world thinks it is (spec 263), published from the clock the
+    // What time the world thinks it is (spec 264), published from the clock the
     // *frame* drew with rather than from the tick -- so a `?clock=` pin reads as
     // the hour it pinned, which is the only way to tell a working pin from one
     // that parsed and reached nothing.
@@ -4420,7 +4420,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the bar froze partway and sat there while the wind-up ran on without it.
     const drawnTick = view.estimatedTick + Math.min(1, accumulator / TICK_MS);
 
-    // What time it is in the world (spec 263). Read at the same `drawnTick` the
+    // What time it is in the world (spec 264). Read at the same `drawnTick` the
     // cast bars are, so the sky and everything else with a duration are on one
     // clock -- and derived rather than received, because the server's tick is
     // the clock and this client already holds an estimate of it.
