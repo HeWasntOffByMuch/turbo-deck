@@ -292,7 +292,27 @@
           "tones": [0, 9, 1, 5, 0, 6, 1, 5, 0, 12, 1, 5, 0, 6, 1, 5, 0, 13, 1, 3, 0, 7, 1, 5, 0, 13, 1, 2, 0, 8, 1, 5, 0, 4, 1, 3, 0, 7, 1, 7, 0, 2, 1, 7, 0, 1, 1, 5, 0, 7, 1, 7, 0, 2, 1, 12, 0, 8, 1, 6, 0, 5, 1, 9, 0, 7, 1, 8, 0, 3, 1, 11, 0, 7, 1, 17, 0, 1, 1, 3, 0, 8, 1, 20, 0, 9, 1, 19, 0, 10, 1, 2, 0, 7, 1, 9, 0, 22, 1, 6, 0, 22, 1, 7, 0, 20, 1, 12, 0, 15, 1, 14, 0, 13, 1, 16, 0, 12, 1, 18, 0, 10, 1, 2, 0, 1, 1, 61, 0, 1, 1, 66, 0, 2, 1, 21, 0, 1, 1, 3, 0, 5, 1, 5, 0, 2, 1, 16, 0, 7, 1, 2, 0, 4, 1, 15, 0, 13, 1, 15, 0, 13],
           "props": [
             { "species": "tree", "x": 310.045, "z": 61.335, "rotation": 1.875, "scale": 0.891, "tint": 0.441 },
-            { "species": "tree", "x": 250.553, "z": 29.383, "rotation": 1.87, "scale": 1.114, "tint": -0.385 }
+            { "species": "tree", "x": 250.553, "z": 29.383, "rotation": 1.87, "scale": 1.114, "tint": -0.385 },
+            { "species": "fence-rubble", "x": 282.011, "z": 86.287, "rotation": -1.792, "scale": 0.6, "tint": -0.223 },
+            { "species": "fence-rubble", "x": 276.639, "z": 114.564, "rotation": -1.725, "scale": 0.6, "tint": 0.822 },
+            { "species": "fence-rubble", "x": 272.378, "z": 143.047, "rotation": -1.714, "scale": 0.6, "tint": 0.259 },
+            { "species": "fence-rubble", "x": 264.472, "z": 170.457, "rotation": -1.989, "scale": 0.6, "tint": 0.988 },
+            { "species": "fence-rubble", "x": 252.765, "z": 196.77, "rotation": -1.989, "scale": 0.6, "tint": -0.619 },
+            { "species": "fence-rubble", "x": 253.559, "z": 222.7, "rotation": -1.091, "scale": 0.6, "tint": -0.864 },
+            { "species": "fence-rubble", "x": 263.82, "z": 249.413, "rotation": -1.317, "scale": 0.6, "tint": 0.072 },
+            { "species": "fence-rubble", "x": 268.65, "z": 277.701, "rotation": -1.486, "scale": 0.6, "tint": -0.609 },
+            { "species": "fence-rubble", "x": 271.084, "z": 306.398, "rotation": -1.486, "scale": 0.6, "tint": -0.025 },
+            { "species": "fence-rubble", "x": 271.212, "z": 335.105, "rotation": -1.647, "scale": 0.6, "tint": -0.381 },
+            { "species": "fence-rubble", "x": 267.426, "z": 363.609, "rotation": -1.759, "scale": 0.6, "tint": -0.662 },
+            { "species": "fence-rubble", "x": 260.503, "z": 391.521, "rotation": -1.869, "scale": 0.6, "tint": 0.547 },
+            { "species": "fence-rubble", "x": 252.73, "z": 419.243, "rotation": -1.82, "scale": 0.6, "tint": 0.019 },
+            { "species": "fence-rubble", "x": 236.502, "z": 440.022, "rotation": -2.648, "scale": 0.6, "tint": 0.667 },
+            { "species": "fence-rubble", "x": 213.935, "z": 457.315, "rotation": -2.327, "scale": 0.6, "tint": 0.223 },
+            { "species": "fence-rubble", "x": 199.283, "z": 481.374, "rotation": -1.908, "scale": 0.6, "tint": 0.999 },
+            { "species": "fence-rubble", "x": 195.449, "z": 509.332, "rotation": -1.506, "scale": 0.6, "tint": 0.201 },
+            { "species": "fence-rubble", "x": 196.869, "z": 538.094, "rotation": -1.537, "scale": 0.6, "tint": -0.283 },
+            { "species": "fence-rubble", "x": 200.708, "z": 566.49, "rotation": -1.336, "scale": 0.6, "tint": -0.811 },
+            { "species": "fence-rubble", "x": 209.101, "z": 593.983, "rotation": -1.213, "scale": 0.6, "tint": -0.474 }
           ],
           "markers": []
         }

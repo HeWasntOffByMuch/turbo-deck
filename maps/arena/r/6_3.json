@@ -197,7 +197,8 @@
             { "species": "tree", "x": 259.456, "z": 86.99, "rotation": 5.496, "scale": 1.434, "tint": 0.208 },
             { "species": "tree", "x": 275.298, "z": 173.25, "rotation": 3.261, "scale": 0.902, "tint": 0.195 },
             { "species": "tree", "x": 221.135, "z": 40.909, "rotation": 3.293, "scale": 0.892, "tint": -0.064 },
-            { "species": "tree", "x": 414.614, "z": 192.296, "rotation": 2.126, "scale": 0.78, "tint": 0.386 }
+            { "species": "tree", "x": 414.614, "z": 192.296, "rotation": 2.126, "scale": 0.78, "tint": 0.386 },
+            { "species": "fence-rubble", "x": 212.161, "z": 5.736, "rotation": -1.709, "scale": 0.6, "tint": -0.989 }
           ],
           "markers": []
         },
