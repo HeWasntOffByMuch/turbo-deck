@@ -36,6 +36,7 @@ function entity(id: number, overrides: Partial<ServerEntity> = {}): ServerEntity
     kind: EntityKindValue.Monster,
     typeId: 'grazer',
     ownerPlayerId: null,
+    spawnTick: 0,
     position: { x: 100, y: 200, z: 0 },
     facing: 0,
     mote: null,

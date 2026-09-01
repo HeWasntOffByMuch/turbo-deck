@@ -95,6 +95,9 @@ export function asEntity(mirror: Mirror): ServerEntity {
     kind: EntityKindValue.Player,
     typeId: '',
     ownerPlayerId: null,
+    // One of the harmless fills the header names: the cast gate never asks how
+    // old a body is, and this entity is a dress rather than a claim (spec 263).
+    spawnTick: 0,
     position: { x: mirror.position.x, y: mirror.position.y, z: 0 },
     facing: mirror.facing,
     health: mirror.health,

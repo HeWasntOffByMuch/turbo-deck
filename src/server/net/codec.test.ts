@@ -396,6 +396,9 @@ describe('game message round-trip', () => {
             EntityField.Level,
           kind: 0,
           typeId: 'player',
+          // Non-zero on purpose (spec 263): a `u32` that round-trips at 0 says
+          // nothing about whether it was written or merely defaulted.
+          spawnTick: 4_000_000_123,
           position: { x: 1.5, y: -2.5, z: 0 },
           facing: 0.25,
           health: 90,

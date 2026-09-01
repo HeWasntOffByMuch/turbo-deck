@@ -4351,6 +4351,110 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  take `staggered` as their own field, and the `moveIntent`
                  branch is *first*, ahead of a held key, since the key is the
                  one branch a player is actively driving.
+                 `world/spawn-presentation.ts` is what a body's **arrival**
+                 looks like (spec 263), and it is the flinch's shape one event
+                 earlier: a `read` per body per frame, an offset added to the
+                 drawn transform, `forget`/`retain` for its own bookkeeping, and
+                 nothing it returns reaching a decision. Until it existed nothing
+                 in this game arrived -- a monster was a coordinate that did not
+                 have a body on it and did on the next frame, and a player who
+                 pressed Respawn was standing on the pad between one frame and
+                 the next.
+                 There are **two presentations and no more**, and the split is a
+                 fact about the *rigs* rather than a list of type ids.
+                 `MechRig` is the only rig here with **world-locked feet** --
+                 `stabilise` draws each leg from a hip carried through
+                 `carriage.matrix` to a foot that is independent of it -- so it
+                 is the only one that can plant its feet while the body they
+                 carry is still underground. The spider and the Warden share
+                 that rig, so they share the **burrow**; a critter's legs are
+                 sine-driven bone rotations of one skeleton with no plant to
+                 hold, and an authored unit would need a clip nobody has
+                 authored, so everything else gets the **poof**.
+                 `MechRig.burrow` is the whole rig change: one public number,
+                 0..1, subtracted from the carriage *outside* the sway clamp
+                 (that clamp is sized for a chassis bobbing on its suspension and
+                 this is a body height), with `hiddenDepth` beside it as a
+                 **getter** for `openingWorld`'s reason -- how tall a mech is, is
+                 `(BODY_Y + half the body) * sizeScale * bodySize`, and a caller
+                 carrying its own copy would bury the spider correctly and leave
+                 the Warden's turret in the grass the first time somebody
+                 retuned it. At 0 it draws what it drew before, joint for joint,
+                 which `rigs-burrow.test.ts` asserts against a lockstep control
+                 rather than trusting that a term multiplied by zero is zero.
+                 The one thing the **server** had to add is `spawnTick`: the tick
+                 a body was created, riding the `Spawn` field. `EntityField.Spawn`
+                 is set "the first time an entity enters this client's interest
+                 set", which is the same delta for a monster made a moment ago
+                 and one the player has walked toward for a minute -- so an
+                 arrival drawn off that bit alone would poof every body on the
+                 map as you approached it. It is `LootDrop.spawnTick`'s decision
+                 verbatim and for its stated reason, on the field whose own
+                 comment is "sent once": four bytes per body per client, nothing
+                 per tick. **A respawn is deliberately not a spawn tick** --
+                 `respawn` heals and moves the body it already has, so no body is
+                 created and the field is not re-sent -- and the client reads the
+                 dead-to-alive edge it watched instead, which is
+                 `stagger-flinch.ts`'s rule (*the window is replicated, the start
+                 is observed*) with the same consequence: a client that turns up
+                 after somebody else's respawn draws nothing, which is right.
+                 **No gameplay timing moved.** There is no spawn state on
+                 `ServerEntity` and this adds none: a body is targetable, can
+                 move and can attack on exactly the tick it always could. The
+                 presentation **yields** instead -- a body that dies or commits
+                 to a cast settles on that frame, so nothing is ever drawn
+                 swinging from under the ground. Walking is deliberately not a
+                 commitment, because a monster's idle plan sets off on its second
+                 tick and a rule that yielded to it would be a rule under which
+                 the emergence never plays at all.
+                 Interruption costs nothing to unwind, and that is structural
+                 rather than careful: `scene.ts` writes the whole position and
+                 the whole `burrow` every frame -- the rule `rotation.z = flinch.pitch`
+                 beside it already follows -- so a settled body reads `SETTLED`,
+                 whose offsets are zero, and there is no state to put back.
+                 The staging has one number that was **measured rather than
+                 chosen**, and `preview-emergence.ts` is what measured it. A leg
+                 has a fixed reach, so how far a knee can arch above the ground is
+                 what is left after spanning from a sunken hip to a planted foot
+                 -- and at a drop deep enough to hide the body outright there is
+                 almost none. Photographed at the full depth every leg came out
+                 *straight*: the spider's knees cleared the ground by about a unit
+                 and the Warden's did not clear it at all, so the stage whose
+                 entire job is *legs, no body yet* drew nothing on the larger
+                 body. `DIG_DROP` is 0.78 for that, and what it costs is that the
+                 body's top edge breaks the surface during the dig instead of
+                 staying under it -- the better picture anyway, since a thing
+                 clawing out of a hole is not invisible. What it cannot fix is
+                 recorded rather than papered over: the Warden's reach is 60
+                 against a 34-unit foot offset and a body 56 tall, so there is
+                 **no** drop at which its body is hidden and any part of its leg
+                 is above ground. It is a box on short legs and it heaves up with
+                 its shoulders and knees together; the staging is tuned to the
+                 spider, which can lead with its legs.
+                 The two effects are `brushPoof` and `brushDirt` in
+                 `vfx/brush.ts`, both one-shots (so nothing owes a stop) and both
+                 on mesh shapes and blends the registry **already batches** --
+                 `brush-blot`, `brush-dab` and `brush-flick` in `alpha` -- so
+                 `library.test.ts`'s 25-batch ceiling did not move. The dirt is
+                 the one effect in that file with a *shape over time*: a hit is
+                 an instant and digging is a job, so it is `emission: 'ramp'`,
+                 the one emission kind whose rate is a curve, peaking a third of
+                 the way in where the feet are through and ending at exactly zero
+                 -- a ramp that stopped short would leave its last marks born on
+                 the final tick and still airborne after the body was standing.
+                 Neither invents a colour: `dustSnow`/`dustPale`/`smokeLight` and
+                 `dustEarth`/`paintBrown`/`paintSoot` were all already there.
+                 `npx tsx scripts/preview-emergence.ts` is the instrument, and the
+                 thing that makes it one rather than a screenshot is that **it
+                 draws the ground**: being underground here is not a material or a
+                 clip plane, it is the terrain being in front of you, so a preview
+                 without an opaque floor would show the whole rig hanging in the
+                 air at every phase and prove nothing. It prints what fraction of
+                 the body and of the legs is above the ground at each phase, and
+                 the knee's height against the body's top -- which is the number
+                 readability actually turns on, since a leg with no slack left is
+                 drawn straight and a straight leg from a sunken hip is almost
+                 entirely buried however far out its foot is.
                  `world/status-marks.ts` is that same swirl generalised to the
                  rest of the progression (spec 186), and it is built to the
                  stun icon's three rules on purpose, because they were the right
