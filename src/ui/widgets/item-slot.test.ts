@@ -264,7 +264,7 @@ describe('the catch around a cell (spec 136)', () => {
 });
 
 /**
- * A cell that is not a container (spec 264).
+ * A cell that is not a container (spec 269).
  *
  * The shop's grid is built from this widget because an item should look the
  * same everywhere -- but a shop cell is a *button*, and the bag's drag

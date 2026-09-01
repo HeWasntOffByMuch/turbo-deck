@@ -706,7 +706,7 @@ describe('what a skill cell will take', () => {
 });
 
 /**
- * The purse, under the bag (spec 264).
+ * The purse, under the bag (spec 269).
  *
  * Coins ride the `Inventory` message beside the stacks, so the window that says
  * what you have is the window that says what you have -- and before this the

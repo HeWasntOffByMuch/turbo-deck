@@ -74,7 +74,7 @@ describe('shopViewOf', () => {
   });
 
   /**
-   * The assertion the grid exists for (spec 264): a shop describes an item the
+   * The assertion the grid exists for (spec 269): a shop describes an item the
    * way the bag does, rather than as a name and a number.
    *
    * Against `detailsFor` rather than against a written-out list, so a retune of

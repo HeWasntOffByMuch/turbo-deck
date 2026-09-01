@@ -298,7 +298,7 @@ export function demoContainers(): ContainerView {
 
   return {
     bag,
-    // A purse with something in it (spec 264): a golden of `0 coins` would be
+    // A purse with something in it (spec 269): a golden of `0 coins` would be
     // one that could not tell a drawn line from a missing one.
     coins: 214,
     worn: {
@@ -959,7 +959,7 @@ export function demoShop(options: ShopRenderOptions = {}): ShopView {
   return {
     name: 'Quartermaster',
     coins,
-    // Seven, so the Buy tab photographs a **full row and a wrap** (spec 264):
+    // Seven, so the Buy tab photographs a **full row and a wrap** (spec 269):
     // four cells is a line of icons and says nothing about whether the thing is
     // a grid, which is the one claim these goldens are here to check.
     stock: [
@@ -989,7 +989,7 @@ export function demoShop(options: ShopRenderOptions = {}): ShopView {
  * layer order, and the layer order is only visible in pixels.
  */
 /**
- * How wide the shop window is photographed, in UI pixels (spec 264).
+ * How wide the shop window is photographed, in UI pixels (spec 269).
  *
  * Six columns is a **fixed** width, so a window narrower than them clips the
  * last one -- and a clipped column photographs as though it were the design,
@@ -1021,7 +1021,7 @@ export function renderShop(options: ShopRenderOptions = {}): ShopFrame {
   if (options.tab !== undefined) shop.select(options.tab);
 
   manager.register(
-    // Unscrolled, exactly as the mount registers it (spec 264): a `TabPanel`
+    // Unscrolled, exactly as the mount registers it (spec 269): a `TabPanel`
     // inside somebody else's scroller measures to its content and scrolls its
     // strip away instead of its body, which is spec 198's bug. A golden built
     // the other way would photograph a layout the game does not have.

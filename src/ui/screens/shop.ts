@@ -1,6 +1,6 @@
 /**
  * What is for sale, what of yours is worth something, and what you just sold
- * (specs 130, 264).
+ * (specs 130, 269).
  *
  * Same rule as every screen since phase 4: **it renders what it is handed and
  * never edits itself.** A purchase emits an intent and moves nothing; the next
@@ -13,7 +13,7 @@
  * buyback list six entries deep that a seventh sale pushes off the end. So the
  * dialog belongs on exactly one of the two buttons.
  *
- * Since spec 264 it is a **grid** rather than three lists of names. The cells
+ * Since spec 269 it is a **grid** rather than three lists of names. The cells
  * are `ItemSlot`s -- the bag's own widget, unchanged -- so an item is the same
  * picture, the same tier wash and the same icon in a shop as it is in a bag and
  * as it was in the grass, and there is one habit to learn rather than three.
@@ -51,7 +51,7 @@ import { TONE_TOKENS } from './tones.js';
 /** One thing a shop has an opinion about, and what that opinion is. */
 export interface ShopRow {
   /**
-   * The item, exactly as the bag knows it (spec 264).
+   * The item, exactly as the bag knows it (spec 269).
    *
    * The whole `ItemView` rather than a name and an icon, because what the cell
    * draws and what its tooltip says are the bag's -- the tier wash, the sprite,
@@ -172,7 +172,7 @@ export class ShopCell extends Column {
     this.slot.layoutAlign = 'center';
     // A button that looks like a cell, not a place an item can be. The bag's
     // drag hit-tests the whole layer stack, so a cell that took a release would
-    // swallow a carry with nothing emitted (spec 264).
+    // swallow a carry with nothing emitted (spec 269).
     this.slot.acceptsDrops = false;
     this.slot.onClick = (_cell, gesture) => {
       onPress(gesture.time);
@@ -195,7 +195,7 @@ export class ShopCell extends Column {
 export class ShopScreen extends Column {
   readonly dialog: Dialog;
   /**
-   * What a hovered cell says about itself (spec 264).
+   * What a hovered cell says about itself (spec 269).
    *
    * Owned here and placed in the tooltip layer by the mount, exactly as the
    * bag's is -- a box about a cell in this window must not be clipped by it.

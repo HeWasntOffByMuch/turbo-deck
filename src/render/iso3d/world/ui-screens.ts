@@ -327,7 +327,7 @@ export const WINDOW_CHROME = {
 export const CHARACTER_MIN_SIZE: Size = { width: 96, height: 120 };
 
 /**
- * The smallest the shop window may be, in UI pixels (specs 249, 264).
+ * The smallest the shop window may be, in UI pixels (specs 249, 269).
  *
  * A floor rather than a size, and it exists for the case the placement fix
  * cannot reach: a layout **already written** by a build that placed the shop
@@ -648,7 +648,7 @@ export class UiScreens {
     };
     this.layers.place('modal', this.shop.dialog);
     // The shop's tooltip beside the bag's and the sheet's, and for their reason
-    // (spec 264): a box describing a cell in this window must not be clipped by
+    // (spec 269): a box describing a cell in this window must not be clipped by
     // it, and the two windows are routinely open at once.
     this.layers.place('tooltip', this.shop.tooltip);
 
@@ -857,7 +857,7 @@ export class UiScreens {
     });
     this.registerWindow('account', this.account);
     // Not scrolled by the mount, for the sheet's reason one window along
-    // (spec 198): the shop has a `TabPanel` since spec 264, and one scroller
+    // (spec 198): the shop has a `TabPanel` since spec 269, and one scroller
     // around the whole screen is what scrolls a tab strip off the top -- with
     // no way back to Buy without scrolling up first. Unscrolled, the screen is
     // handed the window's real height, its panel grows into it, and each tab
@@ -1079,7 +1079,7 @@ export class UiScreens {
 
     this.openVendorId = view.vendor?.id ?? '';
     this.lastVendorRevision = view.vendorRevision;
-    // Walked away (spec 264). Asked *before* the screen is fed, so the last
+    // Walked away (spec 269). Asked *before* the screen is fed, so the last
     // thing drawn is not a price list the player has already left, and asked
     // every frame rather than raised as an event -- which is `sweepConversations`'
     // own shape and its reason: every way of getting out of range is the same
@@ -1205,7 +1205,7 @@ export class UiScreens {
     if (!this.isOpen('character')) this.character.clearTooltip();
     this.character.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
     // The shop's, on the same terms -- and it needs the shut-window case more
-    // than the others do (spec 264): a shop closes when the player *walks away*,
+    // than the others do (spec 269): a shop closes when the player *walks away*,
     // which no pointer move follows at all, so a box left over a cell would sit
     // on the world until the mouse twitched.
     this.shop.tooltip.viewport = this.root.viewport;

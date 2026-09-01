@@ -410,7 +410,7 @@ export interface ContainerSource {
   readonly inventory: Inventory;
   readonly equipment: Equipment;
   readonly level: number;
-  /** What the purse holds (spec 264). `ClientView.coins`, passed straight on. */
+  /** What the purse holds (spec 269). `ClientView.coins`, passed straight on. */
   readonly coins: number;
   /**
    * The body's weapon-scaling grade steps, from its replicated `Stats` (spec 216).

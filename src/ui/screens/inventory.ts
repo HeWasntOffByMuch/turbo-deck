@@ -91,7 +91,7 @@ export interface ContainerView {
   /** The character's level, for the tooltip's "requires level N". */
   readonly level: number;
   /**
-   * What the purse holds (spec 264).
+   * What the purse holds (spec 269).
    *
    * On the bag rather than on the sheet, because coins are carried: they ride
    * the `Inventory` message beside the stacks for exactly that reason, and the

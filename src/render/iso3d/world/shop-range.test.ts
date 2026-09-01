@@ -1,5 +1,5 @@
 /**
- * Whether the shop that is open can still be reached (spec 264).
+ * Whether the shop that is open can still be reached (spec 269).
  *
  * The measurement is against the vendor's **own** radius rather than a number
  * written here, because the whole point of the rule is that the window shuts

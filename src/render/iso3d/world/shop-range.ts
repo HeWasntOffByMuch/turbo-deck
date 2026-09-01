@@ -1,5 +1,5 @@
 /**
- * Whether the shop that is open can still be reached (spec 264).
+ * Whether the shop that is open can still be reached (spec 269).
  *
  * The server refuses each *transaction* out of range and always has --
  * `vendorInReach`, which is the authority and is untouched. What it does not do

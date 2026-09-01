@@ -1,5 +1,5 @@
 /**
- * That the shop is photographed wide enough to hold its own grid (spec 264).
+ * That the shop is photographed wide enough to hold its own grid (spec 269).
  *
  * Six columns is a **fixed** width -- the tab's body scrolls vertically and has
  * nothing to offer horizontally -- so a window narrower than them clips the

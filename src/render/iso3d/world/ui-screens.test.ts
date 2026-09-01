@@ -61,7 +61,7 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
     equipment: NO_EQUIPMENT,
     coins: 60,
     // Standing on the counter unless a test says otherwise, so nothing but the
-    // range tests below has an opinion about where the body is (spec 264).
+    // range tests below has an opinion about where the body is (spec 269).
     self: QUARTERMASTER === null ? null : { x: QUARTERMASTER.x, y: QUARTERMASTER.y },
     vendor: null,
     vendorRevision: 0,
@@ -445,7 +445,7 @@ describe('what a shop tells the server', () => {
 });
 
 /**
- * Walking away from a merchant (spec 264).
+ * Walking away from a merchant (spec 269).
  *
  * The server refuses each *transaction* out of range and always has, but only
  * answers when asked -- so before this a player who walked off kept a full

@@ -1,4 +1,4 @@
-# 264 — A shop you can look at
+# 269 — A shop you can look at
 
 ## Problem
 

@@ -177,7 +177,7 @@ export class ItemSlot extends StyledWidget implements DropTarget {
   /** For an equipment cell: the slot id it takes. Null accepts anything. */
   acceptsSlot: string | null = null;
   /**
-   * Whether anything may be let go here at all (spec 264).
+   * Whether anything may be let go here at all (spec 269).
    *
    * True for a cell of a container, which is every cell there was until the
    * shop became a grid. A shop cell is a **button that happens to look like a

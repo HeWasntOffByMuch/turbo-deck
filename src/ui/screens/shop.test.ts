@@ -1,5 +1,5 @@
 /**
- * The shop screen (specs 130, 264).
+ * The shop screen (specs 130, 269).
  *
  * Three things carry this file. Buying emits and changes nothing, like every
  * screen since phase 4. Selling *asks* -- so the assertions are about when the

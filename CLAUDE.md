@@ -1505,11 +1505,11 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  the trade table, the options window, its display page, the
                  chat, the action bar and the selected-unit readout), plus
                  tones.ts -- the one table saying what a described line's *tone*
-                 is drawn in, out of `inventory.ts` at spec 264 because the shop
+                 is drawn in, out of `inventory.ts` at spec 269 because the shop
                  draws item details too and two copies of "is a drawback red" is
                  two answers free to disagree on two windows a player has open at
                  once.
-                 shop.ts is a **grid** since spec 264 rather than three lists of
+                 shop.ts is a **grid** since spec 269 rather than three lists of
                  names, and the cells are `ItemSlot`s -- the bag's own widget,
                  unchanged -- so an item is the same picture and the same tier
                  wash in a shop as it is in a bag and as it was in the grass. It
@@ -1741,7 +1741,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that no `if` in the renderer changes an outcome is finally a fact
                  about the module graph. **No colour is spelled out** in a widget;
                  a hex literal there fails the build.
-                 The bag says what the purse holds since spec 264, at the
+                 The bag says what the purse holds since spec 269, at the
                  foot of its own column and in the `success` token the shop's
                  purse already uses -- coins ride the `Inventory` message beside
                  the stacks, so the window that says what you have is the window
@@ -6493,14 +6493,14 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  are turned into plain rows out here, and whether a button is
                  live is answered by running the *server's own* rule against the
                  client's copy so a greyed-out button and a refusal cannot
-                 disagree. Since spec 264 a shop row carries a whole `ItemView`
+                 disagree. Since spec 269 a shop row carries a whole `ItemView`
                  rather than a name and an icon, through the bag's own
                  `itemViewOf`, so an item describes itself the same way in a
                  shop as it does in a bag -- the scaling modifiers are threaded
                  in for that reason and no other, since they are exactly what
                  makes a sword's scaling line differ between the two),
                  shop-range.ts (whether the shop that is open can still be
-                 reached, spec 264. The server refuses each *transaction* out of
+                 reached, spec 269. The server refuses each *transaction* out of
                  range and always has, but only answers when asked and nothing
                  sweeps -- so walking off a merchant left a full price list on
                  screen with every cell live, refusing one press at a time.

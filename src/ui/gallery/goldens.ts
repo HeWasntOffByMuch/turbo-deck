@@ -510,7 +510,7 @@ export const SHOP_GOLDEN_CASES: readonly ShopGoldenCase[] = [
   {
     name: 'shop-buyback',
     options: { coins: 8, buyback: true, tab: 'buyback' },
-    covers: 'the Buyback tab with something in it, at the price it would cost to undo (spec 264)',
+    covers: 'the Buyback tab with something in it, at the price it would cost to undo (spec 269)',
   },
   {
     // Said in words rather than left blank, and photographed because that is
@@ -523,7 +523,7 @@ export const SHOP_GOLDEN_CASES: readonly ShopGoldenCase[] = [
   {
     name: 'shop-sell',
     options: { tab: 'sell' },
-    covers: "the Sell tab: the player's own things in the same grid, at what the shop pays (spec 264)",
+    covers: "the Sell tab: the player's own things in the same grid, at what the shop pays (spec 269)",
   },
   {
     // The frame the grid exists for. Every other shop golden photographs cells,
@@ -532,7 +532,7 @@ export const SHOP_GOLDEN_CASES: readonly ShopGoldenCase[] = [
     // it was that a name and a number are not enough to decide on.
     name: 'shop-tooltip',
     options: { tab: 'buy', tooltipOverCell: 3, coins: 8 },
-    covers: 'an item described in a shop: its own lines, then the price, then the refusal (spec 264)',
+    covers: 'an item described in a shop: its own lines, then the price, then the refusal (spec 269)',
   },
   {
     name: 'shop-small',

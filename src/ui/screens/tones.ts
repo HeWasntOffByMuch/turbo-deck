@@ -1,11 +1,11 @@
 /**
- * What a described line is drawn in (specs 185, 264).
+ * What a described line is drawn in (specs 185, 269).
  *
  * The one place the vocabulary the view-models speak meets the palette: a model
  * says what *kind* of thing a line is and this says what that looks like, which
  * is what lets `src/render/` describe an item without naming a colour.
  *
- * Its own module since spec 264, because the shop draws item details too. The
+ * Its own module since spec 269, because the shop draws item details too. The
  * table lived in `inventory.ts` while the bag was the only screen that had
  * them, and a second copy in the shop would be a second answer to "is a
  * drawback red" -- free to disagree the first time either was retuned, on two
