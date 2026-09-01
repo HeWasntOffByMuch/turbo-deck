@@ -1,5 +1,5 @@
 /**
- * What the day/night cycle actually does (spec 263).
+ * What the day/night cycle actually does (spec 264).
  *
  * A `preview-` rather than a `probe-` because what is being judged is a
  * **schedule**: a thumbnail of a sunset says nothing about whether the sunset

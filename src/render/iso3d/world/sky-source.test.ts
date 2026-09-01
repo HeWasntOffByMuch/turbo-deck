@@ -16,7 +16,7 @@ import {
 
 const DEFAULTS: SkySettings = { cycleOn: true, overrideClock: false, panelHours: DEFAULT_TIME_OF_DAY };
 
-describe('who owns the sky (spec 263)', () => {
+describe('who owns the sky (spec 264)', () => {
   it('follows the world clock by default', () => {
     const clock = worldClockAt(tickForHours(9));
     expect(resolveSkyHours(DEFAULTS, clock)).toBe(clock.hours);
@@ -42,7 +42,7 @@ describe('who owns the sky (spec 263)', () => {
   });
 });
 
-describe('?clock= (spec 263)', () => {
+describe('?clock= (spec 264)', () => {
   it('defers when it is absent, empty or unrecognised', () => {
     // `device.ts`'s rule: a misspelling costs the flag and not the frame.
     for (const search of ['', '?seed=1', '?clock=', '?clock=%20', '?clock=noon', '?clock=nite']) {
@@ -102,7 +102,7 @@ describe('?clock= (spec 263)', () => {
   });
 });
 
-describe('the readout (spec 263)', () => {
+describe('the readout (spec 264)', () => {
   it('names the phase, the hour, the darkness and whether it is pinned', () => {
     const readout = worldClockReadout(worldClockAt(0), false);
     expect(readout).toContain('phase=day');

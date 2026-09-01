@@ -178,7 +178,7 @@ export interface ViewControls {
    * What the Sky section is asking for (specs 047, 263).
    *
    * The panel states its settings and `sky-source.ts` decides, rather than the
-   * panel answering a `SkyState` itself: since spec 263 **two** things drive
+   * panel answering a `SkyState` itself: since spec 264 **two** things drive
    * this sun -- the server's clock and this panel -- and one of them is not in
    * the tab at all. A panel that answered outright would be the panel deciding
    * for the game.
@@ -471,7 +471,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   // manual light sliders below are inert; unticking it hands them the sun back,
   // which is what spec 033 built them for.
   //
-  // **Ticked by default since spec 263**, which reverses a decision rather than
+  // **Ticked by default since spec 264**, which reverses a decision rather than
   // drifting from one. It opened unticked because the cycle was a toy whose
   // clock lived in this panel, and spec 254 then hid this panel in the shipped
   // build -- so the game people play had no day and no night, only a permanent
@@ -480,7 +480,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
   const dayNight = makeCheckbox('Day/night cycle', true,
     'Drive the sun, sky and ambient light from a clock. Unticked, the Direction and ' +
     'Elevation sliders below place the sun by hand instead.');
-  // The panel taking the clock back off the server (spec 263). Unticked, the
+  // The panel taking the clock back off the server (spec 264). Unticked, the
   // three rows below are inert and the world's own clock is what is drawn --
   // which is what everybody who never opens this panel gets.
   const overrideClock = makeCheckbox('Override the clock', false,
@@ -903,7 +903,7 @@ export function createViewControls(opts: ViewControlOptions = {}): ViewControls 
     // keeps one source of truth, and means dragging it mid-cycle simply jumps
     // the sky to that hour and carries on from there.
     //
-    // It only runs while the panel is overriding (spec 263). Left running
+    // It only runs while the panel is overriding (spec 264). Left running
     // underneath the world's clock it would be a second clock nobody is looking
     // at, quietly walking the slider away from the hour it would resume at.
     advanceClock: (dtSeconds: number) => {

@@ -1,5 +1,5 @@
 /**
- * Whether the world clock is wired to anything (spec 263).
+ * Whether the world clock is wired to anything (spec 264).
  *
  * The half no headless test can reach, and on this feature that is not a
  * formality. Every rule about the cycle is asserted in Node -- the segment
