@@ -27,6 +27,7 @@ import { GameClient, type ClientView } from '../../../server/client/game-client.
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { afflictionsFromQuery } from './affliction-vfx.js';
 import { fieldsWantedByQuery } from './aura-vfx.js';
+import { drawnWorldClock, parseClockFlag, worldClockReadout } from './sky-source.js';
 
 /**
  * How often `?afflict=` re-applies what it was asked for, in ticks (spec 215).
@@ -654,6 +655,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * eight seconds `FIELD_DEMO_TICKS` grants -- so the ring stays up while
    * somebody walks around under it rather than going out mid-look.
    */
+  /**
+   * `?clock=` -- pin the sky to one hour for this client (spec 263).
+   *
+   * Parsed once here rather than per frame, because it is a decision somebody
+   * took in a URL and not something that can change while the tab is open. Null
+   * is the ordinary case: the world's own clock.
+   */
+  const pinnedClockTick = parseClockFlag(location.search);
   const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
   let fieldAgainAtTick = 0;
   let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
@@ -1253,10 +1262,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the driver's own held set, so one refused by the effect budget or evicted
     // by the instance pool reads as absent.
     const firesLit = scene.heldFires().length;
+    // What time the world thinks it is (spec 263), published from the clock the
+    // *frame* drew with rather than from the tick -- so a `?clock=` pin reads as
+    // the hour it pinned, which is the only way to tell a working pin from one
+    // that parsed and reached nothing.
+    const clockReadout = worldClockReadout(
+      drawnWorldClock(view.estimatedTick, pinnedClockTick),
+      pinnedClockTick !== null,
+    );
     const meshState =
       `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
       `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}` +
-      `:${aurasDrawn}:${lightsHeld}:${lightsOffered}:${firesLit}`;
+      `:${aurasDrawn}:${lightsHeld}:${lightsOffered}:${firesLit}:${clockReadout}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
@@ -1268,6 +1285,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       root.dataset['auras'] = String(aurasDrawn);
       root.dataset['worldLights'] =
         `lit=${String(lightsHeld)} offered=${String(lightsOffered)} fires=${String(firesLit)}`;
+      root.dataset['worldClock'] = clockReadout;
       root.dataset['nav'] =
         `gen=${String(navGeneration)} asked=${String(navAsked)}` +
         ` adopted=${String(navAdopted)} refused=${String(navStale)}`;
@@ -4297,6 +4315,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the bar froze partway and sat there while the wind-up ran on without it.
     const drawnTick = view.estimatedTick + Math.min(1, accumulator / TICK_MS);
 
+    // What time it is in the world (spec 263). Read at the same `drawnTick` the
+    // cast bars are, so the sky and everything else with a duration are on one
+    // clock -- and derived rather than received, because the server's tick is
+    // the clock and this client already holds an estimate of it.
+    const worldClock = drawnWorldClock(drawnTick, pinnedClockTick);
+
     scene.render(view, {
       dt: elapsed / 1000,
       // What an authored unit's state machine advances by (spec 111). The whole
@@ -4305,6 +4329,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // say that and never could.
       ticks,
       tick: drawnTick,
+      clock: worldClock,
       selfFacing: facing,
       cursor,
       targetEntityId: targetId,

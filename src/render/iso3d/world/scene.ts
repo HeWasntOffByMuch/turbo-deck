@@ -130,6 +130,7 @@ import {
 } from '../player-lights.js';
 import { PlayerLighting } from '../player-lighting.js';
 import { hasConjuredLight, resolveCarriedLights, type CarriedLightFacts } from './carried-light.js';
+import { resolveSkyHours, type WorldClock } from './sky-source.js';
 import type { LightRequest } from '../light-residency.js';
 import { WorldLights } from '../world-lights.js';
 import { FireVfx, type FireSite } from './fire-vfx.js';
@@ -326,6 +327,16 @@ export interface FrameInfo {
    * way positions are, so a wind-up fills smoothly rather than in 20Hz steps.
    */
   readonly tick: number;
+  /**
+   * What time it is in the world (spec 263).
+   *
+   * Computed by `view.ts` from the same `tick` above -- the server's clock,
+   * which every client resolves to the same hour because the clock is a pure
+   * function of a tick both ends hold. Pushed in like every other frame fact
+   * rather than read here, because `?clock=` can pin it and a pin is a decision
+   * the mount takes once rather than one this class re-derives per frame.
+   */
+  readonly clock: WorldClock;
   /**
    * The local player's predicted heading (spec 064). Drawn instead of the
    * replicated one for the same reason its position is: facing arrives at 20Hz,
@@ -1770,7 +1781,7 @@ export class WorldScene {
     this.listenerY = groundY;
     this.listenerZ = me.y;
     this.followSelf(this.framedPoint(me), groundY, dt);
-    this.applyControls();
+    this.applyControls(frame.clock);
     this.applyPlayerLights(me, groundY, {
       // Only ours, because only ours is on the wire (spec 165): a remote
       // player's off hand is not replicated, so a torch in one is a light this
@@ -3511,7 +3522,7 @@ export class WorldScene {
     return { x: (me.x + framing.x) / 2, y: (me.y + framing.y) / 2 };
   }
 
-  private applyControls(): void {
+  private applyControls(clock: WorldClock): void {
     const off = this.controls.cameraOffset();
     this.camOffsetTarget.set(off.x, off.y, off.z);
     this.camOffsetCurrent.lerp(this.camOffsetTarget, CAMERA_SMOOTH);
@@ -3529,7 +3540,7 @@ export class WorldScene {
       this.lastHalfWidth = this.halfWidth;
     }
 
-    this.applySun();
+    this.applySun(clock);
     this.syncUnwalkable(this.controls.showUnwalkable());
     // Applied per frame, beside the switches that own these objects the rest of
     // the time: the prop field is replaced whenever a region rebuilds, and the
@@ -3538,8 +3549,13 @@ export class WorldScene {
     if (this.perf.noTerrain && this.terrainMesh) this.terrainMesh.group.visible = false;
   }
 
-  private applySun(): void {
-    const shadow = this.controls.dayNightEnabled() ? this.applyCycleSun() : this.applyManualSun();
+  private applySun(clock: WorldClock): void {
+    // Two things drive this sun since spec 263 -- the world's clock and the
+    // tuning panel -- and `sky-source.ts` holds the one rule that settles them:
+    // the panel wins where it is asking for something, and the game decides
+    // where it is not. `carried-light.ts`'s rule, one system along.
+    const hours = resolveSkyHours(this.controls.skySettings(), clock);
+    const shadow = hours === null ? this.applyManualSun() : this.applyCycleSun(hours);
     this.sun.castShadow = shadow.casting && !this.perf.noShadow;
 
     const frame = shadowFrame(this.halfWidth);
@@ -3560,9 +3576,8 @@ export class WorldScene {
     }
   }
 
-  private applyCycleSun(): HorizonShadow {
-    const sky = this.controls.sky();
-    if (!sky) return this.applyManualSun();
+  private applyCycleSun(hours: number): HorizonShadow {
+    const sky = this.controls.skyAtHours(hours);
 
     const d = sky.lightDirection;
     this.sunDirection.set(d.x, d.y, d.z).normalize();
