@@ -49,3 +49,19 @@ jobs:
       # any route, because every route has the same symptom.
       - run: npm run build
       - run: npm run check:bundle
+      # The spec-number gate (spec 265). `main` carries 105 specs that share a
+      # number with another one, because every session picks its number off
+      # `specs/` -- which only ever holds what has merged -- and this repo runs a
+      # lot of branches at once. This is the half no local tool can enforce: a
+      # branch cannot be merged while it duplicates a number `main` already uses.
+      #
+      # `checkout` leaves one ref behind, so main has to be fetched before the
+      # comparison. Depth 1 is enough -- the check reads a file listing, not
+      # history -- and a stale baseline is this check's only false positive, so
+      # the fetch is a step of its own rather than something it assumes.
+      #
+      # Last, with the other `check:` gates, because the fix is a rename: a
+      # session that trips this should still get its test results from the run
+      # that told it.
+      - run: git fetch --no-tags --depth=1 origin main:refs/remotes/origin/main
+      - run: npm run check:specs
