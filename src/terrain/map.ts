@@ -156,6 +156,24 @@ export interface MapPropLight {
 export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger' | 'spawner';
 
 /**
+ * When a spawner is allowed to fill (spec 268).
+ *
+ * A closed union rather than a number, the rule `Temperament` and `Idle` are
+ * unions for: a window names no quantity, so there is none to author, and the
+ * two members are the only two readings of the sun there are. Absent is the
+ * third state and is not a member here -- a point that says nothing fills
+ * whenever its timer is up, exactly as every spawner did before this existed.
+ *
+ * What `night` *means* is deliberately not decided here: `spawnWindowOpen` in
+ * `server/world/spawners.ts` is the one sentence, so the sim, the readout and
+ * every test read one answer rather than each picking one.
+ */
+export type SpawnWindow = 'night' | 'day';
+
+/** For the parser, which refuses anything else. Mirrors `MARKER_KINDS`. */
+export const SPAWN_WINDOWS: readonly SpawnWindow[] = ['night', 'day'];
+
+/**
  * What a `spawner` marker says past which monster stands there (spec 222).
  *
  * Both were global constants answering a per-spawner question: how long a kill
@@ -183,6 +201,31 @@ export interface MapSpawnerSettings {
    * was sized for.
    */
   readonly leashRadius?: number;
+  /**
+   * When this point may fill (spec 268). Absent = whenever its timer is up.
+   *
+   * Absent rather than a written-in `'always'`, for the reason the two numbers
+   * above it are absent: a committed map carries only what somebody chose, so
+   * adding this field moved no region file's bytes and no `mapId`.
+   */
+  readonly when?: SpawnWindow;
+}
+
+/**
+ * Whether a settings block says nothing, so callers can drop it (spec 268).
+ *
+ * One answer with two callers -- the parser below, which normalizes an empty
+ * block to absent, and the editor's `patchMarker`, which drops one somebody
+ * emptied -- for the reason `footprintRadius` is one answer: both are deciding
+ * the same thing about the same object, and two copies agree exactly until a
+ * fourth field is added to one of them.
+ */
+export function spawnerSettingsEmpty(settings: MapSpawnerSettings): boolean {
+  return (
+    settings.respawnSeconds === undefined &&
+    settings.leashRadius === undefined &&
+    settings.when === undefined
+  );
 }
 
 /** A point of interest, positioned in its chunk's local space. */
@@ -619,6 +662,7 @@ function writeSpawnerSettings(settings: MapSpawnerSettings | undefined): string 
   const parts: string[] = [];
   if (settings.respawnSeconds !== undefined) parts.push(`"respawnSeconds": ${settings.respawnSeconds}`);
   if (settings.leashRadius !== undefined) parts.push(`"leashRadius": ${settings.leashRadius}`);
+  if (settings.when !== undefined) parts.push(`"when": ${writeScalar(settings.when)}`);
   return parts.length === 0 ? '' : `, "spawner": { ${parts.join(', ')} }`;
 }
 
@@ -825,10 +869,23 @@ function parseSpawnerSettings(value: unknown, what: string): MapSpawnerSettings 
   const r = asRecord(value, what);
   const respawn = r['respawnSeconds'];
   const leash = r['leashRadius'];
-  const settings: { respawnSeconds?: number; leashRadius?: number } = {};
+  const when = r['when'];
+  const settings: { respawnSeconds?: number; leashRadius?: number; when?: SpawnWindow } = {};
   if (respawn !== undefined) settings.respawnSeconds = asNumber(respawn, `${what}.respawnSeconds`);
   if (leash !== undefined) settings.leashRadius = asNumber(leash, `${what}.leashRadius`);
-  return settings.respawnSeconds === undefined && settings.leashRadius === undefined ? undefined : settings;
+  if (when !== undefined) {
+    // Refused rather than ignored, the stance this parser already takes on a
+    // marker kind it does not know (spec 268): a spawner whose window nothing
+    // can open never fills, and from inside the game that is an empty patch of
+    // ground -- which is also what a typo'd monster id looks like, and is the
+    // reason that one is a boot failure too.
+    const word = asString(when, `${what}.when`);
+    if (!SPAWN_WINDOWS.includes(word as SpawnWindow)) {
+      fail(`${what}.when is not a known spawn window: ${word}`);
+    }
+    settings.when = word as SpawnWindow;
+  }
+  return spawnerSettingsEmpty(settings) ? undefined : settings;
 }
 
 function parseMarker(value: unknown, what: string): MapMarker {
