@@ -5206,7 +5206,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  kinds of speaker now and a mount searching `view.entities` would
                  find one and silently draw nothing for the other.
                  The pick is the marker tool's finding one tab over: **a sign's
-                 board is not where a sign is filed**, so the column is tested
+                 board is not where a sign is filed**, so the volume is tested
                  first and the ground footprint second -- at this camera's pitch
                  the ground under a cursor aimed at a board is metres from the
                  post, and how many metres depends on the elevation the player
@@ -5214,6 +5214,36 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the collider is the *post*, which is the one place those two
                  numbers are deliberately different: a signpost the cursor could
                  only name by its stick is a signpost nobody clicks.
+                 It is **two bands**, and both of the reasons are the same
+                 sentence from opposite ends: the board is seven times wider
+                 than the stick holding it up, so one cylinder sized for the
+                 board would claim a column of empty air either side of every
+                 post from the ground up -- and every unit of that is ground a
+                 click can no longer walk to, which is the price `hover.ts`
+                 records paying once and reversing. The ground footprint is the
+                 **post's** radius for the same reason: the patch of earth a
+                 sign occupies is the patch its post stands on, and claiming
+                 what the board overhangs would take a stride of walkable ground
+                 out of the game around every signpost on the map.
+                 Every band is measured from a **sampled** ground height, and
+                 that is the one thing this shipped wrong. The first cut took
+                 the base as zero and wrote it down as a stated approximation;
+                 the arena's ground is hundreds of units up, so the whole column
+                 sat underneath the sign -- the board answered nothing at all,
+                 and a ray that passed through the buried column on its way down
+                 answered `sign` over open ground. Hovering the thing did
+                 nothing and the field near it was live. `SignIndex` samples
+                 `WorldScene.groundAt` when it rebuilds, which is the same
+                 answer the bubble's anchor is projected through, so the volume
+                 a cursor names and the point a bubble hangs over cannot
+                 disagree about where a sign is standing -- and it rebuilds on
+                 the store's revision, which is the tick a sign and the ground
+                 under it both arrive on, because they are the same chunk.
+                 What the probe was doing meanwhile is worth keeping: it swept
+                 the frame until *something* read `sign`, found the patch of
+                 ground, and reported a pass. It measures the mark against the
+                 **bubble's own anchor** now -- 0 pixels below it when the
+                 volume is right, 96 when the base is assumed to be zero.
                  **No sound**, and that is `SILENT_SPEECH` rather than a voice at
                  zero: a sink that can start a sound owes a way to stop one, and
                  the cheapest thing that cannot go wrong is one that never
@@ -5233,6 +5263,22 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  conversation never reads it: a sign has no server to release
                  it, so this is the only thing that does, and an argument a
                  caller can leave out is one a caller will.
+                 `bubbleAnchor` is where the bubble points, and it is a named
+                 function because the rule was wrong and the wrongness was
+                 invisible -- a bubble that has quietly fallen back to its
+                 no-anchor placement is still a bubble, sitting somewhere
+                 plausible, saying the right words. **Whether the speaker is on
+                 screen is asked at their feet; where the bubble goes is asked
+                 at the lift.** The lift is in *world* units, so zooming in
+                 magnifies it: at the span a conversation frames itself at, the
+                 point a body's headroom above the ground is 400 pixels up in an
+                 800-pixel frame, and judging *that* point on screen dropped the
+                 anchor for a speaker standing in the middle of the view -- which
+                 put their bubble at the bottom of the screen, because centred
+                 and low is what a null anchor gets. Spec 246's rule is
+                 unchanged and is what the feet are for; what a lifted anchor off
+                 the top means is only that `placement` clamps it, which is what
+                 that function has always done with one.
                  The camera is a `WorldScene.setDialogueFraming` push and
                  nothing more: the focus point becomes the midpoint of the two
                  bodies and the half-width is taken down, both through the ease

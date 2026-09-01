@@ -1,7 +1,7 @@
 import { footprintRadius, signText, SIGN_PLAN, type Prop } from '../../../terrain/index.js';
 import type { Vec2 } from '../../../sim/types.js';
 import type { DialogueSpeaker, DialogueSpeech } from './dialogue.js';
-import { rayBodyDistance, type RayLike } from '../hover.js';
+import { rayBodyDistance, type RayLike, type RayVolume } from '../hover.js';
 import { PLAYER_RADIUS } from '../../../sim/constants.js';
 
 /**
@@ -21,6 +21,17 @@ import { PLAYER_RADIUS } from '../../../sim/constants.js';
  * server can see. The *walk* to it goes out as ordinary movement input, exactly
  * as click-to-move already does.
  */
+
+/**
+ * How far a body's ground height is sampled from, when a sign's own is not
+ * known yet.
+ *
+ * There is no such case today -- a sign's chunk carries the ground it stands on,
+ * so a mark only exists once that ground is held -- and the fallback exists
+ * because {@link SignMark.base} being *wrong* is the failure this whole shape
+ * was rebuilt for and a silent zero is exactly how it looked.
+ */
+const UNKNOWN_GROUND = 0;
 
 /** The words on one sign, and the shape a cursor can name it by. */
 export interface SignMark {
@@ -42,8 +53,23 @@ export interface SignMark {
   readonly text: string;
   /** The post, as the sim collides with it. */
   readonly radius: number;
-  /** How far the top of the board stands above the ground it is filed at. */
-  readonly height: number;
+  /** Half the board's span. What the cursor can name the *board* by. */
+  readonly boardRadius: number;
+  /**
+   * World Y of the ground the post stands on.
+   *
+   * **Sampled, not assumed.** The first cut of this took it as zero and called
+   * that a stated approximation, which was wrong in the one way that mattered:
+   * the arena's ground is hundreds of units up, so the pick column sat entirely
+   * below the sign -- the board answered nothing at all, and a swathe of ground
+   * near the post answered `sign`, which is exactly what a ray passing through
+   * an underground column looks like from a camera pitched down at it.
+   */
+  readonly base: number;
+  /** World Y where the post ends and the board begins. */
+  readonly boardBase: number;
+  /** World Y of the top of the board. */
+  readonly top: number;
 }
 
 /** The key {@link SignMark.key} takes, so a caller can build one to compare. */
@@ -63,79 +89,102 @@ function keyOf(prop: Prop): string {
  * over and a click walks past -- the same answer the editor gives when it
  * refuses to place one.
  */
-export function signMarks(props: readonly Prop[]): readonly SignMark[] {
+export function signMarks(props: readonly Prop[], groundAt?: GroundAt): readonly SignMark[] {
   const marks: SignMark[] = [];
   for (const prop of props) {
     const text = signText(prop);
     if (text === null) continue;
     const scale = Number.isFinite(prop.scale) && prop.scale > 0 ? prop.scale : 1;
+    const sampled = groundAt?.(prop.x, prop.y);
+    const base = Number.isFinite(sampled) ? (sampled as number) : UNKNOWN_GROUND;
     marks.push({
       key: keyOf(prop),
       x: prop.x,
       y: prop.y,
       text,
       radius: footprintRadius(prop),
-      height: (SIGN_PLAN.postHeight + SIGN_PLAN.height) * scale,
+      boardRadius: (SIGN_PLAN.width / 2) * scale,
+      base,
+      boardBase: base + SIGN_PLAN.postHeight * scale,
+      top: base + (SIGN_PLAN.postHeight + SIGN_PLAN.height) * scale,
     });
   }
   return marks;
 }
 
 /**
+ * Where the ground is under a world point.
+ *
+ * The renderer's own `WorldScene.groundAt`, handed in rather than sampled here:
+ * it is the same answer the bubble's anchor is projected through, so the volume
+ * a cursor names and the point a bubble hangs over cannot disagree about where
+ * a sign is standing.
+ */
+export type GroundAt = (x: number, z: number) => number;
+
+/**
  * The sign the cursor is asking for, or null.
  *
- * `hover.ts`'s two tests with the meshes left out. The board first, through the
- * volume test that file already exports, then the ground footprint -- and both
- * are needed for the reason the editor's marker tool records: **a sign's board
- * is not where a sign is filed.** The board stands a body's height up, so at
- * this camera's pitch the ground under a cursor aimed squarely at it is metres
- * from the post, and how many metres depends on the elevation the player has
- * the Height slider at. Aiming at the picture is exact at every angle; the
- * footprint is what catches a click that landed by the post instead.
+ * `hover.ts`'s two tests with the meshes left out, and with the volume in
+ * **two bands rather than one**: the board, then the post, then the ground
+ * footprint. All three are needed and the split is not fussiness --
+ *
+ *  - the **board** is what a player aims at, and it is seven times wider than
+ *    the stick holding it up, so one cylinder sized for the board would claim a
+ *    column of empty air either side of the post from the ground up;
+ *  - the **post** is what is under the cursor when somebody aims at the bottom
+ *    of a signpost, which is an ordinary thing to do;
+ *  - the **footprint** catches a click that landed on the patch of earth the
+ *    post occupies, exactly as it does for a unit.
+ *
+ * Every band is measured from {@link SignMark.base}, the sampled ground, and
+ * that is the whole of what this got wrong first: with the base assumed to be
+ * zero the column sat hundreds of units underneath the sign on real terrain, so
+ * the board answered nothing and a ray that passed through the buried column on
+ * its way down answered `sign` over open ground.
  *
  * There are no meshes to test because a sign's are instanced into a shared
  * batch with every other sign in the region -- a raycast against that object
- * answers "some sign", which is not the question. The volume is a better
- * description of a signpost than its own geometry is anyway: what a player is
- * pointing at is the board, and the board fills its volume.
+ * answers "some sign", which is not the question. The bands are a better
+ * description of a signpost than its own geometry is anyway.
  */
 export function pickSign(
   ray: RayLike,
   marks: readonly SignMark[],
   ground: Vec2 | null,
 ): SignMark | null {
-  return pickBoard(ray, marks) ?? pickFootprint(ground, marks);
+  return pickBand(ray, marks, board) ?? pickBand(ray, marks, post) ?? pickFootprint(ground, marks);
 }
 
-/**
- * How wide the *pick* volume is, against how wide the collider is.
- *
- * Half the board rather than half the post, and stated as its own function
- * because the two answer different questions and the difference is the whole
- * reason a sign is clickable at all: the collider is what a body walks into,
- * and the pick is what a cursor can name. A pick at the collider's radius is a
- * six-unit stick to hit at a hundred units of camera distance.
- */
-export function pickRadius(mark: SignMark): number {
-  return (mark.radius / (SIGN_PLAN.postWidth / 2)) * (SIGN_PLAN.width / 2);
-}
+/** One band of a sign's pick volume, as {@link rayBodyDistance} wants it. */
+type Band = (mark: SignMark) => RayVolume;
 
-/** The nearest sign whose board the ray enters. */
-function pickBoard(ray: RayLike, marks: readonly SignMark[]): SignMark | null {
+/** The board: wide, and only over its own height. */
+const board: Band = (mark) => ({
+  position: { x: mark.x, y: mark.y },
+  radius: mark.boardRadius,
+  base: mark.boardBase,
+  height: Math.max(0, mark.top - mark.boardBase),
+});
+
+/** The post: the stick, from the ground to the underside of the board. */
+const post: Band = (mark) => ({
+  position: { x: mark.x, y: mark.y },
+  // The collider, and no wider. Forgiveness here is not free: `issueOrder`
+  // reads a sign before it reads the ground, so every unit of slack is ground
+  // the player can no longer click to walk to -- which is the price `hover.ts`
+  // records paying once already and reversing.
+  radius: mark.radius,
+  base: mark.base,
+  height: Math.max(0, mark.boardBase - mark.base),
+});
+
+/** The nearest sign whose band the ray enters. */
+function pickBand(ray: RayLike, marks: readonly SignMark[], band: Band): SignMark | null {
   let best: SignMark | null = null;
   let bestDistance = Infinity;
   for (const mark of marks) {
-    const distance = rayBodyDistance(ray, {
-      position: { x: mark.x, y: mark.y },
-      // The *pick* volume is the board, not the post: a signpost the cursor
-      // could only name by its stick is a signpost nobody clicks.
-      radius: pickRadius(mark),
-      // The whole post-and-board column, from the ground it is filed at. A
-      // volume that started at the board would refuse a cursor on the post,
-      // which is a perfectly ordinary place to point at a signpost.
-      base: groundOf(mark),
-      height: mark.height,
-    });
+    const distance = rayBodyDistance(ray, band(mark));
     if (distance === null || distance >= bestDistance) continue;
     best = mark;
     bestDistance = distance;
@@ -144,22 +193,13 @@ function pickBoard(ray: RayLike, marks: readonly SignMark[]): SignMark | null {
 }
 
 /**
- * The ground a sign's column stands on.
+ * The nearest sign whose ground footprint holds the cursor.
  *
- * Zero, and that is a stated approximation rather than an oversight: a
- * `SignMark` carries no height because nothing that builds one has sampled the
- * terrain, and the alternative -- threading `scene.ground` into a pure module --
- * would buy accuracy in the one case it cannot matter. The column is 96 units
- * tall against ground that moves by a few between one prop and the next, so a
- * ray aimed at the board enters the column either way; what an unsampled base
- * costs is a cursor on the very bottom of the post over steep ground, which the
- * footprint test below answers anyway.
+ * At the **post's** radius rather than the board's: the patch of earth a sign
+ * occupies is the patch its post stands on, and the board is a metre of air a
+ * body walks under. Claiming the ground the board overhangs would take a stride
+ * of walkable earth out of the game around every signpost on the map.
  */
-function groundOf(_mark: SignMark): number {
-  return 0;
-}
-
-/** The nearest sign whose footprint holds the ground cursor. */
 function pickFootprint(cursor: Vec2 | null, marks: readonly SignMark[]): SignMark | null {
   if (!cursor) return null;
   let best: SignMark | null = null;
@@ -168,8 +208,7 @@ function pickFootprint(cursor: Vec2 | null, marks: readonly SignMark[]): SignMar
     const dx = mark.x - cursor.x;
     const dy = mark.y - cursor.y;
     const distSq = dx * dx + dy * dy;
-    const reach = pickRadius(mark);
-    if (distSq > reach * reach || distSq >= bestDistSq) continue;
+    if (distSq > mark.radius * mark.radius || distSq >= bestDistSq) continue;
     best = mark;
     bestDistSq = distSq;
   }
@@ -195,11 +234,18 @@ export class SignIndex {
   private marks: readonly SignMark[] = [];
   private revision = -1;
 
-  /** The signs, rebuilding first if the store has moved on. */
-  update(revision: number, props: () => readonly Prop[]): readonly SignMark[] {
+  /**
+   * The signs, rebuilding first if the store has moved on.
+   *
+   * The ground is sampled at that rebuild rather than per query, and the
+   * revision is the right moment for both: a chunk arriving is what brings a
+   * sign *and* the ground it stands on, and the two land together because they
+   * are the same chunk.
+   */
+  update(revision: number, props: () => readonly Prop[], groundAt: GroundAt): readonly SignMark[] {
     if (revision !== this.revision) {
       this.revision = revision;
-      this.marks = signMarks(props());
+      this.marks = signMarks(props(), groundAt);
     }
     return this.marks;
   }

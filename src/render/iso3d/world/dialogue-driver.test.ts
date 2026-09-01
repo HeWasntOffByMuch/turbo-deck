@@ -4,7 +4,7 @@ import type { DialogueVoiceId } from '../../../server/data/dialogue.js';
 import { ALL_NPCS, npcById } from '../../../server/data/npcs.js';
 import type { SpeakEvent } from '../../audio/dialogue-voice.js';
 import { planLine } from '../../audio/dialogue-voice.js';
-import { DialogueDriver, type DialogueBody } from './dialogue-driver.js';
+import { bubbleAnchor, DialogueDriver, type DialogueBody } from './dialogue-driver.js';
 import type { DialogueSpeech } from './dialogue.js';
 import { SIGN_BUBBLE_LIFT, SIGN_READ_RADIUS, signMarks, type SignMark } from './sign.js';
 import type { Prop } from '../../../terrain/index.js';
@@ -416,5 +416,40 @@ describe('reading a sign', () => {
     driver.readSign(post(), 0);
     driver.leave();
     expect(driver.focus([])).toBeNull();
+  });
+});
+
+/**
+ * Spec 259's follow-up. Where the bubble points.
+ *
+ * One rule, and it is here rather than inline in the mount because getting it
+ * wrong is invisible: a bubble that has quietly fallen back to its no-anchor
+ * placement is still a bubble, sitting somewhere plausible, saying the right
+ * words.
+ */
+describe('the bubble anchor', () => {
+  const on = (x: number, y: number): { x: number; y: number; onScreen: boolean } => ({ x, y, onScreen: true });
+  const off = (x: number, y: number): { x: number; y: number; onScreen: boolean } => ({ x, y, onScreen: false });
+
+  it('points at the lifted point, not at the feet', () => {
+    expect(bubbleAnchor(on(400, 120), on(400, 500))).toEqual({ x: 400, y: 120 });
+  });
+
+  it('keeps pointing when the lift has run off the top of the frame', () => {
+    // The bug. The lift is in world units, so zooming in magnifies it: at a
+    // tight span and a wide frame the point above a body's head is hundreds of
+    // pixels up, and judging *that* point on-screen dropped the anchor for a
+    // speaker standing in the middle of the view -- which put their bubble at
+    // the bottom of the screen, because that is what a null anchor gets.
+    expect(bubbleAnchor(off(400, -350), on(400, 300))).toEqual({ x: 400, y: -350 });
+    // The screen clamps it from there, which is what `placement` is for.
+  });
+
+  it('points at nothing when the speaker is off screen', () => {
+    // Spec 246's rule, unchanged and now asked about the speaker: somebody the
+    // player cannot see draws no bubble rather than one pinned to an edge,
+    // because the camera is on its way to them.
+    expect(bubbleAnchor(on(400, 120), off(400, 5000))).toBeNull();
+    expect(bubbleAnchor(off(400, -350), off(400, 5000))).toBeNull();
   });
 });

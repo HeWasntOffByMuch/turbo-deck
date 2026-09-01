@@ -125,7 +125,7 @@ import { isHandheldDevice } from '../device.js';
 import { showsWorkbenches } from '../client-build.js';
 import { isFriendlyMonster } from '../../../server/data/monsters.js';
 import { npcById } from '../../../server/data/npcs.js';
-import { DialogueDriver, SpeechSink } from './dialogue-driver.js';
+import { bubbleAnchor, DialogueDriver, SpeechSink } from './dialogue-driver.js';
 import { appearanceOf, bleedsFor } from './appearance.js';
 import { weaponTypeFor } from './weapon-look.js';
 import { damageElementOf } from '../../../server/data/abilities.js';
@@ -3761,7 +3761,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   function currentSignMarks(): readonly SignMark[] {
     const held = streamed;
     if (!held) return [];
-    return signIndex.update(held.revision, () => held.props());
+    // `scene.groundAt` rather than the store's own sampler, and they are the
+    // same number today: what makes it the right one is that the bubble's
+    // anchor is projected through it too, so the volume a cursor names and the
+    // point a bubble hangs over cannot come to different answers about where a
+    // sign is standing.
+    return signIndex.update(held.revision, () => held.props(), (x, z) => scene.groundAt(x, z));
   }
 
   /**
@@ -4173,13 +4178,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       ui.setDialogue(null, null);
       return;
     }
-    // Over the speaker's head, or over the board. `projectPoint` answers in CSS
-    // pixels and reports whether the point is on screen at all -- an off-screen
-    // anchor draws no bubble rather than one pinned to an edge, since what is
-    // being read is somewhere the player cannot see and the camera is on its
-    // way there.
-    const at = scene.projectPoint(focus.x, focus.y, focus.lift);
-    ui.setDialogue(bubble, at.onScreen ? { x: at.x, y: at.y } : null);
+    // Over the speaker's head, or over the board. Two projections, because
+    // "is the speaker on screen" and "where does the bubble hang" are asked at
+    // different heights -- `bubbleAnchor` is where that rule lives and why.
+    ui.setDialogue(
+      bubble,
+      bubbleAnchor(
+        scene.projectPoint(focus.x, focus.y, focus.lift),
+        scene.projectPoint(focus.x, focus.y, 0),
+      ),
+    );
   }
 
   function frame(now: number): void {

@@ -123,6 +123,18 @@ for a fixture. `placeStructure` reads it the way it reads `structureYaw`.
   bubble is not up — the handle a line with no replies is pressed by.
 - `SignIndex` walks the store only when its revision moves, and finds a sign by
   the key a standing order holds.
+- Every band of a sign's pick volume stands on the **sampled** ground: a mark
+  built over ground at 240 answers a ray aimed at its board and refuses one
+  aimed where the board would be if the ground were zero.
+- The board's band is named at the board's width and the post's at the
+  collider's, so the air beside a post is not the sign and neither is the ground
+  the board overhangs.
+- `bubbleAnchor` points at the lifted point whenever the speaker's **feet** are
+  on screen — including when the lift has run off the top of the frame, which is
+  the case that used to hand the screen a null anchor and drop the bubble to the
+  bottom — and at nothing when the speaker is off screen.
+- `DialogueScreen.placement` clamps such an anchor into the frame rather than
+  falling back to its no-anchor placement, and the two are distinguishable.
 - The presentation-only assertion still holds: the same seed and inputs, once
   with a sign read and once without, produce identical authoritative state.
 

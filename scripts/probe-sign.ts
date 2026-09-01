@@ -43,6 +43,7 @@ import { splitMap } from '../src/terrain/regions.js';
 import { DEFAULT_MAP_PATH, loadMapFile } from '../src/server/world/map-file.js';
 import { writeSplit } from './split-map.js';
 import { DEFAULT_SPAWN } from '../src/server/player/player-manager.js';
+import { BUBBLE_LIFT } from '../src/ui/screens/dialogue.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const MAP = join(root, DEFAULT_MAP_PATH);
@@ -251,6 +252,51 @@ async function findSign(page: Page): Promise<{ point: { x: number; y: number } |
  * what it recognised would leave behind whichever region the sign's own chunk
  * had been split into.
  */
+/**
+ * Hover down from where the bubble is pointing, and say where the mark caught.
+ *
+ * The check the first cut of this probe did not have, and the bug it did not
+ * catch: the pick volume was built assuming the ground was at world Y zero, so
+ * on the arena's terrain -- hundreds of units up -- it sat entirely underneath
+ * the sign. The board answered nothing at all, and a ray that passed through
+ * the buried column on its way down answered `sign` over open ground. A sweep
+ * that only asks "did anything anywhere read sign" reports that as a pass,
+ * which is exactly what it did.
+ *
+ * The anchor is where the game itself says the sign is: the bubble hangs
+ * `BUBBLE_LIFT` above the point `projectPoint` returned for the board, so
+ * reading it back off the box gives the sign's own screen position without this
+ * file guessing one. Scanned **downward**, because the anchor is
+ * `SIGN_BUBBLE_LIFT` world units up and the board is just below it.
+ */
+async function markDistance(page: Page, box: Box): Promise<number> {
+  const anchor = await toCss(page, {
+    x: box.x + Math.floor(box.width / 2),
+    y: box.y + box.height + BUBBLE_LIFT,
+  });
+  if (!anchor) return Number.POSITIVE_INFINITY;
+  for (let down = 0; down <= 320; down += 8) {
+    await page.mouse.move(anchor.x, anchor.y + down);
+    await page.waitForTimeout(60);
+    if ((await crosshair(page)) === 'sign') return down;
+  }
+  return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * How far below the anchor the mark may be found and still be *on the sign*.
+ *
+ * **Measured, not chosen.** `SIGN_BUBBLE_LIFT` puts the anchor 18 world units
+ * above the top of the board, which at the zoom a conversation frames itself at
+ * is a few dozen pixels -- so the mark is found at the anchor itself. With the
+ * base assumed to be zero it was found **104 pixels** further down, on the
+ * patch of ground the buried column happened to intersect. Both numbers came
+ * off this probe against this map; the bound sits between them with room, and
+ * a mark a hundred pixels down the screen from the board is not on the board
+ * whatever else it is on.
+ */
+const MARK_ON_SIGN_PX = 48;
+
 function restoreMap(): void {
   if (!existsSync(BACKUP)) return;
   rmSync(MAP, { recursive: true, force: true });
@@ -260,6 +306,11 @@ function restoreMap(): void {
 
 async function main(): Promise<void> {
   const problems: string[] = [];
+  /** One named assertion, with what was actually seen beside it. */
+  const check = (what: string, ok: boolean, detail: string): void => {
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${what} \u2014 ${detail}`);
+    if (!ok) problems.push(what);
+  };
 
   // The backup first, and the restore in a `finally` below: a probe that left
   // a sign in the committed map would be a probe that edits the world.
@@ -410,6 +461,69 @@ async function main(): Promise<void> {
       } else {
         console.log(`  and settles on: "${settled.line}"`);
       }
+    }
+
+    // --- the two things a screenshot cannot settle ------------------------
+    //
+    // **The mark is on the sign**, not on the ground near it. This is the check
+    // the first cut of this probe did not have, and the bug it did not catch:
+    // the pick volume was built assuming the ground was at world Y zero, so on
+    // the arena's terrain -- hundreds of units up -- it sat entirely underneath
+    // the sign. The board answered nothing at all, and a ray that passed
+    // through the buried column on its way down answered `sign` over open
+    // ground. A sweep that only asks "did anything anywhere read sign" reports
+    // that as a pass, which is exactly what it did.
+    //
+    // The anchor is where the game itself says the sign is: the bubble hangs
+    // `BUBBLE_LIFT` above the point `projectPoint` returns for the board, so
+    // reading it back off the box gives the sign's own screen position without
+    // this file guessing one. Scanned **downward**, because the anchor is
+    // `SIGN_BUBBLE_LIFT` world units up and the board is just below it.
+    if (settled.open && settled.box) {
+      const away = await markDistance(page, settled.box);
+      check(
+        'the mark is on the sign the bubble is pointing at',
+        away <= MARK_ON_SIGN_PX,
+        Number.isFinite(away) ? `${away}px below the anchor` : 'never read sign',
+      );
+    }
+
+    // **The bubble stays with the sign when the camera zooms in.**
+    //
+    // Asked as the check above asked over again, rather than by looking at
+    // where the box ended up: if the anchor is dropped the bubble falls back to
+    // its no-anchor placement -- centred and low -- and a scan down from *that*
+    // box's middle finds no sign, whichever corner of the frame it landed in.
+    // One assertion for both halves of what zooming can break.
+    //
+    // What this deliberately does not claim is to reproduce the flip. Measured
+    // at the shipped camera limits, the anchor lands within `projectPoint`'s
+    // own 80-pixel margin of the top of the frame however far the wheel is
+    // turned -- the camera's span floors at 200 and the dialogue framing at
+    // 150, and how far the anchor rides above the speaker is a fixed fraction
+    // of the frame from there. The reproduction is `bubbleAnchor`'s own test;
+    // this is the guard that the mount still calls it.
+    if (settled.open) {
+      await page.mouse.move(640, 400);
+      for (let i = 0; i < 12; i++) {
+        await page.mouse.wheel(0, -300);
+        await page.waitForTimeout(140);
+      }
+      await page.waitForTimeout(900);
+      const zoomed = await dialogue(page);
+      check('the bubble is still up after the camera zooms in', zoomed.open, zoomed.line || 'gone');
+      const away = zoomed.box === null ? Number.POSITIVE_INFINITY : await markDistance(page, zoomed.box);
+      check(
+        'and still points at the sign rather than falling to the bottom of the frame',
+        away <= MARK_ON_SIGN_PX,
+        zoomed.box ? `box at ${zoomed.box.x.toFixed(0)},${zoomed.box.y.toFixed(0)}, mark ${away}px below` : 'no box',
+      );
+      for (let i = 0; i < 12; i++) {
+        await page.mouse.wheel(0, 300);
+        await page.waitForTimeout(120);
+      }
+      await page.waitForTimeout(900);
+      settled = await dialogue(page);
     }
 
     // And it closes on a press, since a sign has no replies -- pressed on the

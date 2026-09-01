@@ -119,6 +119,39 @@ export class SpeechSink implements DialogueSpeech {
   }
 }
 
+/** A world point projected to the frame, as `WorldScene.projectPoint` answers. */
+export interface Projected {
+  readonly x: number;
+  readonly y: number;
+  readonly onScreen: boolean;
+}
+
+/**
+ * Where the bubble points, or null for nothing to point at.
+ *
+ * Two projected points and one rule, and it is a named function rather than a
+ * line in the mount because the rule was wrong and the wrongness was invisible:
+ * **whether the speaker is on screen is asked at their feet, and where the
+ * bubble goes is asked at the lift.**
+ *
+ * The lift is in *world* units, so zooming in magnifies it -- at a tight span
+ * and a wide frame the point a body's headroom above the ground is hundreds of
+ * pixels up, and once it passed the top of the frame the mount handed the
+ * screen a null anchor and got its no-anchor placement: centred, low. A speaker
+ * standing in the middle of the view with their bubble at the bottom of the
+ * screen, and nothing about it looks like an off-screen speaker.
+ *
+ * Spec 246's rule is unchanged and is what the feet are for -- a speaker the
+ * player cannot see draws no bubble rather than one pinned to an edge, because
+ * the camera is on its way to them. What a lifted anchor off the top means is
+ * only that `DialogueScreen.placement` clamps it, which is what that function
+ * has always done with one.
+ */
+export function bubbleAnchor(lifted: Projected, feet: Projected): { x: number; y: number } | null {
+  if (!feet.onScreen) return null;
+  return { x: lifted.x, y: lifted.y };
+}
+
 export interface DialogueDriverOptions {
   /** Where vocal events go. Injected so the driver runs against a recorder. */
   readonly speech: DialogueSpeech;

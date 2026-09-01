@@ -264,6 +264,27 @@ describe('the pointer', () => {
     expect(bubble.bubbleRect).toBeNull();
   });
 
+  it('clamps an anchor that has run off the top rather than dropping it', () => {
+    // What the mount's `bubbleAnchor` relies on (spec 259's follow-up): the
+    // lift is in world units, so a zoomed-in camera can put the point above the
+    // frame while the speaker is squarely in the middle of it. Clamping is the
+    // right answer there and was already what this does; what was wrong was one
+    // level up, where such an anchor was being replaced by null.
+    const bubble = screen();
+    bubble.setAnchor({ x: 400, y: -600 });
+    bubble.setView({ speaker: 'Sign', text: 'Beware the bridge.', typing: false, choices: [] });
+    laid(bubble);
+    const at = bubble.placement(VIEWPORT);
+    expect(at.y).toBeGreaterThanOrEqual(0);
+    expect(at.y).toBeLessThan(VIEWPORT.height / 2);
+    // And it is *not* the no-anchor placement, which is centred and low -- the
+    // two being told apart is the whole of the bug this guards.
+    const adrift = screen();
+    adrift.setView({ speaker: 'Sign', text: 'Beware the bridge.', typing: false, choices: [] });
+    laid(adrift);
+    expect(adrift.placement(VIEWPORT).y).toBeGreaterThan(VIEWPORT.height / 2);
+  });
+
   it('reports a reply by its index', () => {
     const bubble = screen();
     const pressed: number[] = [];
