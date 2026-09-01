@@ -492,7 +492,7 @@ export const SHOP_GOLDEN_CASES: readonly ShopGoldenCase[] = [
   {
     name: 'shop',
     options: {},
-    covers: 'stock, what is yours, an empty buyback said in words, and a purse',
+    covers: "the Buy tab: a merchant's stock as a grid of items with prices under them, and a purse",
   },
   {
     name: 'shop-confirm',
@@ -500,9 +500,39 @@ export const SHOP_GOLDEN_CASES: readonly ShopGoldenCase[] = [
     covers: 'the first thing ever in the modal layer, drawn over the screen it blocks',
   },
   {
+    // The caption used to say "beside a buyback that can", which stopped being
+    // true when the three lists became three tabs: the buyback is one press
+    // away rather than underneath, so it gets a frame of its own below.
     name: 'shop-poor',
-    options: { coins: 8, buyback: true },
-    covers: 'what cannot be afforded, greyed out, beside a buyback that can',
+    options: { coins: 8 },
+    covers: 'a purse that cannot reach any of it: every price dimmed, and none of the cells live',
+  },
+  {
+    name: 'shop-buyback',
+    options: { coins: 8, buyback: true, tab: 'buyback' },
+    covers: 'the Buyback tab with something in it, at the price it would cost to undo (spec 264)',
+  },
+  {
+    // Said in words rather than left blank, and photographed because that is
+    // the only way to see it is a *sentence*: a `Grid` gives every child one
+    // fixed cell, so a label put in the grid would draw as "no".
+    name: 'shop-buyback-empty',
+    options: { tab: 'buyback' },
+    covers: 'nothing sold yet, said in words rather than as a blank panel',
+  },
+  {
+    name: 'shop-sell',
+    options: { tab: 'sell' },
+    covers: "the Sell tab: the player's own things in the same grid, at what the shop pays (spec 264)",
+  },
+  {
+    // The frame the grid exists for. Every other shop golden photographs cells,
+    // and a cell that had stopped describing itself would look identical in all
+    // of them -- what was wrong with the old shop was never how it was laid out,
+    // it was that a name and a number are not enough to decide on.
+    name: 'shop-tooltip',
+    options: { tab: 'buy', tooltipOverCell: 3, coins: 8 },
+    covers: 'an item described in a shop: its own lines, then the price, then the refusal (spec 264)',
   },
   {
     name: 'shop-small',

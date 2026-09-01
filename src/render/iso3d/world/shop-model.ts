@@ -14,12 +14,15 @@
  * Pure and headlessly tested.
  */
 
-import { itemById } from '../../../server/data/items.js';
 import { sellPrice, vendorById } from '../../../server/data/vendors.js';
 import { buy, sell } from '../../../server/player/shop.js';
 import type { Inventory } from '../../../server/state/types.js';
 import type { SellableRow, ShopRow, ShopView } from '../../../ui/screens/shop.js';
-import { iconFor } from './inventory-model.js';
+import { itemViewOf } from './inventory-model.js';
+import {
+  NO_GRADE_MODIFIERS,
+  type ScalingGradeModifiers,
+} from '../../../server/data/weapon-scaling.js';
 
 export interface ShopSource {
   readonly vendor: {
@@ -34,10 +37,17 @@ export interface ShopSource {
   } | null;
   readonly inventory: Inventory;
   readonly coins: number;
-}
-
-function nameOf(defId: string): string {
-  return itemById(defId)?.name ?? defId;
+  /** The character's level, for the tooltip's "requires level N". */
+  readonly level: number;
+  /**
+   * The body's weapon-scaling grade steps, from its replicated `Stats`
+   * (spec 216).
+   *
+   * The bag's field, for the bag's reason and one more: a sword's scaling line
+   * must read the same in the shop as it does in the bag two windows over, and
+   * these are exactly the modifiers that make it differ.
+   */
+  readonly scalingModifiers?: ScalingGradeModifiers;
 }
 
 /**
@@ -55,14 +65,16 @@ export function shopViewOf(source: ShopSource): ShopView | null {
   // never heard of still lists and simply cannot be acted on, which is the
   // honest outcome for a server running content this build does not have.
   const vendor = vendorById(open.id);
+  const modifiers = source.scalingModifiers ?? NO_GRADE_MODIFIERS;
 
   const stock: ShopRow[] = open.stock.map((entry) => {
     const check = vendor ? buy(source.inventory, source.coins, vendor, entry.defId, 1) : null;
     return {
-      defId: entry.defId,
-      name: nameOf(entry.defId),
-      icon: iconFor(entry.defId),
-      count: 1,
+      // One of them, because a Buy is one of them (spec 129). The count on a
+      // stock cell is what the press does rather than what the shop holds --
+      // stock is unlimited, so a number there would be a lie either way and
+      // this is the one that matches the gesture.
+      item: itemViewOf(entry.defId, 1, modifiers),
       // The server's price, never recomputed here: this side does not know a
       // markup and should not learn one.
       price: entry.price,
@@ -79,11 +91,8 @@ export function shopViewOf(source: ShopSource): ShopView | null {
     const check = vendor ? sell(source.inventory, source.coins, vendor, index, stack.count) : null;
     sellable.push({
       index,
-      defId: stack.defId,
-      name: nameOf(stack.defId),
-      icon: iconFor(stack.defId),
-      count: stack.count,
-      // The whole stack, because the button sells the whole stack. A price that
+      item: itemViewOf(stack.defId, stack.count, modifiers),
+      // The whole stack, because the cell sells the whole stack. A price that
       // said "each" beside a button that takes all of them is the sort of thing
       // a confirmation dialog exists to stop being a surprise, and it should not
       // need to.
@@ -94,14 +103,11 @@ export function shopViewOf(source: ShopSource): ShopView | null {
   });
 
   const buyback: ShopRow[] = open.buyback.map((entry) => ({
-    defId: entry.defId,
-    name: nameOf(entry.defId),
-    icon: iconFor(entry.defId),
-    count: entry.count,
+    item: itemViewOf(entry.defId, entry.count, modifiers),
     price: entry.price,
     enabled: entry.price <= source.coins,
     blockedBecause: entry.price <= source.coins ? '' : `${entry.price} coins, and you have ${source.coins}`,
   }));
 
-  return { name: open.name, coins: source.coins, stock, sellable, buyback };
+  return { name: open.name, coins: source.coins, stock, sellable, buyback, level: source.level };
 }
