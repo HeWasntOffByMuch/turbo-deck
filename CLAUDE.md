@@ -58,6 +58,8 @@ change a game outcome.
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
+| `npm run spec:next` | The number a new spec takes, read from **every branch** rather than from `specs/` (spec 266). `specs/` holds only what has merged, and 105 of the 319 specs on `main` share a number with another one because every session read it anyway. Also prints who holds what, including branches sitting on a number `main` already uses — nine of them the day it was written |
+| `npm run check:specs` | The same report with an exit code, and what CI gates on: a branch may not **introduce** a duplicate number. The 48 already on `main` are reported and never failed on — renumbering them would break every `spec NNN` reference in the tree |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
 | `npm run validate:items` | Validate every weapon document in `assets/items/`, against its own mesh |
 | `npm run bake:units` | The offline model build: gate tri counts, hash every asset, write `assets/units/manifest.json` |
@@ -117,6 +119,37 @@ point. A spec should be short: problem statement, data/API shape, the
 invariants that will be tested, and explicit out-of-scope notes. Specs are
 numbered in build order; implementation PRs/commits should reference the
 spec they implement.
+
+### Picking the number
+
+**Never read `specs/` to find the next number.** Run `npm run spec:next`, and
+take what it says. Then write the spec, commit it on its own, and **push it
+before you start building.**
+
+Those are two rules and they are the same rule: `specs/` holds only what has
+**merged**, and this repo runs 184 branches at once, so a number that looks free
+in the working tree is a number several other sessions are also looking at.
+`spec:next` reads every ref instead — a pushed branch has published its claim,
+and reading all of them costs half a second. Pushing early is your half of that
+bargain; until you push, your claim is invisible to everybody else, and the
+window in which somebody takes your number is the whole time you spend building
+rather than the minute it takes to push a markdown file.
+
+The cost of not doing this is measured rather than hypothetical: **105 of the
+319 specs on `main` share a number with another spec** (spec 266). Spec 254 is
+two different specs, 139 is four, and every `spec NNN` reference to a contested
+number — in this file, in the specs, in the source comments — is ambiguous. When
+you meet one, disambiguate by slug; they are not being renumbered, because the
+references pointing at them outnumber the files.
+
+If you do collide — you will occasionally, since a session that has picked a
+number and not pushed cannot be seen — **run `npm run spec:next` again and take
+that number.** Do not renumber to "one past the one I hit". That is read off
+`main`, which is the same view that caused the collision, so two sessions
+colliding on the same day pick the same replacement: it is why `main` has two
+spec 257s, and how 263 and 264 each came to hold two. `npm run check:specs` is
+the gate, and CI runs it — a branch cannot merge while it duplicates a number
+`main` already uses.
 
 ## Branching
 
