@@ -5,6 +5,7 @@ import {
   decodeRuns,
   encodeRuns,
   exportMap,
+  isKnownPropKind,
   MAP_VERSION,
   parseMap,
   quantize,
@@ -12,12 +13,13 @@ import {
   type MapDocument,
   type MapLayer,
   type MapMarker,
+  type MapProp,
   type MapRect,
   type MapSpawnerSettings,
 } from './map.js';
 import { loadMap } from './map-world.js';
 import { createWorld, rectContains, type Rect, type TerrainWorld } from './types.js';
-import { scatterInBounds, worldVegetation, type Prop } from './vegetation.js';
+import { MAX_SIGN_TEXT, scatterInBounds, worldVegetation, type Prop } from './vegetation.js';
 import { createArenaWorld, DEFAULT_ARENA_WORLD, arenaBounds } from './world.js';
 
 /**
@@ -499,6 +501,94 @@ describe("a spawner's own settings", () => {
       for (const marker of chunk['markers'] as Record<string, unknown>[]) marker['spawner'] = { respawnSeconds: 'soon' };
     }
     expect(() => parseMap(JSON.stringify(doc))).toThrow(/respawnSeconds/);
+  });
+});
+
+/**
+ * Spec 260. A sign's message is the first *string* a prop carries and the only
+ * field in a prop record a person is expected to edit by hand, so what it owes
+ * is the round trip and a parser that says no rather than storing something the
+ * wire cannot carry.
+ */
+describe("a sign's message", () => {
+  const signAt = (x: number, z: number, text?: string): Prop => ({
+    kind: 'sign',
+    x,
+    y: z,
+    scale: 1,
+    rotation: 0,
+    tint: 0,
+    ...(text === undefined ? {} : { text }),
+  });
+
+  const props = (doc: MapDocument): MapProp[] => soleLayer(doc).chunks.flatMap((c) => c.props);
+
+  const roundTrip = (list: readonly Prop[]): MapProp[] =>
+    props(parseMap(serializeMap(bake(testWorld(), list))));
+
+  it('survives the round trip whole, including quotes and newlines', () => {
+    const said = 'He said "no".\nC:\\road';
+    const back = roundTrip([signAt(100, 80, said)]);
+    expect(back.map((p) => p.text)).toEqual([said]);
+  });
+
+  it('carries the longest message a sign may hold', () => {
+    const long = 'x'.repeat(MAX_SIGN_TEXT);
+    expect(roundTrip([signAt(100, 80, long)])[0]?.text).toBe(long);
+  });
+
+  /**
+   * What makes this change free for every map already committed: a prop that is
+   * not a sign gains no key, so no region file's bytes move and no `mapId`
+   * does either.
+   */
+  it('writes nothing at all for a prop that has none', () => {
+    const before = serializeMap(bake(testWorld(), testProps(testWorld())));
+    expect(before).not.toContain('"text"');
+  });
+
+  it('drops a blank message rather than storing one', () => {
+    // A sign with nothing on it is not a sign, at every layer: the editor
+    // refuses to place one, `signMarks` drops it, and the bake writes no key.
+    expect(roundTrip([signAt(100, 80, '   ')])[0]?.text).toBeUndefined();
+    expect(roundTrip([signAt(100, 80)])[0]?.text).toBeUndefined();
+  });
+
+  it('drops a message written onto a kind that cannot read one', () => {
+    // Written out and then ignored forever after is the state this avoids: the
+    // bake goes through `signText`, which answers null for anything but a sign.
+    const well: Prop = { ...signAt(100, 80, 'not a sign'), kind: 'well' };
+    expect(roundTrip([well])[0]?.text).toBeUndefined();
+  });
+
+  it('refuses a message that is not a string', () => {
+    const doc = JSON.parse(serializeMap(bake(testWorld(), [signAt(100, 80, 'hi')]))) as Record<string, unknown>;
+    const layers = doc['layers'] as Record<string, unknown>[];
+    const chunks = must(layers[0], 'a layer')['chunks'] as Record<string, unknown>[];
+    for (const chunk of chunks) {
+      for (const prop of chunk['props'] as Record<string, unknown>[]) if (prop['text'] !== undefined) prop['text'] = 12;
+    }
+    expect(() => parseMap(JSON.stringify(doc))).toThrow(/text must be a string/);
+  });
+
+  it('refuses one longer than a sign may carry, rather than truncating it', () => {
+    // Refused here and *cut* by the editor, which is the right way round: a
+    // document is a file that may already be wrong, and a panel is a person
+    // still typing. A document silently losing the second half of a sentence
+    // is worse than one that says which prop is too long.
+    const doc = JSON.parse(serializeMap(bake(testWorld(), [signAt(100, 80, 'hi')]))) as Record<string, unknown>;
+    const layers = doc['layers'] as Record<string, unknown>[];
+    const chunks = must(layers[0], 'a layer')['chunks'] as Record<string, unknown>[];
+    for (const chunk of chunks) {
+      for (const prop of chunk['props'] as Record<string, unknown>[]) {
+        if (prop['text'] !== undefined) prop['text'] = 'x'.repeat(MAX_SIGN_TEXT + 1);
+      }
+    }
+    expect(() => parseMap(JSON.stringify(doc))).toThrow(/over the 240 a sign may carry/);
+  });
+
+  it('is a known species, so the map validator accepts one', () => {
+    expect(isKnownPropKind('sign')).toBe(true);
   });
 });
 

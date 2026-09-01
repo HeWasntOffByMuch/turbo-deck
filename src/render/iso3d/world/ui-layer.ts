@@ -117,6 +117,8 @@ export interface UiReadout {
   readonly chatRects: readonly { readonly id: string; readonly rect: Rect }[];
   readonly dialogueOpen: boolean;
   readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
+  /** The bubble's own box: what a press advances when there are no replies. */
+  readonly dialogueBubble: Rect | null;
   readonly dialogueLine: string;
   /**
    * Whether the interface is honouring a reduced-motion preference, and how far

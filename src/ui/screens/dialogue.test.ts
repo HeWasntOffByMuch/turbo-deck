@@ -244,6 +244,47 @@ describe('the pointer', () => {
     expect(advances).toBe(1);
   });
 
+  it('publishes its own box, which is what a line with no replies is pressed by (spec 260)', () => {
+    // The reply rects answer "where do I press to choose"; this answers "where
+    // do I press to go on", which for a sign is the only press there is.
+    const bubble = screen();
+    expect(bubble.bubbleRect).toBeNull();
+    bubble.setAnchor({ x: 400, y: 300 });
+    bubble.setView({ speaker: 'Sign', text: 'Beware the bridge.', typing: false, choices: [] });
+    laid(bubble);
+    const box = bubble.bubbleRect;
+    expect(box).not.toBeNull();
+    // The box a press has to land in, so it has to be the one the hit test
+    // takes -- a published rectangle that is not the pressable one would be a
+    // harness aiming at the world.
+    expect(bubble.hitTest({ x: (box?.x ?? 0) + 4, y: (box?.y ?? 0) + 4 })).not.toBeNull();
+    // And it goes away with the bubble, since a box for something not on screen
+    // is a press into empty space.
+    bubble.setView(null);
+    expect(bubble.bubbleRect).toBeNull();
+  });
+
+  it('clamps an anchor that has run off the top rather than dropping it', () => {
+    // What the mount's `bubbleAnchor` relies on (spec 260's follow-up): the
+    // lift is in world units, so a zoomed-in camera can put the point above the
+    // frame while the speaker is squarely in the middle of it. Clamping is the
+    // right answer there and was already what this does; what was wrong was one
+    // level up, where such an anchor was being replaced by null.
+    const bubble = screen();
+    bubble.setAnchor({ x: 400, y: -600 });
+    bubble.setView({ speaker: 'Sign', text: 'Beware the bridge.', typing: false, choices: [] });
+    laid(bubble);
+    const at = bubble.placement(VIEWPORT);
+    expect(at.y).toBeGreaterThanOrEqual(0);
+    expect(at.y).toBeLessThan(VIEWPORT.height / 2);
+    // And it is *not* the no-anchor placement, which is centred and low -- the
+    // two being told apart is the whole of the bug this guards.
+    const adrift = screen();
+    adrift.setView({ speaker: 'Sign', text: 'Beware the bridge.', typing: false, choices: [] });
+    laid(adrift);
+    expect(adrift.placement(VIEWPORT).y).toBeGreaterThan(VIEWPORT.height / 2);
+  });
+
   it('reports a reply by its index', () => {
     const bubble = screen();
     const pressed: number[] = [];

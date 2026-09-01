@@ -8,6 +8,7 @@ import {
   fixtureLight,
   footprintRadius,
   HOUSE_PLAN,
+  SIGN_PLAN,
   STRUCTURE_KINDS,
   WELL_RADIUS,
   type FenceKind,
@@ -1754,6 +1755,77 @@ function buildWellParts(): PropPart[] {
   ];
 }
 
+let SIGN_PARTS: PropPart[] | null = null;
+function signParts(): PropPart[] {
+  SIGN_PARTS ??= buildSignParts();
+  return SIGN_PARTS;
+}
+
+/**
+ * A sign: a board nailed to a post (spec 260).
+ *
+ * The simplest prop in this file, and it is meant to be. What a sign has to do
+ * is be legible as *a thing with writing on it* from a hundred units up at this
+ * camera's bearing, which at that distance is a pale rectangle standing edge-on
+ * to nothing -- so the whole design is one plank, held broadside to the way it
+ * is read, on a post thin enough that the board reads as the object and the post
+ * as what holds it.
+ *
+ * Its plan comes from {@link SIGN_PLAN} rather than from numbers typed here,
+ * for the reason the hut's does: `FOOTPRINT_BASE` derives the collider from the
+ * same constant, and the client's pick volume is measured off it too. A board
+ * drawn somewhere the pick does not reach is a sign the cursor slides over.
+ *
+ * The board faces the prop's **+Z**, which is the axis the editor's Facing
+ * slider turns -- the same convention the hut's door already uses, so "turn it
+ * to face the road" means one thing for both.
+ *
+ * Two boards rather than one, and it is the only thing here worth arguing over:
+ * the face is pale and the frame behind it is the post's own timber, because a
+ * single plank at this size is a flat lozenge that reads as a floating tile.
+ * The frame is what says *nailed to*.
+ */
+function buildSignParts(): PropPart[] {
+  const { width, height, postHeight, postWidth } = SIGN_PLAN;
+  // The post carries the board's *underside*, so the board's middle is half a
+  // board higher and the post has to run past that to be nailed through.
+  const boardMiddle = postHeight + height / 2;
+  const postLength = boardMiddle + FIXTURE_SINK;
+  return [
+    {
+      // The post. A fence post in this game is a box, and a sign should look
+      // like it came out of the same yard as the lamp on its stake.
+      geometry: new THREE.BoxGeometry(postWidth, postLength, postWidth),
+      offsetY: postLength / 2 - FIXTURE_SINK,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.12,
+      // No `jitterYaw`: a lamp post that leans is a lamp post, and a sign that
+      // leans is a sign nobody can read. Which way this one faces is the whole
+      // of what a level designer set.
+      },
+    {
+      // The backing: the board's frame, a little proud of it on every side.
+      geometry: new THREE.BoxGeometry(width, height, 7),
+      offsetY: boardMiddle,
+      color: PALETTE.post,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      // The face, standing off the frame toward the reader. Pale, because what
+      // makes a sign a sign at this distance is that it is the brightest flat
+      // thing on the post.
+      geometry: new THREE.BoxGeometry(width - 10, height - 8, 4),
+      offsetY: boardMiddle,
+      offsetZ: 5,
+      color: PALETTE.plankPale,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+  ];
+}
+
 /**
  * The light fixtures (spec 250): a campfire, a street lamp on a stake, and a
  * standing torch.
@@ -2385,9 +2457,16 @@ export function propGroupParts(group: number): readonly PropPart[] {
   if (!of) return [];
   if (of.kind === 'tree') return treeParts(of.species);
   if (of.kind === 'bush') return bushParts();
-  if (of.kind === 'structure') return of.structure === 'well' ? wellParts() : houseParts();
+  if (of.kind === 'structure') return structureParts(of.structure);
   if (of.kind === 'fixture') return fixtureParts(of.fixture);
   return fenceParts(of.fence);
+}
+
+/** The parts one building draws with (spec 224/259). Memoized; see {@link treeParts}. */
+function structureParts(kind: StructureKind): readonly PropPart[] {
+  if (kind === 'well') return wellParts();
+  if (kind === 'sign') return signParts();
+  return houseParts();
 }
 
 /** The parts one light fixture draws with (spec 250). Memoized; see {@link treeParts}. */

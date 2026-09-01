@@ -26,12 +26,13 @@ import {
   FENCE_TILE_LENGTH,
   footprintRadius,
   HOUSE_PLAN,
+  SIGN_PLAN,
   STRUCTURE_KINDS,
   WELL_RADIUS,
 } from '../../terrain/vegetation.js';
 import { worldVegetation } from '../../terrain/vegetation.js';
 import { createArenaWorld } from '../../terrain/world.js';
-import type { Prop } from '../../terrain/vegetation.js';
+import type { Prop, StructureKind } from '../../terrain/vegetation.js';
 
 const tree = (x: number, y: number, tint = 0): Prop => ({ kind: 'tree', x, y, scale: 1, rotation: 0, tint });
 
@@ -519,7 +520,7 @@ describe('the conifer trunk, as built', () => {
 describe('the buildings as they are actually built (spec 224)', () => {
   const flat = (): number => 0;
 
-  const structure = (kind: 'house' | 'well', rotation = 0, scale = 1): Prop => ({
+  const structure = (kind: StructureKind, rotation = 0, scale = 1): Prop => ({
     kind,
     x: 0,
     y: 0,
@@ -598,10 +599,16 @@ describe('the buildings as they are actually built (spec 224)', () => {
     return { min, max };
   }
 
-  it('draws both kinds, and gives each more than a box', () => {
+  it('draws every kind, and gives each more than a box', () => {
     for (const kind of STRUCTURE_KINDS) {
       const parts = partsOf(structure(kind));
-      expect(parts.length).toBeGreaterThan(3);
+      // The claim in the name, and no more than it. It used to read `> 3`,
+      // which was true of the two elaborate buildings and is a fact about them
+      // rather than about the list -- spec 260's sign is a post, a frame and a
+      // face, and is not a worse sign for it. What each kind is made of
+      // *specifically* is asserted per kind below, which is where a number that
+      // tight belongs.
+      expect(parts.length).toBeGreaterThan(1);
       expect(span(parts).max.y).toBeGreaterThan(60);
     }
   });
@@ -661,6 +668,35 @@ describe('the buildings as they are actually built (spec 224)', () => {
     const reach = Math.max(-kerb.min.x, kerb.max.x, -kerb.min.z, kerb.max.z);
     expect(reach).toBeLessThanOrEqual(WELL_RADIUS + 3.001);
     expect(footprintRadius(structure('well'))).toBeCloseTo(WELL_RADIUS, 6);
+  });
+
+  it("builds the sign's board to the plan its collider and its pick are derived from (spec 260)", () => {
+    // The hut's rule one prop over, and it matters more here: `SIGN_PLAN` is
+    // read by three files -- this geometry, `FOOTPRINT_BASE` for what a body
+    // walks into, and the client's pick volume for what a cursor can name. A
+    // board drawn wider than the plan is a sign the crosshair slides off.
+    const face = span(toned(partsOf(structure('sign')), PALETTE.plankPale));
+    expect(face.max.x - face.min.x).toBeCloseTo(SIGN_PLAN.width - 10, 3);
+    // The board's underside is what the post carries, so the plan's `height` is
+    // measured from there -- and the face is inset within it.
+    expect(face.min.y).toBeGreaterThan(SIGN_PLAN.postHeight);
+    expect(face.max.y).toBeLessThan(SIGN_PLAN.postHeight + SIGN_PLAN.height);
+    // The post is what a body cannot walk through, and nothing else is.
+    expect(footprintRadius(structure('sign'))).toBeCloseTo(SIGN_PLAN.postWidth / 2, 6);
+  });
+
+  it('turns the sign to face its own +Z, the way the hut turns its door', () => {
+    // What the editor's Facing slider moves. A board that faced the prop's +X
+    // would be readable from ninety degrees off wherever it was pointed, which
+    // is the kind of thing that is only ever noticed after a village is built.
+    const upright = span(toned(partsOf(structure('sign')), PALETTE.plankPale));
+    const turned = span(toned(partsOf(structure('sign', Math.PI / 2)), PALETTE.plankPale));
+    expect(upright.max.x - upright.min.x).toBeGreaterThan(upright.max.z - upright.min.z);
+    expect(turned.max.z - turned.min.z).toBeGreaterThan(turned.max.x - turned.min.x);
+    // And the face stands off the frame toward the reader, so a quarter turn
+    // moves which side of the post it is on.
+    expect(upright.max.z).toBeGreaterThan(0);
+    expect(turned.max.x).toBeGreaterThan(0);
   });
 
   it('turns the whole building, walls and roof together', () => {

@@ -65,6 +65,7 @@ import { monsterCritterFor } from './monster-critter.js';
 import { CRITTERS } from '../../critters/index.js';
 import { attachHighlight, type HighlightHandle } from '../highlight.js';
 import { pickHoveredUnit, type HoverTarget } from '../hover.js';
+import { pickSign, type SignMark } from './sign.js';
 import { createViewControls, type ViewControls } from '../view-controls.js';
 import {
   CAMERA_FAR,
@@ -1357,10 +1358,31 @@ export class WorldScene {
   }
 
   pickUnitAt(cssX: number, cssY: number): number | null {
+    this.aimRayAt(cssX, cssY);
+    return pickHoveredUnit(this.raycaster, this.hoverTargets, this.screenToWorld(cssX, cssY));
+  }
+
+  /**
+   * The sign at a canvas pixel, or null (spec 260).
+   *
+   * The marks are handed in rather than held here, which is the same division
+   * `hoverTargets` is on the other side of: a unit's hover shape is built from
+   * the rigs this scene is drawing, and a sign is a *prop* -- it comes off the
+   * streamed store, which `view.ts` owns, and this file has no business
+   * knowing what a sign is. All it contributes is the ray, which is the one
+   * thing only a camera can answer.
+   */
+  pickSignAt(cssX: number, cssY: number, marks: readonly SignMark[]): SignMark | null {
+    if (marks.length === 0) return null;
+    this.aimRayAt(cssX, cssY);
+    return pickSign(this.raycaster.ray, marks, this.screenToWorld(cssX, cssY));
+  }
+
+  /** Point {@link raycaster} at a canvas pixel. Both picks above start here. */
+  private aimRayAt(cssX: number, cssY: number): void {
     const rect = this.canvas.getBoundingClientRect();
     const point = cursorToNdc(cssX, cssY, rect.width || 1, rect.height || 1);
     this.raycaster.setFromCamera(this.ndc.set(point.x, point.y), this.camera);
-    return pickHoveredUnit(this.raycaster, this.hoverTargets, this.screenToWorld(cssX, cssY));
   }
 
   /** Where the bodies drawn last frame are on screen, for the DOM overlay. */
