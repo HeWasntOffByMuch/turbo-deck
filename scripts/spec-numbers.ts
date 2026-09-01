@@ -151,7 +151,10 @@ function main(): void {
     ...branchClaims.keys(),
   ];
   const next = nextFreeNumber(claimed);
-  const onBaseline = nextFreeNumber(parseSpecPaths(baselinePaths).map((spec) => spec.number)) - 1;
+
+  const baselineSpecs = parseSpecPaths(baselinePaths);
+  const baselineNumbers = new Set(baselineSpecs.map((spec) => spec.number));
+  const onBaseline = Math.max(-1, ...baselineNumbers);
 
   const sawBranches = refs.length >= ENOUGH_REFS;
 
@@ -186,10 +189,15 @@ function main(): void {
   // A branch sitting on a number main already holds. Not this run's failure --
   // it is somebody else's branch -- but it is the collision, visible before it
   // lands rather than after.
-  const doomed = [...branchClaims.entries()]
-    .filter(([number]) => number <= onBaseline)
-    .flatMap(([, files]) => files)
-    .filter((file) => !baselinePaths.includes(file.path))
+  //
+  // The test is "main holds this number under a different name", not "this
+  // number is below main's highest": the sequence has holes at 020 and 021, and
+  // a branch sitting in one of those is odd but is not a duplicate, so calling
+  // it one would be the report crying wolf about the one thing it is for.
+  const onMain = new Set(baselinePaths);
+  const doomed = [...branchClaims.values()]
+    .flat()
+    .filter((file) => baselineNumbers.has(file.number) && !onMain.has(file.path))
     .sort((a, b) => a.number - b.number);
   if (doomed.length > 0) {
     console.log('\nbranches holding a number main already uses (they will duplicate on merge):');
