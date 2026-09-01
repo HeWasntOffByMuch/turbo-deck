@@ -82,6 +82,52 @@ function predictorFor(map: StreamedMap): PredictStep {
 
 const flat = createFlatPredictor(SPEED, SERVER_TICK_RATE);
 
+/**
+ * The chunk with the most relief in it, and the ring of chunks around it.
+ *
+ * A block rather than a strip, and anchored on relief rather than on document
+ * order, so that what the client holds is ground with a slope at its edge --
+ * which is the whole of what the control below is measuring against. Nine
+ * chunks at most; fewer at a corner of the map, which is fine, because what
+ * matters is that the ring leaves the block rather than how much is in it.
+ */
+function reliefAnchor(): HeldChunk {
+  const relief = (h: HeldChunk): number =>
+    Math.max(...h.chunk.heights) - Math.min(...h.chunk.heights);
+  let best = allChunks()[0];
+  if (!best) throw new Error('the shipped map has no chunks');
+  for (const held of allChunks()) if (relief(held) > relief(best)) best = held;
+  return best;
+}
+
+function reliefBlock(): HeldChunk[] {
+  const anchor = reliefAnchor();
+  return allChunks().filter(
+    (h) =>
+      h.layer === anchor.layer &&
+      Math.abs(h.cx - anchor.cx) <= 1 &&
+      Math.abs(h.cz - anchor.cz) <= 1,
+  );
+}
+
+function reliefCentre(): { x: number; y: number } {
+  const anchor = reliefAnchor();
+  const layer = doc.layers[anchor.layer];
+  if (!layer) throw new Error('no layer');
+  return {
+    x: layer.origin.x + (anchor.cx + 0.5) * CHUNK_EXTENT,
+    y: layer.origin.z + (anchor.cz + 0.5) * CHUNK_EXTENT,
+  };
+}
+
+/**
+ * Far enough out to leave a 3x3 block from its middle, whichever way it is
+ * walked -- half of three chunks is 1.5, so two clears it in every direction
+ * including the diagonals' short axis. Derived from the chunk rather than
+ * typed, so it follows the grid instead of the map.
+ */
+const RING_RADIUS = CHUNK_EXTENT * 2;
+
 describe('a map that has not all arrived', () => {
   it('knows what it has and admits what it has not', () => {
     const chunks = allChunks();
@@ -120,13 +166,15 @@ describe('a map that has not all arrived', () => {
   });
 
   it('predicts flat across ground it has not got, rather than a cliff', () => {
-    const chunks = allChunks();
-    // Sixteen rather than four, because the control at the bottom needs the held
-    // ground to have relief in it. The shipped map was trimmed back to a coast
-    // and its first chunks are flat sea, where a predictor with no coverage has
-    // no cliff to refuse -- so the control stops proving the bug is real while
-    // still passing, which is the one way a control can be worse than none.
-    const partial = streamed(chunks.slice(0, 16));
+    // The held ground is chosen for its *relief* rather than taken off the front
+    // of the document, because the control at the bottom is what needs it: a
+    // predictor with no coverage extrapolates the nearest held cell's plane, and
+    // a cell with no slope in it extrapolates to a constant -- no cliff to
+    // refuse, so the control stops proving the bug is real while still passing,
+    // which is the one way a control can be worse than none. It was
+    // `chunks.slice(0, 16)` twice, at four and then at sixteen, and both times
+    // the number was a fact about where that map happened to keep its sea.
+    const partial = streamed(reliefBlock());
     const step = predictorFor(partial);
 
     // Walk out of the held region in every direction. Every one of these steps
@@ -147,12 +195,17 @@ describe('a map that has not all arrived', () => {
     let refusals = 0;
     let blindRefusals = 0;
     let samples = 0;
-    const bounds = partial.snapshotColliders().bounds;
+    // Centred on the held ground rather than on the layer's bounds, which is what
+    // "walk out of the held region in every direction" says: `snapshotColliders`
+    // reports the whole *declared* layer, so a ring around its middle can sit
+    // thousands of units from anything the client actually holds -- unheld in
+    // every direction, and so a walk out of nothing in particular.
+    const centre = reliefCentre();
     for (let i = 0; i < 64; i++) {
       const angle = (i / 64) * Math.PI * 2;
       const from = {
-        x: bounds.x + bounds.w * 0.5 + Math.cos(angle) * 900,
-        y: bounds.y + bounds.h * 0.5 + Math.sin(angle) * 900,
+        x: centre.x + Math.cos(angle) * RING_RADIUS,
+        y: centre.y + Math.sin(angle) * RING_RADIUS,
       };
       if (partial.knows(from.x, from.y)) continue;
       samples += 1;
