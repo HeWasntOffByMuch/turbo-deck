@@ -26,6 +26,7 @@ import { NO_WEAPON } from '../../../server/data/weapon-scaling.js';
 import type { EffectiveStats } from '../../../server/state/types.js';
 import { visualFor } from '../../../server/data/status-visuals.js';
 import { StatusId } from '../../../server/sim/statuses.js';
+import { vendorById } from '../../../server/data/vendors.js';
 
 /** The wire index for a status id, so a test reads by name rather than by number. */
 function wireOf(id: string): number {
@@ -35,6 +36,9 @@ function wireOf(id: string): number {
 }
 
 const VIEWPORT = { width: 400, height: 300 };
+
+/** The shop every test in this file opens, so its reach can be measured. */
+const QUARTERMASTER = vendorById('vendor.quartermaster');
 const NONE = { shift: false, ctrl: false, alt: false, meta: false };
 
 const NO_EQUIPMENT: Equipment = {
@@ -56,6 +60,9 @@ function viewFixture(overrides: Partial<ClientView> = {}): ClientView {
     inventory: emptyInventory(),
     equipment: NO_EQUIPMENT,
     coins: 60,
+    // Standing on the counter unless a test says otherwise, so nothing but the
+    // range tests below has an opinion about where the body is (spec 264).
+    self: QUARTERMASTER === null ? null : { x: QUARTERMASTER.x, y: QUARTERMASTER.y },
     vendor: null,
     vendorRevision: 0,
     trade: null,
@@ -434,6 +441,99 @@ describe('what a shop tells the server', () => {
     // The answer arrived -- walked out of range, or refused -- and it is empty.
     screens.update(viewFixture({ vendor: null, vendorRevision: 1 }), 0);
     expect(screens.isOpen('shop')).toBe(false);
+  });
+});
+
+/**
+ * Walking away from a merchant (spec 264).
+ *
+ * The server refuses each *transaction* out of range and always has, but only
+ * answers when asked -- so before this a player who walked off kept a full
+ * price list on screen, refusing one press at a time.
+ *
+ * Every one of these drives the mount with the server saying **nothing new**:
+ * `vendorRevision` never moves, so the existing empty-answer path
+ * (`vendorRevision > shopAskedAt`) cannot be what is closing the window. That
+ * is the whole distinction, and without it these would pass against a build
+ * with no range rule in it at all.
+ */
+describe('a shop the player has walked away from', () => {
+  const STOCK = {
+    id: 'vendor.quartermaster',
+    name: 'Quartermaster',
+    stock: [{ defId: 'potion.minor', price: 9 }],
+    buyback: [],
+  };
+
+  /** Open, stocked, and standing at the counter. */
+  function openShop(): Harness {
+    const test = harness();
+    test.screens.showShopFor('vendor.quartermaster');
+    test.screens.update(viewFixture({ vendor: STOCK, vendorRevision: 1 }), 0);
+    expect(test.screens.isOpen('shop')).toBe(true);
+    return test;
+  }
+
+  /** A view of that shop, with the body `distance` due east of the vendor. */
+  function standing(distance: number): ClientView {
+    const vendor = QUARTERMASTER;
+    if (!vendor) throw new Error('no quartermaster');
+    return viewFixture({
+      vendor: STOCK,
+      vendorRevision: 1,
+      self: { x: vendor.x + distance, y: vendor.y },
+    });
+  }
+
+  it('closes when the player leaves the radius', () => {
+    const vendor = QUARTERMASTER;
+    if (!vendor) throw new Error('no quartermaster');
+    const test = openShop();
+    test.screens.update(standing(vendor.radius + 1), 16);
+    expect(test.screens.isOpen('shop')).toBe(false);
+  });
+
+  it('stays open right up to the radius', () => {
+    const vendor = QUARTERMASTER;
+    if (!vendor) throw new Error('no quartermaster');
+    const test = openShop();
+    test.screens.update(standing(vendor.radius), 16);
+    expect(test.screens.isOpen('shop')).toBe(true);
+  });
+
+  /**
+   * Leaving is telling: `close` sends `openVendor('')` like every other way of
+   * shutting the window, so the server's `openVendorId` does not linger -- and
+   * so the close is an **ask** like any other, which is what keeps spec 249's
+   * one-reply-per-ask pairing intact. A volunteered `VendorState` from a server
+   * sweep is exactly what would break it.
+   */
+  it('tells the server it has gone', () => {
+    const vendor = QUARTERMASTER;
+    if (!vendor) throw new Error('no quartermaster');
+    const test = openShop();
+    test.screens.update(standing(vendor.radius + 1), 16);
+    expect(test.requests).toEqual(['vendor:vendor.quartermaster', 'vendor:']);
+  });
+
+  /** And it does not keep saying so, frame after frame, once it is shut. */
+  it('says it once', () => {
+    const vendor = QUARTERMASTER;
+    if (!vendor) throw new Error('no quartermaster');
+    const test = openShop();
+    for (const frame of [16, 32, 48]) test.screens.update(standing(vendor.radius + 1), frame);
+    expect(test.requests.filter((request) => request === 'vendor:')).toHaveLength(1);
+  });
+
+  /**
+   * The first frames of a session, where the prediction has not produced a
+   * position yet. A shop shut for having no position would be one that could
+   * not be opened at all on a slow connection.
+   */
+  it('holds a shop when there is no position yet', () => {
+    const test = openShop();
+    test.screens.update(viewFixture({ vendor: STOCK, vendorRevision: 1, self: null }), 16);
+    expect(test.screens.isOpen('shop')).toBe(true);
   });
 });
 

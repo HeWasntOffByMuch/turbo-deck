@@ -87,6 +87,7 @@ import {
 } from '../../../server/data/weapon-scaling.js';
 import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
+import { shopInReach } from './shop-range.js';
 import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
 import type { SoundSink, UiSoundId } from '../../../ui/core/sound.js';
@@ -1078,6 +1079,18 @@ export class UiScreens {
 
     this.openVendorId = view.vendor?.id ?? '';
     this.lastVendorRevision = view.vendorRevision;
+    // Walked away (spec 264). Asked *before* the screen is fed, so the last
+    // thing drawn is not a price list the player has already left, and asked
+    // every frame rather than raised as an event -- which is `sweepConversations`'
+    // own shape and its reason: every way of getting out of range is the same
+    // check, so a route out added later cannot forget to fire anything.
+    //
+    // The client's own predicted position, and `close` tells the server through
+    // the `openVendor('')` it already sends. See `shop-range.ts` for why this is
+    // here rather than in a sweep beside the conversation's.
+    if (this.isOpen('shop') && view.vendor !== null && !shopInReach(view.vendor.id, view.self)) {
+      this.close('shop');
+    }
     if (this.isOpen('shop')) {
       const shopView = shopViewOf({
         vendor: view.vendor,
