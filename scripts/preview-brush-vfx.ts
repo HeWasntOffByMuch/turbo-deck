@@ -712,7 +712,7 @@ async function main(): Promise<void> {
       { id: 'skill.arcLash.impact', label: 'arc (lane)', ticks: [2, 5, 8, 12, 18, 24], half: 190 },
       { id: 'skill.acidSpray.impact', label: 'acid (cone)', ticks: [2, 5, 9, 14, 20, 28], half: 200 },
       { id: 'skill.scorchedEarth.self', label: 'scorch', ticks: [3, 8, 16, 28, 40, 54], half: 240 },
-      // The Warden's lance, one damage pulse of it (spec 259). Judged on this
+      // The Warden's lance, one damage pulse of it (spec 262). Judged on this
       // sheet's questions like the five above, plus one only it has: the beam
       // it comes off is a *ground decal* drawn by the scene and not by the
       // particle system, so what has to read here is sparks leaving a line

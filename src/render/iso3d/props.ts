@@ -2462,7 +2462,7 @@ export function propGroupParts(group: number): readonly PropPart[] {
   return fenceParts(of.fence);
 }
 
-/** The parts one building draws with (spec 224/259). Memoized; see {@link treeParts}. */
+/** The parts one building draws with (spec 224/260). Memoized; see {@link treeParts}. */
 function structureParts(kind: StructureKind): readonly PropPart[] {
   if (kind === 'well') return wellParts();
   if (kind === 'sign') return signParts();

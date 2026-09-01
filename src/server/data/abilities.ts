@@ -1103,7 +1103,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       // nothing in the sim reads it: what it does is entirely a light in the
       // renderer, on whichever body happens to be carrying it.
       { kind: 'applyStatus', statusId: StatusId.MagicLight, durationTicks: TEST_STATUS_TICKS },
-      // The Warden's recovery (spec 259). Here for the reason every line above
+      // The Warden's recovery (spec 262). Here for the reason every line above
       // it is here -- this row's whole job is one body carrying every mark the
       // client can draw -- and it is the one entry whose *mechanic* nothing on
       // the receiving end will honour: what an overheat does is read by
@@ -1119,7 +1119,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     description:
       'A test blow: no damage worth the name, and every status the game can show, at once.',
   },
-  // --- the Warden's laser (spec 259) --------------------------------------
+  // --- the Warden's laser (spec 262) --------------------------------------
   //
   // The first `kind: 'channel'` row this game has ever had. That path -- a
   // wind-up, an attack point, a pulse clock, an end -- has been complete and

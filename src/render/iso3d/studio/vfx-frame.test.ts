@@ -54,7 +54,7 @@ describe('the preview frame', () => {
       // something nobody intended, which is the failure this bound exists to
       // catch and which lands in the thousands rather than the hundreds.
       //
-      // Moved from 1200 by spec 259, deliberately and once. `warden.laser.impact`
+      // Moved from 1200 by spec 262, deliberately and once. `warden.laser.impact`
       // is the first effect in this library whose subject is genuinely long: it
       // paints a six-hundred-unit beam, its emitters are strung the whole way
       // down it by design, and `library.test.ts` asserts separately that not one

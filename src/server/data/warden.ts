@@ -1,5 +1,5 @@
 /**
- * The Warden's laser cycle, as numbers (spec 259).
+ * The Warden's laser cycle, as numbers (spec 262).
  *
  * `data/scaling.ts`'s register, one system smaller: every quantity the
  * encounter turns on is here, so retuning it is a diff of one file and nothing
@@ -134,7 +134,7 @@ export const WARDEN_LASER: LaserCycle = {
   // line, narrow enough that walking out of it is a walk rather than a sprint.
   //
   // Deliberately *not* narrowed when the beam became a shaft out of the head
-  // (spec 259's second pass). The thing that had to get narrower is the thing
+  // (spec 262's second pass). The thing that had to get narrower is the thing
   // you can see, and that is `SHAFT_FRACTION` in `world/warden-beam.ts`; this is
   // the ground the sim damages, it is what the fight was measured against, and
   // moving it moves the encounter. Measured: at 40 a strafing player takes two
@@ -172,7 +172,7 @@ export function cycleByAbility(abilityId: string): LaserCycle | null {
 }
 
 /**
- * The four states, and there are only four (spec 259).
+ * The four states, and there are only four (spec 262).
  *
  * A `const` object in `StatusId`'s register rather than a string union, because
  * it crosses no wire and its whole use is comparison. **Nothing stores one**:

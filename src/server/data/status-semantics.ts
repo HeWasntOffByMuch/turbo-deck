@@ -129,7 +129,7 @@ export const STATUS_SEMANTICS: readonly StatusSemantics[] = [
   { id: StatusId.Exposed, tags: [Harmful] },
   { id: StatusId.Vulnerable, tags: [Harmful] },
   // Harmful, and **not** an affliction, for the reason its two neighbours here
-  // are not (spec 259): nobody inflicted it. It is a fact about what the body
+  // are not (spec 262): nobody inflicted it. It is a fact about what the body
   // just *did* -- fired the thing it fires -- so there is nothing to suffer
   // from, and counting it as Catalysis fuel would pay an Intelligence build for
   // the machine's own recoil.

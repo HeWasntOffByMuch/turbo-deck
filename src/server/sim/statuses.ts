@@ -223,7 +223,7 @@ export const StatusId = {
   /** A conjured light, floating over its carrier. Purely a thing you can see. */
   MagicLight: 'magicLight',
 
-  // --- the Warden's recovery (spec 259) ----------------------------------
+  // --- the Warden's recovery (spec 262) ----------------------------------
   //
   // The one entry here written by a *monster's own attack finishing*, and the
   // only piece of state the Warden's four-state machine stores: the other three

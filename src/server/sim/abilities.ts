@@ -1574,7 +1574,7 @@ function landAbility(
         ? landOnTarget(ability, caster, cast, candidates, tick, rng)
         : landCone(ability, caster, cast, candidates, tick, rng);
     case 'channel':
-      // A channel with a shape sweeps that shape (spec 259), and one without is
+      // A channel with a shape sweeps that shape (spec 262), and one without is
       // the cone it has always been. One branch rather than a new kind, because
       // `kind` answers *when* an ability lands -- once, or repeatedly -- and
       // `area` answers *who* it lands on, which is a question every kind is

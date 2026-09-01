@@ -245,7 +245,7 @@ const RANGE_RING_LIFT = 1.1;
 const AIM_SHAPE_LIFT = 1.3;
 const TELEGRAPH_LIFT = 1.5;
 /**
- * The Warden's lance (spec 259): the shaft, its hot middle, and the pixels of
+ * The Warden's lance (spec 262): the shaft, its hot middle, and the pixels of
  * the sight that precedes it.
  *
  * Red, which is this file's own vocabulary for *it is about to hurt* -- but
@@ -260,7 +260,7 @@ const TELEGRAPH_LIFT = 1.5;
  * it is two weapons drawn on top of each other.
  *
  * There is no lift among these any more. The lance had a ground decal and the
- * decals are ordered by one, and since spec 259's third pass it paints nothing
+ * decals are ordered by one, and since spec 262's third pass it paints nothing
  * on the ground at all -- the shaft and its core are boxes in the air, ordered
  * by depth like anything else.
  */
@@ -460,7 +460,7 @@ interface Body {
    */
   headroom: number;
   /**
-   * The heading this body was last *drawn* at, radians (spec 259).
+   * The heading this body was last *drawn* at, radians (spec 262).
    *
    * The eased yaw of spec 142 rather than the replicated one, and without the
    * stagger flinch's rock on top: the flinch is a wobble of the model and the
@@ -624,7 +624,7 @@ export class WorldScene {
    */
   private readonly conjuredLights: LightRequest[] = [];
   /**
-   * The red light a firing lance throws (spec 259).
+   * The red light a firing lance throws (spec 262).
    *
    * The same arrangement one system over: gathered in `syncLances`, where the
    * beam's *drawn* line is in scope, and spent by `applyWorldLights` later in
@@ -720,7 +720,7 @@ export class WorldScene {
   private readonly telegraphs = new Map<number, GroundDecal>();
   /**
    * The Warden's lance, per body: the lane and the hot middle inside it
-   * (spec 259).
+   * (spec 262).
    *
    * Two decals rather than one, because a band of one flat colour reads as a
    * painted rectangle and a band with a brighter middle reads as something
@@ -1334,7 +1334,7 @@ export class WorldScene {
    * How many lights are offering themselves to the pool right now.
    *
    * *Lights*, not fixtures: the map's own, plus any conjured light on a body
-   * near you, plus the three a firing Warden hangs along its beam (spec 259).
+   * near you, plus the three a firing Warden hangs along its beam (spec 262).
    * `probe-world-lights.ts` compares this against the fixture count in the map
    * file it read itself, which is exact only because neither of the other two is
    * ever up while it is looking -- there is no Warden on the shipped map and
@@ -1738,7 +1738,7 @@ export class WorldScene {
     this.carryTorch(view.selfEntityId);
 
     this.syncTelegraphs(view, frame);
-    // After `syncBodies`, which is what writes `drawnFacing` (spec 259).
+    // After `syncBodies`, which is what writes `drawnFacing` (spec 262).
     this.syncLances(view, frame);
     this.ageEffects();
     // Advanced on whole 60Hz steps, never on `dt`: an effect stepped by elapsed
@@ -2140,7 +2140,7 @@ export class WorldScene {
       body.group.position.set(x, ground, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
       //
-      // Unless the rig turns itself (spec 259). A mech whose lower body does not
+      // Unless the rig turns itself (spec 262). A mech whose lower body does not
       // turn carries the *whole* facing on its turret, in the group's own frame
       // -- so yawing the group as well would turn it twice as far as it was
       // asked to, and the legs would come round with it, which is the one thing
@@ -2149,7 +2149,7 @@ export class WorldScene {
       const groupYaw = body.mech?.orientsWithGroupYaw === false ? 0 : -facing;
       body.group.rotation.y = groupYaw + flinch.yaw;
       // Kept for anything that has to point *along* this body rather than turn
-      // with it (spec 259). The eased heading, without the flinch's rock: a
+      // with it (spec 262). The eased heading, without the flinch's rock: a
       // beam that wobbled with the model would be a danger zone that lies.
       body.drawnFacing = facing;
       // Rocked back about the lateral axis. Written every frame rather than
@@ -2955,7 +2955,7 @@ export class WorldScene {
         const mech = new MechRig(typeId, undefined, {
           tuning: { ...defaultMechTuning(), ...look?.tuning },
           ...(look === null ? {} : { appearance: look.appearance }),
-          // The grey-mech reading (spec 259): the legs plant in a world-fixed
+          // The grey-mech reading (spec 262): the legs plant in a world-fixed
           // frame and only the turret comes round. Passed through rather than
           // defaulted here, because the rig reports it back as
           // `orientsWithGroupYaw` and the frame loop has to honour that.
@@ -3032,7 +3032,7 @@ export class WorldScene {
   }
 
   /**
-   * The Warden's lance: a sight while it aims, a shaft while it fires (spec 259).
+   * The Warden's lance: a sight while it aims, a shaft while it fires (spec 262).
    *
    * Driven off `view.casts` like the telegraph above it, and for the same
    * reason: a lock-on *is* a wind-up and a beam *is* a channel, so both are a

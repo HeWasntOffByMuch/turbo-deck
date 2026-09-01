@@ -209,7 +209,7 @@ describe('the ability table', () => {
    *
    * Four ways in, and they are the only four: an item grants it as an active
    * skill, an item or a monster names it as a basic attack, a monster's
-   * encounter row in `data/warden.ts` names it (spec 259), or it is one of the
+   * encounter row in `data/warden.ts` names it (spec 262), or it is one of the
    * two constants the game reaches for directly -- the fallback swing and the
    * flask. A row with none of them is a rule nothing can invoke.
    *
@@ -234,7 +234,7 @@ describe('the ability table', () => {
       if (monster.stats.basicAttackId) granted.add(monster.stats.basicAttackId);
     }
     // A monster whose whole encounter *is* an ability reaches it from its own
-    // row (spec 259). It is not a basic attack -- the Warden also swings -- and
+    // row (spec 262). It is not a basic attack -- the Warden also swings -- and
     // no item grants it, so without this the laser is an orphan by three rules
     // that were written before an enemy had a cycle.
     for (const cycle of LASER_CYCLES.values()) granted.add(cycle.abilityId);

@@ -300,7 +300,7 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
     '<circle cx="12" cy="12" r="3.4"/>'
     + '<path d="M12 2.5v3.4M12 18.1v3.4M2.5 12h3.4M18.1 12h3.4"/>',
 
-  // --- the Warden's recovery (spec 259) ----------------------------------
+  // --- the Warden's recovery (spec 262) ----------------------------------
   // Overheated -- a thermometer, which is this table's own rule about reaching
   // for the conventional sign rather than the considered one. What it has to
   // stay clear of is Burn's tongue of flame and Scorched's bowl of them: a

@@ -1,5 +1,5 @@
 /**
- * The Warden's laser cycle (spec 259).
+ * The Warden's laser cycle (spec 262).
  *
  * Everything here is driven through the real `step`, never by calling the
  * warden module directly, because the thing being asserted is that the encounter
@@ -247,7 +247,7 @@ const LOCK_ON = WARDEN_LASER.lockOnTicks;
 const FIRING = WARDEN_LASER.firingTicks;
 const OVERHEAT = WARDEN_LASER.overheatTicks;
 
-describe('the cycle (spec 259)', () => {
+describe('the cycle (spec 262)', () => {
   it('walks Normal -> LockOn -> Firing -> Overheated -> Normal, on its own clocks', () => {
     const { state, playerId, wardenId } = fight();
     const seen: { tick: number; phase: number }[] = [];
@@ -312,7 +312,7 @@ describe('the cycle (spec 259)', () => {
   });
 });
 
-describe('the commitment (spec 259)', () => {
+describe('the commitment (spec 262)', () => {
   it('tracks a moving target while it is aiming', () => {
     const { state, playerId, wardenId } = fight();
     const started = mech(state, wardenId).facing;
@@ -399,7 +399,7 @@ describe('the commitment (spec 259)', () => {
   });
 });
 
-describe('the beam (spec 259)', () => {
+describe('the beam (spec 262)', () => {
   it('hits a body in the lane and misses one beside it at the same distance', () => {
     // Two players the same distance out: one dead ahead, one far enough round
     // that the lane's half-width cannot reach them.
@@ -507,7 +507,7 @@ describe('the beam (spec 259)', () => {
   });
 });
 
-describe('the overheat (spec 259)', () => {
+describe('the overheat (spec 262)', () => {
   const overheated = (): { state: ServerWorldState; playerId: number; wardenId: number } => {
     const { state, playerId, wardenId } = fight();
     return {
@@ -605,7 +605,7 @@ describe('the overheat (spec 259)', () => {
   });
 });
 
-describe('two players (spec 259)', () => {
+describe('two players (spec 262)', () => {
   it('names one of them and does not swap mid-beam', () => {
     const first = playerAt(createWorldState(9), 0, 260, 'p1');
     const second = playerAt(first.state, 170, 260, 'p2');
@@ -674,7 +674,7 @@ describe('two players (spec 259)', () => {
   });
 });
 
-describe('standing behind it (spec 259)', () => {
+describe('standing behind it (spec 262)', () => {
   /**
    * Why there is no rear vent.
    *

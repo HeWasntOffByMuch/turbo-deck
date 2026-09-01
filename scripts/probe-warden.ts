@@ -1,5 +1,5 @@
 /**
- * What the Warden is doing, tick by tick (spec 259).
+ * What the Warden is doing, tick by tick (spec 262).
  *
  * `scripts/probe-attack.ts`'s instrument one enemy over: a real
  * `stepWorld` over a real map-less world, a real player standing where you put

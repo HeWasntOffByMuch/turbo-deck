@@ -93,7 +93,7 @@ describe('the visible status table (spec 186)', () => {
       // that it is drawn: nothing in the sim reads it, so a row here is not this
       // table deciding to show a condition -- it is the condition.
       StatusId.MagicLight,
-      // The Warden's recovery (spec 259). Here for the reason the light above
+      // The Warden's recovery (spec 262). Here for the reason the light above
       // is: it is the one part of that encounter a client cannot derive, since
       // an overheat and a stagger are the same `activity` byte.
       StatusId.Overheated,

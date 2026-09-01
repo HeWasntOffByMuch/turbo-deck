@@ -1,5 +1,5 @@
 /**
- * What the Warden's lance looks like this frame (spec 259).
+ * What the Warden's lance looks like this frame (spec 262).
  *
  * Pure -- no three.js, no DOM, no `GameClient`. It is handed replicated facts
  * and answers what to draw, which is the discipline `shot-vfx.ts`,

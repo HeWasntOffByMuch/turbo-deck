@@ -100,7 +100,7 @@ describe('the registry as a whole', () => {
     expect(byId.get('puff_footstep')?.priority).toBeLessThanOrEqual(1);
   });
 
-  it('registers the Warden\u2019s lance under the id the sim actually sends (spec 259)', () => {
+  it('registers the Warden\u2019s lance under the id the sim actually sends (spec 262)', () => {
     // `landArea` sends `${ability.id}.impact` at the caster's feet, with the
     // lane's bearing on it, once per damage pulse -- so registering the effect
     // under that exact name is the whole of the wiring, and registering it under
@@ -1253,7 +1253,7 @@ describe('the aimed landings (spec 235)', () => {
   });
 });
 
-describe('the Warden’s lance crackles rather than strobes (spec 259)', () => {
+describe('the Warden’s lance crackles rather than strobes (spec 262)', () => {
   /**
    * A beam is *sustained* and its sparks are played eight times over it, so the
    * one thing they must not do is leave a gap. This is the check the picture

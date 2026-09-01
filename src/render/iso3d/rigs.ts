@@ -935,7 +935,7 @@ export class MechRig {
   // Body meshes + their base (scale-1) positions, so a size change can resize them.
   private bodyParts: { readonly mesh: THREE.Mesh; readonly base: THREE.Vector3 }[] = [];
   /**
-   * The head's opening, if this body shape has one (spec 259).
+   * The head's opening, if this body shape has one (spec 262).
    *
    * Held rather than looked up, because it is asked for every frame a beam is
    * live and it is *replaced* whenever the body is rebuilt -- a colour change, a
@@ -1069,7 +1069,7 @@ export class MechRig {
     head.position.set((BODY_SIZE / 2 + 3) * bodySize, BODY_Y - 1 * bodySize, 0);
     const eye = box(3 * bodySize, 5 * bodySize, 10 * bodySize, PALETTE.enemyEye);
     eye.position.set((BODY_SIZE / 2 + 8) * bodySize, BODY_Y, 0);
-    // The eye is the opening (spec 259): the front-most part of the head, on the
+    // The eye is the opening (spec 262): the front-most part of the head, on the
     // turret, so it is already carried by every rotation the upper body makes
     // and by the scale `applyScale` puts on the parts. Named rather than
     // indexed, because "the last one" is a fact about this function that a
@@ -1202,7 +1202,7 @@ export class MechRig {
   /**
    * Where the head's opening is in the world, or false for a body without one.
    *
-   * What a beam comes out of (spec 259). Read off the *drawn* mesh rather than
+   * What a beam comes out of (spec 262). Read off the *drawn* mesh rather than
    * computed from the tuning, which is the whole reason it is a method here
    * rather than arithmetic in the scene: the opening rides the turret, so it
    * already carries the body yaw, the yaw lag, the size scale, the body size,
