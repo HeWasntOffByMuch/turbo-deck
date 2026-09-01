@@ -65,6 +65,7 @@ function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
     slots: SLOTS,
     skillSlots: SKILL_SLOTS,
     level: 3,
+    coins: 42,
     ...overrides,
   };
 }
@@ -701,5 +702,35 @@ describe('what a skill cell will take', () => {
         data: { from: { container: 'inventory', index: 0 }, item: item('sigil.guardBreak', 'skill'), count: 1 },
       }),
     ).toBe(false);
+  });
+});
+
+/**
+ * The purse, under the bag (spec 269).
+ *
+ * Coins ride the `Inventory` message beside the stacks, so the window that says
+ * what you have is the window that says what you have -- and before this the
+ * number was drawn in exactly one place in the whole interface, the shop's own
+ * line.
+ */
+describe('the purse', () => {
+  function purseText(screen: InventoryScreen): string[] {
+    return [...screen.walk()]
+      .map((widget) => (widget as unknown as { text?: string }).text)
+      .filter((text): text is string => typeof text === 'string')
+      .filter((text) => text.endsWith('coins'));
+  }
+
+  it('says what the bag is carrying', () => {
+    const test = harness();
+    test.screen.setContainers(viewOf({ coins: 137 }));
+    expect(purseText(test.screen)).toEqual(['137 coins']);
+  });
+
+  /** An omitted line reads as a missing feature where `0 coins` is a fact. */
+  it('says nothing left rather than nothing at all', () => {
+    const test = harness();
+    test.screen.setContainers(viewOf({ coins: 0 }));
+    expect(purseText(test.screen)).toEqual(['0 coins']);
   });
 });

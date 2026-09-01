@@ -262,3 +262,24 @@ describe('the catch around a cell (spec 136)', () => {
     expect(placed(0, 0).focusable).toBe(false);
   });
 });
+
+/**
+ * A cell that is not a container (spec 269).
+ *
+ * The shop's grid is built from this widget because an item should look the
+ * same everywhere -- but a shop cell is a *button*, and the bag's drag
+ * hit-tests the whole layer stack, so one that took a release would swallow the
+ * carry with nothing emitted and nothing said.
+ */
+describe('a cell that takes no drops', () => {
+  it('refuses a payload it would otherwise have accepted', () => {
+    const source = new ItemSlot({ container: 'inventory', index: 0 });
+    const cell = new ItemSlot({ container: 'inventory', index: 2 }, 'shopCell');
+    const drag: ItemDrag = { from: source.ref, item: item('sword', 'mainHand'), count: 1 };
+    // The control: without it this asserts nothing, since a cell that refused
+    // for some other reason passes the second half on its own.
+    expect(cell.canAcceptDrop(payloadFrom(source, drag))).toBe(true);
+    cell.acceptsDrops = false;
+    expect(cell.canAcceptDrop(payloadFrom(source, drag))).toBe(false);
+  });
+});

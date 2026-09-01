@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { buy, sell } from '../../../server/player/shop.js';
 import { buyPrice, sellPrice, vendorById, type VendorDefinition } from '../../../server/data/vendors.js';
 import { emptyInventory, type Inventory } from '../../../server/state/types.js';
-import { UNKNOWN_ICON } from './inventory-model.js';
+import { detailsFor, UNKNOWN_ICON } from './inventory-model.js';
 import { shopViewOf, type ShopSource } from './shop-model.js';
 
 const QUARTERMASTER = vendorById('vendor.quartermaster') as VendorDefinition;
@@ -26,6 +26,7 @@ function openShop(inventory: Inventory, coins: number): ShopSource {
     },
     inventory,
     coins,
+    level: 1,
   };
 }
 
@@ -39,7 +40,7 @@ function bagOf(...stacks: { defId: string; count: number }[]): Inventory {
 
 describe('shopViewOf', () => {
   it('answers null when no shop is open', () => {
-    expect(shopViewOf({ vendor: null, inventory: emptyInventory(), coins: 100 })).toBeNull();
+    expect(shopViewOf({ vendor: null, inventory: emptyInventory(), coins: 100, level: 1 })).toBeNull();
   });
 
   it('lists the stock at the price the server sent, not a recomputed one', () => {
@@ -64,18 +65,49 @@ describe('shopViewOf', () => {
         expect(view).not.toBeNull();
         if (!view) continue;
         for (const entry of view.stock) {
-          const truth = buy(bag, coins, QUARTERMASTER, entry.defId, 1);
-          expect(entry.enabled, `${entry.defId} with ${coins} coins`).toBe(truth.ok);
+          const truth = buy(bag, coins, QUARTERMASTER, entry.item.defId, 1);
+          expect(entry.enabled, `${entry.item.defId} with ${coins} coins`).toBe(truth.ok);
           if (!truth.ok) expect(entry.blockedBecause).toBe(truth.reason);
         }
       }
     }
   });
 
+  /**
+   * The assertion the grid exists for (spec 269): a shop describes an item the
+   * way the bag does, rather than as a name and a number.
+   *
+   * Against `detailsFor` rather than against a written-out list, so a retune of
+   * the item table reaches the shop with nothing here to remember -- and so
+   * this cannot pass by agreeing with a copy of itself.
+   */
+  it("carries every item's own description, on all three lists", () => {
+    const bag = bagOf({ defId: 'bow.hunting', count: 1 });
+    const view = shopViewOf({
+      ...openShop(bag, 100),
+      vendor: {
+        id: QUARTERMASTER.id,
+        name: QUARTERMASTER.name,
+        stock: QUARTERMASTER.stock.map((defId) => ({ defId, price: buyPrice(defId, QUARTERMASTER) })),
+        buyback: [{ defId: 'sword.worn', count: 1, price: 12 }],
+      },
+    });
+    expect(view).not.toBeNull();
+    if (!view) return;
+    // Each list has something in it, or this asserts nothing about that list.
+    expect(view.stock.length).toBeGreaterThan(0);
+    expect(view.sellable.length).toBeGreaterThan(0);
+    expect(view.buyback.length).toBeGreaterThan(0);
+    for (const row of [...view.stock, ...view.sellable, ...view.buyback]) {
+      expect(row.item.details, row.item.defId).toEqual(detailsFor(row.item.defId));
+      expect(row.item.details.length, row.item.defId).toBeGreaterThan(0);
+    }
+  });
+
   it('offers only what is worth something, and says which slot it is in', () => {
     const bag = bagOf({ defId: 'bow.hunting', count: 1 }, { defId: 'nothing.at.all', count: 1 });
     const view = shopViewOf(openShop(bag, 10));
-    expect(view?.sellable.map((sellable) => sellable.defId)).toEqual(['bow.hunting']);
+    expect(view?.sellable.map((sellable) => sellable.item.defId)).toEqual(['bow.hunting']);
     expect(view?.sellable[0]?.index).toBe(0);
   });
 
@@ -83,7 +115,7 @@ describe('shopViewOf', () => {
     const bag = bagOf({ defId: 'potion.minor', count: 4 });
     const view = shopViewOf(openShop(bag, 0));
     expect(view?.sellable[0]?.price).toBe(sellPrice('potion.minor', QUARTERMASTER) * 4);
-    expect(view?.sellable[0]?.count).toBe(4);
+    expect(view?.sellable[0]?.item.count).toBe(4);
     // ...and it is live exactly when selling the whole stack would be.
     expect(view?.sellable[0]?.enabled).toBe(sell(bag, 0, QUARTERMASTER, 0, 4).ok);
   });
@@ -114,8 +146,8 @@ describe('shopViewOf', () => {
       },
     };
     const view = shopViewOf(source);
-    expect(view?.stock[0]?.name).toBe('sword.imaginary');
-    expect(view?.stock[0]?.icon).toBe(UNKNOWN_ICON);
+    expect(view?.stock[0]?.item.name).toBe('sword.imaginary');
+    expect(view?.stock[0]?.item.icon).toBe(UNKNOWN_ICON);
     expect(view?.stock[0]?.enabled).toBe(false);
   });
 
@@ -128,6 +160,7 @@ describe('shopViewOf', () => {
       vendor: { id: 'vendor.future', name: 'Someone New', stock: [{ defId: 'potion.minor', price: 4 }], buyback: [] },
       inventory: emptyInventory(),
       coins: 500,
+      level: 1,
     });
     expect(view?.name).toBe('Someone New');
     expect(view?.stock[0]?.enabled).toBe(false);

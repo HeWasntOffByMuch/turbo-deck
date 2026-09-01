@@ -410,6 +410,8 @@ export interface ContainerSource {
   readonly inventory: Inventory;
   readonly equipment: Equipment;
   readonly level: number;
+  /** What the purse holds (spec 269). `ClientView.coins`, passed straight on. */
+  readonly coins: number;
   /**
    * The body's weapon-scaling grade steps, from its replicated `Stats` (spec 216).
    *
@@ -446,6 +448,7 @@ export function containerViewOf(source: ContainerSource): ContainerView {
     slots: EQUIPMENT_SLOT_VIEW,
     skillSlots: SKILL_SLOT_VIEW,
     level: source.level,
+    coins: source.coins,
     // Passed straight through: `swapProgress` has already turned the two server
     // ticks into a fraction, and this layer's job is to hand the screen plain
     // data rather than to work anything out about it.

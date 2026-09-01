@@ -43,7 +43,7 @@ import {
   selectedUnitInsets,
   type StatusRowView,
 } from '../screens/selected-unit.js';
-import { ShopScreen, type ShopRow, type ShopView } from '../screens/shop.js';
+import { ShopScreen, type ShopRow, type ShopTab, type ShopView } from '../screens/shop.js';
 import { Tooltip } from '../widgets/tooltip.js';
 import { UiWindow } from '../widgets/window.js';
 import { TradeScreen, type TradeUiView } from '../screens/trade.js';
@@ -298,6 +298,9 @@ export function demoContainers(): ContainerView {
 
   return {
     bag,
+    // A purse with something in it (spec 269): a golden of `0 coins` would be
+    // one that could not tell a drawn line from a missing one.
+    coins: 214,
     worn: {
       mainHand: worn('maul', 'Iron Maul', 'mainHand', 'sword', 5, 'rare'),
       offHand: null,
@@ -909,6 +912,10 @@ export interface ShopRenderOptions {
   readonly coins?: number;
   /** Catch the dialog partway through arriving, at this time (spec 133). */
   readonly confirmArrivingAt?: number;
+  /** Which tab to photograph. Defaults to the one a shop opens on. */
+  readonly tab?: ShopTab;
+  /** Show the tooltip over this cell of {@link tab}, with the delay elapsed. */
+  readonly tooltipOverCell?: number;
 }
 
 /**
@@ -926,10 +933,22 @@ export function demoShop(options: ShopRenderOptions = {}): ShopView {
   // had eight coins -- which is nonsense, and which nothing but the picture was
   // ever going to say.
   const line = (defId: string, name: string, price: number, count = 1, affordable = true): ShopRow => ({
-    defId,
-    name,
-    icon: `item:${defId}`,
-    count,
+    // Two details apiece rather than none, because what the goldens are for
+    // here is the *cell* -- and a row with an empty description photographs
+    // identically whether the tooltip works or not.
+    item: {
+      defId,
+      name,
+      count,
+      slot: null,
+      icon: `item:${defId}`,
+      levelRequirement: 1,
+      rarity: 'common',
+      details: [
+        { text: 'Common', tone: 'rarity' },
+        { text: `Worth ${price} coins`, tone: 'dim' },
+      ],
+    },
     price,
     enabled: affordable,
     blockedBecause: affordable ? '' : `${price} coins, and you have ${coins}`,
@@ -940,11 +959,17 @@ export function demoShop(options: ShopRenderOptions = {}): ShopView {
   return {
     name: 'Quartermaster',
     coins,
+    // Seven, so the Buy tab photographs a **full row and a wrap** (spec 269):
+    // four cells is a line of icons and says nothing about whether the thing is
+    // a grid, which is the one claim these goldens are here to check.
     stock: [
       forSale('potion', 'Minor Salve', 9),
       forSale('sword', 'Worn Sword', 18),
       forSale('shield', 'Oak Shield', 60),
       forSale('chest', 'Scalemail', 240),
+      forSale('helm', 'Leather Cap', 15),
+      forSale('bow', 'Hunting Bow', 27),
+      forSale('legs', "Traveller's Greaves", 21),
     ],
     sellable: [
       { ...line('bow', 'Hunting Bow', 12), index: 3 },
@@ -952,6 +977,7 @@ export function demoShop(options: ShopRenderOptions = {}): ShopView {
       { ...line('potion', 'Minor Salve', 6, 3), index: 9 },
     ],
     buyback: options.buyback ? [forSale('legs', "Traveller's Greaves", 7)] : [],
+    level: 5,
   };
 }
 
@@ -962,6 +988,21 @@ export function demoShop(options: ShopRenderOptions = {}): ShopView {
  * dialog is drawn *over* the shop rather than behind it is a fact about the
  * layer order, and the layer order is only visible in pixels.
  */
+/**
+ * How wide the shop window is photographed, in UI pixels (spec 269).
+ *
+ * Six columns is a **fixed** width, so a window narrower than them clips the
+ * last one -- and a clipped column photographs as though it were the design,
+ * which is what the first bake of `shop.png` did: a sixth icon cut in half and
+ * a price reading `2` instead of `27`.
+ *
+ * Measured rather than derived, because the sum runs through two paddings and a
+ * scroller that this file would have to restate: the screen wants 206 and the
+ * window's own chrome is 8. `shop-row.test.ts`'s row check is what fails if
+ * either moves.
+ */
+const SHOP_GOLDEN_WIDTH = 214;
+
 export function renderShop(options: ShopRenderOptions = {}): ShopFrame {
   const theme = THEME;
   const viewport = options.viewport ?? GOLDEN_VIEWPORT;
@@ -975,17 +1016,43 @@ export function renderShop(options: ShopRenderOptions = {}): ShopFrame {
   const shop = new ShopScreen({ theme, contexts, focus: root.focus });
   shop.setShop(demoShop(options));
   layers.place('modal', shop.dialog);
+  layers.place('tooltip', shop.tooltip);
+  shop.tooltip.viewport = viewport;
+  if (options.tab !== undefined) shop.select(options.tab);
 
   manager.register(
-    new UiWindow(new ScrollView(shop, 'shopScroll'), {
+    // Unscrolled, exactly as the mount registers it (spec 269): a `TabPanel`
+    // inside somebody else's scroller measures to its content and scrolls its
+    // strip away instead of its body, which is spec 198's bug. A golden built
+    // the other way would photograph a layout the game does not have.
+    new UiWindow(shop, {
       title: 'Shop',
       at: { x: 8, y: 8 },
-      size: { width: Math.min(viewport.width - 16, 220), height: Math.min(viewport.height - 16, 260) },
+      size: {
+        width: Math.min(viewport.width - 16, SHOP_GOLDEN_WIDTH),
+        height: Math.min(viewport.height - 16, 210),
+      },
     }),
     'shop',
   );
   manager.setViewport(viewport);
   root.update(0);
+
+  if (options.tooltipOverCell !== undefined) {
+    const cell = shop.cellsOf(options.tab ?? 'buy')[options.tooltipOverCell];
+    // Pointed the way the mount points it -- through `pointerMoved`, so the
+    // golden photographs the hover the game does rather than a tooltip handed
+    // its lines directly. A cell that had stopped answering the pointer would
+    // then show up here as an empty frame.
+    if (cell) {
+      shop.pointerMoved({ x: cell.slot.rect.x + 8, y: cell.slot.rect.y + 8 }, 0);
+      shop.updateTooltip(theme.input.tooltipDelayMs + 1);
+      // Laid out again, the way the bag's tooltip golden does: the box became
+      // visible after the frame was arranged, so without this it is measured at
+      // nothing and photographs as an absence.
+      root.update(0);
+    }
+  }
 
   if (options.confirmRow !== undefined) {
     // With a time it arrives, without one it is already there -- and it has to

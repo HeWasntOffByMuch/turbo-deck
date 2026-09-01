@@ -87,6 +87,7 @@ import {
 } from '../../../server/data/weapon-scaling.js';
 import { swapProgress, type SwapProgress } from './skill-swap-view.js';
 import { shopViewOf } from './shop-model.js';
+import { shopInReach } from './shop-range.js';
 import { tradeViewOf } from './trade-model.js';
 import type { WindowId } from './control-actions.js';
 import type { SoundSink, UiSoundId } from '../../../ui/core/sound.js';
@@ -326,7 +327,7 @@ export const WINDOW_CHROME = {
 export const CHARACTER_MIN_SIZE: Size = { width: 96, height: 120 };
 
 /**
- * The smallest the shop window may be, in UI pixels (spec 249).
+ * The smallest the shop window may be, in UI pixels (specs 249, 269).
  *
  * A floor rather than a size, and it exists for the case the placement fix
  * cannot reach: a layout **already written** by a build that placed the shop
@@ -336,12 +337,28 @@ export const CHARACTER_MIN_SIZE: Size = { width: 96, height: 120 };
  * clamps a stored size up to this on the way in, which is what turns "reinstall
  * and it is still broken" into "it is a shop again next time you open it".
  *
- * The height is what a stocked list actually measures (215) rounded up, so it
- * is a floor a real shop is already above rather than a size that forces one:
- * the natural placement is unchanged by it, and the only thing it moves is a
- * window somebody -- or a bug -- has made too small to read.
+ * **Re-measured when the shop became a grid**, and the two halves stopped being
+ * the same kind of number.
+ *
+ * The width is now what the grid genuinely *needs*: six columns is a fixed
+ * width, and a window narrower than them clips the rightmost one -- the tab's
+ * body scrolls vertically and has nothing to offer horizontally. So this one is
+ * a real minimum rather than a guard against a stale layout, and it happens to
+ * be exactly what a stocked shop places at.
+ *
+ * The height is now the **tallest tab**, measured: a full bag is four rows of
+ * six and places at 200 against the Buy tab's 132. With tabs there is no single
+ * natural height, and sizing from the one that happens to be showing is the
+ * sliver bug in miniature -- a shop that opens fine and needs resizing the
+ * moment you press Sell. So the floor is what the biggest tab wants, which is
+ * what makes all three usable without touching the frame.
+ *
+ * That is a *reversal* of the old rule rather than a drift from it, and it is
+ * worth saying which: 220 was a stocked list's own height and was a floor no
+ * real shop ever met. This one is met by exactly one tab and forces the other
+ * two, deliberately.
  */
-export const SHOP_MIN_SIZE: Size = { width: 160, height: 220 };
+export const SHOP_MIN_SIZE: Size = { width: 214, height: 200 };
 
 /** How far a window sits from the edge it opens against, in UI pixels. */
 const MARGIN = 8;
@@ -630,6 +647,10 @@ export class UiScreens {
       options.onBuyBack(this.openVendorId, index);
     };
     this.layers.place('modal', this.shop.dialog);
+    // The shop's tooltip beside the bag's and the sheet's, and for their reason
+    // (spec 269): a box describing a cell in this window must not be clipped by
+    // it, and the two windows are routinely open at once.
+    this.layers.place('tooltip', this.shop.tooltip);
 
     this.trade = new TradeScreen({ theme: THEME });
     this.trade.onOffer = (slots, coins) => {
@@ -835,9 +856,17 @@ export class UiScreens {
       minSize: CHARACTER_MIN_SIZE,
     });
     this.registerWindow('account', this.account);
+    // Not scrolled by the mount, for the sheet's reason one window along
+    // (spec 198): the shop has a `TabPanel` since spec 269, and one scroller
+    // around the whole screen is what scrolls a tab strip off the top -- with
+    // no way back to Buy without scrolling up first. Unscrolled, the screen is
+    // handed the window's real height, its panel grows into it, and each tab
+    // scrolls its own body while the merchant's name, the purse and the three
+    // tabs stay put.
+    //
     // A floor, so a sliver is not expressible -- by a stale layout document, by
     // a resize, or by a placement that ran before the stock arrived (spec 249).
-    this.registerWindow('shop', this.shop, { minSize: SHOP_MIN_SIZE });
+    this.registerWindow('shop', this.shop, { scrolled: false, minSize: SHOP_MIN_SIZE });
     this.registerWindow('trade', this.trade);
     // Not scrolled by the mount: the options screen's tabs scroll their own
     // bodies (spec 198), and the keybindings page inside it has a filter field
@@ -1022,6 +1051,7 @@ export class UiScreens {
           inventory: view.inventory,
           equipment: view.equipment,
           level: view.level,
+          coins: view.coins,
           // The server's own summed grade steps (spec 216), so the scaling line
           // on every tooltip in the bag is resolved from the same modifiers the
           // damage was. Absent before the first `Stats` arrives, which is the
@@ -1049,11 +1079,28 @@ export class UiScreens {
 
     this.openVendorId = view.vendor?.id ?? '';
     this.lastVendorRevision = view.vendorRevision;
+    // Walked away (spec 269). Asked *before* the screen is fed, so the last
+    // thing drawn is not a price list the player has already left, and asked
+    // every frame rather than raised as an event -- which is `sweepConversations`'
+    // own shape and its reason: every way of getting out of range is the same
+    // check, so a route out added later cannot forget to fire anything.
+    //
+    // The client's own predicted position, and `close` tells the server through
+    // the `openVendor('')` it already sends. See `shop-range.ts` for why this is
+    // here rather than in a sweep beside the conversation's.
+    if (this.isOpen('shop') && view.vendor !== null && !shopInReach(view.vendor.id, view.self)) {
+      this.close('shop');
+    }
     if (this.isOpen('shop')) {
       const shopView = shopViewOf({
         vendor: view.vendor,
         inventory: view.inventory,
         coins: view.coins,
+        level: view.level,
+        // The same modifiers the bag resolves its tooltips through (spec 216),
+        // so a sword's scaling line reads the same in the shop as it does in
+        // the bag two windows over.
+        scalingModifiers: view.stats?.scalingModifiers ?? NO_GRADE_MODIFIERS,
       });
       // The server shut it -- walked out of range, or refused to open one at
       // all. The window goes with it rather than sitting there with a price list
@@ -1157,6 +1204,13 @@ export class UiScreens {
     this.character.tooltip.viewport = this.root.viewport;
     if (!this.isOpen('character')) this.character.clearTooltip();
     this.character.updateTooltip(nowMs, THEME.input.tooltipDelayMs);
+    // The shop's, on the same terms -- and it needs the shut-window case more
+    // than the others do (spec 269): a shop closes when the player *walks away*,
+    // which no pointer move follows at all, so a box left over a cell would sit
+    // on the world until the mouse twitched.
+    this.shop.tooltip.viewport = this.root.viewport;
+    if (!this.isOpen('shop')) this.shop.clearTooltip();
+    this.shop.updateTooltip(nowMs);
     // ...and a capture does not outlive the window it was armed in either. It
     // holds `textEntry` while it waits, so a capture stranded by a window closing
     // any other way -- the title bar's cross, a second press of K -- is an
@@ -2132,6 +2186,7 @@ export class UiScreens {
     if (phase === 'move') this.actionBar.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('inventory')) this.inventory.pointerMoved(pos, this.now);
     if (phase === 'move' && this.isOpen('character')) this.character.pointerMoved(pos, this.now);
+    if (phase === 'move' && this.isOpen('shop')) this.shop.pointerMoved(pos, this.now);
     return !reachesGameplay(this.routingOf(consumed, 'pointer'));
   }
 

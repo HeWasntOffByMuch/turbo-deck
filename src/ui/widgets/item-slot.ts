@@ -177,6 +177,21 @@ export class ItemSlot extends StyledWidget implements DropTarget {
   /** For an equipment cell: the slot id it takes. Null accepts anything. */
   acceptsSlot: string | null = null;
   /**
+   * Whether anything may be let go here at all (spec 269).
+   *
+   * True for a cell of a container, which is every cell there was until the
+   * shop became a grid. A shop cell is a **button that happens to look like a
+   * cell**: it is not a place an item can be, and the bag's drag hit-tests the
+   * whole layer stack -- so without this a shop cell lights up as a drop
+   * candidate, takes the release, and the carried stack goes quietly back where
+   * it came from with nothing emitted and nothing said.
+   *
+   * Separate from `acceptsSlot`, because "takes only helmets" and "is not a
+   * container" are different claims: expressing the second as a slot id nothing
+   * matches would be a lie that happens to have the right effect.
+   */
+  acceptsDrops = true;
+  /**
    * Whether a drag in flight would land here.
    *
    * Set by the screen from the controller's answer rather than worked out here,
@@ -254,7 +269,7 @@ export class ItemSlot extends StyledWidget implements DropTarget {
    * the player would have to read to learn they had done nothing.
    */
   canAcceptDrop(payload: DragPayload): boolean {
-    if (!this.enabled || !this.visible) return false;
+    if (!this.enabled || !this.visible || !this.acceptsDrops) return false;
     if (!isItemDrag(payload.data)) return false;
     const drag = payload.data;
     if (drag.from.container === this.ref.container && drag.from.index === this.ref.index) return false;
