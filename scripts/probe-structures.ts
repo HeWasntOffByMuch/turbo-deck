@@ -52,7 +52,7 @@ interface SavedProp {
   readonly z: number;
   readonly rotation?: number;
   readonly scale?: number;
-  /** What a sign says (spec 259). Absent on every other kind. */
+  /** What a sign says (spec 260). Absent on every other kind. */
   readonly text?: string;
 }
 interface MapFile {
@@ -165,7 +165,7 @@ const CORNER: readonly [number, number] = [60, 110];
 const MIDDLE: readonly [number, number] = [480, 400];
 
 /**
- * What the sign is placed saying (spec 259).
+ * What the sign is placed saying (spec 260).
  *
  * Distinctive, and short enough that the editor's status line quotes it whole:
  * that line cuts at 40 characters, so a message longer than one would be
@@ -458,7 +458,7 @@ async function main(): Promise<void> {
     check('the well places too', await clickGround(page, 560, 560), await placed(page));
     check('and says so', /placed well/.test(await readout(page)), await placed(page));
 
-    // --- the sign, and its message (spec 259) -------------------------------
+    // --- the sign, and its message (spec 260) -------------------------------
     //
     // The one placed kind with a field of its own, so the one whose panel row
     // can be shown for the wrong kind or read by nothing at all -- and neither
@@ -592,7 +592,7 @@ async function main(): Promise<void> {
     );
 
     // The sign, and its message: the file is where "the panel row is wired to
-    // the tool" is finally answered (spec 259). A `Message` row that changed
+    // the tool" is finally answered (spec 260). A `Message` row that changed
     // nothing draws exactly the same board.
     const signs = after.filter((p) => p.species === 'sign');
     check(

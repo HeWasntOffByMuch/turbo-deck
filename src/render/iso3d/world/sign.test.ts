@@ -17,7 +17,7 @@ import {
 } from './sign.js';
 
 /**
- * Spec 259. A sign is the first thing in this game a click acts on that the sim
+ * Spec 260. A sign is the first thing in this game a click acts on that the sim
  * has never heard of, so everything asserted here is a *client* rule: which
  * post the cursor named, how close the body has to get, and what the bubble is
  * handed. Nothing below sends anything.
@@ -361,7 +361,7 @@ describe('reading one', () => {
     expect(early).toBeLessThan(session.view.text.length);
   });
 
-  it('speaks nothing, at any point (spec 259)', () => {
+  it('speaks nothing, at any point (spec 260)', () => {
     // The whole of "no sound", and it is asserted through the *sink the driver
     // uses* rather than by reading the code: a recorder in `SILENT_SPEECH`'s
     // place proves the plan has vocal events in it to suppress.

@@ -86,7 +86,7 @@ describe('placing a building', () => {
     for (const kind of STRUCTURE_KINDS) {
       const map = loaded();
       // Every kind gets a message in the panel, because a sign refuses without
-      // one (spec 259) and no other kind reads it -- which is the second half
+      // one (spec 260) and no other kind reads it -- which is the second half
       // of the assertion below.
       const out = placeStructure(
         map.store,
@@ -101,7 +101,7 @@ describe('placing a building', () => {
     }
   });
 
-  describe('a sign (spec 259)', () => {
+  describe('a sign (spec 260)', () => {
     it('refuses one with nothing to say, rather than placing a blank post', () => {
       // `signMarks` drops a blank sign and the crosshair never offers one, so a
       // sign placed empty is scenery -- and scenery the eraser's radius makes a

@@ -125,7 +125,7 @@ interface Vec3Like {
  * The two vectors {@link rayBodyDistance} reads off a ray.
  *
  * Structural rather than `THREE.Ray`, which satisfies it: the volume test is
- * arithmetic and the class is only how a camera hands one over. Spec 259 is why
+ * arithmetic and the class is only how a camera hands one over. Spec 260 is why
  * -- a sign's pick is the same cylinder test over props that come out of the
  * streamed map, and that module runs headlessly.
  */

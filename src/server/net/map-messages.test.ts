@@ -125,7 +125,7 @@ describe('MapChunk round trip', () => {
   });
 
   /**
-   * A sign's message crosses too (spec 259).
+   * A sign's message crosses too (spec 260).
    *
    * The second optional block on a prop, which is what this is really about:
    * with two of them the *order* has to be agreed, and a decoder that read the

@@ -117,7 +117,7 @@ const BUBBLE: readonly string[] = [
 ];
 
 /**
- * The question mark: what sits over a sign you can read (spec 259).
+ * The question mark: what sits over a sign you can read (spec 260).
  *
  * The bubble's argument one prop over -- a *picture rather than a reticle*,
  * because what this says is what the click does rather than where it lands --
@@ -275,7 +275,7 @@ export interface WorldPointerInput {
   readonly overNpc: boolean;
   /**
    * True while the cursor is over a sign with something written on it
-   * (spec 259) -- `pickSign`'s answer, the way `overNpc` is `talkable`'s.
+   * (spec 260) -- `pickSign`'s answer, the way `overNpc` is `talkable`'s.
    *
    * Its own field for `overNpc`'s reason and one more: a sign is a **prop**,
    * and every other field here is about an entity, so folding it into one of
@@ -300,7 +300,7 @@ export interface WorldPointerInput {
 export function worldMark(input: WorldPointerInput): CrosshairArt | null {
   if (input.aiming) return 'full';
   // A sign is checked first among the three world marks, and for once that is
-  // precedence rather than clarity (spec 259): the other three are answers
+  // precedence rather than clarity (spec 260): the other three are answers
   // about a *body* and this is an answer about a prop, so unlike every pair
   // above them the two really can both be true -- a merchant standing in front
   // of a signpost is an ordinary thing for a village to contain. The sign wins

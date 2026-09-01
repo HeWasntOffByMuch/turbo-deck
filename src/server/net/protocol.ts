@@ -321,7 +321,7 @@ export const MapPropFlag = {
   Light: 1 << 2,
   /**
    * This prop carries a message, and a `str` follows the light block if there
-   * is one (spec 259).
+   * is one (spec 260).
    *
    * {@link MapPropFlag.Light}'s shape rather than {@link MapPropFlag.Align}'s,
    * and for its reason: almost no prop is a sign, so the common case pays the

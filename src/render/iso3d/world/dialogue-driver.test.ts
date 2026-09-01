@@ -53,7 +53,7 @@ function greetMs(): number {
 const BODY_LIFT = 96;
 
 /**
- * Where the player is standing, for the range release (spec 259).
+ * Where the player is standing, for the range release (spec 260).
  *
  * On top of the sign in every test but the one that walks away, because the
  * release is the *only* thing that ends a sign's bubble and a reader parked
@@ -263,7 +263,7 @@ describe('the shipped NPCs', () => {
 });
 
 /**
- * Spec 259. A sign goes through the whole of the conversation above with two
+ * Spec 260. A sign goes through the whole of the conversation above with two
  * things different, and both are asserted here rather than by reading the code:
  * **the server is never told**, and **nothing sounds**.
  */
@@ -420,7 +420,7 @@ describe('reading a sign', () => {
 });
 
 /**
- * Spec 259's follow-up. Where the bubble points.
+ * Spec 260's follow-up. Where the bubble points.
  *
  * One rule, and it is here rather than inline in the mount because getting it
  * wrong is invisible: a bubble that has quietly fallen back to its no-anchor

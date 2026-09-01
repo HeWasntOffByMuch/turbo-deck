@@ -218,7 +218,7 @@ const well = (x: number, z: number, scale = 1): Prop => ({
   tint: 0,
 });
 /**
- * A sign (spec 259).
+ * A sign (spec 260).
  *
  * The message is not drawn -- the board is blank timber and the words are in
  * the bubble -- so what these shots are for is the *silhouette*: whether a post

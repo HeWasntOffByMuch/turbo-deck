@@ -244,7 +244,7 @@ describe('the pointer', () => {
     expect(advances).toBe(1);
   });
 
-  it('publishes its own box, which is what a line with no replies is pressed by (spec 259)', () => {
+  it('publishes its own box, which is what a line with no replies is pressed by (spec 260)', () => {
     // The reply rects answer "where do I press to choose"; this answers "where
     // do I press to go on", which for a sign is the only press there is.
     const bubble = screen();
@@ -265,7 +265,7 @@ describe('the pointer', () => {
   });
 
   it('clamps an anchor that has run off the top rather than dropping it', () => {
-    // What the mount's `bubbleAnchor` relies on (spec 259's follow-up): the
+    // What the mount's `bubbleAnchor` relies on (spec 260's follow-up): the
     // lift is in world units, so a zoomed-in camera can put the point above the
     // frame while the speaker is squarely in the middle of it. Clamping is the
     // right answer there and was already what this does; what was wrong was one

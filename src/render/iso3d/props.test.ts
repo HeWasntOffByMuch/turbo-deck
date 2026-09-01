@@ -604,7 +604,7 @@ describe('the buildings as they are actually built (spec 224)', () => {
       const parts = partsOf(structure(kind));
       // The claim in the name, and no more than it. It used to read `> 3`,
       // which was true of the two elaborate buildings and is a fact about them
-      // rather than about the list -- spec 259's sign is a post, a frame and a
+      // rather than about the list -- spec 260's sign is a post, a frame and a
       // face, and is not a worse sign for it. What each kind is made of
       // *specifically* is asserted per kind below, which is where a number that
       // tight belongs.
@@ -670,7 +670,7 @@ describe('the buildings as they are actually built (spec 224)', () => {
     expect(footprintRadius(structure('well'))).toBeCloseTo(WELL_RADIUS, 6);
   });
 
-  it("builds the sign's board to the plan its collider and its pick are derived from (spec 259)", () => {
+  it("builds the sign's board to the plan its collider and its pick are derived from (spec 260)", () => {
     // The hut's rule one prop over, and it matters more here: `SIGN_PLAN` is
     // read by three files -- this geometry, `FOOTPRINT_BASE` for what a body
     // walks into, and the client's pick volume for what a cursor can name. A

@@ -1395,7 +1395,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       targetId !== null ? 'attack' : '',
       pickupId !== null ? 'pickup' : '',
       talkId !== null ? 'talk' : '',
-      // The one order in this list with nobody to ask (spec 259), so it is also
+      // The one order in this list with nobody to ask (spec 260), so it is also
       // the one whose *absence* is the whole answer: a sign order ends by
       // opening the bubble, and there is no message in flight to have been
       // refused.
@@ -1483,7 +1483,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the one thing a harness has to be able to press.
     const dialogueRects = boxes(readout.dialogueRects);
     // The bubble's own box is a **fourth** field rather than a row in
-    // `dialogueRects` (spec 259), and that is not tidiness: `probe-shop.ts`
+    // `dialogueRects` (spec 260), and that is not tidiness: `probe-shop.ts`
     // reads that list as "the replies, in order" and presses one by index, so a
     // row in it that is not a reply is a probe pressing the bubble's
     // background and reporting a shop that would not open. Appended, so a
@@ -1981,7 +1981,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /**
    * Which speaker `talkAim` was armed for, so a second conversation re-arms it.
    *
-   * A string since spec 259, and `''` for nobody: a sign is worth turning to
+   * A string since spec 260, and `''` for nobody: a sign is worth turning to
    * face and has no entity id, so the two kinds of speaker share one key rather
    * than a number that one of them would have to fake.
    */
@@ -2488,7 +2488,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   /** How many times the standing talk order has asked. See `TALK_MAX_ASKS`. */
   let talkAsks = 0;
   /**
-   * The sign being walked over to, to read (spec 259).
+   * The sign being walked over to, to read (spec 260).
    *
    * A **key** rather than a mark, because a mark is rebuilt whenever a chunk
    * arrives or is dropped: `SignIndex` walks the store afresh on every
@@ -2505,7 +2505,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let signId: string | null = null;
   /**
    * The signs this client is holding ground for, memoized on the store's
-   * revision (spec 259).
+   * revision (spec 260).
    *
    * Here rather than inside the scene because a sign is a prop and the streamed
    * store is this file's: the scene is handed the marks and contributes the
@@ -3109,7 +3109,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     talkId = null;
     signId = null;
 
-    // A sign is the fifth thing the button can mean (spec 259), and it is
+    // A sign is the fifth thing the button can mean (spec 260), and it is
     // checked **first** -- which is precedence rather than clarity, unlike the
     // three branches below it. A sign is a prop and everything else here is an
     // entity, so this is the one pair that really can both be true: a merchant
@@ -3300,7 +3300,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // the rule `overEnemy` already lives by one line up.
       overNpc: hovered !== undefined && talkable(hovered),
       // A prop rather than a body, so it is asked afresh rather than read off
-      // `scene.hoveredEntityId` (spec 259). Cheap: there are a handful of signs
+      // `scene.hoveredEntityId` (spec 260). Cheap: there are a handful of signs
       // on a map against a store walked once per streamed chunk, and the test
       // itself is a ray against a cylinder.
       overSign:
@@ -3747,7 +3747,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
-   * The signs on ground this client is holding (spec 259).
+   * The signs on ground this client is holding (spec 260).
    *
    * Memoized on `StreamedMap.revision`, which is spec 215's number and the only
    * honest key here: `size` is bounded by the keep window, so it cannot tell
@@ -3770,7 +3770,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
-   * One tick of a sign order (spec 259): close the gap, then read it.
+   * One tick of a sign order (spec 260): close the gap, then read it.
    *
    * `driveTalk`'s shape with the ask taken out, and the ask is the only thing
    * that differs -- which is the whole of what makes a sign cheap. There is
@@ -3945,7 +3945,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
   /**
    * @param nowMs the frame's clock, for the one order that opens something
-   *              rather than asking the server for it (spec 259). The same
+   *              rather than asking the server for it (spec 260). The same
    *              clock `driveDialogue` reveals against, so a sign's first
    *              character lands on the frame the body arrived.
    */
@@ -4147,12 +4147,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   function driveDialogue(view: ClientView, nowMs: number): void {
     // The *predicted* position, which is the one the walk that opened the
-    // bubble was measured against (spec 259): a release judged from the
+    // bubble was measured against (spec 260): a release judged from the
     // replica would fire a round trip late, and on the frame the player turns
     // round at the edge of the reach that is a bubble that closes after they
     // have already stopped walking away.
     dialogue.update(view.conversationEntityId, view.entities, nowMs, selfPosition());
-    // Where the conversation *is*, which since spec 259 is a question only the
+    // Where the conversation *is*, which since spec 260 is a question only the
     // driver can answer: an NPC is a body in the replicated set and a sign is a
     // prop the server has never heard of, so a search of `view.entities` here
     // would find one of them and silently draw nothing for the other.
@@ -4166,7 +4166,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // Armed on the *edge* rather than held (spec 246): the player turns to face
     // whoever they have just spoken to, and is then free to look anywhere. Keyed
     // on the speaker, so walking from one merchant to another turns you again --
-    // and on a *string* since spec 259, because a sign is worth turning to as
+    // and on a *string* since spec 260, because a sign is worth turning to as
     // well and has no entity id to be keyed by.
     if (focus?.key !== talkAimFor) {
       talkAimFor = focus?.key ?? '';

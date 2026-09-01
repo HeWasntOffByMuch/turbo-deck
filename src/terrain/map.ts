@@ -134,7 +134,7 @@ export interface MapProp {
    */
   readonly light?: MapPropLight;
   /**
-   * What a sign says (spec 259).
+   * What a sign says (spec 260).
    *
    * Optional and absent by default, `light` beside it for `light`'s own stated
    * reason: no committed document gains a key, so no region file's bytes move

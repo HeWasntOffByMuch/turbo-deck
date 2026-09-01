@@ -85,8 +85,8 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
-| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 259). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
-| `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 259). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 260). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
+| `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 260). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
 | `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
 | `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
 | `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
@@ -406,7 +406,7 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  a flat wall and a body that can stand in a corner, and erring
                  wide is the fence's own answer to the same question. A well is
                  already a circle, so that one is exact.
-                 Since spec 259 there is a **sign** beside them, and it belongs
+                 Since spec 260 there is a **sign** beside them, and it belongs
                  in that list for the list's one membership test: it goes in one
                  spot somebody chose, turned to face the road it is read from,
                  so it is placed rather than painted. What it adds is a
@@ -1429,7 +1429,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  press whose meaning is read off what is under the cursor (spec
                  070), and refusing a pending aim is the same shape one level up,
                  so `world.order` is one action with four readings exactly as it
-                 was one branch with four -- five since spec 259, which added
+                 was one branch with four -- five since spec 260, which added
                  *read a sign* and is the first of them that acts on something
                  the server has never heard of. Three bindings a player could put
                  on three different buttons is not a preference, it is a broken
@@ -2530,7 +2530,7 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  ring is the building's own `footprintRadius`, so what the ring
                  draws and what the collider blocks are the same circle rather
                  than two numbers that agree until one is edited.
-                 Since spec 259 it also places a **sign**, and the message is a
+                 Since spec 260 it also places a **sign**, and the message is a
                  panel field read at the press, the way `structureYaw` and the
                  two fixture sliders are: a `Message` row shown for the one kind
                  that reads it and hidden for the rest, since unlike spec 178's
@@ -5180,7 +5180,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the output is **re-asked every call** rather than cached --
                  there is no `AudioContext` until the first user gesture, and a
                  null cached at mount is an NPC silent for the session.
-                 Since spec 259 the same bubble reads a **sign**, and the
+                 Since spec 260 the same bubble reads a **sign**, and the
                  interesting part is how little it costs. A sign is a prop, so
                  the sim has never heard of it: there is no `Talk`, no
                  `Conversation` and no claim, which is not a shortcut but what a
@@ -5745,7 +5745,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the mark is centred on the pointer like the other two, so what
                  has to sit on the box's middle is the bubble's body rather than
                  the whole drawing including its tail.
-                 The **question mark** (spec 259) says the thing under the
+                 The **question mark** (spec 260) says the thing under the
                  pointer is a sign you can read, and it is the bubble's argument
                  one prop over -- deliberately *not* the bubble itself, since a
                  sign says one thing, says it to everybody and cannot be asked

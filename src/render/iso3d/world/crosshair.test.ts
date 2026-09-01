@@ -190,11 +190,11 @@ describe('which mark the world draws', () => {
     expect(worldMark({ ...NOTHING, overNpc: true })).toBe('bubble');
   });
 
-  it('is the question mark over a sign with something on it (spec 259)', () => {
+  it('is the question mark over a sign with something on it (spec 260)', () => {
     expect(worldMark({ ...NOTHING, overSign: true })).toBe('sign');
   });
 
-  it('lets a sign win over a body standing in front of it (spec 259)', () => {
+  it('lets a sign win over a body standing in front of it (spec 260)', () => {
     // The one pair here that really can both be true: every other field is
     // about an entity and this one is about a prop, so a merchant in front of a
     // signpost is an ordinary village. `issueOrder` reads the same order, so

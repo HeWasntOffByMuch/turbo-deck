@@ -58,7 +58,7 @@ export function isFenceKind(kind: PropKind): kind is FenceKind {
  * face a square -- so the editor gives them a press-to-place tool of their own
  * and this is the list it offers.
  *
- * A sign is the third (spec 259), and it belongs here rather than beside the
+ * A sign is the third (spec 260), and it belongs here rather than beside the
  * fixtures for the same one reason: it goes in **one spot somebody chose**,
  * turned to face the road it is read from. That is the whole membership test of
  * this list, and it is why a thing that emits no light and holds nobody's roof
@@ -145,7 +145,7 @@ export const HOUSE_PLAN = { width: 148, depth: 124 } as const;
 export const WELL_RADIUS = 44;
 
 /**
- * The sign's board and the post under it, at scale 1, in world units (spec 259).
+ * The sign's board and the post under it, at scale 1, in world units (spec 260).
  *
  * Here beside the kinds rather than in the renderer, for {@link HOUSE_PLAN}'s
  * reason: `FOOTPRINT_BASE` derives the collider from `postWidth` and the
@@ -170,7 +170,7 @@ export const SIGN_PLAN = {
 } as const;
 
 /**
- * The longest message a sign may carry, in characters (spec 259).
+ * The longest message a sign may carry, in characters (spec 260).
  *
  * A bound rather than a style guide, and it is enforced by the parser: a `str`
  * on the wire is length-prefixed and a map is a file somebody may hand-edit, so
@@ -258,7 +258,7 @@ export interface Prop {
    */
   readonly light?: PropLight;
   /**
-   * What this sign says (spec 259).
+   * What this sign says (spec 260).
    *
    * Absent by default, so no committed map gains a key, no region file's bytes
    * move and no `mapId` does either -- `light` beside it for the same reason.
@@ -544,7 +544,7 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   campfire: 34,
   'lamp-post': 11,
   'torch-stand': 10,
-  // The post, and the post only (spec 259). The board is a metre of air at
+  // The post, and the post only (spec 260). The board is a metre of air at
   // chest height that a body walks under without noticing -- blocking its whole
   // span would be an invisible wall either side of a stick, and would put the
   // reach a player has to get inside *behind* the thing they are reading.

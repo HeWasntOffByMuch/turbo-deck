@@ -1,5 +1,5 @@
 /**
- * Read a sign in the shipped page (spec 259).
+ * Read a sign in the shipped page (spec 260).
  *
  * Everything this spec *decides* is pure and asserted in Node -- what a sign
  * says, which post the cursor named, how close the body has to get, what the

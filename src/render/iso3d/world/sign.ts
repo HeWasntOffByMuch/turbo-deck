@@ -5,7 +5,7 @@ import { rayBodyDistance, type RayLike, type RayVolume } from '../hover.js';
 import { PLAYER_RADIUS } from '../../../sim/constants.js';
 
 /**
- * What a sign is to the client that reads it (spec 259).
+ * What a sign is to the client that reads it (spec 260).
  *
  * Pure: no three.js, no DOM, no clock, and -- the part that matters -- **no
  * server**. A sign is the first thing in this
@@ -293,7 +293,7 @@ export const SIGN_BUBBLE_LIFT = SIGN_PLAN.postHeight + SIGN_PLAN.height + 18;
 export const SIGN_READ_RADIUS = SIGN_PLAN.postWidth / 2 + PLAYER_RADIUS + 56;
 
 /**
- * A sign as something the dialogue can be handed (spec 259).
+ * A sign as something the dialogue can be handed (spec 260).
  *
  * One line, no replies, no vendor. `DialogueSession` reads exactly these five
  * fields, so a sign goes through the whole of spec 246's conversation -- the
@@ -336,7 +336,7 @@ export function signSpeaker(mark: SignMark): DialogueSpeaker {
 export const SIGN_SPEAKER_NAME = 'Sign';
 
 /**
- * A sink that starts nothing and so owes no stop (spec 259).
+ * A sink that starts nothing and so owes no stop (spec 260).
  *
  * The whole of "a sign makes no sound", and it is a sink rather than a voice at
  * zero volume for the reason `dialogue.ts` gives for `DialogueSpeech` having a

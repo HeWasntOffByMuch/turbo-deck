@@ -54,7 +54,7 @@ export interface StructureSettings {
    */
   readonly structureYaw: number;
   /**
-   * What a sign is placed saying (spec 259).
+   * What a sign is placed saying (spec 260).
    *
    * Read only by a kind that has anything to do with it, exactly as
    * `fixtureBrightness` is read only by a kind that emits: a message on a well
@@ -289,7 +289,7 @@ export function placeStructure(
   const scale = Number.isFinite(settings.structureScale) ? Math.max(0.1, settings.structureScale) : 1;
   const light = fixtureOverride(settings);
   const text = messageOf(settings);
-  // Refused rather than placed blank (spec 259). A sign with nothing on it is a
+  // Refused rather than placed blank (spec 260). A sign with nothing on it is a
   // post the crosshair slides over and a click walks past -- `signMarks` drops
   // it and `signText` is what decides, at every layer -- so putting one down
   // would be a tool that appears to work and produces scenery. The eraser is a

@@ -53,11 +53,11 @@ export interface DialogueSpeech {
 }
 
 /**
- * What a {@link DialogueSession} needs to be about (spec 259).
+ * What a {@link DialogueSession} needs to be about (spec 260).
  *
  * `NpcDefinition` minus the fields a *conversation* never reads -- there are
  * two, `talkRadius` and the monster row it is keyed by, and both are the
- * server's business. Narrowed rather than left as the NPC type because spec 259
+ * server's business. Narrowed rather than left as the NPC type because spec 260
  * has a second thing to talk through: a sign is one line on a post, with no
  * body, no `talkRadius` anybody enforces and no row in `MONSTERS`, and handing
  * this a synthetic `NpcDefinition` would be three lies to buy a type.
@@ -119,7 +119,7 @@ export class DialogueSession {
 
   /**
    * @param npc     what is being talked to: its name, its voice, its script.
-   *                An NPC row, or a sign's one line (spec 259).
+   *                An NPC row, or a sign's one line (spec 260).
    * @param entityId the body, so the caller can check it is still there.
    *                 **0 for a speaker that is not a body** -- a sign is a prop
    *                 and has no entity id, and its driver checks it is still

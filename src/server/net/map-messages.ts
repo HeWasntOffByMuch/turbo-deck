@@ -282,7 +282,7 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
     // exact for anything `quantize` produced -- and the document's own writer
     // quantizes them, so a light survives the round trip unchanged.
     if (prop.light) w.varint(q(prop.light.brightness)).varint(q(prop.light.radius));
-    // And a sign's message after it (spec 259). *After* the light, because the
+    // And a sign's message after it (spec 260). *After* the light, because the
     // reader takes them in this order and two optional blocks on one prop only
     // work if both ends agree which comes first.
     if (prop.text !== undefined) w.str(prop.text);

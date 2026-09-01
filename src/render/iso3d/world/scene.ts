@@ -1363,7 +1363,7 @@ export class WorldScene {
   }
 
   /**
-   * The sign at a canvas pixel, or null (spec 259).
+   * The sign at a canvas pixel, or null (spec 260).
    *
    * The marks are handed in rather than held here, which is the same division
    * `hoverTargets` is on the other side of: a unit's hover shape is built from

@@ -188,7 +188,7 @@ export interface EditorSettings {
   /** Where the front faces, in degrees. See `structure.ts`. */
   structureYaw: number;
   /**
-   * What a sign is placed saying (spec 259). Ignored by every other kind.
+   * What a sign is placed saying (spec 260). Ignored by every other kind.
    *
    * A string and never `undefined`, for the reason `fixtureBrightness` above is
    * a number and never `null`: `gui.add` refuses a field with no value in it and
@@ -520,7 +520,7 @@ export function armedKindEmits(settings: EditorSettings): boolean {
 
 /**
  * Which of them carries a message, so the panel knows when its text row means
- * anything (spec 259).
+ * anything (spec 260).
  *
  * Beside {@link armedKindEmits} and for its stated reason: what the panel shows
  * and what the tool reads have to be the same answer, and a second `=== 'sign'`

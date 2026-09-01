@@ -505,7 +505,7 @@ describe("a spawner's own settings", () => {
 });
 
 /**
- * Spec 259. A sign's message is the first *string* a prop carries and the only
+ * Spec 260. A sign's message is the first *string* a prop carries and the only
  * field in a prop record a person is expected to edit by hand, so what it owes
  * is the round trip and a parser that says no rather than storing something the
  * wire cannot carry.

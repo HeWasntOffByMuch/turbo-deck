@@ -2021,7 +2021,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
           // (spec 250). A kind that emits nothing says nothing extra.
           const lit = fixtureLight(out.placed);
           // And what a sign was placed *saying*, for exactly that reason one
-          // prop over (spec 259): a board with the wrong words on it looks
+          // prop over (spec 260): a board with the wrong words on it looks
           // identical to one with the right words on it until somebody walks
           // up to it, and the whole point of the message being a panel field is
           // that the panel is where it can still be got wrong. Quoted and cut,

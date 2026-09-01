@@ -107,7 +107,7 @@ export class DialogueScreen extends Panel {
   }
 
   /**
-   * The bubble's own box, in UI pixels, or null when it is not up (spec 259).
+   * The bubble's own box, in UI pixels, or null when it is not up (spec 260).
    *
    * Beside {@link DialogueScreen.replyRects} and for that field's stated
    * reason, one case further along: a bubble is drawn to a canvas, so a harness

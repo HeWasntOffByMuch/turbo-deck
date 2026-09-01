@@ -373,7 +373,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     .name('Light radius');
 
   /**
-   * What a sign is placed saying (spec 259).
+   * What a sign is placed saying (spec 260).
    *
    * Hidden for a kind that cannot read one, which is the two light rows' rule
    * and the same judgement: unlike spec 178's monster dropdown -- shown but

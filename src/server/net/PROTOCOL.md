@@ -555,7 +555,7 @@ follow its flags byte in bit order: two `varint`s of light when `4` is set, then
 a `str` of message when `8` is set. `kind`: `0` spawn, `1` objective, `2`
 campfire, `3` trigger. An empty `label` string means the marker had none.
 
-A message is a sign's words (spec 259). It is bounded to `MAX_SIGN_TEXT`
+A message is a sign's words (spec 260). It is bounded to `MAX_SIGN_TEXT`
 characters by the document parser rather than here, because a `str` is
 length-prefixed and the question "how much text may one prop put on the wire"
 has to have an answer that is not *whatever somebody typed into a file*.

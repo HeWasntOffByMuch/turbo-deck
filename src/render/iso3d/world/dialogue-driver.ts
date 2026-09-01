@@ -48,7 +48,7 @@ export interface DialogueBody {
 }
 
 /**
- * Where the conversation is, for the camera and the bubble (spec 259).
+ * Where the conversation is, for the camera and the bubble (spec 260).
  *
  * Answered by the driver rather than looked up again by the mount, because
  * there are two kinds of speaker now and only this file knows which one is
@@ -172,7 +172,7 @@ export interface DialogueDriverOptions {
 export class DialogueDriver {
   private session: DialogueSession | null = null;
   /**
-   * The sign being read, or null while the session is a body's (spec 259).
+   * The sign being read, or null while the session is a body's (spec 260).
    *
    * Held beside the session rather than inferred from `session.entityId === 0`,
    * because those are two different claims: a sign has no entity id *and* the
@@ -214,7 +214,7 @@ export class DialogueDriver {
   }
 
   /**
-   * Read a sign (spec 259).
+   * Read a sign (spec 260).
    *
    * The one way a conversation starts without the server saying so, and it does
    * not contradict the rule above it: **the server decides whether a
@@ -256,7 +256,7 @@ export class DialogueDriver {
     reader: { readonly x: number; readonly y: number },
   ): void {
     // A sign is read on this client's own say-so, so the server's answer is not
-    // what keeps one open (spec 259). What it still is, is what *closes* one:
+    // what keeps one open (spec 260). What it still is, is what *closes* one:
     // a conversation with a body outranks a board, so walking up to a merchant
     // while a sign is open puts the sign down rather than opening two bubbles.
     if (this.sign !== null) {

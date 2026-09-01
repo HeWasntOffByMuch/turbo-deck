@@ -1762,7 +1762,7 @@ function signParts(): PropPart[] {
 }
 
 /**
- * A sign: a board nailed to a post (spec 259).
+ * A sign: a board nailed to a post (spec 260).
  *
  * The simplest prop in this file, and it is meant to be. What a sign has to do
  * is be legible as *a thing with writing on it* from a hundred units up at this
