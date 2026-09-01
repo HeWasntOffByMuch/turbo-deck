@@ -141,7 +141,18 @@
             { "species": "tree", "x": 142.612, "z": 114.821, "rotation": 1.076, "scale": 0.909, "tint": 0.331 },
             { "species": "bush", "x": 601.822, "z": 611.913, "rotation": 1.777, "scale": 0.775, "tint": -0.663 },
             { "species": "tree", "x": 372.821, "z": 283.462, "rotation": 2.028, "scale": 0.947, "tint": 0.281 },
-            { "species": "tree", "x": 100.556, "z": 225.547, "rotation": 0.125, "scale": 1.296, "tint": -0.112 }
+            { "species": "tree", "x": 100.556, "z": 225.547, "rotation": 0.125, "scale": 1.296, "tint": -0.112 },
+            { "species": "tree", "x": 268.014, "z": 60.223, "rotation": 2.001, "scale": 0.983, "tint": -0.034 },
+            { "species": "tree", "x": 162.144, "z": 14.819, "rotation": 3.512, "scale": 0.929, "tint": -0.678 },
+            { "species": "tree", "x": 347.298, "z": 53.383, "rotation": 4.178, "scale": 1.001, "tint": -0.722 },
+            { "species": "tree", "x": 391.65, "z": 131.298, "rotation": 1.027, "scale": 1.266, "tint": 0.151 },
+            { "species": "tree", "x": 282.562, "z": 145.237, "rotation": 5.613, "scale": 1.178, "tint": 0.357 },
+            { "species": "tree", "x": 167.622, "z": 157.571, "rotation": 4.578, "scale": 1.043, "tint": 0.809 },
+            { "species": "tree", "x": 220.651, "z": 193.365, "rotation": 3.393, "scale": 0.903, "tint": 0.341 },
+            { "species": "tree", "x": 227.312, "z": 94.72, "rotation": 5.925, "scale": 0.792, "tint": -0.512 },
+            { "species": "tree", "x": 171.265, "z": 64.14, "rotation": 4.51, "scale": 1.084, "tint": 0.623 },
+            { "species": "tree", "x": 442.847, "z": 133.186, "rotation": 5.277, "scale": 0.789, "tint": 0.884 },
+            { "species": "tree", "x": 99.17, "z": 146.761, "rotation": 3.434, "scale": 1.206, "tint": 0.409 }
           ],
           "markers": []
         },
