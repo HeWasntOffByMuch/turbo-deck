@@ -35,7 +35,7 @@ describe('containerViewOf', () => {
     bag[2] = { defId: 'sword.worn', count: 1 };
     bag[7] = { defId: 'potion.minor', count: 4 };
 
-    const view = containerViewOf({ inventory: bag, equipment: EMPTY_EQUIPMENT, level: 3 });
+    const view = containerViewOf({ inventory: bag, equipment: EMPTY_EQUIPMENT, level: 3, coins: 0 });
     expect(view.bag).toHaveLength(bag.length);
     expect(view.bag[0]).toBeNull();
     expect(view.bag[2]).toMatchObject({ defId: 'sword.worn', name: 'Worn Sword', slot: 'mainHand' });
@@ -48,6 +48,7 @@ describe('containerViewOf', () => {
       inventory: emptyInventory(),
       equipment: { ...EMPTY_EQUIPMENT, mainHand: 'bow.hunting' },
       level: 1,
+      coins: 0,
     });
     expect(view.worn['mainHand']).toMatchObject({ defId: 'bow.hunting', icon: 'item:bow' });
     expect(view.worn['head']).toBeNull();
@@ -63,6 +64,7 @@ describe('containerViewOf', () => {
       inventory: emptyInventory(),
       equipment: EMPTY_EQUIPMENT,
       level: 1,
+      coins: 0,
     });
     // The paperdoll's slots and the skill row's between them are every
     // equipment slot the server has, in order (spec 188). Two lists because
@@ -78,7 +80,7 @@ describe('containerViewOf', () => {
   it('draws an item the table no longer defines rather than hiding it', () => {
     const bag = [...emptyInventory()];
     bag[0] = { defId: 'sword.imaginary', count: 1 };
-    const view = containerViewOf({ inventory: bag, equipment: EMPTY_EQUIPMENT, level: 1 });
+    const view = containerViewOf({ inventory: bag, equipment: EMPTY_EQUIPMENT, level: 1, coins: 0 });
     expect(view.bag[0]).toMatchObject({
       defId: 'sword.imaginary',
       name: 'sword.imaginary',
@@ -307,11 +309,12 @@ describe('the compact scaling line', () => {
   it('reaches every tooltip in the bag through containerViewOf', () => {
     const bag = [...emptyInventory()];
     bag[0] = { defId: 'sword.worn', count: 1 };
-    const plain = containerViewOf({ inventory: bag, equipment: EMPTY_EQUIPMENT, level: 9 });
+    const plain = containerViewOf({ inventory: bag, equipment: EMPTY_EQUIPMENT, level: 9, coins: 0 });
     const wearing = containerViewOf({
       inventory: bag,
       equipment: EMPTY_EQUIPMENT,
       level: 9,
+      coins: 0,
       scalingModifiers: { strength: 0, agility: 2, intelligence: 0 },
     });
     const lineOf = (view: ReturnType<typeof containerViewOf>): string | undefined =>

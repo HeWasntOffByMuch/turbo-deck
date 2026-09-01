@@ -65,6 +65,7 @@ function viewOf(overrides: Partial<ContainerView> = {}): ContainerView {
     slots: SLOTS,
     skillSlots: SKILL_SLOTS,
     level: 3,
+    coins: 42,
     ...overrides,
   };
 }

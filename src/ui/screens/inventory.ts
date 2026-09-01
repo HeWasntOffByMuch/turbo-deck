@@ -21,40 +21,23 @@ import { DragController, type DragPayload } from '../core/drag.js';
 import type { Gesture } from '../core/events.js';
 import { uniformInsets, type Point } from '../core/geom.js';
 import type { Widget } from '../core/widget.js';
-import { ATTRIBUTE_TOKENS, type Theme } from '../theme/theme.js';
+import type { Theme } from '../theme/theme.js';
 import { DragGhost } from '../widgets/drag-ghost.js';
 import { Tooltip, type TooltipLine } from '../widgets/tooltip.js';
 import {
   ItemSlot,
   rarityToken,
   SLOT_SIDE,
-  type DetailTone,
   type ItemDrag,
   type ItemView,
   type SlotPending,
   type SlotRef,
 } from '../widgets/item-slot.js';
 import { Label } from '../widgets/label.js';
+import { TONE_TOKENS } from './tones.js';
 
 export type { ItemDetail, ItemDetailSpan, ItemView, SlotRef } from '../widgets/item-slot.js';
 
-/**
- * What a tone is drawn in (spec 185).
- *
- * The one place the vocabulary the view-model speaks meets the palette. `rarity`
- * is absent because it is not one colour -- it is the item's own, and only the
- * item knows which.
- */
-const TONE_TOKENS: Readonly<Record<Exclude<DetailTone, 'rarity'>, string>> = {
-  good: 'success',
-  bad: 'danger',
-  dim: 'textDim',
-  normal: 'text',
-  // Attribute identity (specs 216, 242), from the one table that names it --
-  // the action bar draws the same three positions on a skill tooltip now, and
-  // two copies of "Strength is this colour" is how the two stop matching.
-  ...ATTRIBUTE_TOKENS,
-};
 
 /**
  * One equipment slot, as the screen is told about it.
@@ -107,6 +90,19 @@ export interface ContainerView {
   readonly skillSlots: readonly SlotDescriptor[];
   /** The character's level, for the tooltip's "requires level N". */
   readonly level: number;
+  /**
+   * What the purse holds (spec 264).
+   *
+   * On the bag rather than on the sheet, because coins are carried: they ride
+   * the `Inventory` message beside the stacks for exactly that reason, and the
+   * window that says what you have is the window that says what you have.
+   *
+   * Before this the number was drawn in one place in the entire interface --
+   * the shop's own purse line -- so "how much money do I have" was a question
+   * you could only ask while standing at a counter, and "what did that cost me"
+   * was one you could not ask at all.
+   */
+  readonly coins: number;
   /**
    * A change to a skill slot the server has committed to (spec 188), or absent.
    *
@@ -199,6 +195,15 @@ export class InventoryScreen extends Row {
   private readonly grid: Grid;
   private readonly skills: Grid;
   private readonly paperdoll: Column;
+  /**
+   * The purse, under the bag.
+   *
+   * In the `success` token the shop's own purse already uses, so the number is
+   * the same colour wherever a player meets it -- and drawn at zero as well,
+   * because an omitted line reads as a missing feature where `0 coins` is a
+   * fact about a character who has spent everything.
+   */
+  private readonly purse = new Label('0 coins', 'body');
   private level = 1;
   /**
    * The last thing this screen was handed, so it can be drawn again.
@@ -256,7 +261,8 @@ export class InventoryScreen extends Row {
 
     const bag = new Column('bag');
     bag.gap = theme.spacing.xs;
-    bag.addAll([heading('BAG'), this.grid, heading('SKILLS'), this.skills]);
+    this.purse.colorToken = 'success';
+    bag.addAll([heading('BAG'), this.grid, heading('SKILLS'), this.skills, this.purse]);
 
     this.addAll([this.paperdoll, bag]);
   }
@@ -285,6 +291,7 @@ export class InventoryScreen extends Row {
   setContainers(view: ContainerView): void {
     this.view = view;
     this.level = view.level;
+    this.purse.setText(`${view.coins} coins`);
     // One cell list over both groups, indexed by the *equipment ordinal*, so a
     // `SlotRef` means the same thing whichever group it landed in -- which is
     // what lets `cellAt`, `render` and the drag stay group-blind.
