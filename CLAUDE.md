@@ -86,8 +86,8 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-ground.ts` | Whether the editor's ground window really meshes and evicts, in a browser (spec 212) |
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
-| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
-| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 260). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
+| `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224), plus a grave and a row of them (spec 263). The grave is the one prop here whose risk runs *opposite* to the sign's: it has to be unmistakably shorter than the person looking at it and still read from the game's own bearing, so the block it is drawn beside is the measurement rather than a courtesy |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well, a sign and a grave in the real editor and read them back out of the saved file (specs 224, 260, 263). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message. The grave is the opposite case and earns a step for it: it has **nothing** of its own, so every part of being placeable is derived, and the whole feature is a button nobody wrote and geometry nobody dispatched to -- both silent. It is also why `placed()` derives its pattern from `PLACED_KINDS` instead of listing the kinds: written by hand it printed `said nothing` for a grave that really had been placed, which is exactly what one that had **not** been placed prints |
 | `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 260). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
 | `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
 | `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
@@ -428,6 +428,36 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  to hand-edit: `maps/arena.json` is committed so the world
                  reviews as a diff, and a sentence is the one thing in a prop
                  record that reads as a sentence rather than a coordinate.
+                 Since spec 263 there is a **grave** beside it -- a grey
+                 headstone on a plinth over a mound of turned earth -- and it is
+                 the first member of that list that is not something a village
+                 *built*, which changes nothing about how it is placed and is the
+                 point: it passes the same membership test, going in one spot
+                 somebody chose and turned to face the path it is walked up to
+                 from, so a graveyard is a layout rather than a distribution.
+                 Two things about it are decisions rather than defaults.
+                 `GRAVE_PLAN.stoneHeight` is **44 against a body's 56**, and
+                 that bound is the design: a marker taller than the person
+                 reading it stops being a grave and becomes a monument, which is
+                 a different prop with a different reason to exist. And the
+                 collider is the **headstone and only the headstone**, which is
+                 the sign's rule applied to the other half of an object -- a
+                 mound is loose earth a stride high, and a circle wide enough to
+                 cover the plot would take a body and a half of walkable ground
+                 out of the world around every grave, which in a graveyard is
+                 most of the graveyard. Its three palette tones are new rather
+                 than borrowed for one stated reason: every stone in that palette
+                 is deliberately *warm* limestone, tuned so a wall belongs to the
+                 ground it stands on, and a grave marker is the one piece of
+                 stonework here that has to read as cold against it.
+                 The mound runs *into* the plinth rather than up to it, because
+                 `rockGeometry` knocks every vertex inward by up to half its
+                 roughness -- so earth laid exactly against the base comes out
+                 several units short of it, and a grave with daylight between the
+                 stone and the soil reads as two props that happen to be near
+                 each other. Found by looking at `preview-structures.ts`'s sheet
+                 and pinned by the test that now fails when the overlap is
+                 removed.
                  Since spec 250 it also holds the **light fixtures**: a campfire,
                  a street lamp on a stake, and a standing torch. The same
                  argument one system further along -- a fixture is written into
