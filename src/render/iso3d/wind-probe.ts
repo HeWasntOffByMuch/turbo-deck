@@ -12,6 +12,7 @@ import { internalRenderSize } from './view-frame.js';
 import { SHADOW_MAP_SIZE } from './shadow.js';
 import { advanceWind, resetWind, windTimeUniform } from './wind-uniforms.js';
 import { WATER, WIND } from './wind.js';
+import { isWaterQuad } from './water-material.js';
 
 /**
  * The measuring rig for the weather (spec 074).
@@ -153,7 +154,12 @@ scene.add(propField.group);
 function stripWeather(): void {
   scene.traverse((object) => {
     if (!(object instanceof THREE.Mesh)) return;
-    if (object.material instanceof THREE.ShaderMaterial) {
+    // Asked of `water-material.ts` rather than measured off the material's
+    // type: this was `instanceof THREE.ShaderMaterial`, which stopped naming
+    // the sea the moment spec 259 lit it -- and the water would then have gone
+    // down the clone path below and been stripped to a plain *white* quad,
+    // which is a baseline that quietly measures something else.
+    if (isWaterQuad(object)) {
       object.material = new THREE.MeshBasicMaterial({ color: WATER.deep });
       return;
     }

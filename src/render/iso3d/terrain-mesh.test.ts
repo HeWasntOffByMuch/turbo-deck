@@ -17,6 +17,7 @@ import { ServerMessageType } from '../../server/net/protocol.js';
 import type { HeldChunk } from '../../server/client/map-cache.js';
 import { StreamedMap } from '../../server/client/streamed-map.js';
 import { buildTerrainMesh, buildTerrainMeshFromChunks, type TerrainMeshHandle } from './terrain-mesh.js';
+import { isWaterQuad } from './water-material.js';
 
 /**
  * The acceptance test for spec 048, and the reason the mesher was split in two:
@@ -69,17 +70,39 @@ function attribute(mesh: THREE.Mesh, name: string): Float32Array | null {
 }
 
 /**
- * The water quads under a group (spec 074). They are the only meshes here
- * carrying a `ShaderMaterial`; the ground and its skirts are Lambert.
+ * The water quads under a group (spec 074).
+ *
+ * Asked of `water-material.ts` rather than measured off the material's type.
+ * This was `m.material instanceof THREE.ShaderMaterial` -- true only for as long
+ * as the sea was the one unlit surface in the frame, and silently false the
+ * moment spec 259 lit it, which would have left every water test below quietly
+ * asserting nothing about an empty list.
  */
 function waterQuads(group: THREE.Object3D): THREE.Mesh[] {
-  return meshes(group).filter((m) => m.material instanceof THREE.ShaderMaterial);
+  return meshes(group).filter((m) => isWaterQuad(m));
+}
+
+/**
+ * The uniforms a water quad's material would be compiled with.
+ *
+ * A patched built-in material has no `.uniforms` of its own: they are assigned
+ * into the shader three.js hands `onBeforeCompile`, so the only honest way to
+ * read them is to drive that same path (spec 259). The stub carries the four
+ * anchors the patch reaches for.
+ */
+function waterUniforms(mesh: THREE.Mesh): Record<string, THREE.IUniform> {
+  const shader = {
+    uniforms: {} as Record<string, THREE.IUniform>,
+    vertexShader: '#include <common>\nvoid main() {\n#include <begin_vertex>\n}',
+    fragmentShader: '#include <common>\nvoid main() {\n#include <color_fragment>\n}',
+  };
+  (mesh.material as THREE.Material).onBeforeCompile(shader as never, null as never);
+  return shader.uniforms;
 }
 
 /** One water quad's packed shore distance field. */
 function shoreBytes(mesh: THREE.Mesh): number[] {
-  const material = mesh.material as THREE.ShaderMaterial;
-  const texture = material.uniforms['uShoreField']?.value as THREE.DataTexture;
+  const texture = waterUniforms(mesh)['uShoreField']?.value as THREE.DataTexture;
   return [...(texture.image.data as unknown as Uint8Array)];
 }
 
@@ -258,19 +281,23 @@ describe('a reloaded map draws the same water', () => {
     // material. What must *not* be per chunk is the weather or the palette:
     // those are shared uniform objects, so a second source of truth cannot be
     // introduced by writing to the wrong one.
-    const quads = waterQuads(generated.group).map((q) => q.material as THREE.ShaderMaterial);
+    const quads = waterQuads(generated.group);
     expect(quads.length).toBeGreaterThan(1);
-    const first = quads[0] as THREE.ShaderMaterial;
-    for (const material of quads) {
+    const uniforms = quads.map(waterUniforms);
+    const first = uniforms[0] as Record<string, THREE.IUniform>;
+    for (const bound of uniforms) {
       for (const shared of ['uWindTime', 'uDeep', 'uMid', 'uShallow', 'uFoam']) {
-        expect(material.uniforms[shared]).toBe(first.uniforms[shared]);
+        expect(bound[shared]).toBe(first[shared]);
       }
-      // ...and one compiled program behind all of them, so the per-chunk
-      // material costs a texture bind rather than a shader switch.
-      expect(material.fragmentShader).toBe(first.fragmentShader);
     }
+    // ...and one compiled program behind all of them, so the per-chunk material
+    // costs a texture bind rather than a shader switch. Since spec 259 that is
+    // the cache key rather than the shader text: three.js keys a patched
+    // built-in material's program on what `customProgramCacheKey` returns.
+    const keys = new Set(quads.map((q) => (q.material as THREE.Material).customProgramCacheKey()));
+    expect([...keys]).toEqual(['water']);
     // The shore field is the one thing that genuinely is per chunk.
-    const fields = new Set(quads.map((m) => m.uniforms['uShoreField']));
+    const fields = new Set(uniforms.map((bound) => bound['uShoreField']));
     expect(fields.size).toBe(quads.length);
   });
 
@@ -368,7 +395,7 @@ describe('a map that streams in draws the same land', () => {
 
   /** The ground and its skirts. Water is the other tests' subject. */
   const land = (group: THREE.Object3D): THREE.Mesh[] =>
-    meshes(group).filter((m) => !(m.material instanceof THREE.ShaderMaterial));
+    meshes(group).filter((m) => !isWaterQuad(m));
 
   /** Skirt triangles only: the walls are the meshes with no supplied normal. */
   const wallTriangles = (group: THREE.Object3D): number =>
@@ -493,7 +520,7 @@ describe('rebuilding one chunk', () => {
     const after = meshes(handle.group);
     const replaced = after.filter((m) => !survivors.has(m));
     // A chunk is at most a surface and a skirt.
-    const ground = replaced.filter((m) => !(m.material instanceof THREE.ShaderMaterial));
+    const ground = replaced.filter((m) => !isWaterQuad(m));
     expect(ground.length).toBeGreaterThan(0);
     expect(ground.length).toBeLessThanOrEqual(2);
     // Water is allowed to go further (spec 074): a shoreline a few cells over a
