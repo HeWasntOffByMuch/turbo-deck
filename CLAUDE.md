@@ -70,6 +70,7 @@ change a game outcome.
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
 | `npx tsx scripts/probe-warden.ts` | What the Warden is doing, tick by tick (spec 262): the state it is in, the body its lance is committed to, where that lance points against where the body does, the state's own clock, both Guard pools and every pulse that lands. It exists because the encounter *is* timing, which is the one thing a pass/fail test says nothing about -- `warden.test.ts` asserts that stepping aside works, and only this says whether stepping aside is a half-second decision or a two-second one. `--strafe` reacts once the beam is live, `--orbit` never stops moving, `--at N` fights it from further out. On the shipped numbers one beam costs a body that stands still all **eight** of its pulses and a body that moves **two** -- and the gap widens with range rather than closing, because a lane sweeps its tip faster the further out you are: at 400 units the same reaction costs six |
+| `npx tsx scripts/probe-already-casting.ts` | Where `alreadyCasting` comes from in an ordinary fight (spec 264). Drives the shipped loop against a real server over a delayed wire -- `autoAttack` deciding the swings, `startAim` deciding the presses -- and counts every refusal by reason beside the phase the caster's **own** cast was in when the press was made. It has to run both halves at once, which is why no existing harness could have found this: `auto-attack-wire.test.ts` swings and asserts the refusals are `staggered` and nothing else, and that still holds. Add the presses and thirteen of them were refused thirteen times, a third during a *follow-through*. `--now` is the control, sending on the press as `castNow` did; `--no-press` is the swings-only half |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
@@ -6387,6 +6388,59 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  request; correcting for it would mean replicating a monster's
                  move speed to say something the broadcast-interval floor already
                  covers),
+                 press-queue.ts (a press that waits for the swing, spec 262. Of
+                 the four things that can ask for a cast, three hold while the
+                 body is committed -- `autoAttack` and `castOrder` both take
+                 `rooted`, `staggered` and `pending`, and a confirmed aim is held
+                 as an `AimOrder` until the swing ends -- and the fourth, a
+                 hotbar press, was gated on the cooldown and nothing else. A
+                 `'none'` gesture is `targeting: 'self'`, so the press *is* the
+                 commitment and went straight out mid-swing: measured through
+                 the shipped loop, **thirteen presses and thirteen
+                 `alreadyCasting`**, a third of them made during a
+                 *follow-through*, where the blow has already landed and the
+                 refusal is a lie. It did not self-limit either, because a
+                 refusal stamps no cooldown, so the local gate never closed. The
+                 five self-casts are the flask everybody carries plus Whirlwind,
+                 Rime Touch, Scorched Earth and Conjure Light -- which is to say
+                 the things a player mashes in a fight.
+                 **There is no expiry, and that is derived rather than skipped**:
+                 each of the three gates is already bounded by machinery that
+                 exists -- `rooted` by the cast's own `endTick`, `staggered` by
+                 the replicated `activityUntilTick`, `pending` by
+                 `PREDICTED_CAST_TIMEOUT_TICKS` -- so a fourth bound would be a
+                 number to keep in step with all of them, and it would be the one
+                 deciding how long a press lives. What ends one early is what
+                 already ends every other order: the stop key, Escape, death, and
+                 the next press. Starvation is prevented by the **order the frame
+                 loop drains them in** rather than by a timeout, which needed one
+                 more thing to be true: the drivers all read one `view` taken at
+                 the top of the frame, so a request sent by the first is not in
+                 the `awaitingCast` the rest read, and two requests on one frame
+                 is the server taking the first and refusing the second.
+                 Two rules were put there by the measurement rather than by
+                 reasoning, and both replaced one refusal with another until they
+                 were. **Ready is re-asked at the send** -- with the queue in and
+                 nothing else, `alreadyCasting` disappeared and `onCooldown` took
+                 its place, because a *second* press made during the first one's
+                 wind-up is still ready by `startAim`'s reading and waited that
+                 whole cast out to be refused at the end of it; dropped instead
+                 and silently, which is `castOrder`'s own rule (*"in reach, and
+                 not ready: the order is dropped rather than parked"*), since
+                 **what a press waits for is the body, never the timer**. And the
+                 **swing hold moved to the send**: spec 258's edge is consumed on
+                 the frame it is raised and carried forward only while
+                 `casting && !committed`, which is the *previous* swing, so
+                 raised at the press it is gone before the cast it belongs to has
+                 started and a player walking on WASD is back to 258's own
+                 measurement of every press refused as `withdrawn`. It carries
+                 the set it was made with rather than re-reading it, which is the
+                 difference between two right answers and one -- a direction held
+                 **at the press** is one the press means to stop, and one pressed
+                 **after** it is a withdrawal (spec 079), which is exactly what
+                 the player is asking for by pressing it. Only the *explicit*
+                 press raises it; `driveCastOrder` and `driveAutoAttack` still do
+                 not, which is 258's rule unchanged),
                  loot-drop.ts (how a drop looks while it is still withholding
                  itself, spec 158 -- the three.js half is `iso3d/drop-rig.ts`,
                  beside the other rigs, and this is everything it is told: the phase is a comparison against two ticks
