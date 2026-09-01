@@ -415,6 +415,15 @@ maps/            the world, as a map document (spec 072). arena.json is what the
                  enforce. A recipe is the only place natural
                  language enters: an agent writes one, it is reviewed as JSON,
                  and nothing at runtime reads a model.
+src/tooling/     rules about the repo rather than about the game (spec 266).
+                 spec-numbers.ts is which spec number is free and which one a
+                 branch is about to take twice, and it is under `src/` for
+                 `src/render/bundle-budget.ts`'s reason: vitest collects
+                 `src/**/*.test.ts`, so the pure half of a `check:` gate lives
+                 here to be covered by `npm test` while the script beside it in
+                 `scripts/` stays git plumbing and an exit code. Nothing in the
+                 game imports it, and no lint fence reaches it -- it is not the
+                 deterministic core, it is a thing that reads filenames.
 src/shared/      PRNG, spatial hash, world extent — dependency-free helpers
                  shared by the server, the geometry helpers and terrain
 src/terrain/     pure, deterministic world data: heightfields, materials, chunks
