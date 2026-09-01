@@ -30,8 +30,13 @@
 
 import type { SpeakEvent, LinePlan } from '../../audio/dialogue-voice.js';
 import { planLine } from '../../audio/dialogue-voice.js';
-import { lineOf, type DialogueVoiceId, type DialogueLine } from '../../../server/data/dialogue.js';
-import type { NpcDefinition } from '../../../server/data/npcs.js';
+import {
+  lineOf,
+  type DialogueLine,
+  type DialogueScript,
+  type DialogueVoice,
+  type DialogueVoiceId,
+} from '../../../server/data/dialogue.js';
 
 /**
  * Where a vocal event goes.
@@ -45,6 +50,30 @@ export interface DialogueSpeech {
   speak(voice: DialogueVoiceId, event: SpeakEvent, index: number): void;
   /** Silence anything still sounding. Called on every line change and on close. */
   stop(): void;
+}
+
+/**
+ * What a {@link DialogueSession} needs to be about (spec 260).
+ *
+ * `NpcDefinition` minus the fields a *conversation* never reads -- there are
+ * two, `talkRadius` and the monster row it is keyed by, and both are the
+ * server's business. Narrowed rather than left as the NPC type because spec 260
+ * has a second thing to talk through: a sign is one line on a post, with no
+ * body, no `talkRadius` anybody enforces and no row in `MONSTERS`, and handing
+ * this a synthetic `NpcDefinition` would be three lies to buy a type.
+ *
+ * `NpcDefinition` satisfies it structurally, so nothing about an NPC's side of
+ * this changed and no call site moved.
+ */
+export interface DialogueSpeaker {
+  /** Identity, and the seed half of a line's reveal hash. */
+  readonly id: string;
+  /** What the bubble calls them. */
+  readonly name: string;
+  readonly voice: DialogueVoice;
+  /** The `VENDORS` row an `opens: 'shop'` reply opens, or null for no shop. */
+  readonly vendorId: string | null;
+  readonly dialogue: DialogueScript;
 }
 
 /** What the bubble draws. Plain rows: `src/ui/` never sees anything else. */
@@ -90,12 +119,16 @@ export class DialogueSession {
 
   /**
    * @param npc     what is being talked to: its name, its voice, its script.
+   *                An NPC row, or a sign's one line (spec 260).
    * @param entityId the body, so the caller can check it is still there.
-   * @param speech  where vocal events go.
+   *                 **0 for a speaker that is not a body** -- a sign is a prop
+   *                 and has no entity id, and its driver checks it is still
+   *                 there by a different route entirely.
+   * @param speech  where vocal events go. `SILENT_SPEECH` for a sign.
    * @param nowMs   the clock the first line starts against.
    */
   constructor(
-    readonly npc: NpcDefinition,
+    readonly npc: DialogueSpeaker,
     readonly entityId: number,
     private readonly speech: DialogueSpeech,
     nowMs: number,

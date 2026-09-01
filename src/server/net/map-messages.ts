@@ -274,13 +274,18 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
     w.u8(
       (prop.align === true ? MapPropFlag.Align : 0) |
         (prop.uniform === true ? MapPropFlag.Uniform : 0) |
-        (prop.light ? MapPropFlag.Light : 0),
+        (prop.light ? MapPropFlag.Light : 0) |
+        (prop.text === undefined ? 0 : MapPropFlag.Text),
     );
     // A fixture's own numbers, and only where the document carries them
     // (spec 250). Quantized like every other number on this frame, which is
     // exact for anything `quantize` produced -- and the document's own writer
     // quantizes them, so a light survives the round trip unchanged.
     if (prop.light) w.varint(q(prop.light.brightness)).varint(q(prop.light.radius));
+    // And a sign's message after it (spec 260). *After* the light, because the
+    // reader takes them in this order and two optional blocks on one prop only
+    // work if both ends agree which comes first.
+    if (prop.text !== undefined) w.str(prop.text);
   }
 
   w.varuint(c.markers.length);
@@ -340,6 +345,10 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
       (flags & MapPropFlag.Light) !== 0
         ? { brightness: unq(r.varint()), radius: unq(r.varint()) }
         : undefined;
+    // Read here for the reason the light above is: the string is in the stream
+    // whether or not this build has a use for it, so skipping the read would
+    // desynchronise every prop after this one rather than losing one message.
+    const text = (flags & MapPropFlag.Text) !== 0 ? r.str() : undefined;
     // The optional fields are omitted rather than written as false, so a decoded
     // chunk deep-equals the document chunk it was encoded from.
     props[i] = {
@@ -352,6 +361,7 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
       ...((flags & MapPropFlag.Align) !== 0 ? { align: true } : {}),
       ...((flags & MapPropFlag.Uniform) !== 0 ? { uniform: true } : {}),
       ...(light ? { light } : {}),
+      ...(text === undefined ? {} : { text }),
     };
   }
 

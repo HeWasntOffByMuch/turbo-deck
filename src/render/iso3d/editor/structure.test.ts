@@ -9,13 +9,18 @@ import {
   footprintRadius,
   HOUSE_PLAN,
   loadMap,
+  MAX_SIGN_TEXT,
   parseMap,
   serializeMap,
+  SIGN_PLAN,
   STRUCTURE_KINDS,
   type ChunkOptions,
   type LoadedMap,
+  type Prop,
   type Rect,
 } from '../../../terrain/index.js';
+import { PLAYER_RADIUS } from '../../../sim/constants.js';
+import { SIGN_READ_RADIUS } from '../world/sign.js';
 import { EditHistory } from './history.js';
 import {
   baseFootprint,
@@ -80,9 +85,90 @@ describe('placing a building', () => {
   it('places every kind the tool offers', () => {
     for (const kind of STRUCTURE_KINDS) {
       const map = loaded();
-      const out = placeStructure(map.store, LAYER, settings({ structure: kind }), { x: 0, z: 0 });
+      // Every kind gets a message in the panel, because a sign refuses without
+      // one (spec 260) and no other kind reads it -- which is the second half
+      // of the assertion below.
+      const out = placeStructure(
+        map.store,
+        LAYER,
+        settings({ structure: kind, signText: 'Hearthstead, two miles' }),
+        { x: 0, z: 0 },
+      );
       expect(out.placed?.kind).toBe(kind);
+      // Only a sign carries one. A message written onto a hut is a field
+      // nothing will ever read, which is what `messageOf` exists to refuse.
+      expect(out.placed?.text).toBe(kind === 'sign' ? 'Hearthstead, two miles' : undefined);
     }
+  });
+
+  describe('a sign (spec 260)', () => {
+    it('refuses one with nothing to say, rather than placing a blank post', () => {
+      // `signMarks` drops a blank sign and the crosshair never offers one, so a
+      // sign placed empty is scenery -- and scenery the eraser's radius makes a
+      // nuisance to take back.
+      for (const text of ['', '   ', '\n\t ']) {
+        const map = loaded();
+        const out = placeStructure(map.store, LAYER, settings({ structure: 'sign', signText: text }), {
+          x: 0,
+          z: 0,
+        });
+        expect(out.placed).toBeNull();
+        expect(out.refused).toContain('message');
+        expect(map.store.propsWithin(LAYER, 0, 0, 200)).toHaveLength(0);
+      }
+    });
+
+    it('stores the message trimmed, so what is placed is what is read', () => {
+      const map = loaded();
+      const out = placeStructure(
+        map.store,
+        LAYER,
+        settings({ structure: 'sign', signText: '  Beware the bridge.  ' }),
+        { x: 0, z: 0 },
+      );
+      expect(out.placed?.text).toBe('Beware the bridge.');
+    });
+
+    it('cuts a message longer than a sign may carry', () => {
+      // Cut here and *refused* by `parseMap`, which is the right way round: a
+      // document is a file that may already be wrong, and a panel is a person
+      // still typing.
+      const map = loaded();
+      const out = placeStructure(
+        map.store,
+        LAYER,
+        settings({ structure: 'sign', signText: 'x'.repeat(MAX_SIGN_TEXT + 40) }),
+        { x: 0, z: 0 },
+      );
+      expect(out.placed?.text).toHaveLength(MAX_SIGN_TEXT);
+    });
+
+    it('blocks the post and nothing else', () => {
+      // The board is a metre of air at chest height. A collider spanning it
+      // would be an invisible wall either side of a stick -- and would put the
+      // reach a player has to get inside *behind* the thing being read.
+      const map = loaded();
+      const out = placeStructure(map.store, LAYER, settings({ structure: 'sign', signText: 'x' }), {
+        x: 0,
+        z: 0,
+      });
+      expect(out.placed).not.toBeNull();
+      expect(footprintRadius(out.placed as Prop)).toBeCloseTo(SIGN_PLAN.postWidth / 2, 6);
+      // And the reach clears it by more than a body, or the walk would end
+      // inside the post and never arrive.
+      expect(SIGN_READ_RADIUS).toBeGreaterThan(SIGN_PLAN.postWidth / 2 + PLAYER_RADIUS);
+    });
+
+    it('writes no message onto a kind that cannot read one', () => {
+      const map = loaded();
+      const out = placeStructure(
+        map.store,
+        LAYER,
+        settings({ structure: 'campfire', signText: 'not a sign' }),
+        { x: 0, z: 0 },
+      );
+      expect(out.placed?.text).toBeUndefined();
+    });
   });
 
   it('turns the building to the panel\'s facing, in radians', () => {

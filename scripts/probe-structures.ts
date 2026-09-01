@@ -52,6 +52,8 @@ interface SavedProp {
   readonly z: number;
   readonly rotation?: number;
   readonly scale?: number;
+  /** What a sign says (spec 260). Absent on every other kind. */
+  readonly text?: string;
 }
 interface MapFile {
   readonly layers?: readonly { readonly chunks?: readonly { readonly props?: readonly SavedProp[] }[] }[];
@@ -77,7 +79,22 @@ async function waitForServer(url: string, timeoutMs = 30_000): Promise<void> {
   throw new Error(`server at ${url} never came up`);
 }
 
-const readout = async (page: Page): Promise<string> => (await page.textContent('body')) ?? '';
+/**
+ * The editor's own readout block, which is the element carrying `data-ghost`.
+ *
+ * The *element* rather than the whole body, because the page has no line breaks
+ * in its text content: read off `body`, every detail line printed by this probe
+ * ran straight from the status into the tab strip and the entire settings
+ * panel, which turns a failure nobody can read into a failure nobody can act
+ * on. It changes no check -- every number this parses was always in this block.
+ */
+const readout = async (page: Page): Promise<string> => {
+  const text = await page.evaluate(() => {
+    const node = document.querySelector<HTMLElement>('[data-ghost]');
+    return node?.textContent ?? null;
+  });
+  return text ?? (await page.textContent('body')) ?? '';
+};
 
 /**
  * What the ghost has on the scene graph, off `data-ghost` (spec 225).
@@ -146,6 +163,15 @@ async function ghostBecomes(page: Page, want: 'hidden' | 'drawn', at: readonly [
 /** The far corner of the canvas, and the middle of it. */
 const CORNER: readonly [number, number] = [60, 110];
 const MIDDLE: readonly [number, number] = [480, 400];
+
+/**
+ * What the sign is placed saying (spec 260).
+ *
+ * Distinctive, and short enough that the editor's status line quotes it whole:
+ * that line cuts at 40 characters, so a message longer than one would be
+ * reported as a mismatch by a probe rather than by the feature.
+ */
+const SIGN_MESSAGE = 'Beware the bridge';
 
 async function settled(page: Page, was: number): Promise<boolean> {
   for (let i = 0; i < 80; i++) {
@@ -219,9 +245,66 @@ async function setNumber(page: Page, folder: string, label: string, value: numbe
   await page.waitForTimeout(250);
 }
 
+/**
+ * Type into a panel row's text field. {@link setNumber}, for a string.
+ *
+ * Its own function rather than a widened `setNumber` because the two dispatch
+ * differently in lil-gui's own handling and a number coerced out of a string is
+ * exactly the sort of thing that would pass here and place a sign saying `NaN`.
+ */
+async function setText(page: Page, folder: string, label: string, value: string): Promise<void> {
+  await page.evaluate(
+    ({ inside, wanted, to }) => {
+      for (const group of Array.from(document.querySelectorAll('.lil-gui'))) {
+        if (group.querySelector(':scope > .lil-title')?.textContent?.trim() !== inside) continue;
+        for (const row of Array.from(group.querySelectorAll('.lil-controller'))) {
+          if (row.querySelector('.lil-name')?.textContent?.trim() !== wanted) continue;
+          const input = row.querySelector('input');
+          if (!input) return;
+          input.value = to;
+          input.dispatchEvent(new Event('input', { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+          input.blur();
+          return;
+        }
+      }
+    },
+    { inside: folder, wanted: label, to: value },
+  );
+  await page.waitForTimeout(250);
+}
+
 /** The last thing the editor's status line said it did. */
 async function placed(page: Page): Promise<string> {
-  return /placed (?:house|well)[^A-Z]*/.exec(await readout(page))?.[0]?.trim() ?? 'said nothing';
+  return /placed (?:house|well|sign)[^]*$/.exec(await readout(page))?.[0]?.trim() ?? 'said nothing';
+}
+
+/** Whatever the status line is saying, which is the tail after the undo count. */
+async function status(page: Page): Promise<string> {
+  return /\d+ undo(?: \u00b7 ([^]*))?$/.exec(await readout(page))?.[1]?.trim() ?? '(nothing)';
+}
+
+/**
+ * Wait for the status line to say something, and answer whether it did.
+ *
+ * A **poll**, which is the rule spec 250 extended to every read in
+ * `probe-map-editor.ts` after two consecutive runs failed on different checks:
+ * the status is published from the frame and this environment paints the editor
+ * at about five frames a second under software GL, so anything read a fixed
+ * moment after a click is read before the click was processed.
+ *
+ * It matters more for a *refusal* than for a placement, and that is why this
+ * exists rather than `clickGround`: that helper waits for the prop count to
+ * change, which a refusal never does, so it spends its whole timeout -- long
+ * enough for the autosave to land and write its own message over the refusal.
+ */
+async function statusUntil(page: Page, wanted: RegExp, timeoutMs = 6000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (wanted.test(await readout(page))) return true;
+    await page.waitForTimeout(120);
+  }
+  return false;
 }
 
 async function openEditor(page: Page): Promise<void> {
@@ -375,6 +458,55 @@ async function main(): Promise<void> {
     check('the well places too', await clickGround(page, 560, 560), await placed(page));
     check('and says so', /placed well/.test(await readout(page)), await placed(page));
 
+    // --- the sign, and its message (spec 260) -------------------------------
+    //
+    // The one placed kind with a field of its own, so the one whose panel row
+    // can be shown for the wrong kind or read by nothing at all -- and neither
+    // failure is visible in a screenshot, because a sign placed with an empty
+    // message looks exactly like one placed with the right message.
+    await page.getByRole('button', { name: 'sign', exact: true }).click();
+    await page.waitForTimeout(400);
+    check(
+      'arming a sign shows its message row',
+      (await panelRow(page, 'Structures', 'Message'))?.shown === true,
+      'Message on screen',
+    );
+    // Pressed directly rather than through `clickGround`: that helper waits for
+    // the prop count to move, and the whole claim here is that it does not.
+    const propsBefore = await propCount(page);
+    await page.mouse.move(300, 560);
+    await page.mouse.down();
+    await page.waitForTimeout(150);
+    await page.mouse.up();
+    const refused = await statusUntil(page, /a sign needs a message/);
+    check('and a blank one is refused rather than placed', refused, await status(page));
+    check(
+      'and nothing was put down when it was refused',
+      (await propCount(page)) === propsBefore,
+      `${propsBefore} -> ${await propCount(page)} props`,
+    );
+    await setText(page, 'Structures', 'Message', SIGN_MESSAGE);
+    check('a sign with something on it places', await clickGround(page, 300, 560), await placed(page));
+    // Quoted in the status line, for the reason a fixture's brightness is: a
+    // board with the wrong words on it looks identical to one with the right
+    // words on it until somebody walks up to it.
+    check(
+      'and the editor says what it placed it saying',
+      (await readout(page)).includes(SIGN_MESSAGE),
+      await placed(page),
+    );
+    await page.getByRole('button', { name: 'well', exact: true }).click();
+    await page.waitForTimeout(300);
+    check(
+      'and the message row goes away for a kind that cannot read one',
+      (await panelRow(page, 'Structures', 'Message'))?.shown !== true,
+      'Message hidden',
+    );
+    // And the well stays armed, because the ghost check below is written
+    // against it -- this block sits between the two on purpose, so a sign is
+    // placed in the same session as the buildings rather than in one of its
+    // own, but it may not change what the next check finds armed.
+
     // --- the preview (spec 225) --------------------------------------------
     await page.mouse.move(430, 520);
     await page.waitForTimeout(500);
@@ -457,6 +589,26 @@ async function main(): Promise<void> {
       'the dragged hut was saved at the size the drag reached',
       dragged.length === 1,
       `${dragged.length} at ${reached.toFixed(2)}x of ${houses.map((h) => (h.scale ?? 1).toFixed(2)).join(', ')}`,
+    );
+
+    // The sign, and its message: the file is where "the panel row is wired to
+    // the tool" is finally answered (spec 260). A `Message` row that changed
+    // nothing draws exactly the same board.
+    const signs = after.filter((p) => p.species === 'sign');
+    check(
+      'the saved map has the one sign this probe put down',
+      signs.length === 1,
+      `${signs.length} signs`,
+    );
+    check(
+      'and it carries the message that was typed into the panel',
+      signs[0]?.text === SIGN_MESSAGE,
+      `text = ${JSON.stringify(signs[0]?.text ?? null)}`,
+    );
+    check(
+      'and nothing else in the map gained one',
+      after.every((p) => p.species === 'sign' || p.text === undefined),
+      after.filter((p) => p.species !== 'sign' && p.text !== undefined).map((p) => p.species).join(', ') || 'none',
     );
 
     const turned = houses.filter((h) => Math.abs((h.rotation ?? 0) - Math.PI / 2) < 0.01);

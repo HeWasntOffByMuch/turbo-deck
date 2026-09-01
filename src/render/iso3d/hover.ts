@@ -114,6 +114,46 @@ function bodyDistance(raycaster: THREE.Raycaster, target: HoverTarget): number |
   return mesh === null ? volume : Math.min(volume, mesh);
 }
 
+/** A point or a direction, as the volume test below reads one. */
+interface Vec3Like {
+  readonly x: number;
+  readonly y: number;
+  readonly z: number;
+}
+
+/**
+ * The two vectors {@link rayBodyDistance} reads off a ray.
+ *
+ * Structural rather than `THREE.Ray`, which satisfies it: the volume test is
+ * arithmetic and the class is only how a camera hands one over. Spec 260 is why
+ * -- a sign's pick is the same cylinder test over props that come out of the
+ * streamed map, and that module runs headlessly.
+ */
+export interface RayLike {
+  readonly origin: Vec3Like;
+  readonly direction: Vec3Like;
+}
+
+/**
+ * The upright cylinder {@link rayBodyDistance} tests against.
+ *
+ * `HoverTarget` minus the two fields the volume half never reads -- the meshes
+ * are `pickHoveredUnit`'s business and the id is the caller's. Narrowed for the
+ * reason above and one more: it is what a caller with no `Object3D` to offer
+ * would otherwise have to invent, and a placeholder in an unread field is a
+ * placeholder somebody later reads.
+ */
+export interface RayVolume {
+  /** Where it stands, world XZ. */
+  readonly position: Vec2;
+  /** Its radius, in world units. */
+  readonly radius: number;
+  /** The ground under it, world Y. */
+  readonly base: number;
+  /** How tall it stands above {@link RayVolume.base}. */
+  readonly height: number;
+}
+
 /**
  * Where `ray` enters a unit's body volume, or null when it misses.
  *
@@ -121,7 +161,7 @@ function bodyDistance(raycaster: THREE.Raycaster, target: HoverTarget): number |
  * to the top of its head. A ray that starts inside it enters at zero; one whose
  * only crossing is behind the origin misses.
  */
-export function rayBodyDistance(ray: THREE.Ray, target: HoverTarget): number | null {
+export function rayBodyDistance(ray: RayLike, target: RayVolume): number | null {
   const { origin, direction } = ray;
   const top = target.base + target.height;
   if (target.height <= 0 || target.radius <= 0) return null;

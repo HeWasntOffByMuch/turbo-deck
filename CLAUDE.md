@@ -85,7 +85,8 @@ change a game outcome.
 | `npx tsx scripts/probe-editor-props.ts` | Whether the editor's deferred prop field really puts the trees back (spec 211) |
 | `npx tsx scripts/bench-editor.ts` | What *opening the map editor* costs, stage by stage, across world sizes (spec 211). `bench-map.ts` measures the server; this measures the one caller that still wants the mesh |
 | `npx tsx scripts/preview-structures.ts` | Photograph the village props -- hut, well, and four of them round a square -- with a body-sized block for scale (spec 224) |
-| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut and a well in the real editor and read them back out of the saved file (spec 224) |
+| `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 260). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
+| `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 260). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
 | `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
 | `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
 | `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
@@ -405,6 +406,26 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  a flat wall and a body that can stand in a corner, and erring
                  wide is the fence's own answer to the same question. A well is
                  already a circle, so that one is exact.
+                 Since spec 260 there is a **sign** beside them, and it belongs
+                 in that list for the list's one membership test: it goes in one
+                 spot somebody chose, turned to face the road it is read from,
+                 so it is placed rather than painted. What it adds is a
+                 **string** -- `Prop.text`, absent by default like `light`, so no
+                 committed map gained a key and no `mapId` moved -- and
+                 `signText` is the one answer to "what does this say", read by
+                 the editor deciding whether it has anything to place, the client
+                 deciding whether to offer it, and the bake deciding what to
+                 store. Blank, whitespace-only and absent are one state at all
+                 three, and a message on a hut is inert rather than an error,
+                 which is the rule a `light` on one already follows. Its collider
+                 is the **post and only the post**: the board is a metre of air
+                 at chest height that a body walks under, and blocking its span
+                 would be an invisible wall either side of a stick -- and would
+                 put the reach a player has to get inside *behind* the thing they
+                 are reading. It is also the one prop field a person is expected
+                 to hand-edit: `maps/arena.json` is committed so the world
+                 reviews as a diff, and a sentence is the one thing in a prop
+                 record that reads as a sentence rather than a coordinate.
                  Since spec 250 it also holds the **light fixtures**: a campfire,
                  a street lamp on a stake, and a standing torch. The same
                  argument one system further along -- a fixture is written into
@@ -1408,8 +1429,10 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  press whose meaning is read off what is under the cursor (spec
                  070), and refusing a pending aim is the same shape one level up,
                  so `world.order` is one action with four readings exactly as it
-                 was one branch with four. Three bindings a player could put on
-                 three different buttons is not a preference, it is a broken
+                 was one branch with four -- five since spec 260, which added
+                 *read a sign* and is the first of them that acts on something
+                 the server has never heard of. Three bindings a player could put
+                 on three different buttons is not a preference, it is a broken
                  order. The labels avoid every word `keyLabel` already makes:
                  `Right` alone is taken -- it is what `ArrowRight` comes back as
                  -- so the pointer says `Right Click`;
@@ -2507,6 +2530,36 @@ src/render/iso3d/editor/  the map editor tab (specs 049-052, 084). Renders only
                  ring is the building's own `footprintRadius`, so what the ring
                  draws and what the collider blocks are the same circle rather
                  than two numbers that agree until one is edited.
+                 Since spec 260 it also places a **sign**, and the message is a
+                 panel field read at the press, the way `structureYaw` and the
+                 two fixture sliders are: a `Message` row shown for the one kind
+                 that reads it and hidden for the rest, since unlike spec 178's
+                 monster dropdown this is a box with a perfectly plausible
+                 sentence in it and nowhere for that sentence to go. It is the
+                 one row here **not** re-seeded when the armed kind changes --
+                 the light sliders are, because a blank slider cannot be dragged
+                 and a lamp post showing a campfire's brightness is a panel lying
+                 about what pressing now would place, where a message has no row
+                 to come from and is the one field in this panel that costs
+                 something to *type*. A blank sign is **refused** rather than
+                 placed, because `signMarks` drops one and the crosshair never
+                 offers one, so putting one down is a tool that appears to work
+                 and produces scenery -- scenery the eraser's radius then makes a
+                 nuisance to take back. What was placed is said out loud, quoted,
+                 for the reason a fixture's brightness is: a board with the wrong
+                 words on it looks identical to one with the right words on it
+                 until somebody walks up to it.
+                 What this deliberately does **not** do is let a placed sign be
+                 edited, and the reason is structural rather than a matter of
+                 effort: **a prop has no identity** -- a `Prop` is an anonymous
+                 record in a chunk's list -- so "select this one and change its
+                 message" is prop ids in the map format rather than a panel row,
+                 and spec 222's rule for the marker tool (*the selection is an
+                 id, never a reference*) is exactly what cannot be satisfied.
+                 Correcting a sign is erase-and-place, which is the deal every
+                 other prop's scale, facing and brightness already gets -- or an
+                 edit to `maps/arena.json`, which is the one place a sentence in
+                 a prop record is honestly editable by hand.
                  structure-ghost.ts is the building itself, drawn before it is
                  put down (spec 225), and it is here rather than in `cursor.ts`
                  because a footprint circle cannot say which way a hut faces or
@@ -5127,6 +5180,105 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the output is **re-asked every call** rather than cached --
                  there is no `AudioContext` until the first user gesture, and a
                  null cached at mount is an NPC silent for the session.
+                 Since spec 260 the same bubble reads a **sign**, and the
+                 interesting part is how little it costs. A sign is a prop, so
+                 the sim has never heard of it: there is no `Talk`, no
+                 `Conversation` and no claim, which is not a shortcut but what a
+                 sign *is* -- spec 246 put a conversation on the server because
+                 it is a claim on a body that would otherwise wander off
+                 mid-sentence, and a board nailed to a post is not going
+                 anywhere, holds nothing and sells nothing. Two players read the
+                 same sign at once and neither is refused. `world/sign.ts` is the
+                 whole of it and is pure: which post the cursor named, how close
+                 the body has to get, and what the bubble is handed.
+                 Three things were widened rather than duplicated, which is the
+                 measure of whether this belonged here at all. `DialogueSession`
+                 takes a **`DialogueSpeaker`** -- `NpcDefinition` minus the two
+                 fields a conversation never reads -- so a sign is one line, no
+                 replies, no vendor, and a synthetic NPC row would have been
+                 three lies to buy a type. `rayBodyDistance` in `hover.ts` takes
+                 a **`RayLike`** and a **`RayVolume`** rather than three's own
+                 classes, so the cylinder test that answers "is the cursor on
+                 that spider" answers "is the cursor on that board" in Node --
+                 and the placeholder `Object3D` a sign would otherwise have had
+                 to invent stopped existing. And `DialogueDriver` answers a
+                 **`DialogueFocus`** rather than a body id, because there are two
+                 kinds of speaker now and a mount searching `view.entities` would
+                 find one and silently draw nothing for the other.
+                 The pick is the marker tool's finding one tab over: **a sign's
+                 board is not where a sign is filed**, so the volume is tested
+                 first and the ground footprint second -- at this camera's pitch
+                 the ground under a cursor aimed at a board is metres from the
+                 post, and how many metres depends on the elevation the player
+                 has the Height slider at. The pick volume is the *board* where
+                 the collider is the *post*, which is the one place those two
+                 numbers are deliberately different: a signpost the cursor could
+                 only name by its stick is a signpost nobody clicks.
+                 It is **two bands**, and both of the reasons are the same
+                 sentence from opposite ends: the board is seven times wider
+                 than the stick holding it up, so one cylinder sized for the
+                 board would claim a column of empty air either side of every
+                 post from the ground up -- and every unit of that is ground a
+                 click can no longer walk to, which is the price `hover.ts`
+                 records paying once and reversing. The ground footprint is the
+                 **post's** radius for the same reason: the patch of earth a
+                 sign occupies is the patch its post stands on, and claiming
+                 what the board overhangs would take a stride of walkable ground
+                 out of the game around every signpost on the map.
+                 Every band is measured from a **sampled** ground height, and
+                 that is the one thing this shipped wrong. The first cut took
+                 the base as zero and wrote it down as a stated approximation;
+                 the arena's ground is hundreds of units up, so the whole column
+                 sat underneath the sign -- the board answered nothing at all,
+                 and a ray that passed through the buried column on its way down
+                 answered `sign` over open ground. Hovering the thing did
+                 nothing and the field near it was live. `SignIndex` samples
+                 `WorldScene.groundAt` when it rebuilds, which is the same
+                 answer the bubble's anchor is projected through, so the volume
+                 a cursor names and the point a bubble hangs over cannot
+                 disagree about where a sign is standing -- and it rebuilds on
+                 the store's revision, which is the tick a sign and the ground
+                 under it both arrive on, because they are the same chunk.
+                 What the probe was doing meanwhile is worth keeping: it swept
+                 the frame until *something* read `sign`, found the patch of
+                 ground, and reported a pass. It measures the mark against the
+                 **bubble's own anchor** now -- 0 pixels below it when the
+                 volume is right, 96 when the base is assumed to be zero.
+                 **No sound**, and that is `SILENT_SPEECH` rather than a voice at
+                 zero: a sink that can start a sound owes a way to stop one, and
+                 the cheapest thing that cannot go wrong is one that never
+                 starts. A voice row is still authored, because `planLine` reads
+                 it to decide *when* each character appears -- which is the
+                 reveal a player watches.
+                 What ends one is the one thing the server would otherwise have
+                 done, so the driver does it: a sign's bubble is **released by
+                 range**, reconciled every frame against the reader's predicted
+                 position rather than raised as an event, which is
+                 `sweepConversations`' own shape and its reason -- every way a
+                 reader can stop reading is the same check rather than a path
+                 some later change can forget. The *same* radius that opened it,
+                 spec 246's rule in as many words, and it cannot flicker because
+                 nothing reopens a bubble on its own. The reader's position is a
+                 **required** parameter of `update` even though a body
+                 conversation never reads it: a sign has no server to release
+                 it, so this is the only thing that does, and an argument a
+                 caller can leave out is one a caller will.
+                 `bubbleAnchor` is where the bubble points, and it is a named
+                 function because the rule was wrong and the wrongness was
+                 invisible -- a bubble that has quietly fallen back to its
+                 no-anchor placement is still a bubble, sitting somewhere
+                 plausible, saying the right words. **Whether the speaker is on
+                 screen is asked at their feet; where the bubble goes is asked
+                 at the lift.** The lift is in *world* units, so zooming in
+                 magnifies it: at the span a conversation frames itself at, the
+                 point a body's headroom above the ground is 400 pixels up in an
+                 800-pixel frame, and judging *that* point on screen dropped the
+                 anchor for a speaker standing in the middle of the view -- which
+                 put their bubble at the bottom of the screen, because centred
+                 and low is what a null anchor gets. Spec 246's rule is
+                 unchanged and is what the feet are for; what a lifted anchor off
+                 the top means is only that `placement` clamps it, which is what
+                 that function has always done with one.
                  The camera is a `WorldScene.setDialogueFraming` push and
                  nothing more: the focus point becomes the midpoint of the two
                  bodies and the half-width is taken down, both through the ease
@@ -5579,7 +5731,7 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the ground fell across it, which for a mark this size is a couple
                  of units on anything walkable),
                  crosshair.ts (what the pointer *is* over the world, spec 200:
-                 three marks, authored as a 9x9 table of `#` in `pixel-font.ts`'s
+                 four marks, authored as a 9x9 table of `#` in `pixel-font.ts`'s
                  register and rendered as crisp rects -- which is why the art is odd-sided, since what a
                  crosshair marks is its centre pixel and an even box has none.
                  The **small** one -- a centre dot and the four arm tips -- says
@@ -5593,6 +5745,18 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  the mark is centred on the pointer like the other two, so what
                  has to sit on the box's middle is the bubble's body rather than
                  the whole drawing including its tail.
+                 The **question mark** (spec 260) says the thing under the
+                 pointer is a sign you can read, and it is the bubble's argument
+                 one prop over -- deliberately *not* the bubble itself, since a
+                 sign says one thing, says it to everybody and cannot be asked
+                 anything back, so a mark promising a conversation would promise
+                 the wrong thing about a board on a post. It is also the one of
+                 the four that wins on **precedence** rather than on clarity: the
+                 other three are answers about a *body* and this is an answer
+                 about a *prop*, so unlike every pair above it the two really can
+                 both be true -- a merchant standing in front of a signpost is an
+                 ordinary thing for a village to contain. `issueOrder` ranks them
+                 the same way, so what lights up is what the click does.
                  Everywhere else the page's own arrow stands, because a mark that
                  is always on says nothing by being on.
                  They are **drawn in the page** rather than handed to CSS as

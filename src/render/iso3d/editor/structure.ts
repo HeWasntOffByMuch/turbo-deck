@@ -4,6 +4,7 @@ import {
   footprintRadius,
   isFixtureKind,
   PLACED_KINDS,
+  signText,
   type ChunkCoord,
   type MapChunkStore,
   type PlacedKind,
@@ -52,12 +53,29 @@ export interface StructureSettings {
    * once, rather than in the panel and the tool separately.
    */
   readonly structureYaw: number;
+  /**
+   * What a sign is placed saying (spec 260).
+   *
+   * Read only by a kind that has anything to do with it, exactly as
+   * `fixtureBrightness` is read only by a kind that emits: a message on a well
+   * is a field nothing will ever look at, which is the thing `parseMarker`
+   * refuses one system over.
+   *
+   * A **required** string rather than an optional one, and that is not
+   * tidiness: `gui.add` refuses a field whose value is not there, logs
+   * `gui.add failed`, hands back `undefined`, and the `.name()` on the end of
+   * the chain throws -- which stops panel construction where it stands and
+   * opens the Map editor tab black. Spec 250 shipped exactly that by seeding
+   * two sliders `null`, and `tools.test.ts` asserts it cannot happen again.
+   */
+  readonly signText: string;
 }
 
 export const DEFAULT_STRUCTURE: StructureSettings = {
   structure: 'house',
   structureScale: 1,
   structureYaw: 0,
+  signText: '',
 };
 
 /**
@@ -196,6 +214,33 @@ export function fixtureOverride(
 }
 
 /**
+ * The message this tool would place, or **null** for nothing to place.
+ *
+ * `fixtureOverride`'s shape one field along, and the same rule: a kind that
+ * cannot read it never gets one, whatever the panel happens to be holding, so
+ * arming the sign, typing a message and then switching to a hut does not write
+ * a sentence into a building.
+ *
+ * The trimming and the bound are `signText`'s, asked of a prospective prop
+ * rather than reimplemented -- so what the tool refuses to place and what the
+ * game refuses to read are one answer. A message longer than `MAX_SIGN_TEXT` is
+ * *cut* here and *refused* by `parseMap`, which is the right way round: a
+ * document is a file that may already be wrong, and a tool is a person still
+ * typing.
+ */
+export function messageOf(settings: StructureSettings): string | null {
+  return signText({
+    kind: settings.structure,
+    x: 0,
+    y: 0,
+    scale: 1,
+    rotation: 0,
+    tint: 0,
+    text: settings.signText,
+  });
+}
+
+/**
  * The footprint a structure of these settings takes, in world units.
  *
  * What the editor draws its cursor ring at, so the ring is the ground the
@@ -243,6 +288,15 @@ export function placeStructure(
 
   const scale = Number.isFinite(settings.structureScale) ? Math.max(0.1, settings.structureScale) : 1;
   const light = fixtureOverride(settings);
+  const text = messageOf(settings);
+  // Refused rather than placed blank (spec 260). A sign with nothing on it is a
+  // post the crosshair slides over and a click walks past -- `signMarks` drops
+  // it and `signText` is what decides, at every layer -- so putting one down
+  // would be a tool that appears to work and produces scenery. The eraser is a
+  // radius, so it would also be scenery that is a nuisance to take back.
+  if (settings.structure === 'sign' && text === null) {
+    return { placed: null, dirty: [], refused: 'a sign needs a message: type one in the panel' };
+  }
   const prop: Prop = {
     kind: settings.structure,
     x: at.x,
@@ -251,6 +305,7 @@ export function placeStructure(
     rotation: (((settings.structureYaw % 360) + 360) % 360) * (Math.PI / 180),
     tint: tintAt(at.x, at.z),
     ...(light ? { light } : {}),
+    ...(text === null ? {} : { text }),
   };
 
   // Snapshot before anything changes, exactly as the scatter does. Every chunk

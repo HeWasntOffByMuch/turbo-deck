@@ -217,6 +217,14 @@ const PURE_RENDER = [
   // bodies and answers what to draw -- which is what lets "every way a
   // conversation can end arrives as one event" be a test rather than a claim.
   'src/render/iso3d/world/dialogue-driver.ts',
+  // What a sign is to the client that reads it (spec 259): which post the
+  // cursor named, how close the body has to get, and what the bubble is handed.
+  // Pure for `dialogue.ts`'s reason and one of its own -- a sign is the first
+  // thing a click acts on that the sim has never heard of, so "reading one
+  // changes no game outcome" should be a fact about the module graph rather
+  // than a promise. The ray comes in as a `RayLike`, which is why the cylinder
+  // test in `hover.ts` stopped naming three's own class.
+  'src/render/iso3d/world/sign.ts',
   // The action bar's view-model (spec 190). The bar moved onto the interface
   // canvas, so what a slot draws -- its wedge, its badge, why it is lit -- is a
   // mapping from replicated facts to plain rows, and a mapping is checked in

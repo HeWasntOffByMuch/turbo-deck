@@ -550,8 +550,15 @@ zigzag varints throughout, so a negative chunk coordinate still costs one byte.
 A `runs` is `varuint pairCount` then that many `varuint`s — the document's own
 run-length `value, count` pairs, passed through rather than expanded.
 
-`flags`: `1` align, `2` uniform. `kind`: `0` spawn, `1` objective, `2` campfire,
-`3` trigger. An empty `label` string means the marker had none.
+`flags`: `1` align, `2` uniform, `4` light, `8` text. A prop's optional blocks
+follow its flags byte in bit order: two `varint`s of light when `4` is set, then
+a `str` of message when `8` is set. `kind`: `0` spawn, `1` objective, `2`
+campfire, `3` trigger. An empty `label` string means the marker had none.
+
+A message is a sign's words (spec 260). It is bounded to `MAX_SIGN_TEXT`
+characters by the document parser rather than here, because a `str` is
+length-prefixed and the question "how much text may one prop put on the wire"
+has to have an answer that is not *whatever somebody typed into a file*.
 
 **Every coordinate in this message is an integer of thousandths, not an `f32`.**
 The document is quantized to three decimals and most such values have no exact

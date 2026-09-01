@@ -1339,6 +1339,8 @@ export class UiScreens {
     readonly barSlots: readonly { readonly id: string; readonly rect: Rect }[];
     readonly dialogueOpen: boolean;
     readonly dialogueRects: readonly { readonly id: string; readonly rect: Rect }[];
+    /** The bubble's own box: what a press advances when there are no replies. */
+    readonly dialogueBubble: Rect | null;
     readonly dialogueLine: string;
     /**
      * The refund marks currently up, and where each is drawn (spec 254).
@@ -1366,6 +1368,7 @@ export class UiScreens {
       // that opened and shut again shipped with a green suite.
       dialogueOpen: this.dialogue.visible,
       dialogueRects: this.dialogue.replyRects,
+      dialogueBubble: this.dialogue.bubbleRect,
       // Separators stripped: the readout joins on these, and a line that carried
       // one would split into fields nobody meant.
       dialogueLine: this.dialogue.shownLine.replace(/[|;:,]/g, ' '),

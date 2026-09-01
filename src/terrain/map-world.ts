@@ -307,6 +307,7 @@ export class MapChunkStore {
         ...(p.align ? { alignToNormal: true } : {}),
         ...(p.uniform ? { uniform: true } : {}),
         ...(p.light ? { light: p.light } : {}),
+        ...(p.text === undefined ? {} : { text: p.text }),
       })),
       // World space inside the store, chunk-local in the document -- the same
       // convention props use. Holding the two differently is how a world
@@ -1229,6 +1230,11 @@ export class MapChunkStore {
         ...(p.light
           ? { light: { brightness: quantize(p.light.brightness), radius: quantize(p.light.radius) } }
           : {}),
+        // Not through `signText` here, unlike `bakeMap`: this is the *export*
+        // of a store the editor has been writing into, so what it owes is the
+        // round trip -- a message put in is the message that comes back out,
+        // and the deciding is done once, where the prop was made.
+        ...(p.text === undefined ? {} : { text: p.text }),
       })),
       markers: chunk.markers.map((m) => ({
         ...m,

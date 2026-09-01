@@ -34,6 +34,7 @@ import { SpeechVoices } from '../../audio/dialogue-sound.js';
 import type { SpeakEvent } from '../../audio/dialogue-voice.js';
 import type { Audio, SpeechOutput } from '../../audio/sink.js';
 import { DialogueSession, type DialogueOutcome, type DialogueSpeech } from './dialogue.js';
+import { SIGN_BUBBLE_LIFT, SIGN_READ_RADIUS, SILENT_SPEECH, signSpeaker, type SignMark } from './sign.js';
 
 /** Which bus a mumble plays on. See `sink.ts` for why it is not one of its own. */
 const SPEECH_BUS = 'ui' as const;
@@ -44,6 +45,39 @@ export interface DialogueBody {
   readonly typeId: string;
   readonly x: number;
   readonly y: number;
+}
+
+/**
+ * Where the conversation is, for the camera and the bubble (spec 260).
+ *
+ * Answered by the driver rather than looked up again by the mount, because
+ * there are two kinds of speaker now and only this file knows which one is
+ * live: an NPC is a body in the replicated set and a sign is a prop the server
+ * has never heard of, and a mount that searched `view.entities` for either
+ * would find one of them and silently draw nothing for the other.
+ */
+export interface DialogueFocus {
+  /**
+   * The body being spoken to, or **0** for a speaker that is not one.
+   *
+   * Kept as a separate field from {@link DialogueFocus.key} because the two
+   * answer different questions: this is what the server has a claim on, and the
+   * key is only ever compared against itself.
+   */
+  readonly entityId: number;
+  /**
+   * Identity, for a caller watching for the speaker to *change*.
+   *
+   * A string so a body and a sign can share one field without either having to
+   * pretend to be the other -- `view.ts` turns the player to face whoever they
+   * have just addressed, on the edge, and "addressed something else" is the
+   * whole of what it needs to know.
+   */
+  readonly key: string;
+  readonly x: number;
+  readonly y: number;
+  /** How far above the ground the bubble's tail points, in world units. */
+  readonly lift: number;
 }
 
 /**
@@ -85,9 +119,44 @@ export class SpeechSink implements DialogueSpeech {
   }
 }
 
+/** A world point projected to the frame, as `WorldScene.projectPoint` answers. */
+export interface Projected {
+  readonly x: number;
+  readonly y: number;
+  readonly onScreen: boolean;
+}
+
+/**
+ * Where the bubble points, or null for nothing to point at.
+ *
+ * Two projected points and one rule, and it is a named function rather than a
+ * line in the mount because the rule was wrong and the wrongness was invisible:
+ * **whether the speaker is on screen is asked at their feet, and where the
+ * bubble goes is asked at the lift.**
+ *
+ * The lift is in *world* units, so zooming in magnifies it -- at a tight span
+ * and a wide frame the point a body's headroom above the ground is hundreds of
+ * pixels up, and once it passed the top of the frame the mount handed the
+ * screen a null anchor and got its no-anchor placement: centred, low. A speaker
+ * standing in the middle of the view with their bubble at the bottom of the
+ * screen, and nothing about it looks like an off-screen speaker.
+ *
+ * Spec 246's rule is unchanged and is what the feet are for -- a speaker the
+ * player cannot see draws no bubble rather than one pinned to an edge, because
+ * the camera is on its way to them. What a lifted anchor off the top means is
+ * only that `DialogueScreen.placement` clamps it, which is what that function
+ * has always done with one.
+ */
+export function bubbleAnchor(lifted: Projected, feet: Projected): { x: number; y: number } | null {
+  if (!feet.onScreen) return null;
+  return { x: lifted.x, y: lifted.y };
+}
+
 export interface DialogueDriverOptions {
   /** Where vocal events go. Injected so the driver runs against a recorder. */
   readonly speech: DialogueSpeech;
+  /** How far above a *body's* feet its bubble points, in world units. */
+  readonly bodyLift: number;
   /** Open this vendor's shop. The dialogue names it; the mount opens it. */
   readonly onShop: (vendorId: string) => void;
   /** Tell the server the conversation is over. */
@@ -102,16 +171,68 @@ export interface DialogueDriverOptions {
  */
 export class DialogueDriver {
   private session: DialogueSession | null = null;
+  /**
+   * The sign being read, or null while the session is a body's (spec 260).
+   *
+   * Held beside the session rather than inferred from `session.entityId === 0`,
+   * because those are two different claims: a sign has no entity id *and* the
+   * server must not be told anything when one is put down. Reading the second
+   * off the first would make a future speaker with no body silently send a
+   * release for a conversation nobody is having.
+   */
+  private sign: SignMark | null = null;
 
   constructor(private readonly options: DialogueDriverOptions) {}
 
-  /** The body being talked to, or 0. What the camera frames and the bubble points at. */
+  /** The body being talked to, or 0. What the server has a claim on. */
   get speakerId(): number {
-    return this.session?.entityId ?? 0;
+    return this.sign === null ? (this.session?.entityId ?? 0) : 0;
   }
 
   get active(): boolean {
     return this.session !== null;
+  }
+
+  /**
+   * Where the live conversation is, or null.
+   *
+   * Recomputed from `bodies` on each call rather than stored, because a body
+   * walks: a focus point remembered at the start of a line would leave the
+   * camera framing where a merchant used to be. A sign does not walk, so its
+   * half is the mark itself.
+   */
+  focus(bodies: readonly DialogueBody[]): DialogueFocus | null {
+    if (this.session === null) return null;
+    const sign = this.sign;
+    if (sign !== null) {
+      return { entityId: 0, key: `sign:${sign.key}`, x: sign.x, y: sign.y, lift: SIGN_BUBBLE_LIFT };
+    }
+    const id = this.session.entityId;
+    const body = bodies.find((each) => each.id === id);
+    if (body === undefined) return null;
+    return { entityId: id, key: `body:${id}`, x: body.x, y: body.y, lift: this.options.bodyLift };
+  }
+
+  /**
+   * Read a sign (spec 260).
+   *
+   * The one way a conversation starts without the server saying so, and it does
+   * not contradict the rule above it: **the server decides whether a
+   * conversation exists**, and a sign is not one -- there is no body to claim,
+   * nothing to be refused and nobody else to be talking to it. What it borrows
+   * is everything downstream of that decision.
+   *
+   * Whatever was live is ended first, and told to the server if it was a body's
+   * -- walking off to read a sign mid-sentence is leaving the conversation, and
+   * a merchant left holding a claim stands still forever.
+   */
+  readSign(mark: SignMark, nowMs: number): void {
+    this.leave();
+    this.sign = mark;
+    // `SILENT_SPEECH` rather than the injected sink, and that is the whole of
+    // "a sign makes no sound": the reveal, the skip, the bubble and the camera
+    // are the NPC's exactly, and the voice is the one thing that is not.
+    this.session = new DialogueSession(signSpeaker(mark), 0, SILENT_SPEECH, nowMs);
   }
 
   /**
@@ -122,8 +243,47 @@ export class DialogueDriver {
    * the server's own release, and the one that closes the gap where a body
    * streams out of interest range while its `Conversation` message is still in
    * flight.
+   *
+   * `reader` is where the player is standing, and it is a **required**
+   * parameter rather than an optional one even though a body conversation never
+   * reads it: a sign has no server to release it, so this is the only thing
+   * that does, and an argument a caller can leave out is one a caller will.
    */
-  update(conversationEntityId: number, bodies: readonly DialogueBody[], nowMs: number): void {
+  update(
+    conversationEntityId: number,
+    bodies: readonly DialogueBody[],
+    nowMs: number,
+    reader: { readonly x: number; readonly y: number },
+  ): void {
+    // A sign is read on this client's own say-so, so the server's answer is not
+    // what keeps one open (spec 260). What it still is, is what *closes* one:
+    // a conversation with a body outranks a board, so walking up to a merchant
+    // while a sign is open puts the sign down rather than opening two bubbles.
+    if (this.sign !== null) {
+      if (conversationEntityId === 0) {
+        // Released by range, the mirror of `sweepConversations` on the server:
+        // an NPC's bubble goes when the player walks out of `talkRadius`, and a
+        // sign's must too or it follows them across the map. **Reconciled every
+        // frame rather than announced**, for that function's reason -- every
+        // way a reader can stop reading is the same check rather than an event
+        // some later path can forget to raise.
+        //
+        // The *same* radius that opened it, which is spec 246's rule stated in
+        // as many words: "close enough to read" should be a single fact a
+        // player can learn rather than two with a gap between them. It cannot
+        // flicker, because nothing reopens a bubble on its own -- an order ends
+        // when it opens one -- and the walk stops comfortably inside the reach
+        // anyway, `approachOrderFor` measuring against it less the lead.
+        if (Math.hypot(this.sign.x - reader.x, this.sign.y - reader.y) > SIGN_READ_RADIUS) {
+          this.end();
+          return;
+        }
+        this.session?.update(nowMs);
+        if (this.session?.closed ?? false) this.end();
+        return;
+      }
+      this.end();
+    }
     if (conversationEntityId === 0) {
       this.end();
       return;
@@ -181,8 +341,12 @@ export class DialogueDriver {
    */
   leave(): void {
     if (this.session === null) return;
+    // Read before `end` clears it: a sign is nothing the server was ever told
+    // about, so telling it the conversation is over would release a claim
+    // somebody *else* may be holding on a merchant across the square.
+    const wasSign = this.sign !== null;
     this.end();
-    this.options.onLeave();
+    if (!wasSign) this.options.onLeave();
   }
 
   /**
@@ -193,6 +357,7 @@ export class DialogueDriver {
    * there is no path that forgets the sound.
    */
   private end(): void {
+    this.sign = null;
     if (this.session === null) return;
     this.session.end();
     this.session = null;

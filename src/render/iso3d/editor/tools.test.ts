@@ -222,6 +222,14 @@ describe('the settings object', () => {
     }
   });
 
+  it("seeds a sign's message as a string, so its row binds too (spec 260)", () => {
+    // The same trap the two light sliders fell into, in the one field here that
+    // is text: `gui.add` refuses a value that is not there, and the `.name()`
+    // after it throws where it stands -- which opens the Map editor tab black.
+    // An empty string is a real value; `undefined` is not.
+    expect(typeof createEditorSettings().signText).toBe('string');
+  });
+
   /**
    * And the two in particular, at the value they are bound at.
    *
