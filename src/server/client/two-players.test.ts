@@ -18,7 +18,6 @@ import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
 import { ZoneManager, type ZoneDefinition } from '../world/zone-manager.js';
 import { EntityKind, EntityActivity, EntityField } from '../net/protocol.js';
-import { RESUME_GRACE_TICKS } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { isFriendlyMonster } from '../data/monsters.js';
 import { DEFAULT_SPAWN } from '../player/player-manager.js';
@@ -379,14 +378,15 @@ describe('a client that says hello twice', () => {
     await settle();
     expect(countPlayers()).toBe(1);
 
-    // And the one body lingers when the socket drops, then goes (spec 150):
-    // a dropped player is resumable for a while, which is what stops pulling
-    // the plug being an escape.
+    // And the one body goes when the socket drops. Out of combat that is now
+    // the same tick (spec 264); what this test is about is that there is *one*
+    // of them to go, which was the bug -- a second Hello used to spawn a second
+    // body and leave the first belonging to nobody, reaped by nothing.
+    // `resume.test.ts` is where the grace itself is asserted, in both states.
     channel.close();
     await settle();
     await settle();
-    expect(countPlayers()).toBe(1);
-    for (let i = 0; i < RESUME_GRACE_TICKS + 2; i++) server.tick();
+    server.tick();
     await settle();
     expect(countPlayers()).toBe(0);
   });

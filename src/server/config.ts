@@ -278,6 +278,24 @@ export const RESUME_GRACE_TICKS = 1800;
 export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
+ * How long a connected player may ask for nothing before being logged out
+ * (spec 264). Five minutes.
+ *
+ * A separate number from {@link CONNECTION_TIMEOUT_TICKS} because it answers a
+ * separate question -- that one is how long a *socket* may be silent, and this
+ * is how long a *player* may be. They cannot be one constant: the socket
+ * timeout is twenty missed heartbeats and must stay short, and a player who
+ * stands still for ten seconds reading a sign is playing.
+ *
+ * Long enough that nothing anybody does at the keyboard reaches it -- reading a
+ * shop, planning a build, walking away from the screen for a moment -- and
+ * short enough that a tab left open overnight is not a body in the world all
+ * night. Combat suspends it either way, so the only thing it can catch is
+ * somebody who genuinely is not there.
+ */
+export const AFK_TIMEOUT_TICKS = 18_000;
+
+/**
  * Ms between the server's protocol-level pings (spec 197).
  *
  * The application heartbeat rides the client's timers, and Chrome throttles a

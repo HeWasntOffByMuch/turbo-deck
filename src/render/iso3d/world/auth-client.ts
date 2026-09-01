@@ -133,6 +133,18 @@ export async function ensureAuthToken(
         // stored token is meaningless rather than wrong -- so it is left alone.
         return { ok: true, token: storedToken, fresh: false, identity: null };
       }
+      // Anything that is not the server saying "this token is not a session"
+      // leaves it alone (spec 264). The comment below used to say 401 and the
+      // code said *every* other status too, so a 500, a 502 from a proxy, a 503
+      // during a restart or a 429 all discarded the credential and minted a
+      // fresh character -- which for a guest is the permanent loss of theirs,
+      // and leaves the old player row reachable by nothing. A refusal the
+      // server did not make is a refusal that has not happened: this connection
+      // fails, the player is told, and their character is still theirs on the
+      // next load.
+      if (check.status !== 401) {
+        return { ok: false, reason: `the server could not check the session (${check.status})` };
+      }
       // 401: expired, revoked, or rotated by a claim on another device.
       forgetAuthToken(storage);
     }

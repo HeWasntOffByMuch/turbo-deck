@@ -46,6 +46,7 @@ import {
   DROP_TURN_TIMEOUT_TICKS,
   RESUME_GRACE_TICKS,
   CONNECTION_TIMEOUT_TICKS,
+  AFK_TIMEOUT_TICKS,
   PROTOCOL_VERSION,
   RESOURCE_EPSILON,
   SERVER_TICK_MS,
@@ -67,7 +68,7 @@ import { RESTORATION } from './data/restoration.js';
 import { ALL_ITEMS, maxStackOf, rarityFromByte, rarityOf, rarityToByte } from './data/items.js';
 import { applyStatus, adaptedKey } from './sim/statuses.js';
 import { clearAfflictions } from './sim/damage-over-time.js';
-import { clearStatus, StatusId } from './sim/statuses.js';
+import { clearStatus, hasStatus, StatusId } from './sim/statuses.js';
 import { ALL_DOTS, dotById, dotDurationTicks } from './data/damage-over-time.js';
 import { ALL_AURA_FIELDS } from './data/aura-fields.js';
 import { ADAPTED_ID, STATUS_VISUALS } from './data/status-visuals.js';
@@ -91,6 +92,7 @@ import {
   CombatFlag,
   decodeClientMessage,
   encodeServerMessage,
+  type ClientMessage,
   type DropItemMessage,
   type LootDropMessage,
   type MoveItemMessage,
@@ -199,6 +201,24 @@ export interface GameServerOptions {
    */
   readonly authGate?: AuthGate;
   /**
+   * How long a connected player may ask for nothing before being logged out
+   * (spec 264). Defaults to {@link AFK_TIMEOUT_TICKS}; **0 switches it off.**
+   *
+   * Defaulted **on**, which is the direction that matters: a forgotten opt-out
+   * is a tab that logs itself out after five idle minutes, which somebody
+   * notices in a minute, and a forgotten opt-in is a feature that silently does
+   * nothing -- which is the failure this repo keeps rediscovering a hundred
+   * specs later.
+   *
+   * The one caller that switches it off is the single-player tab, and the
+   * reason is one line of `view.ts`: only the remote path wraps its channel in
+   * a `ReconnectingChannel`, so a loopback client that is dropped does not come
+   * back. On a port that is a player logged out; in a tab it is a body nobody
+   * can return to without reloading the page -- and there is nobody else in a
+   * tab for an idle body to be in the way of.
+   */
+  readonly afkTimeoutTicks?: number;
+  /**
    * Called when a save fails, with the player it was for (spec 226).
    *
    * A callback rather than a `console` because `GameServer` runs in a browser
@@ -269,6 +289,27 @@ interface Connection {
   sessionToken: string;
   /** The last tick anything was heard from this connection (spec 150). */
   lastSeenTick: number;
+  /**
+   * The last tick this player *asked for something* (spec 264).
+   *
+   * The difference from `lastSeenTick` is the whole feature. That one answers
+   * "is this socket up", and since spec 197 a pong answers it -- from the
+   * browser's network stack, with no JavaScript running -- so a hidden tab
+   * stamps it forever and its body never times out. This one answers "is
+   * anybody there", so a pong deliberately does not stamp it and neither does
+   * the zero-vector `Input` the client sends every frame regardless.
+   */
+  lastInputTick: number;
+  /**
+   * The facing on the last input that stamped `lastInputTick` (spec 264).
+   *
+   * Held because turning is the one thing a player does that carries no move
+   * vector and no button: aiming at something and standing still is playing,
+   * and an idle tab's facing is a constant, so the *change* is what separates
+   * them. Compared exactly rather than with a tolerance -- the client sends
+   * what it computed, and an untouched mouse recomputes the same float.
+   */
+  lastInputFacing: number;
   /**
    * Set before the socket is closed on purpose (spec 150).
    *
@@ -472,6 +513,8 @@ export class GameServer implements AdminHost {
   private readonly store: DataStore;
   /** Null when this server authenticates nobody. See `GameServerOptions`. */
   private readonly authGate: AuthGate | null;
+  /** Idle ticks before a connected player is logged out; 0 is off (spec 264). */
+  private readonly afkTimeoutTicks: number;
   /** Where a persistence failure is reported. Null in a tab and in tests. */
   private readonly onSaveError: ((playerId: string, error: unknown) => void) | null;
   /**
@@ -538,6 +581,7 @@ export class GameServer implements AdminHost {
     this.onSaveError = options.onSaveError ?? null;
     this.players.onSaveError = this.onSaveError;
     this.authGate = options.authGate ?? null;
+    this.afkTimeoutTicks = options.afkTimeoutTicks ?? AFK_TIMEOUT_TICKS;
     this.audit = new AuditLog(this.store);
     this.transport = options.transport ?? new NullTransport();
     this.admin = new AdminRouter(this, this.audit, options.adminVerifier ?? DENY_ALL_ADMIN);
@@ -697,6 +741,10 @@ export class GameServer implements AdminHost {
       queueFloor: Number.POSITIVE_INFINITY,
       sessionToken: '',
       lastSeenTick: this.state.tick,
+      // Opened at "now" rather than at zero, so the grace a fresh connection
+      // gets is the full window and not however long this server has been up.
+      lastInputTick: this.state.tick,
+      lastInputFacing: Number.NaN,
       leaving: false,
       displaced: false,
     };
@@ -766,6 +814,13 @@ export class GameServer implements AdminHost {
       return;
     }
 
+    // Whether a *player* did that, as opposed to a page that is merely still
+    // loaded (spec 264). One call rather than a line in each of the thirty
+    // cases below, so a message kind added later counts as activity by
+    // default -- which is the safe direction: the cost of a wrong "yes" is an
+    // idle body kept, and of a wrong "no" a player logged out mid-session.
+    this.noteActivity(connection, message);
+
     switch (message.type) {
       case ClientMessageType.Hello:
         await this.hello(
@@ -820,9 +875,14 @@ export class GameServer implements AdminHost {
         break;
 
       case ClientMessageType.Goodbye:
-        // Meant it. No lingering body (spec 150).
-        connection.leaving = true;
-        await this.disconnect(connection, { intentional: true });
+        // Meant it -- which since spec 264 settles nothing on its own. Out of
+        // combat there is no lingering body either way, and in a fight saying
+        // "I meant to leave" is exactly what the escape the grace forbids would
+        // say, so this no longer claims `intentional` and the combat gate in
+        // `disconnect` decides. What the message still buys is *promptness*:
+        // the body goes on this tick rather than when the socket's close
+        // arrives, or twenty missed heartbeats later if it never does.
+        await this.disconnect(connection);
         break;
 
       case ClientMessageType.Ping:
@@ -1503,12 +1563,25 @@ export class GameServer implements AdminHost {
     this.aimAtHeadDrop(connection);
     this.connections.delete(connection);
 
+    // What buys the grace is being *in a fight*, not the manner of leaving
+    // (spec 264). Spec 150 held every body for thirty seconds and gave its
+    // reason -- pulling the plug must not be an escape -- which is a statement
+    // about a fight rather than about a disconnection, and applied to all of
+    // them it made logging off in the village square a statue in the village
+    // square. Nothing is lost by going at once: `syncFromEntity` writes
+    // position, facing and health into the record on every broadcast, so what
+    // the reap below saves is current to within an interval.
+    //
+    // The server decides this and the client never does. A `Goodbye` from
+    // somebody mid-fight still lingers, because "I meant to leave" is exactly
+    // what the escape it forbids would say.
     const resumable =
       options.intentional !== true &&
       !connection.leaving &&
       connection.playerId !== null &&
       connection.entityId >= 0 &&
-      connection.sessionToken !== '';
+      connection.sessionToken !== '' &&
+      this.inCombat(connection.entityId);
     if (resumable && connection.playerId !== null) {
       this.lingering.set(connection.playerId, {
         token: connection.sessionToken,
@@ -1581,6 +1654,59 @@ export class GameServer implements AdminHost {
   }
 
   /**
+   * Is this body in a fight (spec 264)?
+   *
+   * `StatusId.InCombat` is the sim's own answer -- stamped by a blow landed, a
+   * blow taken and an affliction pulse, and eight seconds wide. It has had one
+   * reader since it was written (resting), and this is the second rather than a
+   * second definition of "in a fight": a departure and a refill disagreeing
+   * about whether somebody is fighting is exactly the drift one status exists
+   * to prevent.
+   *
+   * A body that is not there is not in combat. That is the honest answer for a
+   * connection which never got one and for one whose entity has already gone,
+   * and it is the *safe* one: both of those should be reaped rather than held.
+   */
+  private inCombat(entityId: number): boolean {
+    if (entityId < 0) return false;
+    const entity = this.state.entities.get(entityId);
+    if (!entity) return false;
+    return hasStatus(entity.statuses, StatusId.InCombat, this.state.tick);
+  }
+
+  /**
+   * Note that somebody is actually at the keyboard (spec 264).
+   *
+   * Three kinds are refused, and each for its own reason. A `Ping` is the
+   * client's heartbeat, which is the whole thing being measured against. A
+   * `RequestChunk` is the streamer asking on its own behalf. And an `Input`
+   * arrives every frame whether or not anything is pressed -- `view.ts` calls
+   * `sendInput` unconditionally -- so it counts only when it *asks* for
+   * something: a move vector, a button, or a facing that has moved since the
+   * last time this stamped.
+   *
+   * The facing clause is what keeps somebody aiming at a target from being
+   * called idle. It is compared against the last facing that stamped rather
+   * than the last one received, or a mouse drifting one pixel a minute would
+   * hold a session open forever by moving a hair at a time -- the comparison
+   * would pass on every input and never accumulate.
+   */
+  private noteActivity(connection: Connection, message: ClientMessage): void {
+    if (message.type === ClientMessageType.Ping) return;
+    if (message.type === ClientMessageType.RequestChunk) return;
+    if (message.type === ClientMessageType.Input) {
+      const asking =
+        message.moveX !== 0 ||
+        message.moveY !== 0 ||
+        message.buttons !== 0 ||
+        message.facing !== connection.lastInputFacing;
+      if (!asking) return;
+      connection.lastInputFacing = message.facing;
+    }
+    connection.lastInputTick = this.state.tick;
+  }
+
+  /**
    * Reap the bodies whose grace has run out, and cut off connections that have
    * gone quiet (spec 150).
    *
@@ -1595,6 +1721,25 @@ export class GameServer implements AdminHost {
     }
     for (const connection of [...this.connections]) {
       if (connection.playerId === null) continue;
+      // A player who has stopped asking for anything (spec 264). Checked before
+      // the socket timeout because the two are different failures with
+      // different answers: that one is a socket nobody can reach and this is a
+      // socket in perfect health with nobody behind it.
+      //
+      // Never while they are being fought over. `InCombat` is re-stamped by
+      // every blow either way, so this cannot fire on somebody in a fight --
+      // and a body vanishing mid-swing is a worse bug than an idle one kept.
+      if (
+        this.afkTimeoutTicks > 0 &&
+        this.state.tick - connection.lastInputTick >= this.afkTimeoutTicks &&
+        !this.inCombat(connection.entityId)
+      ) {
+        // `drop`, so the departure is intentional and no body is left standing:
+        // five minutes is already the grace, and thirty seconds more of statue
+        // on the end of it is not a resume anybody is coming back for.
+        void this.drop(connection, 'idle');
+        continue;
+      }
       if (this.state.tick - connection.lastSeenTick < CONNECTION_TIMEOUT_TICKS) continue;
       connection.channel.close();
       void this.disconnect(connection);

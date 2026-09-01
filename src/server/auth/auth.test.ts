@@ -256,6 +256,63 @@ describe('accounts and sessions', () => {
     }
   });
 
+  it('carries the expiry forward when a live session is touched (spec 264)', async () => {
+    // `expires_at` used to be fixed at issue and never moved, so the TTL
+    // measured a session's *age* rather than the player's absence: a guest who
+    // played every day was signed out for good on day thirty, and having no
+    // account to sign back in with, lost the character with it.
+    const stack = openTestStack();
+    try {
+      const { auth, db } = stack.current;
+      const issued = await auth.createGuest();
+      const expiryOf = (): number =>
+        db.get<{ expires_at: number }>('SELECT expires_at FROM sessions WHERE id = ?', issued.sessionId)
+          ?.expires_at ?? 0;
+      const atIssue = expiryOf();
+      expect(atIssue).toBeGreaterThan(Date.now());
+
+      // A resolve inside the touch interval writes nothing: the throttle is
+      // what keeps this off every single connection.
+      expect(auth.resolve(issued.token)?.playerId).toBe(issued.playerId);
+      expect(expiryOf()).toBe(atIssue);
+
+      // Now stale enough to be touched. Backdating `last_seen_at` rather than
+      // waiting a minute, and rather than plumbing a clock through the whole
+      // persistence stack for one assertion.
+      db.run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', Date.now() - 120_000, issued.sessionId);
+      expect(auth.resolve(issued.token)?.playerId).toBe(issued.playerId);
+
+      expect(expiryOf()).toBeGreaterThan(atIssue);
+    } finally {
+      stack.dispose();
+    }
+  });
+
+  it('never lets a touch shorten a session that is already live longer', async () => {
+    // `MAX` rather than an assignment: this table holds no opinion about the
+    // TTL, so a caller handing over a shorter window must not be able to
+    // quietly cut a session that some other path extended.
+    const stack = openTestStack();
+    try {
+      const { auth, db, store } = stack.current;
+      const issued = await auth.createGuest();
+      const far = Date.now() + 365 * 24 * 60 * 60 * 1000;
+      db.run('UPDATE sessions SET expires_at = ? WHERE id = ?', far, issued.sessionId);
+
+      store.sessions.touch(issued.sessionId, Date.now(), Date.now() + 1000);
+
+      const row = db.get<{ expires_at: number; last_seen_at: number }>(
+        'SELECT expires_at, last_seen_at FROM sessions WHERE id = ?',
+        issued.sessionId,
+      );
+      expect(row?.expires_at).toBe(far);
+      // The stamp it was actually asked for still landed.
+      expect(row?.last_seen_at).toBeGreaterThan(0);
+    } finally {
+      stack.dispose();
+    }
+  });
+
   it('sweeps sessions that expired long ago and leaves live ones alone', async () => {
     const stack = openTestStack();
     try {

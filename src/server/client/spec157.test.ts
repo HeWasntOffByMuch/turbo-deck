@@ -15,6 +15,7 @@ import { CONNECTION_TIMEOUT_TICKS, RESUME_GRACE_TICKS } from '../config.js';
 import { DEFAULT_BACKOFF_TICKS } from '../net/reconnecting.js';
 import { EntityKind } from '../net/protocol.js';
 import type { Channel } from '../net/transport.js';
+import { hasStatus, StatusId } from '../sim/statuses.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -69,6 +70,35 @@ async function tickAlive(r: Rig, who: Joined, times: number): Promise<void> {
     who.client.advanceTick();
     await settle();
   }
+}
+
+/**
+ * Put this body in a fight, so that dropping its socket leaves one standing.
+ *
+ * Since spec 264 the resume grace is bought by `StatusId.InCombat` rather than
+ * by the manner of leaving, and door 3 below is *about* a lingering body -- out
+ * of combat there is no longer one to be stale beside. A real swing at a dummy
+ * rather than a status written by hand, and polled a tick at a time because
+ * what is waited for is a blow that connects.
+ */
+async function fight(r: Rig, client: GameClient): Promise<void> {
+  const self = client.view().selfEntityId;
+  const at = r.server.world.entities.get(self)?.position ?? { x: 0, y: 0 };
+  r.server.spawnEntities('dummy', at.x + 40, at.y, 1);
+  await r.tick(2);
+  let fighting = false;
+  for (let swing = 0; swing < 12 && !fighting; swing += 1) {
+    client.useAbility('melee.slash', at.x + 40, at.y);
+    for (let step = 0; step < 30 && !fighting; step += 1) {
+      await r.tick(1);
+      fighting = hasStatus(
+        r.server.world.entities.get(self)?.statuses ?? {},
+        StatusId.InCombat,
+        r.server.world.tick,
+      );
+    }
+  }
+  expect(fighting, 'no blow ever landed, so this body is not in a fight').toBe(true);
 }
 
 describe('a second login for a player who is already playing', () => {
@@ -142,6 +172,9 @@ describe('a second login for a player who is already playing', () => {
     const r = rig();
     const first = await join(r, 'dee');
     await r.tick(4);
+    // In a fight, because that is what leaves a body standing since spec 264 --
+    // and a body left standing is precisely what this door is about.
+    await fight(r, first.client);
     first.channel.close();
     await settle();
     await r.tick(4);
