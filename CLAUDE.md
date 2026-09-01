@@ -1427,7 +1427,60 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  atlas authored as text; widgets/ is the nine; screens/ is the
                  eleven (the HUD, the bag, the sheet, the shop, the keybindings,
                  the trade table, the options window, its display page, the
-                 chat, the action bar and the selected-unit readout);
+                 chat, the action bar and the selected-unit readout), plus
+                 tones.ts -- the one table saying what a described line's *tone*
+                 is drawn in, out of `inventory.ts` at spec 264 because the shop
+                 draws item details too and two copies of "is a drawback red" is
+                 two answers free to disagree on two windows a player has open at
+                 once.
+                 shop.ts is a **grid** since spec 264 rather than three lists of
+                 names, and the cells are `ItemSlot`s -- the bag's own widget,
+                 unchanged -- so an item is the same picture and the same tier
+                 wash in a shop as it is in a bag and as it was in the grass. It
+                 exists because the one place a player spends something they
+                 cannot get back was the one place that would not say what a
+                 thing hits for, what it scales with, where it is worn, or that
+                 it is gated behind a level they have not reached: all of it one
+                 `detailsFor` away, and never called. Three decisions follow from
+                 picking that widget. **The price goes under the cell, not on
+                 it** -- `paintItem` already draws a stack count bottom-right and
+                 a twenty-pixel cell has one corner, so a price sharing it would
+                 sit on the count of every stack of potions in the game; a shop
+                 cell is a two-row column, which is why `ItemSlot` needed no
+                 change and none of its goldens moved. **Tabs rather than three
+                 stacked lists**, because Sell is the player's whole bag -- as
+                 many cells again as the other two together, and a window holding
+                 all three at once scrolls past the thing you came in for. And
+                 **the hover walk is over the showing tab only**, which is spec
+                 198's rule rather than caution: a tab switched away is hidden and
+                 never destroyed, so three grids sit at the same coordinates and a
+                 Buy cell would be answered by whichever Sell cell was laid out
+                 behind it. Spec 130's asymmetry is untouched -- a Buy takes
+                 effect on the click and a Sell asks first -- and the refusal a
+                 cell gives is still `buy`/`sell`'s own words.
+                 What the widget did not have until it was used this way is
+                 `ItemSlot.acceptsDrops`: a shop cell is a **button that looks
+                 like a cell**, and the bag's drag hit-tests the whole layer
+                 stack, so one that took a release would swallow a carry with
+                 nothing emitted and nothing said. Separate from `acceptsSlot`,
+                 because "takes only helmets" and "is not a container" are
+                 different claims and expressing the second as a slot id nothing
+                 matches would be a lie that happens to work.
+                 The window is registered **unscrolled** for the character
+                 sheet's reason one window along: a `TabPanel` inside somebody
+                 else's scroller scrolls its strip away instead of its body.
+                 `SHOP_MIN_SIZE` was re-measured with it -- the width is what six
+                 *fixed* columns need (a narrower window clips the last one, and
+                 the tab body has nothing to offer horizontally), and the height
+                 is the **tallest tab**, because a shop that opens fine and needs
+                 resizing the moment you press Sell is the sliver bug in
+                 miniature. That reverses the old rule rather than drifting from
+                 it: 220 was a stocked list's own height and was a floor no real
+                 shop ever met, and this one is met by one tab and forces the
+                 other two, deliberately.
+                 The goldens caught the last of it on their own: `nothing sold
+                 yet` was a label inside a `Grid`, which gives every child one
+                 fixed cell, so the sentence drew as `no`;
                  input/ is the actions, the control map and the two preferences
                  that
                  outlive a session -- the bindings and the interface scale, each
@@ -1612,6 +1665,16 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  that no `if` in the renderer changes an outcome is finally a fact
                  about the module graph. **No colour is spelled out** in a widget;
                  a hex literal there fails the build.
+                 The bag says what the purse holds since spec 264, at the
+                 foot of its own column and in the `success` token the shop's
+                 purse already uses -- coins ride the `Inventory` message beside
+                 the stacks, so the window that says what you have is the window
+                 that says what you have. Before it the number was drawn in one
+                 place in the whole interface, the shop's own line, so "how much
+                 money do I have" was a question you could only ask standing at a
+                 counter and "what did that cost me" was one you could not ask at
+                 all. It is drawn at zero too, because an omitted line reads as a
+                 missing feature where `0 coins` is a fact.
                  chat.ts is the ninth and the only one that is not a window
                  (spec 189): docked bottom-left in the `hud` layer, no title
                  bar, never dragged, nothing in the layout store, because it is
@@ -6314,7 +6377,42 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  are turned into plain rows out here, and whether a button is
                  live is answered by running the *server's own* rule against the
                  client's copy so a greyed-out button and a refusal cannot
-                 disagree), and ui-routing.ts and ui-screens.ts (the interface's
+                 disagree. Since spec 264 a shop row carries a whole `ItemView`
+                 rather than a name and an icon, through the bag's own
+                 `itemViewOf`, so an item describes itself the same way in a
+                 shop as it does in a bag -- the scaling modifiers are threaded
+                 in for that reason and no other, since they are exactly what
+                 makes a sword's scaling line differ between the two),
+                 shop-range.ts (whether the shop that is open can still be
+                 reached, spec 264. The server refuses each *transaction* out of
+                 range and always has, but only answers when asked and nothing
+                 sweeps -- so walking off a merchant left a full price list on
+                 screen with every cell live, refusing one press at a time.
+                 Reconciled every frame against the player's own **predicted**
+                 position, which is `sweepConversations`' shape and spec 260's
+                 rule for a sign's bubble, at the vendor's **own** radius so the
+                 window shuts exactly when the cells would begin being refused.
+                 It is here rather than in a sweep beside the conversation's for
+                 three reasons and the last one decides it. A shop is not a
+                 claim on a body -- it holds nothing, refuses nobody, and two
+                 players may browse one merchant -- so there is nothing for the
+                 server to release. The predicted position crosses the line
+                 first, where `record.position` is written once a broadcast. And
+                 **a volunteered `VendorState` would put spec 249's guard
+                 permanently off by one**: that guard is
+                 `vendorReplies + 1 < vendorAsks` and rests on exactly one reply
+                 per ask, so a reply nobody asked for makes the replies run
+                 ahead for the rest of the session and a *superseded* answer is
+                 then accepted -- which is the shop opening and vanishing within
+                 a frame or two of the press, the bug spec 249 exists to have
+                 fixed. Closing from here is an ordinary `openVendor('')`, so the
+                 pairing is undisturbed and `openVendorId` does not linger. An
+                 unknown vendor and a null position are both **in** reach, which
+                 is the safe direction rather than a shrug: a client a build
+                 behind the server's content that shut a shop it could not name
+                 could not buy from a vendor the server is happy to serve, and a
+                 null position is the first frames of a session rather than a
+                 body a hundred metres away), and ui-routing.ts and ui-screens.ts (the interface's
                  mount, spec 131: who hears an input, and the four screens, their
                  windows and what each is handed per frame). ui-screens.ts is
                  pure for one specific reason -- mounting an interface over the
