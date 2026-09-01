@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Page } from 'playwright';
-import { STRUCTURE_KINDS } from '../src/terrain/vegetation.js';
+import { PLACED_KINDS, STRUCTURE_KINDS } from '../src/terrain/vegetation.js';
 import { STRUCTURE_SCALE_STEP } from '../src/render/iso3d/editor/structure.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
@@ -274,9 +274,23 @@ async function setText(page: Page, folder: string, label: string, value: string)
   await page.waitForTimeout(250);
 }
 
+/**
+ * Which kinds the status line can be reporting a placement of.
+ *
+ * **Derived, never typed.** It was a hand-written `house|well|sign`, and spec
+ * 263's grave was the fourth kind and the first one to show what that costs: a
+ * grave really was placed, the assertion above really did pass, and every check
+ * about it printed `said nothing` as its evidence -- which is exactly what a
+ * grave that was *not* placed would have printed. A detail line that reads the
+ * same whether the thing worked or not is worse than none, because it is read as
+ * evidence. `PLACED_KINDS` rather than `STRUCTURE_KINDS`, since a fixture prints
+ * through this same line.
+ */
+const PLACED_PATTERN = new RegExp(`placed (?:${PLACED_KINDS.join('|')})[^]*$`);
+
 /** The last thing the editor's status line said it did. */
 async function placed(page: Page): Promise<string> {
-  return /placed (?:house|well|sign)[^]*$/.exec(await readout(page))?.[0]?.trim() ?? 'said nothing';
+  return PLACED_PATTERN.exec(await readout(page))?.[0]?.trim() ?? 'said nothing';
 }
 
 /** Whatever the status line is saying, which is the tail after the undo count. */
@@ -495,6 +509,25 @@ async function main(): Promise<void> {
       (await readout(page)).includes(SIGN_MESSAGE),
       await placed(page),
     );
+    // --- the grave (spec 263) ----------------------------------------------
+    //
+    // The kind with nothing of its own -- no message, no brightness, no reach --
+    // which is exactly why it is worth a step here: everything that makes it
+    // placeable is *derived* (`STRUCTURE_KINDS` composes `PLACED_KINDS`, which
+    // the panel's strip is built from), so the whole feature is a button nobody
+    // wrote and geometry nobody dispatched to. Both of those fail silently.
+    await page.getByRole('button', { name: 'grave', exact: true }).click();
+    await page.waitForTimeout(400);
+    check(
+      'arming a grave shows no message row, having nothing to say',
+      (await panelRow(page, 'Structures', 'Message'))?.shown !== true,
+      'Message hidden',
+    );
+    await setNumber(page, 'Structures', 'Facing', 180);
+    check('a grave places', await clickGround(page, 640, 440), await placed(page));
+    check('and says so, at the facing it was turned to', /placed grave facing 180/.test(await readout(page)), await placed(page));
+    await setNumber(page, 'Structures', 'Facing', 90);
+
     await page.getByRole('button', { name: 'well', exact: true }).click();
     await page.waitForTimeout(300);
     check(
@@ -609,6 +642,21 @@ async function main(): Promise<void> {
       'and nothing else in the map gained one',
       after.every((p) => p.species === 'sign' || p.text === undefined),
       after.filter((p) => p.species !== 'sign' && p.text !== undefined).map((p) => p.species).join(', ') || 'none',
+    );
+
+    // The grave: the file is where "a kind that is only a row in a list is
+    // really placeable" is answered (spec 263). Nothing about it is
+    // special-cased anywhere, so the way it fails is by not being there at all.
+    const graves = after.filter((p) => p.species === 'grave');
+    check(
+      'the saved map has the one grave this probe put down',
+      graves.length === 1,
+      `${graves.length} graves`,
+    );
+    check(
+      'and it was saved at the facing it was placed at',
+      Math.abs((graves[0]?.rotation ?? 0) - Math.PI) < 0.01,
+      `rotation = ${(graves[0]?.rotation ?? 0).toFixed(3)}`,
     );
 
     const turned = houses.filter((h) => Math.abs((h.rotation ?? 0) - Math.PI / 2) < 0.01);

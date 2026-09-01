@@ -35,7 +35,8 @@ export type PropKind =
   | 'campfire'
   | 'lamp-post'
   | 'torch-stand'
-  | 'sign';
+  | 'sign'
+  | 'grave';
 
 /**
  * The kinds that are a length of fence rather than a plant: a regular one and a
@@ -64,13 +65,20 @@ export function isFenceKind(kind: PropKind): kind is FenceKind {
  * this list, and it is why a thing that emits no light and holds nobody's roof
  * up is still grouped with a hut.
  *
+ * A grave is the fourth (spec 263), and it is the first member that is not
+ * something a village *built* -- which changes nothing about how it is placed,
+ * and that is the point. It passes the same membership test: a plot goes in one
+ * spot somebody chose, turned to face the path it is walked up to from, so it
+ * takes the press-to-place tool rather than the scatter's density brush. A
+ * graveyard is a layout, not a distribution.
+ *
  * Appended, never inserted. `PROP_GROUPS` enumerates this list and
  * {@link FIXTURE_KINDS} in order across a thread boundary, so a kind inserted
  * ahead of another would hand the worker's matrices to the wrong geometry --
  * both halves come out of one build, so what this really forbids is a *stored*
  * index, and there is none: a document names a species by string.
  */
-export const STRUCTURE_KINDS = ['house', 'well', 'sign'] as const;
+export const STRUCTURE_KINDS = ['house', 'well', 'sign', 'grave'] as const;
 export type StructureKind = (typeof STRUCTURE_KINDS)[number];
 
 export function isStructureKind(kind: PropKind): kind is StructureKind {
@@ -167,6 +175,39 @@ export const SIGN_PLAN = {
   postHeight: 62,
   /** The post, square in plan. Also what a body cannot walk through. */
   postWidth: 12,
+} as const;
+
+/**
+ * The grave's plan at scale 1, in world units, along its own local axes: the
+ * headstone stands across `stoneWidth` and the plot runs away down `moundLength`
+ * (spec 263).
+ *
+ * Here beside the kinds rather than in the renderer, for {@link HOUSE_PLAN}'s
+ * and {@link SIGN_PLAN}'s reason: `FOOTPRINT_BASE` derives the collider from the
+ * stone's two plan dimensions and the renderer builds all three parts from the
+ * six, and two files disagreeing about a grave is a headstone somebody can stand
+ * inside or an invisible wall around a patch of earth.
+ *
+ * Sized against the body that walks up to it -- a unit is about 56 tall -- so
+ * the stone comes to roughly chest height on somebody standing over it. That
+ * bound is the design and not a preference: a marker taller than the person
+ * reading it stops being a grave and becomes a monument, which is a different
+ * prop with a different reason to exist.
+ */
+export const GRAVE_PLAN = {
+  /** The headstone, across the face it is read from. */
+  stoneWidth: 40,
+  /** The headstone, ground to top. Chest height on a body, and no more. */
+  stoneHeight: 44,
+  /** The headstone, front to back. Also what a body cannot walk through. */
+  stoneThickness: 10,
+  /** The mound, from the foot of the stone out along the plot. */
+  moundLength: 88,
+  /** The mound, across the plot. Wider than the stone, so the plot reads as
+   *  something the stone was put at the head of rather than as a path up to it. */
+  moundWidth: 52,
+  /** How far the mound stands proud of the ground it was dug out of. */
+  moundHeight: 17,
 } as const;
 
 /**
@@ -549,6 +590,18 @@ const FOOTPRINT_BASE: Record<PropKind, number> = {
   // span would be an invisible wall either side of a stick, and would put the
   // reach a player has to get inside *behind* the thing they are reading.
   sign: SIGN_PLAN.postWidth / 2,
+  // The headstone, and only the headstone (spec 263) -- the sign's rule applied
+  // to the other half of an object. The mound is loose earth a stride high, and
+  // a circle wide enough to cover the plot would take a body and a half of
+  // walkable ground out of the world around every grave, which in a graveyard is
+  // most of the graveyard. It would also put the reach a player has to get
+  // inside *behind* the thing they came to look at.
+  //
+  // The stone's own circumradius, which is the hut's rule: a rectangle is not a
+  // circle and erring wide is the side that keeps a wall a wall. It costs almost
+  // nothing here, a slab being thin enough that its corner is barely past its
+  // own face.
+  grave: Math.hypot(GRAVE_PLAN.stoneWidth, GRAVE_PLAN.stoneThickness) / 2,
 };
 /**
  * Fallback for a kind this build has no footprint for -- a map written by a

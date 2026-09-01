@@ -236,6 +236,25 @@ const signpost = (x: number, z: number, yawDeg: number, scale = 1): Prop => ({
 });
 
 /**
+ * A grave (spec 263).
+ *
+ * The one prop here whose whole risk is *scale*, in the opposite direction to
+ * the sign's: it has to be unmistakably shorter than a body and still be
+ * something you can see from the game's own bearing. So every shot of it carries
+ * a body block, and the row ends with a plot of several -- because a graveyard
+ * is the arrangement this prop exists for, and four markers in a row is where a
+ * mound that is too round or a stone that is too wide stops being arguable.
+ */
+const grave = (x: number, z: number, yawDeg: number, scale = 1): Prop => ({
+  kind: 'grave',
+  x,
+  y: z,
+  scale,
+  rotation: (yawDeg * Math.PI) / 180,
+  tint: (((x * 3 + z * 17) % 200) / 100) - 1,
+});
+
+/**
  * How far the huts stand from the well, in the village shots.
  *
  * Two and a half footprints, which leaves a square between them rather than a
@@ -259,6 +278,25 @@ const SHOTS: readonly Shot[] = [
   { label: 'sign facing 0', props: [signpost(0, 0, 0)], forward: VIEW_DIR, fit: 240 },
   { label: 'sign facing 90', props: [signpost(0, 0, 90)], forward: VIEW_DIR, fit: 240 },
   { label: 'sign facing 180', props: [signpost(0, 0, 180)], forward: VIEW_DIR, fit: 240 },
+
+  // A grave, beside a body and then in a row of them. Scale is the whole risk:
+  // this is the only prop in the list that is meant to be *shorter* than the
+  // person looking at it, so a block for comparison is not optional here.
+  { label: 'grave', props: [grave(0, 0, 0)], forward: VIEW_DIR, fit: 220, body: [70, 10] },
+  { label: 'grave, low', props: [grave(0, 0, 0)], forward: LOW_DIR, fit: 220, body: [70, 10] },
+  {
+    label: 'graveyard',
+    props: [
+      grave(-90, -30, 0),
+      grave(0, -20, 0, 1.15),
+      grave(90, -34, 0, 0.85),
+      grave(-45, 120, 0),
+      grave(55, 128, 0, 1.05),
+    ],
+    forward: VIEW_DIR,
+    fit: 470,
+    body: [-130, 90],
+  },
 
   { label: 'facing 0', props: [hut(0, 0, 0)], forward: VIEW_DIR, fit: 380 },
   { label: 'facing 90', props: [hut(0, 0, 90)], forward: VIEW_DIR, fit: 380 },
