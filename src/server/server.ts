@@ -159,7 +159,8 @@ import type { BuiltMapWorld, BuiltWorld } from './world/build.js';
 import { ROUTING_RADII } from './world/build.js';
 import { ServerNav } from './world/nav.js';
 import { NAV_WINDOW_PAD_TILES } from './world/nav-residency.js';
-import type { SpawnPoint } from './world/spawners.js';
+import { spawnWindowOpen, type SpawnPoint } from './world/spawners.js';
+import { worldClockAt } from './data/day-night.js';
 import type { MapIndex } from './world/map-index.js';
 import { ChunkBudget, decideChunkRequest } from './world/map-request.js';
 import { MAX_FRAME_BYTES, MAX_NAME_LENGTH, RateLimiter } from './net/rate-limit.js';
@@ -2935,16 +2936,28 @@ export class GameServer implements AdminHost {
     const visible = this.spawnPoints.filter((point) =>
       near.has(this.chunks.keyAt(point.x, point.y)),
     );
+    // Sampled once for the message, like the pass that reads it (spec 266).
+    const clock = worldClockAt(tick);
     const spawners: SpawnerStatus[] = visible.map((point) => {
       const live = this.state.spawners.get(point.id);
       const occupied = live?.entityId != null && this.state.entities.has(live.entityId);
+      // A shut window beats the countdown, whatever the timer reads, because it
+      // is the truthful answer to the question the overlay is for: a point held
+      // by daylight is not about to come back, and a timer running down to a
+      // spawn that will not happen is the one number spec 076 says must never
+      // be shown.
+      const holding = !occupied && !spawnWindowOpen(point.when, clock);
       return {
         id: point.id,
         monsterId: point.monsterId,
         x: point.x,
         y: point.y,
-        state: occupied ? SpawnerStateValue.Occupied : SpawnerStateValue.Waiting,
-        ticks: occupied ? 0 : Math.max(0, (live?.readyAtTick ?? 0) - tick),
+        state: occupied
+          ? SpawnerStateValue.Occupied
+          : holding
+            ? SpawnerStateValue.Holding
+            : SpawnerStateValue.Waiting,
+        ticks: occupied || holding ? 0 : Math.max(0, (live?.readyAtTick ?? 0) - tick),
       };
     });
     this.send(connection, { type: ServerMessageType.SpawnerStates, tick, spawners });

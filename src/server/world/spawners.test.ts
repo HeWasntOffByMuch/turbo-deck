@@ -4,7 +4,8 @@ import { monsterById, noticeRangeOf } from '../data/monsters.js';
 import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { loadMapFile } from './map-file.js';
 import { SERVER_TICK_RATE } from '../config.js';
-import { spawnPointsFrom, SpawnerError } from './spawners.js';
+import { spawnPointsFrom, spawnWindowOpen, SpawnerError } from './spawners.js';
+import { CYCLE_TICKS, worldClockAt } from '../data/day-night.js';
 import { worldBoundsOf } from './build.js';
 import { MOVE_SPEED_HARD_MIN } from '../../sim/constants.js';
 
@@ -66,7 +67,7 @@ describe('reading spawners out of a map', () => {
       }),
     );
     expect(points).toEqual([
-      { id: 'spawner-1', monsterId: 'grazer', x: -90, y: -80, respawnTicks: null, leashRadius: null },
+      { id: 'spawner-1', monsterId: 'grazer', x: -90, y: -80, respawnTicks: null, leashRadius: null, when: null },
     ]);
   });
 
@@ -304,5 +305,88 @@ describe("a spawner's own numbers", () => {
     expect(() => spawnPointsFrom(withSettings({ [field]: value }))).toThrow(
       new RegExp(`spawner-1.*${field}`),
     );
+  });
+});
+
+/**
+ * Spec 266. What a window is, and what "night" means -- which is the one
+ * sentence in this feature, since two readings of the word were available and
+ * they disagree by twenty real seconds.
+ */
+describe("a spawner's window", () => {
+  const withSettings = (settings: Record<string, unknown>): MapDocument =>
+    doc({ '0,0': [{ ...spawner('spawner-1', 'grazer', 10, 20), spawner: settings }] });
+
+  it('says nothing where the document says nothing', () => {
+    expect(spawnPointsFrom(doc({ '0,0': [spawner('spawner-1', 'grazer', 10, 20)] }))[0]?.when).toBeNull();
+  });
+
+  it.each(['night', 'day'])('carries an authored %s through', (when) => {
+    expect(spawnPointsFrom(withSettings({ when }))[0]?.when).toBe(when);
+  });
+
+  /**
+   * Checked here as well as in `parseMap`, because nothing in this function's
+   * signature says the document came through the parser -- a generated one, a
+   * test fixture and a hand-built part all reach it, and a window nothing can
+   * open is a spawner that never fills.
+   */
+  it.each(['dusk', 'Night', '', 'always'])('refuses a window it cannot open: %s', (when) => {
+    expect(() => spawnPointsFrom(withSettings({ when }))).toThrow(SpawnerError);
+    expect(() => spawnPointsFrom(withSettings({ when }))).toThrow(/spawner-1.*when/);
+  });
+
+  it('leaves the two numbers alone', () => {
+    const point = spawnPointsFrom(withSettings({ when: 'night' }))[0];
+    expect(point?.respawnTicks).toBeNull();
+    expect(point?.leashRadius).toBeNull();
+  });
+
+  /**
+   * The control, and it earns its place: every other assertion below is about a
+   * window being shut somewhere, and a `spawnWindowOpen` that answered false
+   * everywhere would pass all of them.
+   */
+  it('is open at every tick of the cycle for a point that authors none', () => {
+    for (let tick = 0; tick < CYCLE_TICKS; tick += 60) {
+      expect(spawnWindowOpen(null, worldClockAt(tick)), String(tick)).toBe(true);
+    }
+  });
+
+  /**
+   * Night is the **horizon**, not the named phase. The `Night` segment begins at
+   * 19:48 where the sun sets at 18:00, so the phase reading would leave about
+   * twenty real seconds of visible darkness with nothing arriving in it.
+   */
+  it('reads night off the sun rather than off the phase name', () => {
+    for (let tick = 0; tick < CYCLE_TICKS; tick += 60) {
+      const clock = worldClockAt(tick);
+      expect(spawnWindowOpen('night', clock), String(tick)).toBe(!clock.sunUp);
+      expect(spawnWindowOpen('day', clock), String(tick)).toBe(clock.sunUp);
+    }
+  });
+
+  /** The two partition the cycle: every tick belongs to exactly one of them. */
+  it('leaves no hour that is neither day nor night', () => {
+    for (let tick = 0; tick < CYCLE_TICKS; tick += 60) {
+      const clock = worldClockAt(tick);
+      expect(spawnWindowOpen('night', clock) !== spawnWindowOpen('day', clock), String(tick)).toBe(true);
+    }
+  });
+
+  /**
+   * Measured rather than assumed, because the whole feature is priced against
+   * it: night is 2m47s of a 13m30s cycle, which is what a designer gating loot
+   * behind a nocturnal monster is really gating it behind.
+   */
+  it('is dark for one contiguous stretch of about 167 seconds', () => {
+    let dark = 0;
+    let flips = 0;
+    for (let tick = 0; tick < CYCLE_TICKS; tick++) {
+      if (spawnWindowOpen('night', worldClockAt(tick))) dark++;
+      if (tick > 0 && worldClockAt(tick).sunUp !== worldClockAt(tick - 1).sunUp) flips++;
+    }
+    expect(dark).toBe(10_022);
+    expect(flips).toBe(2);
   });
 });

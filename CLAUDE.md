@@ -3159,11 +3159,46 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  Night *phase* (19:48-04:30) and the sun being *down*
                  (18:00-06:00) -- and a caller would get whichever the author
                  happened to pick; `phase` and `sunUp` are each unambiguous.
-                 **No game rule reads any of it yet**, which is what the spec asked
-                 for rather than an omission: the renderer's sky is the consumer
-                 that proves the path end to end. The obvious next one is spec
-                 250's fixtures, which burn at a constant intensity, so a lamp is
-                 lit at noon.
+                 **The first game rule to read any of it is spec 266's spawn
+                 window.** A `spawner` marker may author `when: 'night' | 'day'`
+                 and `runSpawners` refuses a point whose window is shut, beside
+                 the population cap it already refuses at -- one `continue`, no
+                 new state, and a spawner that waits and tries again next tick.
+                 What "night" *means* is one sentence in `world/spawners.ts` and
+                 that is the whole of why `spawnWindowOpen` exists rather than a
+                 comparison at each call site: it is **`!clock.sunUp`, the
+                 horizon rather than the named phase**, because `Night` begins at
+                 19:48 where the sun sets at 18:00, so the phase reading leaves
+                 about twenty real seconds of visible darkness with nothing
+                 arriving in it -- a player who watches the sun go down and waits
+                 is watching the rule be wrong.
+                 The decision that made the feature small is what happens at
+                 **dawn**, and it is a decision rather than an omission: the sun
+                 stops the *spawner* and never the monster. A body already
+                 standing goes on wandering until something kills it, and simply
+                 is not replaced until the sun is down again -- so there is no
+                 despawn path, no rule for a body somebody is mid-swing against,
+                 no retreat behaviour and no new field on an entity. The two
+                 sweeps that were considered instead (remove at the phase edge, or
+                 walk home like a broken leash) are written down in the spec as
+                 what was turned down.
+                 The window is a property of the **point** rather than of the
+                 monster row, so one species can be nocturnal in the woods and
+                 permanent in a pen; absent is the third state and writes no key,
+                 so no committed map's bytes moved and no `mapId` did. Two costs
+                 are stated rather than hidden. The dark is **2m47s of the cycle's
+                 13m30s**, which is what a designer gating anything behind a
+                 nocturnal monster is really gating it behind -- measured in
+                 `spawners.test.ts` rather than reasoned about, because it is the
+                 number the content decision turns on. And a spawner held shut
+                 needed a word of its own on the wire: `SpawnerStates` exists to
+                 answer *is that camp about to come back*, and a held point
+                 reading `due` forever is the one thing spec 076 says that readout
+                 must never say, so `SpawnerStateValue.Holding` is appended and
+                 the overlay says `holding`. Nothing else crosses -- the hour is
+                 still derived at both ends from the tick.
+                 Spec 250's fixtures are still the obvious next one, burning at a
+                 constant intensity, so a lamp is lit at noon.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -4117,8 +4152,13 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  constant and the padding follows it for free, which is why that
                  test asserts against the derivation rather than against 800.
                  Nothing new crosses the wire, because the overlay's countdown is
-                 already `readyAtTick - tick`. What is deliberately still global
-                 is **how many bodies a spawner holds**: `SpawnerState.entityId`
+                 already `readyAtTick - tick`. Spec 266 adds a third thing to the
+                 same block and it is the first that is not a number -- `when`,
+                 the hours the point keeps -- on the same terms: a closed union so
+                 the row names no quantity, absent so no committed map moved, and
+                 refused by the parser on a kind that cannot read it. Its rules
+                 are with the world clock further up. What is deliberately still
+                 global is **how many bodies a spawner holds**: `SpawnerState.entityId`
                  is one id and it is replicated as `SpawnerStates`, so a count is
                  a change to the sim's spawner state, the wire and the overlay --
                  a feature rather than a property of the marker in front of you.

@@ -28,6 +28,12 @@ export interface SpawnerLabel {
  * reaches zero before the thing arrives is the one number the overlay must not
  * show. A timer of exactly zero is a spawner waiting on something else -- the
  * population cap -- and says so rather than counting.
+ *
+ * `Holding` is the same rule with a cause the server can name (spec 266): a
+ * point whose window is shut is not counting down to anything, so it says so
+ * rather than showing `due` for the rest of the day. Kept generic rather than
+ * saying "daylight", because a `day` spawner is held by exactly the opposite
+ * sky and the client is not told which window the point authored.
  */
 export function spawnerLabels(
   spawners: readonly SpawnerStatus[],
@@ -36,6 +42,7 @@ export function spawnerLabels(
   const rate = tickRate > 0 ? tickRate : 1;
   return spawners.map((spawner) => {
     const waiting = spawner.state !== SpawnerStateValue.Occupied;
+    const holding = spawner.state === SpawnerStateValue.Holding;
     const seconds = Math.ceil((spawner.ticks / rate) * 10) / 10;
     return {
       id: spawner.id,
@@ -44,9 +51,11 @@ export function spawnerLabels(
       waiting,
       text: !waiting
         ? spawner.monsterId
-        : spawner.ticks <= 0
-          ? `${spawner.monsterId} · due`
-          : `${spawner.monsterId} · ${seconds.toFixed(1)}s`,
+        : holding
+          ? `${spawner.monsterId} · holding`
+          : spawner.ticks <= 0
+            ? `${spawner.monsterId} · due`
+            : `${spawner.monsterId} · ${seconds.toFixed(1)}s`,
     };
   });
 }

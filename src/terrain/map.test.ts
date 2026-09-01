@@ -10,6 +10,8 @@ import {
   parseMap,
   quantize,
   serializeMap,
+  SPAWN_WINDOWS,
+  spawnerSettingsEmpty,
   type MapDocument,
   type MapLayer,
   type MapMarker,
@@ -424,6 +426,81 @@ describe('seam ownership', () => {
     expect(() => store.setCornerHeight('ground', -1, 0, 5)).not.toThrow();
     expect(() => store.setCornerHeight('ground', 9999, 0, 5)).not.toThrow();
     expect(() => store.setCornerHeight('nope', 0, 0, 5)).not.toThrow();
+  });
+});
+
+/**
+ * Spec 266. The third thing a spawner may say, and the first that is not a
+ * number: when it is allowed to fill.
+ *
+ * Everything here is about the *document*, because that is where this can go
+ * wrong invisibly -- a window the parser silently dropped is a spawner that
+ * fills all day, and a window it silently accepted is one that never fills, and
+ * both look from inside the game like ground somebody forgot to populate.
+ */
+describe("a spawner's window", () => {
+  const roundTrip = (markers: readonly MapMarker[]): MapDocument =>
+    parseMap(serializeMap(bake(testWorld(), [], markers)));
+
+  const spawner = (settings?: MapSpawnerSettings): MapMarker => ({
+    kind: 'spawner',
+    id: 'spawner-1',
+    x: 100,
+    z: 80,
+    label: 'grazer',
+    ...(settings === undefined ? {} : { spawner: settings }),
+  });
+
+  const sole = (doc: MapDocument): MapMarker =>
+    must(soleLayer(doc).chunks.flatMap((c) => c.markers)[0], 'a marker');
+
+  const withWhen = (word: unknown): string => {
+    const doc = JSON.parse(serializeMap(bake(testWorld(), [], [spawner()]))) as Record<string, unknown>;
+    const layers = doc['layers'] as Record<string, unknown>[];
+    const chunks = must(layers[0], 'a layer')['chunks'] as Record<string, unknown>[];
+    for (const chunk of chunks) {
+      for (const marker of chunk['markers'] as Record<string, unknown>[]) marker['spawner'] = { when: word };
+    }
+    return JSON.stringify(doc);
+  };
+
+  it.each(SPAWN_WINDOWS)('survives the round trip: %s', (when) => {
+    expect(sole(roundTrip([spawner({ when })])).spawner).toEqual({ when });
+  });
+
+  it('rides beside the numbers without disturbing them', () => {
+    const marker = sole(roundTrip([spawner({ respawnSeconds: 42.5, leashRadius: 250, when: 'night' })]));
+    expect(marker.spawner).toEqual({ respawnSeconds: 42.5, leashRadius: 250, when: 'night' });
+  });
+
+  /**
+   * The claim that makes this free for every map already committed, and the same
+   * one spec 222 made for the two numbers: a spawner nobody has given hours to
+   * is the *same bytes* it was before the field existed, so no region file moved
+   * and no `mapId` did.
+   */
+  it('writes nothing at all for a spawner that keeps no hours', () => {
+    const before = serializeMap(bake(testWorld(), [], [spawner()]));
+    expect(before).not.toContain('when');
+    expect(serializeMap(roundTrip([spawner()]))).toBe(before);
+  });
+
+  /** A block holding only a window is still a block, and must not normalize away. */
+  it('keeps a block that holds nothing else', () => {
+    expect(sole(roundTrip([spawner({ when: 'day' })])).spawner).toEqual({ when: 'day' });
+  });
+
+  it('refuses a window it has never heard of', () => {
+    expect(() => parseMap(withWhen('dusk'))).toThrow(/not a known spawn window: dusk/);
+    expect(() => parseMap(withWhen('Night'))).toThrow(/not a known spawn window/);
+    expect(() => parseMap(withWhen(3))).toThrow();
+  });
+
+  it('says an empty block is empty however many fields it grows', () => {
+    expect(spawnerSettingsEmpty({})).toBe(true);
+    expect(spawnerSettingsEmpty({ when: 'night' })).toBe(false);
+    expect(spawnerSettingsEmpty({ respawnSeconds: 1 })).toBe(false);
+    expect(spawnerSettingsEmpty({ leashRadius: 1 })).toBe(false);
   });
 });
 

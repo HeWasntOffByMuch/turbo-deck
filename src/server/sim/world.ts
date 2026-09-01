@@ -64,7 +64,8 @@ import {
 } from './statuses.js';
 import type { EffectiveStats, Vec3 } from '../state/types.js';
 import { chunkKeyOf, type ChunkKey } from '../world/chunks.js';
-import type { SpawnPoint } from '../world/spawners.js';
+import { spawnWindowOpen, type SpawnPoint } from '../world/spawners.js';
+import { worldClockAt } from '../data/day-night.js';
 import type { TerrainSampler } from '../world/terrain.js';
 import type { ZoneManager } from '../world/zone-manager.js';
 import type { RewindLookup } from '../world/position-history.js';
@@ -2785,6 +2786,11 @@ function runSpawners(
   // anything spawns, and the per-spawner clocks below only ever change *how
   // long*.
   const globalInterval = respawnInterval(config);
+  // Sampled once for the pass rather than per point (spec 266). `worldClockAt`
+  // memoizes on the tick so the difference is an argument rather than a cost,
+  // but a clock read in one place is also the guarantee that two spawners on the
+  // same tick cannot disagree about what time it is.
+  const clock = worldClockAt(tick);
   const byId = spawnPointsById(spawnPoints);
   /** This point's own wait, or the config's for a point that authors none. */
   const waitOf = (point: SpawnPoint | undefined): number => respawnInterval(config, point) ?? 0;
@@ -2855,6 +2861,15 @@ function runSpawners(
       continue;
     }
     if (tick < current.readyAtTick) continue;
+
+    // Keeping hours (spec 266). A point whose window is shut waits and tries
+    // again next tick, which is the population cap's shape below and is the
+    // whole of the feature: the sun stops the *spawner*, never the monster, so
+    // a body already standing here is untouched by dawn and goes on wandering
+    // until something kills it. And because a kill stamps `readyAtTick` when the
+    // body is removed rather than here, a night monster killed near sunrise
+    // waits out the whole day and comes back on the next one.
+    if (!spawnWindowOpen(point.when, clock)) continue;
 
     // The population cap is the one thing that can still refuse a spawn: a
     // spawner inside a chunk that is already full waits rather than tipping it

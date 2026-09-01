@@ -46,6 +46,29 @@ describe('the spawner overlay', () => {
     expect(label?.text).toBe('grazer · due');
   });
 
+  /**
+   * Spec 266. `due` is the one thing a held spawner must not say: it means "any
+   * tick now" and the answer for a point whose window is shut is "not today".
+   * The two are the same `ticks: 0` on the wire, which is why the state is its
+   * own value rather than something inferred from the number.
+   */
+  it('says "holding" for a spawner whose window is shut', () => {
+    const [label] = spawnerLabels(
+      [status({ state: SpawnerStateValue.Holding, ticks: 0 })],
+      SERVER_TICK_RATE,
+    );
+    expect(label?.text).toBe('grazer · holding');
+    expect(label?.waiting).toBe(true);
+  });
+
+  it('holds regardless of any timer that came with it', () => {
+    const [label] = spawnerLabels(
+      [status({ state: SpawnerStateValue.Holding, ticks: SERVER_TICK_RATE * 3 })],
+      SERVER_TICK_RATE,
+    );
+    expect(label?.text).toBe('grazer · holding');
+  });
+
   it('carries the world position through, and keeps the server order', () => {
     const labels = spawnerLabels(
       [status({ id: 'spawner-2', x: 10, y: 20 }), status({ id: 'spawner-1', x: 30, y: 40 })],

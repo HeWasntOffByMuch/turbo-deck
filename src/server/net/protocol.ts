@@ -292,6 +292,17 @@ export const SpawnerStateValue = {
   Occupied: 0,
   /** Empty, and counting down to the next one. */
   Waiting: 1,
+  /**
+   * Empty, and not coming back until its window opens (spec 266).
+   *
+   * Appended rather than slotted in, because a renumbering silently re-labels
+   * every spawner on a client that has not been rebuilt. It is its own value
+   * rather than a `Waiting` with a large `ticks` on it, because the overlay
+   * exists to answer *is that camp about to come back* and the honest answer
+   * here is "no" rather than a number -- what it is waiting for is the sun,
+   * which is not a countdown this message has any business carrying.
+   */
+  Holding: 2,
 } as const;
 
 /** Why a chunk request was refused (spec 072). */
