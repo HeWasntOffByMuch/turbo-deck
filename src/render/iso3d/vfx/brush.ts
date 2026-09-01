@@ -2059,6 +2059,23 @@ export interface BrushFireParams {
   readonly smokeSize?: number;
   /** World units a second squared, up, inside the flame. */
   readonly updraft?: number;
+  /**
+   * How tall this fire is: a multiplier on every world-unit velocity in it.
+   *
+   * The one thing `scale` cannot do. Playing an effect at a scale multiplies a
+   * mark's size and where it is born and deliberately **not** how fast it is
+   * thrown -- which is right for a blast, whose whole shape is a velocity, and
+   * wrong for a fire, which is a column of a certain height. A torch played at
+   * a third of a campfire's scale is three-unit marks climbing the campfire's
+   * fifty units: a thin spray, not a small fire.
+   *
+   * It multiplies the speeds, the updraft, the ember gravity and the turbulence
+   * together, and that scales every *distance* in the effect while leaving
+   * every *duration* alone: an ember's apex is `v^2 / 2g`, so `k^2 / k = k`,
+   * where its time to apex is `v / g` and does not move. So a small fire flickers
+   * at the same rate as a large one, which is what keeps the two the same fire.
+   */
+  readonly reach?: number;
   /** How high the smoke is born above the ground, in fire radii. */
   readonly smokeLift?: number;
   readonly hot?: PaletteKey;
@@ -2080,8 +2097,11 @@ export function brushFire(params: BrushFireParams): EffectDefinition {
   const base = Math.max(0.01, params.base ?? 0.5);
   const flameSize = params.flameSize ?? 0.5;
   const smokeSize = params.smokeSize ?? 0.62;
-  const updraft = params.updraft ?? 120;
+  const reach = Math.max(0, params.reach ?? 1);
+  const updraft = (params.updraft ?? 120) * reach;
   const smokeLift = params.smokeLift ?? 1.6;
+  /** A world-unit velocity, at this fire's height. */
+  const up = (units: number): number => units * reach;
   const hot = params.hot ?? 'fireCore';
   const mid = params.mid ?? 'fireBody';
   const deep = params.deep ?? 'fireDeep';
@@ -2104,14 +2124,14 @@ export function brushFire(params: BrushFireParams): EffectDefinition {
       // "column" was one mark tall and read as a puddle of fire. It climbs
       // about fifty now, against a ring of stones thirty across.
       lifetimeTicks: [24, 38],
-      speed: [40, 66],
+      speed: [up(40), up(66)],
       // Narrow, so the column stands up. The width comes from the disc it is
       // born on and the turbulence, not from throwing marks sideways.
       spreadRadians: 0.3,
       // The heat. It is what makes the top of the flame move faster than the
       // bottom, which is the difference between fire and a fountain.
       acceleration: { x: 0, y: updraft, z: 0 },
-      turbulence: { amplitude: 26, frequency: 0.055 },
+      turbulence: { amplitude: up(26), frequency: 0.055 },
       drag: 1.1,
       angularVelocity: [-2.2, 2.2],
       // Widest low and thinning as it climbs: a flame tapers.
@@ -2139,14 +2159,14 @@ export function brushFire(params: BrushFireParams): EffectDefinition {
       shape: { kind: 'circle', radius: base * 0.55 },
       emission: { kind: 'rate', perSecond: embers },
       lifetimeTicks: [45, 100],
-      speed: [80, 150],
+      speed: [up(80), up(150)],
       spreadRadians: 0.5,
       // The arc. Gentle for its speed, so an ember hangs at the top rather than
       // snapping over: at 150 up this apexes about eighty units above the logs,
       // which is well past the flame and is what carries the fire's real height.
-      gravity: -140,
+      gravity: up(-140),
       drag: 0.5,
-      turbulence: { amplitude: 22, frequency: 0.07 },
+      turbulence: { amplitude: up(22), frequency: 0.07 },
       angularVelocity: [-4, 4],
       size: { keys: [[0, 0.26], [0.3, 0.2], [1, 0.09]] },
       // Held, then out: an ember goes out rather than fading, so the alpha
@@ -2177,12 +2197,12 @@ export function brushFire(params: BrushFireParams): EffectDefinition {
       offset: { x: 0, y: smokeLift, z: 0 },
       emission: { kind: 'rate', perSecond: smoke },
       lifetimeTicks: [80, 150],
-      speed: [12, 26],
+      speed: [up(12), up(26)],
       spreadRadians: 0.55,
       // A third of the flame's. Smoke rises because it is hot, and it stops
       // being hot -- a column that kept accelerating would leave the frame.
       acceleration: { x: 0, y: updraft * 0.3, z: 0 },
-      turbulence: { amplitude: 38, frequency: 0.03 },
+      turbulence: { amplitude: up(38), frequency: 0.03 },
       drag: 0.8,
       angularVelocity: [-1.1, 1.1],
       // The only layer that grows. Smoke spreads as it cools, and it is what
@@ -2489,9 +2509,44 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // a different subject from a fire, and the thing you want to see on it is the
   // heat rather than the embers.
   // The campfire's fire (spec 250). One row, because everything about how a
-  // standing fire is built is in `brushFire` -- a brazier or a lit torch is a
-  // second row at a smaller `scale` and nothing else.
+  // standing fire is built is in `brushFire`.
   brushFire({ id: 'fire_camp' }),
+  // The standing torch's (spec 263), which is that sentence collected: the same
+  // three layers, fewer of each, thrown a fraction as far.
+  //
+  // `reach` is the half spec 250 left out when it said a lit torch was "a second
+  // row at a smaller `scale` and nothing else". A scale shrinks a mark and where
+  // it is born and not how fast it is thrown, so the row that is *only* a scale
+  // is a handful of three-unit marks climbing fifty units out of a bowl -- a
+  // pilot light with a spray over it. At 0.42 the flame stands about twenty
+  // units above the rim and the embers apex about thirty-five, which is a torch
+  // against a body a little over twice that tall.
+  //
+  // The counts come down with it and by more than the height does. A fire's
+  // density is marks per unit of column, so keeping a campfire's twenty-six over
+  // two fifths of the height is a solid orange lozenge rather than a flame with
+  // gaps you can see the pole through -- and the gaps are the whole of why this
+  // is paint. The smoke is two a second: a torch smokes, and a torch that smoked
+  // like a bonfire would read as one that is going out.
+  brushFire({
+    id: 'fire_torch',
+    flames: 15,
+    embers: 3,
+    smoke: 2,
+    reach: 0.42,
+    // Both down from the campfire's, and both because a short column has
+    // nowhere to put its smoke. Born at 1.2 radii rather than 1.6 it leaves the
+    // flame's own tip rather than a gap above it, and at 0.52 it is no longer
+    // the widest thing in the effect -- photographed at 0.62 the grey marks
+    // outweighed the orange ones, which is `brushShot`'s finding about grey on
+    // grass and reads as a torch going out rather than one burning.
+    smokeSize: 0.52,
+    smokeLift: 1.2,
+    // Shorter than the campfire's, in the same proportion its light is: what
+    // carries a torch to the edge of the frame is the pool it throws, and paint
+    // at the far side of a 300-unit reach is a pixel.
+    cullDistance: 800,
+  }),
   brushAffliction({
     id: 'affliction_burn',
     cling: 22,

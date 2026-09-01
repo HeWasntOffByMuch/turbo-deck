@@ -464,6 +464,39 @@ src/terrain/     pure, deterministic world data: heightfields, materials, chunks
                  subject *moves*, so a static solid can only ever be a picture
                  of one instant of it -- and it fought the paint rather than
                  sitting under it.
+                 Spec 263 is that sentence collected for the **standing torch**,
+                 which kept its cone for thirteen specs: `fire_torch` is the same
+                 `brushFire` row played a fraction as wide and a body's height
+                 up, and what is left in the bowl is a coal -- the campfire's
+                 ember bed one prop over, and there for that part's two reasons,
+                 since it is what the paint's root sits in and what is still
+                 burning when a distant torch's paint is culled. `FIXTURE_ART`
+                 says how wide and how far up as well as which effect, and the
+                 second of those is a **fraction of the height the fixture's own
+                 light hangs at** rather than a world number: it scales with the
+                 prop for free, and a flame tied to its light by one number
+                 cannot come apart from it the way two constants in two files
+                 can.
+                 The other half of that spec is that **the part a light comes out
+                 of emits**, and it is worth knowing because the argument against
+                 it was plausible and wrong. props.ts held that a pale colour was
+                 enough since these parts stand inside their own point light --
+                 and a point light at a part's own centre lights *none* of it,
+                 since for every outward-facing triangle the vector to the light
+                 points inward. A lamp's mantle spans 110 to 134 about a light
+                 hung at 122, so that light is behind its four sides, under its
+                 top face and over its bottom one: **every face of the one object
+                 in the frame that was emitting light took ambient alone**, over
+                 a street the same light had made bright. `PropPart.emissive` is
+                 the fix and costs no batch, because a batch builds its own
+                 material anyway (spec 181) and an emissive is a uniform on it --
+                 where the `MeshBasicMaterial` the *carried* torch uses would be
+                 a fifth kind of batch. What a fixture emits is
+                 `FIXTURE_LIGHTS[kind].color`, the colour it lights with, so
+                 retuning a lamp's light retunes the thing the light comes out
+                 of; the intensity is under 1, or the sum with any daylight clips
+                 to white on every channel and the warm gold that says "lamp" is
+                 the first thing lost.
                  `fixtureLight` is the one answer to "does this glow, and how",
                  with three callers -- the worker composing a region, the editor
                  drawing its ghost, the panel offering the sliders -- for the

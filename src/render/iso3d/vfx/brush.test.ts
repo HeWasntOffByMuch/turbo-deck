@@ -27,6 +27,7 @@ import {
   NORMAL_LIFT,
   ORDER_MARK_ARM,
   ORDER_MARK_REACH,
+  brushFire,
 } from './brush.js';
 import { EFFECTS, REGISTRY } from './registry.js';
 import { compileRegistry } from './compile.js';
@@ -1036,5 +1037,68 @@ describe('the affliction cling sizes stay in one band', () => {
         step('affliction_corrosion', 'affliction_corrosion_heavy'),
       ) + 1e-9,
     );
+  });
+});
+
+describe('a standing fire\u2019s reach (spec 263)', () => {
+  const tall = brushFire({ id: 'reach_full' });
+  const small = brushFire({ id: 'reach_half', reach: 0.5 });
+  const layer = (effect: typeof tall, id: string): (typeof tall)['emitters'][number] => {
+    const found = effect.emitters.find((emitter) => emitter.id === id);
+    expect(found, id).toBeDefined();
+    return found as (typeof tall)['emitters'][number];
+  };
+
+  /**
+   * The property the knob exists for and the one that makes it a *height* rather
+   * than a fourth set of numbers to tune: every distance halves and no duration
+   * moves. An ember's apex is `v^2 / 2g`, so halving both halves it; its time to
+   * apex is `v / g` and does not change at all.
+   */
+  it('halves every velocity, acceleration and turbulence together', () => {
+    for (const id of ['flame', 'embers', 'smoke']) {
+      const full = layer(tall, id);
+      const half = layer(small, id);
+      expect(half.speed?.[0], id).toBeCloseTo((full.speed?.[0] ?? 0) / 2, 6);
+      expect(half.speed?.[1], id).toBeCloseTo((full.speed?.[1] ?? 0) / 2, 6);
+      expect(half.turbulence?.amplitude, id).toBeCloseTo((full.turbulence?.amplitude ?? 0) / 2, 6);
+      expect(half.acceleration?.y ?? 0, id).toBeCloseTo((full.acceleration?.y ?? 0) / 2, 6);
+      expect(half.gravity ?? 0, id).toBeCloseTo((full.gravity ?? 0) / 2, 6);
+    }
+  });
+
+  it('leaves the timing, the counts and the sizes exactly alone', () => {
+    for (const id of ['flame', 'embers', 'smoke']) {
+      const full = layer(tall, id);
+      const half = layer(small, id);
+      expect(half.lifetimeTicks, id).toEqual(full.lifetimeTicks);
+      expect(half.size, id).toEqual(full.size);
+      expect(half.alpha, id).toEqual(full.alpha);
+      expect(half.emission, id).toEqual(full.emission);
+      // A rate rather than a distance: damping is per second either way.
+      expect(half.drag, id).toBe(full.drag);
+    }
+  });
+
+  it('leaves a fire that did not ask for one byte for byte where it was', () => {
+    expect(brushFire({ id: 'reach_full' })).toEqual(brushFire({ id: 'reach_full', reach: 1 }));
+  });
+
+  /** The torch as it ships: the campfire's three layers, thrown a fraction as far. */
+  it('gives the torch a shorter column than the campfire out of the same row', () => {
+    const camp = EFFECTS.find((effect) => effect.id === 'fire_camp');
+    const torch = EFFECTS.find((effect) => effect.id === 'fire_torch');
+    expect(torch).toBeDefined();
+    expect(torch?.emitters.map((emitter) => emitter.id)).toEqual(
+      camp?.emitters.map((emitter) => emitter.id),
+    );
+    const flame = (effect: typeof camp): number =>
+      effect?.emitters.find((emitter) => emitter.id === 'flame')?.speed?.[1] ?? 0;
+    expect(flame(torch)).toBeLessThan(flame(camp) * 0.6);
+    // It smokes, which is half of what makes it a fire rather than a glow.
+    expect(torch?.emitters.some((emitter) => emitter.id === 'smoke')).toBe(true);
+    // And it burns until it is stopped, like the campfire: the driver owns the
+    // stop, because a fixture's fire ends when its ground stops being drawn.
+    expect(torch?.durationTicks).toBe(0);
   });
 });

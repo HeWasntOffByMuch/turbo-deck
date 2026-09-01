@@ -138,6 +138,20 @@ export interface StandingTrigger {
    * has one, and a thing standing on the ground has no size the rig can guess.
    */
   readonly scale: number;
+  /**
+   * Where it stands, relative to the dummy (spec 263). Defaults to the origin,
+   * which is the dummy's own feet.
+   *
+   * A campfire is wider than the body beside it and spills out either side of
+   * it; a torch's fire is a third of that and sits **entirely inside the
+   * dummy's silhouette**, so photographed at the origin it is a picture of a
+   * post with nothing burning. `y` is the half of this that is not framing:
+   * a fixture's fire is born at its own head, and one drawn on the ground is
+   * not the effect the game plays.
+   */
+  readonly x?: number;
+  readonly y?: number;
+  readonly z?: number;
 }
 
 export interface AfflictionTrigger {
@@ -609,7 +623,13 @@ class BrushScene {
    * means nothing stops it, so the rig owes the stop.
    */
   standing(id: string, input: StandingTrigger): number {
-    const handle = this.layer.play(id, { x: 0, y: 0, z: 0, seed: input.seed, scale: input.scale });
+    const handle = this.layer.play(id, {
+      x: input.x ?? 0,
+      y: input.y ?? 0,
+      z: input.z ?? 0,
+      seed: input.seed,
+      scale: input.scale,
+    });
     if (handle !== 0) this.held.push(handle);
     return handle;
   }

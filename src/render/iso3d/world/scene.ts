@@ -3720,6 +3720,10 @@ export class WorldScene {
         kind: light.kind,
         x: light.x,
         groundY: light.groundY,
+        // Where the light is hung, which is what a flame's root is measured
+        // against (spec 263) -- already the prop's own scale times its row's
+        // height, so a torch placed large burns out of its own bowl.
+        lightY: light.y,
         z: light.z,
         footprint: light.footprint,
       });

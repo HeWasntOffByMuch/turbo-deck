@@ -2,12 +2,13 @@ import type { FixtureKind } from '../../../terrain/vegetation.js';
 import { seedFor, type VfxPlayer } from './affliction-vfx.js';
 
 /**
- * The fire burning in a campfire (spec 250).
+ * The fire burning in a fixture (specs 250, 263).
  *
  * A campfire's prop is a ring of stones, four charred logs and a bed of embers,
  * and nothing in it moves. What makes it a *fire* is this: a painted effect
  * played at the middle of the ring, in the same brush vocabulary the afflictions
- * are drawn in.
+ * are drawn in. A standing torch is the same sentence one prop over -- a stake,
+ * three legs and a pitch bowl with a coal in it, and the flame is paint.
  *
  * The cone that used to stand there was the honest first answer and is the wrong
  * one for a specific reason -- a fire is the one prop in this game whose subject
@@ -18,7 +19,13 @@ import { seedFor, type VfxPlayer } from './affliction-vfx.js';
  * `FIXTURE_ART` and nothing else, in the register `shot-vfx.ts`'s `SHOT_ART` is
  * in: which effect a fixture carries is **art direction**, so it lives beside
  * the art rather than in `data/`. A kind with no row simply has no paint, which
- * is the right and quiet answer for a lamp post.
+ * is the right and quiet answer for a lamp post: what is in its lantern is a
+ * mantle rather than a fire, and a mantle is a made thing that glows steadily.
+ *
+ * A row says how *wide* and how far *up* as well as which effect, because those
+ * are the two things that separate a torch from a campfire and neither is a
+ * property of the effect: the same three layers are played a fraction as wide
+ * and a body's height off the ground.
  *
  * ## The three rules it inherits
  *
@@ -43,24 +50,6 @@ import { seedFor, type VfxPlayer } from './affliction-vfx.js';
  * to end in Node against a recording {@link VfxPlayer}.
  */
 
-/** Which effect each fixture kind burns with, or nothing. */
-export const FIXTURE_ART: Readonly<Partial<Record<FixtureKind, string>>> = {
-  campfire: 'fire_camp',
-};
-
-/** A fixture standing on ground the client is drawing, as this driver reads one. */
-export interface FireSite {
-  /** The region light's key: stable for as long as this is the same fixture. */
-  readonly key: string;
-  readonly kind: FixtureKind;
-  readonly x: number;
-  /** The **ground**, not the flame: a fire is born on the logs. */
-  readonly groundY: number;
-  readonly z: number;
-  /** What the fixture blocks, which is what its paint is sized by. */
-  readonly footprint: number;
-}
-
 /**
  * How much of a fixture's footprint the fire is drawn at.
  *
@@ -69,6 +58,75 @@ export interface FireSite {
  * its own kerb.
  */
 export const FIRE_SCALE = 0.72;
+
+/** What a fixture burns with: the effect, how wide, and how far up it (spec 263). */
+export interface FixtureFire {
+  readonly id: string;
+  /**
+   * The fire's width, as a fraction of what the fixture blocks.
+   *
+   * Relative rather than a length, so a prop placed at twice the size burns
+   * twice as wide -- `footprint` is already the row's base times the prop's own
+   * scale.
+   */
+  readonly scale: number;
+  /**
+   * Where the flame's root sits, as a fraction of the height its own light hangs
+   * at.
+   *
+   * A fraction of {@link FireSite.lightY} rather than a world number, for two
+   * reasons. It scales with the prop for free, since that height already does --
+   * a torch placed at twice the size burns out of its own bowl rather than out
+   * of the middle of its shaft. And it ties the flame to the light with **one**
+   * number instead of two constants in two files, which is the mistake
+   * `props.ts` names beside `LAMP_HEAD_HEIGHT` and cannot otherwise defend
+   * against: a lamp whose flame is not inside its own lantern is the sort of
+   * thing nobody would think to go looking for.
+   *
+   * At most 1, always: a light hangs *in* a flame, so a root above it is a fire
+   * burning off the top of its own fixture.
+   */
+  readonly root: number;
+}
+
+/**
+ * Which effect each fixture kind burns with, or nothing.
+ *
+ * A lamp post has no row and is right not to: what is inside its lantern is a
+ * mantle, which is a made thing that glows steadily, and it says so by emitting
+ * its own light's colour (spec 263) rather than by throwing marks.
+ */
+export const FIXTURE_ART: Readonly<Partial<Record<FixtureKind, FixtureFire>>> = {
+  // On the ground, inside the ring of stones. `root: 0` is what it has always
+  // played at -- a campfire's flame is born on the logs.
+  campfire: { id: 'fire_camp', scale: FIRE_SCALE, root: 0 },
+  // In the bowl. The light hangs at the middle of the flame, so its root is just
+  // under it -- and `footprint` here is the *pole's* collider, which is narrower
+  // than the head it holds up, so the fire is drawn a little wider than the
+  // thing a body cannot walk through.
+  'torch-stand': { id: 'fire_torch', scale: 1.15, root: 0.93 },
+};
+
+/** A fixture standing on ground the client is drawing, as this driver reads one. */
+export interface FireSite {
+  /** The region light's key: stable for as long as this is the same fixture. */
+  readonly key: string;
+  readonly kind: FixtureKind;
+  readonly x: number;
+  /** The **ground**, not the flame: a campfire is born on the logs. */
+  readonly groundY: number;
+  /**
+   * Where this fixture's light hangs -- the ground plus its row's height, scaled
+   * by the prop's own scale, which is what `RegionLight.y` already is.
+   *
+   * A flame's root is measured against it rather than against the ground: see
+   * {@link FixtureFire.root}.
+   */
+  readonly lightY: number;
+  readonly z: number;
+  /** What the fixture blocks, which is what its paint is sized by. */
+  readonly footprint: number;
+}
 
 export class FireVfx {
   /** Site key -> the handle that stops it. */
@@ -90,15 +148,15 @@ export class FireVfx {
   step(sites: readonly FireSite[]): void {
     const seen = new Set<string>();
     for (const site of sites) {
-      const id = FIXTURE_ART[site.kind];
-      if (id === undefined) continue;
+      const art = FIXTURE_ART[site.kind];
+      if (art === undefined) continue;
       seen.add(site.key);
       const handle = this.burning.get(site.key) ?? 0;
       // Evicted out from under us, or refused when it was last asked for. Either
       // way nothing is burning, so ask again -- which may well be refused again
       // while the pressure lasts, and should be.
       if (handle !== 0 && this.player.isLive(handle)) continue;
-      this.burning.set(site.key, this.start(id, site));
+      this.burning.set(site.key, this.start(art, site));
     }
 
     for (const [key, handle] of this.burning) {
@@ -121,17 +179,21 @@ export class FireVfx {
     return [...this.burning.keys()];
   }
 
-  private start(id: string, site: FireSite): number {
-    if (!this.player.has(id)) return 0;
-    return this.player.play(id, {
+  private start(art: FixtureFire, site: FireSite): number {
+    if (!this.player.has(art.id)) return 0;
+    return this.player.play(art.id, {
       x: site.x,
-      y: site.groundY,
+      // The root, up from the ground toward the light hung in the flame: the
+      // logs for a campfire, the bowl for a torch. Interpolated rather than
+      // added, so a fixture on a slope burns at its own base rather than at a
+      // height measured from nothing.
+      y: site.groundY + (site.lightY - site.groundY) * art.root,
       z: site.z,
       // Hashed off *where it is* rather than drawn, so two clients watching one
       // campfire watch the same fire and a reload does not reshuffle it. The
       // same rule every other seeded thing in this directory follows.
       seed: seedFor(Math.round(site.x), site.kind, Math.round(site.z)),
-      scale: site.footprint * FIRE_SCALE,
+      scale: site.footprint * art.scale,
     });
   }
 }
