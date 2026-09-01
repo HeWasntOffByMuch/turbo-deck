@@ -3201,7 +3201,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  Night *phase* (19:48-04:30) and the sun being *down*
                  (18:00-06:00) -- and a caller would get whichever the author
                  happened to pick; `phase` and `sunUp` are each unambiguous.
-                 **The first game rule to read any of it is spec 266's spawn
+                 **The first game rule to read any of it is spec 268's spawn
                  window.** A `spawner` marker may author `when: 'night' | 'day'`
                  and `runSpawners` refuses a point whose window is shut, beside
                  the population cap it already refuses at -- one `continue`, no
@@ -4194,7 +4194,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  constant and the padding follows it for free, which is why that
                  test asserts against the derivation rather than against 800.
                  Nothing new crosses the wire, because the overlay's countdown is
-                 already `readyAtTick - tick`. Spec 266 adds a third thing to the
+                 already `readyAtTick - tick`. Spec 268 adds a third thing to the
                  same block and it is the first that is not a number -- `when`,
                  the hours the point keeps -- on the same terms: a closed union so
                  the row names no quantity, absent so no committed map moved, and

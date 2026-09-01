@@ -218,7 +218,7 @@ export interface EditorSettings {
   /** How far its body may be dragged. {@link SPAWNER_UNSET} = the sim's own. */
   selLeashRadius: number;
   /**
-   * When this spawner may fill (spec 266). {@link SPAWNER_ALWAYS} = whenever.
+   * When this spawner may fill (spec 268). {@link SPAWNER_ALWAYS} = whenever.
    *
    * A string a dropdown is bound to rather than an optional, for the reason
    * `fixtureBrightness` is always a number: `gui.add` refuses a field with no
@@ -371,7 +371,7 @@ export const SELECT_PICK_RADIUS = 70;
 export const SPAWNER_UNSET = 0;
 
 /**
- * The dropdown value meaning "whenever its timer is up" (spec 266).
+ * The dropdown value meaning "whenever its timer is up" (spec 268).
  *
  * {@link SPAWNER_UNSET}'s idiom in string form and for its reason: the document
  * says "whenever" by carrying no key at all, and a control needs a value to sit

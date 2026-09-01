@@ -309,7 +309,7 @@ describe("a spawner's own numbers", () => {
 });
 
 /**
- * Spec 266. What a window is, and what "night" means -- which is the one
+ * Spec 268. What a window is, and what "night" means -- which is the one
  * sentence in this feature, since two readings of the word were available and
  * they disagree by twenty real seconds.
  */

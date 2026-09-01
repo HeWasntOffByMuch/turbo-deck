@@ -293,7 +293,7 @@ export const SpawnerStateValue = {
   /** Empty, and counting down to the next one. */
   Waiting: 1,
   /**
-   * Empty, and not coming back until its window opens (spec 266).
+   * Empty, and not coming back until its window opens (spec 268).
    *
    * Appended rather than slotted in, because a renumbering silently re-labels
    * every spawner on a client that has not been rebuilt. It is its own value

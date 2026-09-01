@@ -156,7 +156,7 @@ export interface MapPropLight {
 export type MapMarkerKind = 'spawn' | 'objective' | 'campfire' | 'trigger' | 'spawner';
 
 /**
- * When a spawner is allowed to fill (spec 266).
+ * When a spawner is allowed to fill (spec 268).
  *
  * A closed union rather than a number, the rule `Temperament` and `Idle` are
  * unions for: a window names no quantity, so there is none to author, and the
@@ -202,7 +202,7 @@ export interface MapSpawnerSettings {
    */
   readonly leashRadius?: number;
   /**
-   * When this point may fill (spec 266). Absent = whenever its timer is up.
+   * When this point may fill (spec 268). Absent = whenever its timer is up.
    *
    * Absent rather than a written-in `'always'`, for the reason the two numbers
    * above it are absent: a committed map carries only what somebody chose, so
@@ -212,7 +212,7 @@ export interface MapSpawnerSettings {
 }
 
 /**
- * Whether a settings block says nothing, so callers can drop it (spec 266).
+ * Whether a settings block says nothing, so callers can drop it (spec 268).
  *
  * One answer with two callers -- the parser below, which normalizes an empty
  * block to absent, and the editor's `patchMarker`, which drops one somebody
@@ -875,7 +875,7 @@ function parseSpawnerSettings(value: unknown, what: string): MapSpawnerSettings 
   if (leash !== undefined) settings.leashRadius = asNumber(leash, `${what}.leashRadius`);
   if (when !== undefined) {
     // Refused rather than ignored, the stance this parser already takes on a
-    // marker kind it does not know (spec 266): a spawner whose window nothing
+    // marker kind it does not know (spec 268): a spawner whose window nothing
     // can open never fills, and from inside the game that is an empty patch of
     // ground -- which is also what a typo'd monster id looks like, and is the
     // reason that one is a boot failure too.

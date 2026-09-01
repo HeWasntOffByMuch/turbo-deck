@@ -29,7 +29,7 @@ export interface SpawnerLabel {
  * show. A timer of exactly zero is a spawner waiting on something else -- the
  * population cap -- and says so rather than counting.
  *
- * `Holding` is the same rule with a cause the server can name (spec 266): a
+ * `Holding` is the same rule with a cause the server can name (spec 268): a
  * point whose window is shut is not counting down to anything, so it says so
  * rather than showing `due` for the rest of the day. Kept generic rather than
  * saying "daylight", because a `day` spawner is held by exactly the opposite

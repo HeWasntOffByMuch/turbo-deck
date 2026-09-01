@@ -1,5 +1,5 @@
 /**
- * Spec 266. A spawner that keeps hours.
+ * Spec 268. A spawner that keeps hours.
  *
  * Everything here goes through the real `step`, because the claim is about a
  * pass and not about a predicate -- `spawnWindowOpen` has its own tests in

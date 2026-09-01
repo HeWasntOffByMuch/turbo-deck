@@ -430,7 +430,7 @@ describe('seam ownership', () => {
 });
 
 /**
- * Spec 266. The third thing a spawner may say, and the first that is not a
+ * Spec 268. The third thing a spawner may say, and the first that is not a
  * number: when it is allowed to fill.
  *
  * Everything here is about the *document*, because that is where this can go

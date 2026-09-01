@@ -3081,7 +3081,7 @@ export class GameServer implements AdminHost {
     const visible = this.spawnPoints.filter((point) =>
       near.has(this.chunks.keyAt(point.x, point.y)),
     );
-    // Sampled once for the message, like the pass that reads it (spec 266).
+    // Sampled once for the message, like the pass that reads it (spec 268).
     const clock = worldClockAt(tick);
     const spawners: SpawnerStatus[] = visible.map((point) => {
       const live = this.state.spawners.get(point.id);

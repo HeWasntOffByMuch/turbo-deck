@@ -45,7 +45,7 @@ export interface SpawnPoint {
   readonly leashRadius: number | null;
   /**
    * When this point is allowed to fill, or null for "whenever its timer is up"
-   * (spec 266).
+   * (spec 268).
    *
    * Null rather than a third member of the union for the reason the two fields
    * above are null: this file's job is to say what the *document* asked for, and
@@ -56,7 +56,7 @@ export interface SpawnPoint {
 }
 
 /**
- * Whether a point with this window may fill right now (spec 266).
+ * Whether a point with this window may fill right now (spec 268).
  *
  * **The one sentence that says what night is.** Two readings were available and
  * they disagree by twenty real seconds: the named `Night` phase begins at 19:48
@@ -151,7 +151,7 @@ function respawnTicksOf(marker: MapMarker): number | null {
 }
 
 /**
- * A spawner's window, or null for a point that authors none (spec 266).
+ * A spawner's window, or null for a point that authors none (spec 268).
  *
  * Checked again here rather than trusted from the parser, for the reason the two
  * numbers beside it are: `spawnPointsFrom` is handed a `MapDocument`, and

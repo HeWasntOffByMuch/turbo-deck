@@ -438,7 +438,7 @@ describe('the select tool', () => {
   });
 
   /**
-   * Spec 266. The window is the third thing a spawner can say and the first
+   * Spec 268. The window is the third thing a spawner can say and the first
    * that is not a number, so it gets `SPAWNER_UNSET`'s treatment in string
    * form: the dropdown always holds a word, and one of the words means "write
    * no key at all".

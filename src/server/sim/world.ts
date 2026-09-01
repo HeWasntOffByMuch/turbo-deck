@@ -2786,7 +2786,7 @@ function runSpawners(
   // anything spawns, and the per-spawner clocks below only ever change *how
   // long*.
   const globalInterval = respawnInterval(config);
-  // Sampled once for the pass rather than per point (spec 266). `worldClockAt`
+  // Sampled once for the pass rather than per point (spec 268). `worldClockAt`
   // memoizes on the tick so the difference is an argument rather than a cost,
   // but a clock read in one place is also the guarantee that two spawners on the
   // same tick cannot disagree about what time it is.
@@ -2862,7 +2862,7 @@ function runSpawners(
     }
     if (tick < current.readyAtTick) continue;
 
-    // Keeping hours (spec 266). A point whose window is shut waits and tries
+    // Keeping hours (spec 268). A point whose window is shut waits and tries
     // again next tick, which is the population cap's shape below and is the
     // whole of the feature: the sun stops the *spawner*, never the monster, so
     // a body already standing here is untouched by dawn and goes on wandering

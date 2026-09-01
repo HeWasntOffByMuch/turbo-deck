@@ -47,7 +47,7 @@ describe('the spawner overlay', () => {
   });
 
   /**
-   * Spec 266. `due` is the one thing a held spawner must not say: it means "any
+   * Spec 268. `due` is the one thing a held spawner must not say: it means "any
    * tick now" and the answer for a point whose window is shut is "not today".
    * The two are the same `ticks: 0` on the wire, which is why the state is its
    * own value rather than something inferred from the number.

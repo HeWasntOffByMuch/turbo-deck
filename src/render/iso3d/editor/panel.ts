@@ -506,7 +506,7 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     .name('Leash (0=default)')
     .onChange(opts.onSelectionEdit);
   // A dropdown rather than a slider, because a window is not a quantity (spec
-  // 266) -- and `always` is a real option in the list rather than an unticked
+  // 268) -- and `always` is a real option in the list rather than an unticked
   // box, so what the document says is readable without knowing which value is
   // the empty one.
   const selWhen = select
