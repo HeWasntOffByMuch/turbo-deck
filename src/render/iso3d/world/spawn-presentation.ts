@@ -295,7 +295,7 @@ export class SpawnPresentations {
       // now -- anything older is a body walking into range, which is the whole
       // case `spawnTick` exists to separate. A body seen first *dead* is a
       // corpse whether it was made a moment ago or not.
-      const fresh = !body.dead && now - spawnTick <= ARRIVAL_GRACE_TICKS && now >= spawnTick;
+      const fresh = !body.dead && isRecent(spawnTick, now);
       const since = fresh && !body.committed ? now : null;
       this.tracks.set(body.id, { since, dead: body.dead, spawnTick });
       return since === null ? SETTLED : this.stageAt(body.style, since, now, true);
@@ -309,7 +309,7 @@ export class SpawnPresentations {
     // the server has reused for a different body: the client would otherwise
     // hold a track that outlives the body it describes.
     const revived = track.dead && !body.dead;
-    const remade = spawnTick !== track.spawnTick && now - spawnTick <= ARRIVAL_GRACE_TICKS;
+    const remade = spawnTick !== track.spawnTick && isRecent(spawnTick, now);
     let began = false;
     if ((revived || remade) && !body.committed) {
       track.since = now;
@@ -408,6 +408,25 @@ export function bodyDropAt(phase: number): number {
   }
   // The push. The legs straighten under it and the body comes up to standing.
   return DIG_DROP * (1 - smoothstep((p - DIG_UNTIL) / (1 - DIG_UNTIL)));
+}
+
+/**
+ * Whether a spawn tick is recent enough to be an arrival rather than a body
+ * this client has walked up to.
+ *
+ * **Symmetric**, and the negative half is the one that had to be thought about:
+ * `estimatedTick` is a forward-biased ratchet that adds half the measured round
+ * trip, so it usually *leads* the server -- but before the first round trip is
+ * measured it can sit behind, which is exactly the moment the local player's own
+ * body is created. A one-sided `now >= spawnTick` would drop that arrival in
+ * silence, and it is the one every session opens with.
+ *
+ * Nothing is lost by allowing it: the case this exists to refuse is a body
+ * walking into interest range, whose spawn tick is seconds or minutes old, so
+ * the two are nowhere near a window measured in half a second.
+ */
+function isRecent(spawnTick: number, now: number): boolean {
+  return Math.abs(now - spawnTick) <= ARRIVAL_GRACE_TICKS;
 }
 
 function clamp01(v: number): number {

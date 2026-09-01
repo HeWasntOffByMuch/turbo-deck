@@ -192,6 +192,15 @@ describe('SpawnPresentations', () => {
     expect(stage.began).toBe(false);
   });
 
+  it('plays an arrival whose tick the clock has not caught up to yet', () => {
+    // `estimatedTick` leads the server once a round trip has been measured and
+    // can sit behind before one has -- which is precisely when the local
+    // player's own body is made. A one-sided window would drop the arrival
+    // every session opens with, in silence.
+    const spawns = new SpawnPresentations();
+    expect(spawns.read(body({ spawnTick: 100 }), 96).began).toBe(true);
+  });
+
   it('fires the effect once, not once a frame', () => {
     const spawns = new SpawnPresentations();
     let fired = 0;
