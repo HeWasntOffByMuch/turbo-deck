@@ -133,18 +133,27 @@ own (spec 260's rule for a sign's bubble, which this is).
 
 - **Every stock, sell and buyback cell carries the item's own details.** Asserted
   against `detailsFor` rather than against a written-out list, so a retune of
-  the item table reaches the shop with nothing to remember.
-- **A cell's price line and its tooltip agree**, over all three tabs.
+  the item table reaches the shop with nothing to remember -- and over a view
+  with something in all three lists, since a list that happens to be empty
+  asserts nothing about that list.
+- **A cell's price line and its tooltip agree**, over all three tabs. Two places
+  drawing one price is two places to retune, and the tooltip is the one a player
+  reads before deciding.
 - **A refusal says what the server would have said**: the reason on a blocked
   cell is `buy`/`sell`'s own, not a sentence written here.
 - **A Buy fires on the click; a Sell asks first.** Spec 130's asymmetry, kept as
   a test rather than as a comment.
 - **The bag says what the purse holds**, and says it for zero coins too -- an
   omitted line reads as a missing feature where `0 coins` is a fact.
-- **A hidden tab's cells are not hovered.** Spec 198's rule: a tab switched away
-  keeps its rectangles, so a hover over a Buy cell must not be answered by the
-  Sell cell laid out behind it. Mutation-checked by hit-testing on `visible`
-  alone.
+- **The window holds a whole row of cells.** Six columns is a fixed width and
+  the tab body scrolls only vertically, so a window narrower than them clips the
+  last column -- which the first two bakes of `shop.png` did, with a sixth icon
+  cut in half and a price reading `2` where the row says `27`.
+- **A hidden tab's cells are not hovered.** Spec 198's rule: the three grids sit
+  at the same coordinates, so one point is over the first cell of every tab and
+  only the showing one may answer -- asserted both ways round, or a screen that
+  always said `buy` would pass. Mutation-checked by walking every tab's cells
+  and taking the first hit, which fails exactly this test and nothing else.
 - **The shop closes when the player leaves the vendor's radius**, and stays open
   at exactly the radius -- the boundary, because a boundary bug is a bug about
   where you are standing.
@@ -152,10 +161,14 @@ own (spec 260's rule for a sign's bubble, which this is).
 - **Leaving does not depend on having been told**: the range close is driven by
   the client's own position with the server saying nothing, which is what
   separates it from the existing empty-answer path.
-- **The ask/reply pairing still holds**, over a range close followed by a
-  purchase: the close is an ask like any other, so `vendorAsks` and
-  `vendorReplies` stay level and spec 249's guard goes on firing. Mutation-
-  checked by closing the window without telling the server.
+- **The close is an ordinary ask**, which is what leaves spec 249's pairing
+  alone: it goes through the same `close('shop')` -> `openVendor('')` every
+  other way of shutting the window uses, so the request list after a range close
+  is exactly the one a title-bar X produces. That is asserted at the mount
+  rather than at `GameClient`, because what could have gone wrong here is a
+  second path to closing, not a change to the counting -- the counting is
+  `client/vendor-answers.test.ts`'s and is untouched.
+- **It says it once**, rather than on every frame the player stays away.
 
 ## Out of scope
 

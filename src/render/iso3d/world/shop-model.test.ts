@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { buy, sell } from '../../../server/player/shop.js';
 import { buyPrice, sellPrice, vendorById, type VendorDefinition } from '../../../server/data/vendors.js';
 import { emptyInventory, type Inventory } from '../../../server/state/types.js';
-import { UNKNOWN_ICON } from './inventory-model.js';
+import { detailsFor, UNKNOWN_ICON } from './inventory-model.js';
 import { shopViewOf, type ShopSource } from './shop-model.js';
 
 const QUARTERMASTER = vendorById('vendor.quartermaster') as VendorDefinition;
@@ -70,6 +70,37 @@ describe('shopViewOf', () => {
           if (!truth.ok) expect(entry.blockedBecause).toBe(truth.reason);
         }
       }
+    }
+  });
+
+  /**
+   * The assertion the grid exists for (spec 264): a shop describes an item the
+   * way the bag does, rather than as a name and a number.
+   *
+   * Against `detailsFor` rather than against a written-out list, so a retune of
+   * the item table reaches the shop with nothing here to remember -- and so
+   * this cannot pass by agreeing with a copy of itself.
+   */
+  it("carries every item's own description, on all three lists", () => {
+    const bag = bagOf({ defId: 'bow.hunting', count: 1 });
+    const view = shopViewOf({
+      ...openShop(bag, 100),
+      vendor: {
+        id: QUARTERMASTER.id,
+        name: QUARTERMASTER.name,
+        stock: QUARTERMASTER.stock.map((defId) => ({ defId, price: buyPrice(defId, QUARTERMASTER) })),
+        buyback: [{ defId: 'sword.worn', count: 1, price: 12 }],
+      },
+    });
+    expect(view).not.toBeNull();
+    if (!view) return;
+    // Each list has something in it, or this asserts nothing about that list.
+    expect(view.stock.length).toBeGreaterThan(0);
+    expect(view.sellable.length).toBeGreaterThan(0);
+    expect(view.buyback.length).toBeGreaterThan(0);
+    for (const row of [...view.stock, ...view.sellable, ...view.buyback]) {
+      expect(row.item.details, row.item.defId).toEqual(detailsFor(row.item.defId));
+      expect(row.item.details.length, row.item.defId).toBeGreaterThan(0);
     }
   });
 

@@ -224,6 +224,13 @@ describe('buying back', () => {
   });
 });
 
+/** The verb each tab's price line uses, so the agreement test can name one. */
+const PHRASES: Readonly<Record<ShopTab, string>> = {
+  buy: 'Buy for',
+  sell: 'Sells for',
+  buyback: 'Buy back for',
+};
+
 describe('the screen', () => {
   it('shows the purse and the vendor', () => {
     const test = harness();
@@ -243,6 +250,36 @@ describe('the screen', () => {
       .filter((text): text is string => typeof text === 'string');
     expect(texts).toContain('9');
     expect(texts).toContain('240');
+  });
+
+  /**
+   * The number under a cell and the number in its tooltip are the same number.
+   *
+   * Two places drawing one price is two places to retune, and the tooltip is
+   * the one a player reads before deciding -- so this walks all three tabs
+   * rather than the one that happens to be showing.
+   */
+  it('draws the same price under a cell as it puts in its tooltip', () => {
+    const view = viewOf({ buyback: [row('legs.traveller', 7)] });
+    const test = harness(view);
+    for (const tab of SHOP_TABS) {
+      const rows: readonly ShopView['stock'][number][] =
+        tab === 'buy' ? view.stock : tab === 'sell' ? view.sellable : view.buyback;
+      test.shop.select(tab);
+      test.root.update(0);
+      expect(rows.length, tab).toBeGreaterThan(0);
+      for (const [index, entry] of rows.entries()) {
+        const cell = test.shop.cellsOf(tab)[index];
+        expect(cell, `${tab}:${index}`).toBeDefined();
+        const drawn = [...(cell?.walk() ?? [])]
+          .map((widget) => (widget as unknown as { text?: string }).text)
+          .filter((text): text is string => typeof text === 'string');
+        expect(drawn, `${tab}:${index}`).toContain(String(entry.price));
+        expect(test.shop.tooltipFor(tab, entry).map((line) => line.text)).toContain(
+          `${PHRASES[tab]} ${entry.price} coins`,
+        );
+      }
+    }
   });
 
   it('reuses its cells when a resend arrives rather than rebuilding them', () => {
@@ -345,19 +382,32 @@ describe('hovering', () => {
    * answered by whichever Sell cell was laid out behind it.
    */
   it('never answers with a cell in a tab that is not showing', () => {
-    const test = harness();
-    // Build every tab, then come back: each has been arranged at least once.
+    const view = viewOf();
+    const test = harness(view);
+    // Build every tab, so each has been arranged at least once and every grid
+    // is holding the rectangles it was last given. Without this the hidden
+    // cells have no rects and the test passes for the wrong reason.
     for (const tab of SHOP_TABS) {
       test.shop.select(tab);
       test.root.update(0);
     }
+
     test.shop.select('buy');
     test.root.update(16);
+    // The three grids sit at the same coordinates, so this point is over the
+    // first cell of *every* tab. Only the showing one may answer.
+    const overlap = centreOf(test, 'sell', 0);
+    const showing = test.shop.rowUnder(overlap);
+    expect(showing?.tab).toBe('buy');
+    expect(showing?.row.item.defId).toBe(view.stock[0]?.item.defId);
 
-    for (const index of [0, 1]) {
-      const found = test.shop.rowUnder(centreOf(test, 'buy', index));
-      expect(found?.tab).toBe('buy');
-    }
+    // ...and the other way round, or this would pass for a screen that always
+    // answered 'buy'.
+    test.shop.select('sell');
+    test.root.update(32);
+    const swapped = test.shop.rowUnder(centreOf(test, 'buy', 0));
+    expect(swapped?.tab).toBe('sell');
+    expect(swapped?.row.item.defId).toBe(view.sellable[0]?.item.defId);
   });
 
   it('points the tooltip at what it found, and clears it away from a cell', () => {
