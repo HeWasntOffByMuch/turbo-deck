@@ -24,6 +24,7 @@ import { PLAYER_RADIUS } from '../../sim/constants.js';
 import {
   FENCE_KINDS,
   FENCE_TILE_LENGTH,
+  FIXTURE_LIGHTS,
   footprintRadius,
   GRAVE_PLAN,
   HOUSE_PLAN,
@@ -1587,5 +1588,62 @@ describe('a deferred prop field (spec 211)', () => {
     field.adoptRegion(key, buildRegionInstances(buckets.get(key) ?? [], heightAt, normalAt));
     expect(batchesOf(field.group)).toEqual(once);
     field.dispose();
+  });
+});
+
+/**
+ * The parts a light comes out of (spec 265).
+ *
+ * The bug this is written against is one every offscreen check in this repo
+ * would have passed: the geometry was right, the colour was right, the light was
+ * right, and the mantle was a grey box -- because a point light hung at a part's
+ * own centre is *behind every face of it*, so the brightest object in the frame
+ * was the one taking ambient alone. What is asserted is that the emissive
+ * reaches the material `buildPropField` really builds, since that seam is the
+ * whole of the change and a part-level field nothing reads is exactly what this
+ * repo keeps finding a hundred specs later.
+ */
+describe('a fixture emits its own light (spec 265)', () => {
+  const fixture = (kind: 'campfire' | 'lamp-post' | 'torch-stand'): Prop => ({
+    kind,
+    x: 40,
+    y: 40,
+    scale: 1,
+    rotation: 0,
+    tint: 0,
+  });
+
+  const materials = (kind: 'campfire' | 'lamp-post' | 'torch-stand'): THREE.MeshLambertMaterial[] =>
+    batchesOf([fixture(kind)]).map((mesh) => mesh.material as THREE.MeshLambertMaterial);
+
+  const glowing = (kind: 'campfire' | 'lamp-post' | 'torch-stand'): THREE.MeshLambertMaterial[] =>
+    materials(kind).filter((material) => material.emissive.getHex() !== 0x000000);
+
+  it("gives a lamp's mantle the colour the lamp lights with", () => {
+    const lit = glowing('lamp-post');
+    // Exactly one: the stake, the brace and the iron cage are things the light
+    // falls on, and a lantern whose ironwork glowed would be a lantern made of
+    // light rather than one with a light in it.
+    expect(lit).toHaveLength(1);
+    expect(lit[0]?.emissive.getHex()).toBe(FIXTURE_LIGHTS['lamp-post'].color);
+    // Under full, or the sum with any daylight clips to white on every channel
+    // and the warm gold that says "lamp" is the first thing lost.
+    expect(lit[0]?.emissiveIntensity).toBeGreaterThan(0);
+    expect(lit[0]?.emissiveIntensity).toBeLessThan(1);
+  });
+
+  it("gives a torch's coal the colour the torch lights with", () => {
+    const lit = glowing('torch-stand');
+    expect(lit).toHaveLength(1);
+    expect(lit[0]?.emissive.getHex()).toBe(FIXTURE_LIGHTS['torch-stand'].color);
+  });
+
+  it('leaves everything that is not a light alone', () => {
+    // The campfire included: its bed sits on the ground under a light hung 34 up,
+    // so it is one of the few parts of a fixture its own lamp genuinely reaches.
+    for (const kind of ['campfire'] as const) expect(glowing(kind)).toHaveLength(0);
+    for (const mesh of batchesOf([tree(40, 40, 0.3)])) {
+      expect((mesh.material as THREE.MeshLambertMaterial).emissive.getHex()).toBe(0x000000);
+    }
   });
 });

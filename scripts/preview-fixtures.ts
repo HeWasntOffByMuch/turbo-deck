@@ -67,7 +67,20 @@ interface Tri {
   readonly b: THREE.Vector3;
   readonly c: THREE.Vector3;
   readonly color: THREE.Color;
+  /**
+   * What this triangle gives off regardless of what falls on it (spec 265).
+   *
+   * Read off the material rather than assumed, and the reason is the bug this
+   * sheet exists to have caught and did not: a lamp's mantle stands *inside* its
+   * own point light, so every face of it has that light behind it and takes
+   * nothing from the loop below. A preview that shaded a glowing part like any
+   * other would go on drawing the grey box the game used to.
+   */
+  readonly emissive: THREE.Color;
 }
+
+/** For the sheet's own scenery -- the floor and the scale block -- which glows not at all. */
+const NO_GLOW = new THREE.Color(0, 0, 0);
 
 /** A point light as the rasteriser applies one. See the header. */
 interface Lamp {
@@ -93,9 +106,15 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
       if (mesh.isInstancedMesh) mesh.getMatrixAt(n, matrix);
       else matrix.identity();
       matrix.premultiply(mesh.matrixWorld);
+      const material = mesh.material as THREE.MeshLambertMaterial;
       const color = new THREE.Color();
       if (mesh.isInstancedMesh && mesh.instanceColor) mesh.getColorAt(n, color);
-      else color.copy((mesh.material as THREE.MeshLambertMaterial).color);
+      else color.copy(material.color);
+      // `instanceColor` multiplies the diffuse and nothing else, which is why
+      // this one is taken off the material and not off the instance.
+      const emissive = material.emissive
+        ? material.emissive.clone().multiplyScalar(material.emissiveIntensity ?? 1)
+        : new THREE.Color(0, 0, 0);
       for (let i = 0; i < count; i += 3) {
         const corners = [0, 1, 2].map((k) => {
           const vi = index ? index.getX(i + k) : i + k;
@@ -106,6 +125,7 @@ function collectTriangles(root: THREE.Object3D): Tri[] {
           b: corners[1] as THREE.Vector3,
           c: corners[2] as THREE.Vector3,
           color: color.clone(),
+          emissive,
         });
       }
     }
@@ -122,8 +142,8 @@ function box(cx: number, cy: number, cz: number, w: number, h: number, d: number
     v(-1, 1, -1), v(1, 1, -1), v(1, 1, 1), v(-1, 1, 1),
   ] as const;
   const face = (a: number, b: number, c: number, d2: number): Tri[] => [
-    { a: corner[a] as THREE.Vector3, b: corner[b] as THREE.Vector3, c: corner[c] as THREE.Vector3, color },
-    { a: corner[a] as THREE.Vector3, b: corner[c] as THREE.Vector3, c: corner[d2] as THREE.Vector3, color },
+    { a: corner[a] as THREE.Vector3, b: corner[b] as THREE.Vector3, c: corner[c] as THREE.Vector3, color, emissive: NO_GLOW },
+    { a: corner[a] as THREE.Vector3, b: corner[c] as THREE.Vector3, c: corner[d2] as THREE.Vector3, color, emissive: NO_GLOW },
   ];
   return [
     ...face(4, 7, 6, 5),
@@ -156,8 +176,8 @@ function ground(halfSpan: number, cells = 48): Tri[] {
       const z0 = -halfSpan + j * step;
       const p = (x: number, z: number): THREE.Vector3 => new THREE.Vector3(x, 0, z);
       tris.push(
-        { a: p(x0, z0), b: p(x0 + step, z0), c: p(x0 + step, z0 + step), color },
-        { a: p(x0, z0), b: p(x0 + step, z0 + step), c: p(x0, z0 + step), color },
+        { a: p(x0, z0), b: p(x0 + step, z0), c: p(x0 + step, z0 + step), color, emissive: NO_GLOW },
+        { a: p(x0, z0), b: p(x0 + step, z0 + step), c: p(x0, z0 + step), color, emissive: NO_GLOW },
       );
     }
   }
@@ -277,9 +297,11 @@ function render(
         const at = y * size + x;
         if (d >= (depth[at] as number)) continue;
         depth[at] = d;
-        out[at * 4] = encode(tri.color.r * r);
-        out[at * 4 + 1] = encode(tri.color.g * g);
-        out[at * 4 + 2] = encode(tri.color.b * b);
+        // Added after the lighting, which is what emissive means: a part that
+        // emits is bright in the dark, and no dimmer at noon.
+        out[at * 4] = encode(tri.color.r * r + tri.emissive.r);
+        out[at * 4 + 1] = encode(tri.color.g * g + tri.emissive.g);
+        out[at * 4 + 2] = encode(tri.color.b * b + tri.emissive.b);
       }
     }
   }
