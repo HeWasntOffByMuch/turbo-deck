@@ -12,7 +12,8 @@
  * the cooldown and on nothing else, so a self-cast pressed during a swing goes
  * out and is refused -- which is invisible to a harness that only swings.
  *
- *   npx tsx scripts/probe-already-casting.ts             # both halves
+ *   npx tsx scripts/probe-already-casting.ts             # both halves, queued
+ *   npx tsx scripts/probe-already-casting.ts --now       # the control: sent on the press
  *   npx tsx scripts/probe-already-casting.ts --no-press  # swings only
  *
  * The flask is the press because it is the one self-cast every character
@@ -35,6 +36,7 @@ import { createWorldPredictor } from '../src/server/client/prediction.js';
 import { moveIntent } from '../src/render/iso3d/world/intent.js';
 import { autoAttack } from '../src/render/iso3d/world/target.js';
 import { startAim } from '../src/render/iso3d/world/aim.js';
+import { drainPress, type QueuedPress } from '../src/render/iso3d/world/press-queue.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -72,6 +74,7 @@ async function play(options: {
   readonly weapon: string | null;
   readonly delayTicks: number;
   readonly press: boolean;
+  readonly queue: boolean;
 }): Promise<Fought> {
   const transport = new LoopbackTransport();
   const server = new GameServer({
@@ -102,8 +105,9 @@ async function play(options: {
   void client.connect();
 
   const rejects: Record<string, number> = {};
-  client.onCastRejected((_id, reason) => {
-    rejects[reason] = (rejects[reason] ?? 0) + 1;
+  client.onCastRejected((abilityId, reason) => {
+    const key = `${reason}:${abilityId}`;
+    rejects[key] = (rejects[key] ?? 0) + 1;
   });
 
   const pressedDuring: Record<string, number> = {};
@@ -112,6 +116,7 @@ async function play(options: {
   let asks = 0;
   let presses = 0;
   let refusedLocally = 0;
+  let queued: QueuedPress | null = null;
 
   for (let ticks = 1; ticks <= RUN_TICKS; ticks++) {
     line.deliver(ticks);
@@ -141,6 +146,25 @@ async function play(options: {
         const mob = live.get(targetId);
         if (mob) live.set(targetId, { ...mob, health: mob.stats.maxHealth });
 
+        // `driveQueuedPress`, ahead of the two orders exactly as the frame loop
+        // runs it -- which is what stops the attack order committing the next
+        // swing over the top of a press that has been waiting for the last one.
+        let askedThisFrame = false;
+        if (options.queue) {
+          const step = drainPress({
+            queued,
+            rooted: view.selfRoot !== null,
+            staggered: view.selfStaggered,
+            pending: view.awaitingCast,
+            ready: view.estimatedTick >= (view.cooldowns[queued?.abilityId ?? ''] ?? 0),
+          });
+          queued = step.queued;
+          if (step.send) {
+            askedThisFrame = true;
+            client.useAbility(step.send.abilityId, view.self.x, view.self.y, 0);
+          }
+        }
+
         const swingId = view.stats.basicAttackId || 'melee.slash';
         const swing = abilityById(swingId);
         const entity = view.entities.find((e) => e.id === targetId);
@@ -154,7 +178,10 @@ async function play(options: {
           range: swing?.range ?? 0,
           rooted: view.selfRoot !== null,
           staggered: view.selfStaggered,
-          pending: view.awaitingCast,
+          // `view` was read at the top of the frame, so a request sent by the
+          // drain above is not in it yet -- and two requests on one frame is
+          // the server taking the first and refusing the second.
+          pending: view.awaitingCast || askedThisFrame,
           readyAtTick: view.cooldowns[swingId] ?? 0,
           aligned: !entity ? true : facesAim(view.self, facing, { x: entity.x, y: entity.y }),
           tick: view.estimatedTick,
@@ -165,7 +192,7 @@ async function play(options: {
         }
 
         // `pressAbility` verbatim: `startAim` gates on the cooldown and on
-        // nothing else, and a `'none'` gesture goes straight to `castNow`.
+        // nothing else, and a `'none'` gesture is the commitment itself.
         const flask = abilityById(FLASK);
         if (options.press && flask && ticks % PRESS_EVERY === 0) {
           const start = startAim(flask, {
@@ -177,11 +204,14 @@ async function play(options: {
             const own = live.get(view.selfEntityId)?.cast ?? null;
             const during = own ? (PHASE_NAMES[own.phase] ?? String(own.phase)) : 'idle';
             pressedDuring[during] = (pressedDuring[during] ?? 0) + 1;
-            client.useAbility(flask.id, view.self.x, view.self.y, 0);
+            // Queued (spec 262), or sent on the press, which is what shipped.
+            if (options.queue) queued = { abilityId: flask.id, held: new Set() };
+            else client.useAbility(flask.id, view.self.x, view.self.y, 0);
           } else {
             refusedLocally += 1;
           }
         }
+
 
         const intent = moveIntent({
           held: new Set<string>(),
@@ -215,10 +245,16 @@ const WEAPONS: readonly (string | null)[] = [null, 'bow.hunting', 'stars.weighte
 const DELAYS: readonly number[] = [0, 3, 6, 12];
 
 const press = !process.argv.includes('--no-press');
-console.log(press ? 'swinging and pressing the flask' : 'swinging only');
+/** `--now` is the control: the press is sent where it was made, as it shipped. */
+const queue = !process.argv.includes('--now');
+console.log(
+  press
+    ? `swinging and pressing the flask, ${queue ? 'queued (spec 262)' : 'sent on the press'}`
+    : 'swinging only',
+);
 for (const weapon of WEAPONS) {
   for (const delayTicks of DELAYS) {
-    const out = await play({ weapon, delayTicks, press });
+    const out = await play({ weapon, delayTicks, press, queue });
     const label = `${weapon ?? 'bare hands'} @ ${delayTicks}t`;
     console.log(
       `${label.padEnd(24)} swings=${String(out.asks).padStart(2)}` +
