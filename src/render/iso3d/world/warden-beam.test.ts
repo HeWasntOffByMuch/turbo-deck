@@ -37,7 +37,7 @@ const shaftAt = (tick: number): ShaftLook => {
   return look;
 };
 
-describe('the lance, drawn (spec 259)', () => {
+describe('the lance, drawn (spec 262)', () => {
   it('draws nothing over a body that has no cycle, whatever it is casting', () => {
     expect(beamLookFor('ravager', FIRING, 200)).toBeNull();
     expect(beamLookFor('player', FIRING, 200)).toBeNull();
@@ -156,7 +156,7 @@ describe('the lance, drawn (spec 259)', () => {
   });
 });
 
-describe('the sight is a scan, not a twinkle (spec 259)', () => {
+describe('the sight is a scan, not a twinkle (spec 262)', () => {
   it('lays every dot on the line, and none of them past its end', () => {
     for (let tick = 0; tick < 90; tick++) {
       const look = sightAt(tick);
@@ -207,7 +207,7 @@ describe('the sight is a scan, not a twinkle (spec 259)', () => {
   });
 });
 
-describe('the beam lights the ground rather than painting it (spec 259)', () => {
+describe('the beam lights the ground rather than painting it (spec 262)', () => {
   it('hangs its lights along the beam and never past either end', () => {
     const shaft = shaftAt(250);
     for (let i = 0; i < BEAM_GLOW_LIGHTS; i++) {

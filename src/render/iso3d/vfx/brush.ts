@@ -1820,7 +1820,7 @@ export interface BrushBeamParams {
 const BEAM_SCORCH_HEIGHT = 14;
 
 /**
- * The sparks a sustained beam throws, and the ground it burns (spec 259).
+ * The sparks a sustained beam throws, and the ground it burns (spec 262).
  *
  * A sibling of {@link brushLane} rather than a use of it, and the difference is
  * the one thing that file already names: *"alternate nodes are pushed to

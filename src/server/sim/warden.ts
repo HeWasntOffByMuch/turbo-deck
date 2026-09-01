@@ -1,5 +1,5 @@
 /**
- * The Warden's laser cycle, as behaviour (spec 259).
+ * The Warden's laser cycle, as behaviour (spec 262).
  *
  * Four states, and the whole of what this file adds to the sim:
  *
@@ -388,7 +388,7 @@ export function coolAfterBeam(
 }
 
 /**
- * Everything worth looking at about a Warden, for a person (spec 259 §12).
+ * Everything worth looking at about a Warden, for a person (spec 262 §12).
  *
  * Pure and derived, so it can be printed from a headless run
  * (`scripts/probe-warden.ts`), asserted in a test, or handed to an admin tool

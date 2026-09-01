@@ -1127,7 +1127,7 @@ export const LIBRARY: readonly EffectDefinition[] = [
     deep: 'corrodeDeep',
   }),
 
-  // The Warden's lance, once per damage pulse (spec 259).
+  // The Warden's lance, once per damage pulse (spec 262).
   //
   // Nothing new drives this: `landArea` already sends `${ability.id}.impact` at
   // the caster's feet with the lane's bearing on it, every pulse, hit or miss --

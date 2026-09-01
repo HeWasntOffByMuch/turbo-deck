@@ -133,7 +133,7 @@ describe('the wire indices the marks cross on', () => {
     scorchedEarth: 16,
     // Appended by spec 250, on the same terms.
     magicLight: 17,
-    // Appended by spec 259, on the same terms.
+    // Appended by spec 262, on the same terms.
     overheated: 18,
   };
 

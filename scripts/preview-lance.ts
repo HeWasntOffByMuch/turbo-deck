@@ -1,4 +1,4 @@
-// Dev-only: look at the Warden's lance over the arena's real ground (spec 259).
+// Dev-only: look at the Warden's lance over the arena's real ground (spec 262).
 // Not part of the app.
 //
 //   npx tsx scripts/preview-lance.ts
@@ -419,7 +419,7 @@ const FIRING: BeamCast = { ...LOCK_ON, phase: CastPhase.Channel };
  * How high the head's opening sits over the mech's feet.
  *
  * `rigs.ts`'s `BODY_Y` (40) times the Warden look's own `sizeScale` (1.1), which
- * is where `MechRig` puts the eye -- and the eye *is* the opening, since spec 259
+ * is where `MechRig` puts the eye -- and the eye *is* the opening, since spec 262
  * made `buildBody` hand it back. Stated here rather than imported because the rig
  * module is three.js and this script rasterises in software; nothing checks the
  * two agree, so it is a number to re-derive if either moves, and what it costs if

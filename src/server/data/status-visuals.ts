@@ -316,7 +316,7 @@ const DEFINITIONS: readonly StatusVisual[] = [
     effect: 'A conjured light floats overhead, lighting the ground around you. It casts no shadows.',
   },
 
-  // --- the Warden's recovery (spec 259) ----------------------------------
+  // --- the Warden's recovery (spec 262) ----------------------------------
   //
   // On the wire because it is the one part of that encounter's state machine a
   // client cannot work out for itself. Lock-on and firing are a cast, and a

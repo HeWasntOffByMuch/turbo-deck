@@ -46,7 +46,7 @@ export type MechRigTuning = Partial<Omit<MechTuning, 'moveSpeed' | 'turnRate'>>;
 
 export interface MonsterLook {
   /**
-   * Whether the leg platform turns with the heading (spec 259).
+   * Whether the leg platform turns with the heading (spec 262).
    *
    * `MechOptions`' own field, surfaced here because it is a *look* in exactly
    * the sense the rest of this row is: it changes nothing the sim reads and
@@ -104,7 +104,7 @@ const SMALL_SPIDER: MonsterLook = {
 };
 
 /**
- * The Warden (spec 259): the sandbox's grey walker, at the values it was tuned
+ * The Warden (spec 262): the sandbox's grey walker, at the values it was tuned
  * to.
  *
  * The appearance is `defaultMechAppearance(PALETTE.walkerBody)` **whole** rather

@@ -601,7 +601,7 @@ const AUTHORED: readonly AuthoredMonster[] = [
   },
   {
     // The one body in this table that fights by *committing to a direction*
-    // (spec 259). Everything else here closes to its own standoff and swings at
+    // (spec 262). Everything else here closes to its own standoff and swings at
     // whatever it is standing next to; the Warden aims, fires down a lane, and
     // is helpless afterwards -- so the answer to it is where you are standing
     // rather than how hard you hit.
@@ -659,7 +659,7 @@ const AUTHORED: readonly AuthoredMonster[] = [
       // third, which is enough that standing in front of it is a losing
       // proposition and not enough that the beam stops being the threat. It was
       // measured at 5 first, where the encounter was unwinnable at level 1 by
-      // any play at all -- see the tuning note in spec 259.
+      // any play at all -- see the tuning note in spec 262.
       attackDamage: 4,
       attackRange: 100,
       baseAttackTimeTicks: seconds(2),

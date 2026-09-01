@@ -1262,7 +1262,7 @@ export function step(
     for (const spawn of advanced.spawns) spawnQueue.push({ owner: casting, spawn });
   }
 
-  // --- 3a': the machine cools (spec 259) ---------------------------------
+  // --- 3a': the machine cools (spec 262) ---------------------------------
   //
   // Driven off this tick's `castEnded` events, in `rally`'s register: the
   // alternative is a scan asking every body in the world whether it has just
@@ -2171,7 +2171,7 @@ function monsterIntent(
   const listener = monster.conversationWith === null ? null : entities.get(monster.conversationWith);
   if (listener && listener.health > 0) return conversationDecision(monster, listener);
 
-  // A live laser cycle outranks everything below it too (spec 259), and for the
+  // A live laser cycle outranks everything below it too (spec 262), and for the
   // conversation's reason one line up: a committed beam is a *claim on the
   // body*, not a mood. Above the leash in particular -- a player who walked
   // past it mid-beam would otherwise have the Warden drop its target, `goHome`,
@@ -2244,7 +2244,7 @@ function monsterIntent(
   // rather than pressing into it.
   if (monster.aggro === AggroValue.Fleeing) return fleeFrom(monster, target, tick, context);
 
-  // And a Warden with its lance ready stops walking and aims (spec 259). Here
+  // And a Warden with its lance ready stops walking and aims (spec 262). Here
   // rather than folded into the swing below, because what it replaces is the
   // *approach*: the beam reaches 620 and the melee 100, so a machine that
   // closed first would spend its whole cooldown walking and fire from a range
