@@ -44,7 +44,6 @@
 
 import type { Rng } from '../../shared/prng.js';
 import { SERVER_TICK_RATE } from '../config.js';
-import { RESTORATION } from '../data/restoration.js';
 import { SCALING } from '../data/scaling.js';
 import { elementOfAbility, type AbilityDefinition } from '../data/abilities.js';
 import { abilityAttributeBonus, abilityGradesOf, abilityWeaponFactor } from '../data/ability-scaling.js';
@@ -53,7 +52,7 @@ import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
 import { applyPoiseDamage, isResolute, poiseDamageOf, stagger } from './poise.js';
-import { markAssist } from './restoration.js';
+import { enterCombat, markAssist } from './restoration.js';
 import {
   adaptationAgainst,
   adaptedKey,
@@ -483,7 +482,7 @@ function markTarget(
   // And the wider "you are in a fight" window, which only resting reads
   // (spec 156). Both, because they answer different questions at different
   // widths -- see `StatusId.InCombat`.
-  statuses = applyStatus(statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
+  statuses = enterCombat(statuses, tick);
 
   // "This player hit me", left on the victim for its death to read (spec 156).
   // The whole assist system is this line plus a lookup: no threat table, no
@@ -535,7 +534,7 @@ function rewardAttacker(
   // rather than in `markTarget` because that one skips a body it just killed --
   // and a player standing over a corpse in the safe zone has very much been
   // fighting.
-  let statuses = applyStatus(next.statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
+  let statuses = enterCombat(next.statuses, tick);
 
   if (outcome.weakPoint) {
     resource += A.weakPointResource;

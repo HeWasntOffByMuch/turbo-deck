@@ -150,6 +150,9 @@ export const STATUS_SEMANTICS: readonly StatusSemantics[] = [
   // that answered "has this been hit".
   { id: StatusId.RecentlyHit, tags: [Bookkeeping] },
   { id: StatusId.InCombat, tags: [Bookkeeping] },
+  // The clock a monster's recovery is measured against. Nobody suffers from it
+  // and nobody benefits: it is the sim remembering when a fight ended.
+  { id: StatusId.Recovering, tags: [Bookkeeping] },
   // Inverted: carrying one means the mechanic has fired and has not re-armed.
   // Bookkeeping rather than `Harmful` for that reason -- it is the absence of a
   // boon rather than the presence of a problem, and a cleanse that removed it

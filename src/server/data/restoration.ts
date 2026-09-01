@@ -215,6 +215,17 @@ export const RESTORATION = {
      * exists to be a reaction window and has to stay one.
      */
     combatTicks: seconds(8),
+    /**
+     * How long a monster nobody is fighting takes to come back from nothing to
+     * full, once {@link combatTicks} has closed (specs 213, 259).
+     *
+     * Here rather than in `sim/idle.ts` because two files need it and they are
+     * on opposite sides of an import: `restore` ramps over it, and
+     * `enterCombat` sizes `StatusId.Recovering` as `combatTicks` plus this, so
+     * that the record of when a fight ended lasts exactly as long as the ramp
+     * measured against it. Stated once, so those two cannot drift.
+     */
+    recoveryTicks: seconds(4),
   },
 
   // --- groups -----------------------------------------------------------

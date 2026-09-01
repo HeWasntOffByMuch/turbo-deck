@@ -35,7 +35,6 @@
  * rather than as an import of `world.ts`, which imports this.
  */
 
-import { RESTORATION } from '../data/restoration.js';
 import type { AbilityDefinition } from '../data/abilities.js';
 import { abilityEffectPowerOf } from '../data/ability-scaling.js';
 import { SCALING } from '../data/scaling.js';
@@ -49,7 +48,7 @@ import {
   type DotDefinition,
 } from '../data/damage-over-time.js';
 import { staggered } from './poise.js';
-import { markAssist } from './restoration.js';
+import { enterCombat, markAssist } from './restoration.js';
 import {
   applyStatus,
   hasStatus,
@@ -418,7 +417,7 @@ function onePulse(
     // into a rest zone and heal through it. Deliberately NOT `RecentlyHit`:
     // that one is a half-second reaction window and an affliction that held it
     // open would take Perfect Exit off an Agility build for its whole duration.
-    statuses = applyStatus(statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
+    statuses = enterCombat(statuses, tick);
     // A player whose affliction is doing the work has helped kill it, and the
     // assist system is one mark plus a lookup -- so it gets the mark.
     if (source && source.kind === EntityKindValue.Player) {

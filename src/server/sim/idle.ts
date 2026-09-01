@@ -24,13 +24,23 @@
  * derived is a walk home (spec 248): `ServerEntity.returnStart` is a snapshot,
  * because both ends of "regenerate to full along the route" are gone the moment
  * the body takes its first step.
+ *
+ * **And recovery is measured on the clock rather than in ticks** (spec 259).
+ * `world.ts` steps nothing outside `activeChunks`, so a body nobody is near is
+ * not slowed but frozen -- which made {@link restore} a counter of how long
+ * somebody was *watching* rather than of how long the body was left alone, and
+ * left the exploit wide open through the one door that opens it fastest: dying,
+ * which teleports the player away and freezes the monster on whatever sliver
+ * was left of it. What a body is owed is read off a clock stamped when it was
+ * last in a fight, so the ticks nobody watched count too. See {@link restore}.
  */
 
 import { hash2i, hashUnit2 } from '../../shared/hash.js';
 import type { Vec2 } from '../../sim/types.js';
-import { SERVER_TICK_RATE } from '../config.js';
 import { idlePlanOf, type Idle } from '../data/monsters.js';
+import { RESTORATION } from '../data/restoration.js';
 import { arriveHome } from './aggro.js';
+import { recoveryRemaining } from './restoration.js';
 import { hasStatus, StatusId } from './statuses.js';
 import { EntityKindValue, type ReturnStart, type ServerEntity } from './types.js';
 
@@ -67,11 +77,14 @@ export const RETURN_PACE = 1;
  */
 export const HOME_MARGIN = 24;
 
-/** Seconds of recovery to go from nothing to full. Linear throughout. */
-export const RECOVERY_SECONDS = 4;
-
-/** The same, in ticks -- the denominator of one tick's worth of healing. */
-export const RECOVERY_TICKS = Math.max(1, Math.round(RECOVERY_SECONDS * SERVER_TICK_RATE));
+/**
+ * Ticks of recovery to go from nothing to full. Linear throughout.
+ *
+ * `RESTORATION.rest.recoveryTicks` rather than a number of its own, because
+ * `enterCombat` sizes the clock this ramps along -- see that function and
+ * {@link restore}. Two files, one width.
+ */
+export const RECOVERY_TICKS = RESTORATION.rest.recoveryTicks;
 
 /**
  * Whether this body has been dragged further from its spawn point than it will
@@ -220,7 +233,7 @@ function clamp01(value: number): number {
 }
 
 /**
- * A linear step back toward full health, for a body nobody is fighting.
+ * A step back toward full health, for a body nobody is fighting.
  *
  * Exploit avoidance and nothing more ambitious: without it, "hit it, walk past
  * the leash, come back" is a free four fifths of a kill, repeatable, and the
@@ -234,7 +247,38 @@ function clamp01(value: number): number {
  * `advanceRest` refuses to rest through, and it is stamped by every blow and
  * every affliction pulse -- so a body still burning does not heal through the
  * burn, and a body that merely lost sight of you waits out the same window a
- * player does.
+ * player does. It is a *wide* window on purpose (`RESTORATION.rest.combatTicks`
+ * says why), and it has to be: a player chasing a body that fled, or closing
+ * again after being knocked back, is still fighting it, and a monster that
+ * healed in those gaps would be a monster you cannot finish.
+ *
+ * **Recovery is measured on the clock, not in ticks somebody was near enough to
+ * watch** (spec 259), and that is what the floor below is for. `world.ts` steps
+ * nothing outside `activeChunks`, so a body nobody is near is not slowed but
+ * *frozen* -- and dying is the fastest way there is to make one unwatched,
+ * since a respawn teleports the player away. The one situation this function
+ * exists for was the one it did not run in: the body was still on its sliver
+ * when the player walked back, however long they took.
+ *
+ * So there are two answers and the larger wins:
+ *
+ *  - the **step**, one tick's worth from wherever the body is now. This is what
+ *    a watched body has always got, and it is unchanged.
+ *  - the **floor**, read off `StatusId.Recovering`, whose expiry *is* the tick
+ *    this body is due back to full. Being a comparison against an absolute tick
+ *    -- the register `statusOf`'s expiry, the loot reveal and the stun swirl are
+ *    all already in -- it counts the ticks a body spent unwatched exactly as it
+ *    counts the ticks it spent watched, so a body away past its due tick is
+ *    simply full on the first tick it is stepped again.
+ *
+ * The floor **never binds for a body that was watched throughout**, which is
+ * what makes the ramp's shape provably the one it was rather than approximately
+ * so: both reach full at the due tick, and the step runs from the body's own
+ * health where the floor runs from empty. It is pure catch-up.
+ *
+ * Nothing owed -- a body that has never been in a fight, or one whose clock has
+ * been pruned because it ran out -- gets no floor at all. See
+ * {@link recoveryRemaining} for why one answer is right for both.
  */
 export function restore(monster: ServerEntity, tick: number): ServerEntity {
   const max = monster.stats.maxHealth;
@@ -243,7 +287,12 @@ export function restore(monster: ServerEntity, tick: number): ServerEntity {
   // function that would be wrong rather than the caller.
   if (monster.health <= 0 || monster.health >= max) return monster;
   if (hasStatus(monster.statuses, StatusId.InCombat, tick)) return monster;
-  return { ...monster, health: Math.min(max, monster.health + max / RECOVERY_TICKS) };
+
+  const stepped = monster.health + max / RECOVERY_TICKS;
+  const remaining = recoveryRemaining(monster.statuses, tick);
+  const owed = remaining === null ? 0 : max * (1 - remaining / RECOVERY_TICKS);
+  const health = Math.min(max, Math.max(stepped, owed));
+  return health === monster.health ? monster : { ...monster, health };
 }
 
 /** How far from its anchor a body of this plan is still on its own ground. */

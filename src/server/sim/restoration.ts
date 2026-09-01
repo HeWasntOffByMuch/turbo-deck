@@ -35,7 +35,7 @@
 
 import { RESTORATION } from '../data/restoration.js';
 import { monsterById } from '../data/monsters.js';
-import { applyStatus, hasStatus, stacksOf, type Statuses } from './statuses.js';
+import { StatusId, applyStatus, hasStatus, stacksOf, type Statuses } from './statuses.js';
 import { EntityKindValue, type KillQualities, type ServerEntity } from './types.js';
 
 /** What a mote restores. A number rather than a union, so the wire can carry it. */
@@ -128,6 +128,67 @@ export function assistsOn(statuses: Statuses, tick: number): readonly number[] {
 /** Records that `attackerId` hit this body, for {@link assistsOn} to find later. */
 export function markAssist(statuses: Statuses, attackerId: number, tick: number): Statuses {
   return applyStatus(statuses, assistKey(attackerId), tick, RESTORATION.assistTicks);
+}
+
+// --- the combat window ---------------------------------------------------
+//
+// `StatusId.InCombat` is stamped by three things -- a blow landed, a blow
+// thrown, an affliction pulsing -- and read by two: whether a player may rest
+// (`advanceRest`), and whether a monster may recover (`sim/idle.ts`). The pair
+// below is the only way either is written or measured, so the two widths are
+// stated once rather than at each site.
+
+/**
+ * Put a body in a fight, and start the clock its recovery is measured on.
+ *
+ * Two stamps, because there are two questions and they have different widths.
+ * `InCombat` is `RESTORATION.rest.combatTicks` and answers *is this body still
+ * fighting*; `Recovering` is that plus a whole `recoveryTicks` and answers
+ * *when is this body due back to full*. Both are refreshed by every blow, so a
+ * fight that goes on pushes both ends of it forward together.
+ *
+ * One writer, so the second stamp cannot be forgotten at a call site that
+ * remembers the first -- which is the failure it would be hardest to see, since
+ * the body would still refuse to heal during the fight and would simply never
+ * catch up afterwards. Three sites used to spell the first out by hand.
+ */
+export function enterCombat(statuses: Statuses, tick: number): Statuses {
+  const fighting = applyStatus(statuses, StatusId.InCombat, tick, RESTORATION.rest.combatTicks);
+  return applyStatus(
+    fighting,
+    StatusId.Recovering,
+    tick,
+    RESTORATION.rest.combatTicks + RESTORATION.rest.recoveryTicks,
+  );
+}
+
+/**
+ * Ticks until this body is due back to full, or `null` if nothing is owed
+ * (spec 259).
+ *
+ * **It reads the entry whether or not it is still live**, and is the one place
+ * in the sim that wants a lapsed status. That does not bend `statuses.ts`'s rule
+ * that reading a stale entry can never produce a live effect: what is read is
+ * *when the ramp ends*, and a lapsed entry says the ramp has ended, which is the
+ * same thing the live entry would have said one tick later.
+ *
+ * Reading a lapsed entry is the whole of why a monster nobody is near recovers
+ * at all. Nothing prunes a frozen body's statuses -- `advanceProgression` runs
+ * only for bodies the tick actually stepped -- so the record of when its last
+ * fight ended is still on it whenever somebody finally comes back.
+ *
+ * `null` is **not** "long ago", and the difference is load-bearing: it is
+ * either a body that has never been in a fight, or one whose entry has been
+ * pruned. Pruning happens exactly when the ramp is due, so a watched body is
+ * already full by then and there is nothing to owe it; and a body that was
+ * never in a fight must not be handed full health for a wound it got some other
+ * way. One answer -- no floor -- is right for both, which is what makes the two
+ * safe to conflate.
+ */
+export function recoveryRemaining(statuses: Statuses, tick: number): number | null {
+  const held = statuses[StatusId.Recovering];
+  if (!held) return null;
+  return Math.max(0, held.expiresAtTick - tick);
 }
 
 // --- what a body is worth ------------------------------------------------
