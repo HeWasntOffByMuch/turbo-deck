@@ -90,6 +90,7 @@ change a game outcome.
 | `npm run build && npx tsx scripts/probe-structures.ts` | Place a hut, a well and a sign in the real editor and read them back out of the saved file (specs 224, 260). The sign is the one placed kind with a field of its own, so it is the one whose panel row can be shown for the wrong kind or wired to nothing -- and neither failure is visible in a screenshot, because a board placed with an empty message looks exactly like one placed with the right message |
 | `npm run build && npx tsx scripts/probe-sign.ts` | Whether a sign on the map is marked, walked to, read and closed in the shipped page (spec 260). **It puts the sign there itself**, backing up `maps/arena/` and restoring it -- there is none on the shipped map, and a probe that needed somebody to have placed one first is a probe nobody runs. Written before the game server starts, because with `?server=` the client's terrain comes off the wire, so what the page draws is whatever that process read from disk. The sign is found with the cursor (`data-crosshair` reading `sign` is the game's own answer to "that is something you can read"), and the **walk is measured** rather than assumed: `SIGN_READ_RADIUS` is under a hundred units, so a run that opened the bubble without moving has not seen the order at all and would go on passing after it was removed |
 | `npx tsx scripts/preview-fixtures.ts` | Photograph the three light fixtures **and what they light** (spec 250). The rasteriser has three's own `getDistanceAttenuation` in it, so the pool on the ground is the one the game throws -- and it prints the number a picture is bad at: the ground is not facing the light, so what a designer sets is scaled by the grazing angle, and the three read out to 41-47% of their reach at night against 29-30% by day |
+| `npx tsx scripts/preview-day-night.ts` | What the day/night cycle actually does (spec 263). A `preview-` rather than a `probe-` because what is being judged is a **schedule**: a thumbnail of a sunset says nothing about whether the sunset takes four seconds or forty, and forty is the whole question. Four sheets -- the segment table with the hours-per-second rate that falls out of it, the four seams with the rate either side of each as a ratio, a whole cycle walked through the real `worldClockAt` and the real `skyAt`, and the acceptance numbers. The pair worth reading is on the seams sheet: a piecewise clock can only show a kink where its rate jumps, and beside each ratio it prints **how fast the colour was moving there** -- so day->dusk speeding up 4.89x reads as 0.000005 to 0.000256 of a channel per frame, which is a large multiple of nothing. The last sheet answers the question the segment names cannot: the Day and Night *phases* are 10m00s and 2m00s, and the *sun* is up 10m43s and down 2m47s, because dawn and dusk divide their 45s each between light and dark |
 | `npx tsx scripts/probe-world-lights.ts` | Whether the fixtures on the shipped map are actually lit in the Play tab (spec 250). Reads `data-world-lights`, whose `lit=` is the **pool's own held slots** -- so one refused or dropped reads as absent -- against an `offered=` this script checks against the map file it read itself |
 | `npx tsx scripts/light-the-square.ts` | Put a fire and three lamps in the town square of `maps/arena` (spec 250), where the shopkeepers stand. `place-npc.ts`'s script one system over and for its reason: these have to agree with `data/vendors.ts`, which the editor cannot see. Prints what it would do; `--write` does it. Idempotent, and it **refuses** a spot with no ground, one inside an existing prop, or one inside a shopkeeper's wander disc |
 | `npx tsx scripts/place-npc.ts` | Put every friendly NPC's spawner into `maps/arena` at the spot its shop is measured from (specs 246, 245). Prints what it would do; `--write` does it. Idempotent -- a marker already there is moved rather than duplicated. The editor is still the tool for *placing* markers; this exists because a shopkeeper's spot has to agree with a constant in `data/vendors.ts`, so "exactly there" is the operation and a script saying so is reviewable where a dragged marker is not |
@@ -3012,6 +3013,92 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  grids, `gen` 25 to 155, none refused. It arrived with spec 208
                  rather than with 215, and nothing caught it because every test
                  in the tree drives a client that grows.
+                 `data/day-night.ts` is what time it is (spec 263), and it is
+                 the half spec 047 said would need a spec of its own: that one
+                 built the whole cycle -- the sun's arc, the nine-key colour
+                 ramp, the terminator fade -- and drove it from a slider in a
+                 tuning panel, which spec 254 then hid in the shipped build. So
+                 the game people play had no day and no night, only a permanent
+                 mid-afternoon; and a clock in a panel is a **per-client** clock,
+                 which is the one thing a shared cycle cannot be.
+                 **The clock is a pure function of the tick, and nothing crosses
+                 the wire.** The client already holds one -- `estimatedTick` is
+                 the server's clock re-synced to every delta with half the round
+                 trip added -- so both ends compute the same hour from the same
+                 number, and the feature costs no message, no protocol version
+                 and no state to persist, replicate or forget to clear. It is the
+                 pattern the loot reveal's phase, the stun swirl's angle and the
+                 affliction beat already use, and spec 215 states it outright:
+                 *the beat is derived, not sent*. What it costs is one round
+                 trip's worth of hour, which at the fastest the clock ever runs is
+                 under a hundredth of an hour on a 200ms connection.
+                 Ten minutes of day and two of night are **not expressible under
+                 one rate** -- `advanceTimeOfDay` is linear in `dt`, so day and
+                 night are each half a cycle whatever the day length -- so the
+                 cycle is four segments with a rate each: Day 07:30-16:30 in
+                 600s, Dusk 16:30-19:48 in 45s, Night 19:48-04:30 in 120s, Dawn
+                 04:30-07:30 in 45s. 24 hours, 810 seconds, 48,600 ticks, every
+                 count an integer, so the phase is integer arithmetic on the tick
+                 with no drift to accumulate over a session.
+                 **The boundaries are `SKY_KEYS` entries**, and that is the point
+                 rather than a coincidence: the ramp already has keys at 4.5, 7.5,
+                 16.5 and 19.8, so the segments *are* its own structure and a
+                 seam -- the one place a piecewise clock can show a kink, because
+                 the rate jumps there -- always lands on a keyframe and never
+                 mid-transition. Two of the four seams do step by about 5x, and
+                 both sit at the ends of the long daylight stretch where the
+                 colour is barely moving: measured through the real ramp,
+                 day->dusk speeds up 4.89x at a point where the sky is moving
+                 0.000005 of a channel per frame. The largest step the whole
+                 cycle takes between two frames is 0.0066 of a retro colour band.
+                 Day and night are authored **independently**, so 600 and 120 are
+                 exactly the ten minutes and the two minutes and moving one does
+                 not silently move the other or eat the sunrise. The cycle is
+                 therefore 13m30s rather than 12m, which is stated rather than
+                 hidden -- and measured against the *horizon* instead of the
+                 segment names the sun is up 10m43s and down 2m47s, since dawn
+                 and dusk divide their 45s each between light and dark. Dawn spans
+                 a real sunrise (04:30 to 07:30 crosses the horizon at 06:00), and
+                 it is the same 45s as dusk because asymmetry would need a reason
+                 and there is not one: what makes it the payoff for a short night
+                 is that it is 45 seconds against night's 120.
+                 **Tick 0 is the first tick of Day**, which is why the table is
+                 authored starting at Day -- the cycle's own order from its own
+                 epoch, so there is no offset constant to keep in step. A fresh
+                 server opens in morning light with the full ten minutes ahead of
+                 it, and every harness that boots a server and photographs it
+                 inside a minute is photographing daylight. The cost is that the
+                 game no longer opens on spec 045's tuned 15:00 framing; with the
+                 clock always running that is an hour the world passes through
+                 rather than the hour it sits at.
+                 **`worldClockAt(tick)` is the whole hook surface**, and every
+                 pass in the sim already has the tick in hand. Deliberately not a
+                 `ServerWorldState` field, a `StepContext` member or a
+                 `ServerSimEvent`: each would be a socket sitting un-plugged in a
+                 dozen places -- a field to persist and replicate, a context
+                 member every test fixture has to supply, a `switch` arm in every
+                 consumer -- to say something derivable from a number those
+                 callers were handed anyway. `phaseBeganAt` is the edge for a
+                 mechanic that wants to act once at nightfall, and being a
+                 comparison rather than a fired event there is nothing to forget
+                 to raise. It memoizes its last answer on the tick, which is pure
+                 by construction since the tick is its only input.
+                 `darkness` is the hook that is a *number*: 0 through Day,
+                 smoothstepped up across Dusk, 1 through Night, smoothstepped down
+                 across Dawn. Deliberately **not** derived from the sky's light
+                 intensity -- that is presentation, tuned by eye and free to be
+                 retuned, and this is a gameplay quantity with a stated shape; a
+                 mechanic reading the ramp would be a rule that moves when
+                 somebody adjusts a colour. There is deliberately **no
+                 `isNight`**, because it would mean two different things -- the
+                 Night *phase* (19:48-04:30) and the sun being *down*
+                 (18:00-06:00) -- and a caller would get whichever the author
+                 happened to pick; `phase` and `sunUp` are each unambiguous.
+                 **No game rule reads any of it yet**, which is what the spec asked
+                 for rather than an omission: the renderer's sky is the consumer
+                 that proves the path end to end. The obvious next one is spec
+                 250's fixtures, which burn at a constant intensity, so a lamp is
+                 lit at noon.
                  net/ is the binary wire format (see net/PROTOCOL.md), sim/ is the
                  deterministic tick, world/ is chunking and zones, player/ derives
                  stats from ids and levels, state/ is the swappable DataStore,
@@ -5331,6 +5418,41 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  with it is the fallback rather than the plan"* -- to a `{2, 5}`
                  between the bow and the keen sword, because since 217 that
                  range **is** what an Ember Shot hits for)
+                 sky-source.ts (whose clock the sky follows, spec 263).
+                 `carried-light.ts`'s shape one system along, and it holds that
+                 module's rule for that module's reason -- **the panel wins where
+                 it is asking for something, and the game decides where it is
+                 not** -- because two things drive this sun now and one of them is
+                 not in the tab at all. `view-controls.ts` states its settings and
+                 this decides; a panel that answered a `SkyState` outright would
+                 be the panel deciding for the game.
+                 The `Day/night cycle` checkbox opens **ticked** since 263, which
+                 reverses a decision rather than drifting from one: it opened
+                 unticked because the cycle was a toy whose clock lived in that
+                 panel, and the clock is the server's now. `Override the clock`
+                 beside it takes it back and drives the sky from the `Time`
+                 slider, which is spec 047's behaviour byte for byte -- and is
+                 what keeps the panel useful for the thing it is for, looking at
+                 an hour on purpose. Unticking the cycle still hands the sun to
+                 the manual `Direction`/`Elevation` sliders, which is what it has
+                 always meant and what spec 033 built them for. A panel with no
+                 Sky section is not a panel asking for a cycle, so `lighting`
+                 gates it: the sandboxes and the Studio preview keep the single
+                 fixed light they have had since spec 045.
+                 `?clock=15`, `?clock=night` pins the hour, in the register of
+                 `?seed=` and `?field=`, and it is needed rather than convenient:
+                 a sky that moves is a sky no harness can photograph twice, which
+                 is why `probe-living-ground.ts` already stills the weather clock.
+                 It resolves to a **cycle tick**, so a pin is a real `WorldClock`
+                 with a phase and a darkness rather than a second path; an
+                 unrecognised value **defers** (`device.ts`'s rule, so a
+                 misspelling costs the flag and not the frame); and it pins **what
+                 this client draws and nothing else**, since the honest line for a
+                 shared cycle is that one player cannot make it night for
+                 everybody. `data-world-clock` is published from the clock the
+                 frame actually drew with rather than from the tick, which is the
+                 only way to tell a working pin from one that parsed and reached
+                 nothing.
                  carried-light.ts (what the player is holding, and what that
                  means for the two lights the scene already owns, spec 250).
                  Pure, and worth being a module because **two things now decide
