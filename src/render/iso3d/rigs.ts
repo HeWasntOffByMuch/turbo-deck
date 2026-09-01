@@ -934,6 +934,15 @@ export class MechRig {
   private legJustRecreated = false;
   // Body meshes + their base (scale-1) positions, so a size change can resize them.
   private bodyParts: { readonly mesh: THREE.Mesh; readonly base: THREE.Vector3 }[] = [];
+  /**
+   * The head's opening, if this body shape has one (spec 259).
+   *
+   * Held rather than looked up, because it is asked for every frame a beam is
+   * live and it is *replaced* whenever the body is rebuilt -- a colour change, a
+   * shape change, a body-size change. A caller holding the mesh itself would be
+   * holding a disposed one the first time somebody recoloured the mech.
+   */
+  private opening: THREE.Mesh | null = null;
   // What the meshes currently ON SCREEN were built from, so an edit to the live
   // appearance is a rebuild and everything else is not.
   private builtShape: MechBodyShape | null = null;
@@ -1015,7 +1024,9 @@ export class MechRig {
       part.mesh.geometry.dispose();
     }
     this.bodyParts = [];
-    for (const mesh of this.buildBody(shape, bodyColor, bodySize)) {
+    const built = this.buildBody(shape, bodyColor, bodySize);
+    this.opening = built.opening;
+    for (const mesh of built.meshes) {
       this.turret.add(mesh);
       this.bodyParts.push({ mesh, base: mesh.position.clone() });
     }
@@ -1033,14 +1044,20 @@ export class MechRig {
    * because it changes the body's proportion against the legs rather than the
    * whole rig, and every offset scales with it so a chassis does not come apart.
    */
-  private buildBody(shape: MechBodyShape, color: number, bodySize: number): readonly THREE.Mesh[] {
+  private buildBody(
+    shape: MechBodyShape,
+    color: number,
+    bodySize: number,
+  ): { readonly meshes: readonly THREE.Mesh[]; readonly opening: THREE.Mesh | null } {
     if (shape === 'sphere') {
       // One part. A plate and a head on a sphere would be a mech wearing a ball,
       // and the eye that says which way a chassis points is unreadable on a body
       // this dark -- which is the case this shape was added for.
       const body = faceted(BODY_RADIUS * bodySize, color);
       body.position.y = BODY_Y;
-      return [body];
+      // No head, so no opening. A caller that wants one has to cope with a body
+      // that has not got one rather than being handed the middle of a ball.
+      return { meshes: [body], opening: null };
     }
 
     const size = BODY_SIZE * bodySize;
@@ -1052,7 +1069,12 @@ export class MechRig {
     head.position.set((BODY_SIZE / 2 + 3) * bodySize, BODY_Y - 1 * bodySize, 0);
     const eye = box(3 * bodySize, 5 * bodySize, 10 * bodySize, PALETTE.enemyEye);
     eye.position.set((BODY_SIZE / 2 + 8) * bodySize, BODY_Y, 0);
-    return [body, plate, head, eye];
+    // The eye is the opening (spec 259): the front-most part of the head, on the
+    // turret, so it is already carried by every rotation the upper body makes
+    // and by the scale `applyScale` puts on the parts. Named rather than
+    // indexed, because "the last one" is a fact about this function that a
+    // caller reading `bodyParts[3]` could not check.
+    return { meshes: [body, plate, head, eye], opening: eye };
   }
 
   /**
@@ -1175,6 +1197,29 @@ export class MechRig {
   /** The mech's current locomotion state, for HUDs (e.g. the movement sandbox). */
   get locomotionState(): LocomotionState {
     return this.state;
+  }
+
+  /**
+   * Where the head's opening is in the world, or false for a body without one.
+   *
+   * What a beam comes out of (spec 259). Read off the *drawn* mesh rather than
+   * computed from the tuning, which is the whole reason it is a method here
+   * rather than arithmetic in the scene: the opening rides the turret, so it
+   * already carries the body yaw, the yaw lag, the size scale, the body size,
+   * the chassis bob and the pitch-and-roll springs. Every one of those is a
+   * number this class owns and none of them is on the wire.
+   *
+   * The world matrices are refreshed first, deliberately. Three updates them
+   * inside `render`, so a caller during the frame's *logic* -- which is where a
+   * scene decides what to draw -- would otherwise read the previous frame's
+   * position and the beam would trail the head it comes out of by a frame.
+   */
+  openingWorld(out: THREE.Vector3): boolean {
+    const opening = this.opening;
+    if (!opening) return false;
+    opening.updateWorldMatrix(true, false);
+    out.setFromMatrixPosition(opening.matrixWorld);
+    return true;
   }
 
   /**

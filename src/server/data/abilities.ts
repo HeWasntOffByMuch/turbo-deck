@@ -16,6 +16,7 @@ import { adaptedKey, StatusId } from '../sim/statuses.js';
 import type { AbilityScaling } from './ability-scaling.js';
 import { ScalingGrade } from './weapon-scaling.js';
 import type { SkillArea, SkillCosts, SkillEffect } from './skill-effects.js';
+import { WARDEN_LASER } from './warden.js';
 
 export type AbilityKind = 'melee' | 'projectile' | 'ground' | 'self' | 'channel' | 'area';
 
@@ -1102,6 +1103,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       // nothing in the sim reads it: what it does is entirely a light in the
       // renderer, on whichever body happens to be carrying it.
       { kind: 'applyStatus', statusId: StatusId.MagicLight, durationTicks: TEST_STATUS_TICKS },
+      // The Warden's recovery (spec 259). Here for the reason every line above
+      // it is here -- this row's whole job is one body carrying every mark the
+      // client can draw -- and it is the one entry whose *mechanic* nothing on
+      // the receiving end will honour: what an overheat does is read by
+      // `sim/warden.ts` and asked only of a body with a laser cycle, so on a
+      // training dummy this is the mark and nothing else.
+      { kind: 'applyStatus', statusId: StatusId.Overheated, durationTicks: TEST_STATUS_TICKS },
       // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
       // They are inverted -- carrying one means the mechanic has fired and has
       // not re-armed -- so applying them would silently switch two mechanics off
@@ -1110,6 +1118,66 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     ],
     description:
       'A test blow: no damage worth the name, and every status the game can show, at once.',
+  },
+  // --- the Warden's laser (spec 259) --------------------------------------
+  //
+  // The first `kind: 'channel'` row this game has ever had. That path -- a
+  // wind-up, an attack point, a pulse clock, an end -- has been complete and
+  // unreachable from content since spec 062, and a laser is exactly the shape
+  // it describes: a long readable aim, a moment of commitment, and then damage
+  // repeating for as long as you are standing in it.
+  //
+  // Every number is `data/warden.ts`'s, so the row states the *shape* of the
+  // attack and the encounter's tuning lives in one file.
+  //
+  // Three fields are doing more than they look like they are:
+  //
+  //  - `targeting: 'unit'` names **one** body, and `startCast` refuses the cast
+  //    without one. That is the whole of "select one authoritative target" --
+  //    the cast holds the id, nothing re-reads it, and a second player hitting
+  //    the Warden mid-beam cannot swing it round.
+  //  - `castAngleDeg: 360` starts the cast in its wind-up rather than in a turn
+  //    (spec 065). Deliberate: for every other ability the turn is the
+  //    preparation and the wind-up is the swing, and here **the lock-on is the
+  //    aiming** -- so a Warden that had to come round first would be telegraphed
+  //    twice and would spend the second telegraph pointing at where you were.
+  //  - `area` makes this a lane rather than the cone a channel would otherwise
+  //    sweep. A lane has a width that does not grow with distance, which is what
+  //    lets "stand out of the beam" mean the same thing at every range.
+  //
+  // `scaling` is absent, so it scales with nothing (spec 238): a monster has no
+  // attributes to scale off, and the beam is worth what this row says it is
+  // worth to anybody it catches.
+  {
+    id: WARDEN_LASER.abilityId,
+    name: 'Sweeping Lance',
+    kind: 'channel',
+    targeting: 'unit',
+    windupTicks: WARDEN_LASER.lockOnTicks,
+    channelTicks: WARDEN_LASER.firingTicks,
+    pulseIntervalTicks: WARDEN_LASER.pulseIntervalTicks,
+    cooldownTicks: WARDEN_LASER.cooldownTicks,
+    castAngleDeg: 360,
+    // Free. What paces it is the cooldown and the overheat behind it, and a
+    // pool cost on a body with no pool would be a number that reads as a
+    // balance lever and is not one.
+    cost: 0,
+    range: WARDEN_LASER.range,
+    damage: WARDEN_LASER.damage,
+    area: { shape: 'line', width: WARDEN_LASER.width, range: WARDEN_LASER.range },
+    // The damage the row already states, and then the Guard. Order matters and
+    // is the authored order (spec 188): the health goes first, so a pulse that
+    // kills is a kill rather than a break on a corpse.
+    //
+    // The Guard is where the beam's identity is. It is absolute, so it means
+    // the same thing to everybody, and it is the larger of the two numbers --
+    // standing in this is what staggers you, and being staggered in it is what
+    // kills you. Through `applyPoiseDamage`, so hyper-armour reduces it, the
+    // two-second immunity still refuses a second break, and emptying the pool
+    // produces the game's own stagger rather than a second one.
+    effects: [{ kind: 'damage' }, { kind: 'poiseDamage', amount: WARDEN_LASER.guardDamage }],
+    element: 'fire',
+    description: 'The lance takes a long moment to find you, and none at all to stay found.',
   },
 ];
 

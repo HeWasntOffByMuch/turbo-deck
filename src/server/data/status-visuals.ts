@@ -48,7 +48,8 @@ export type StatusIconId =
   | 'frostbite'
   | 'decay'
   | 'scorched'
-  | 'light';
+  | 'light'
+  | 'overheated';
 
 /**
  * Which way a status cuts.
@@ -313,6 +314,38 @@ const DEFINITIONS: readonly StatusVisual[] = [
     icon: 'light',
     maxStacks: 1,
     effect: 'A conjured light floats overhead, lighting the ground around you. It casts no shadows.',
+  },
+
+  // --- the Warden's recovery (spec 259) ----------------------------------
+  //
+  // On the wire because it is the one part of that encounter's state machine a
+  // client cannot work out for itself. Lock-on and firing are a cast, and a
+  // cast is already replicated with its ability, its phase and all three of its
+  // ticks; the beam's direction is the body's own replicated facing. An
+  // overheat is a root, and a root is `ActivityValue.Stunned` -- which is
+  // exactly right mechanically and indistinguishable from being staggered. This
+  // row is the difference.
+  //
+  // It has a glyph of its own because it has to: `afflictions-content.test.ts`
+  // requires every row to draw a *different* mark, on the grounds that two
+  // marks a player cannot tell apart are worse than one -- so borrowing
+  // `vulnerable`, which is what this row wanted to do until the art is
+  // decided, fails the suite. The one in `icons.ts` is the most conventional
+  // sign there is for the state and nothing more than that.
+  //
+  // It carries a sentence because it has to: the rule is that nothing derivable
+  // may be authored, and there is no dot row and no field row to derive from.
+  // What the window is worth is `Exposed`, applied beside it, which has its own
+  // mark and its own line.
+  {
+    id: StatusId.Overheated,
+    wire: 18,
+    name: 'Overheated',
+    kind: 'affliction',
+    icon: 'overheated',
+    maxStacks: 1,
+    effect:
+      'Venting after firing. It cannot move, act or recover Guard until it has cooled.',
   },
 ];
 

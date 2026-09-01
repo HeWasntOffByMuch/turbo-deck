@@ -1774,6 +1774,229 @@ export function brushShot(params: BrushShotParams): EffectDefinition {
 
 // --- the shipped presets -----------------------------------------------------
 
+// --- the Warden's lance ------------------------------------------------------
+
+export interface BrushBeamParams {
+  readonly id: string;
+  /** How far the lance reaches. The nodes are strung along this. */
+  readonly length: number;
+  /** The lane's full width -- what the sparks are thrown out of the sides of. */
+  readonly width: number;
+  /**
+   * How wide the *drawn* beam is, which is narrower than the lane it burns.
+   *
+   * Two widths because there are two layers and they belong to two things. A
+   * **spark** comes off the shaft, so it is sized and thrown against the object
+   * you can see; a **scorch** lands on the lane, so it is spread across the
+   * ground the sim damages. Sizing both off the lane was right while the beam
+   * *was* the lane and drew sparks two thirds as wide as the shaft the moment
+   * the shaft became a line through the middle of it.
+   */
+  readonly beamWidth: number;
+  /** How many places along the run throw marks. */
+  readonly nodes?: number;
+  /**
+   * How high the beam is where it leaves the machine, and where it lands.
+   *
+   * The sparks ride the line rather than a constant height, because since the
+   * beam became a shaft out of the head it *slopes*: marks at one height would
+   * be coming off the air under it near the machine and out of the ground under
+   * it at the far end.
+   */
+  readonly fromHeight: number;
+  readonly toHeight: number;
+  readonly lifetimeTicks?: number;
+  readonly priority?: Priority;
+}
+
+/**
+ * How high a ground mark is *born*, before it falls onto the real surface.
+ *
+ * Not where it ends up: the scorch layer carries `collision`, so where it comes
+ * to rest is whatever the scene says the ground is under it. This is only far
+ * enough above the muzzle's own height that a mark down-range has somewhere to
+ * fall from rather than starting inside a rise.
+ */
+const BEAM_SCORCH_HEIGHT = 14;
+
+/**
+ * The sparks a sustained beam throws, and the ground it burns (spec 259).
+ *
+ * A sibling of {@link brushLane} rather than a use of it, and the difference is
+ * the one thing that file already names: *"alternate nodes are pushed to
+ * opposite sides of the centre line ... which is the whole difference between a
+ * bolt and a laser"*. A bolt zigs and arrives end to end; a lance is **ruled**,
+ * so the nodes here sit dead on the centre line and every one of them fires on
+ * the same tick. What moves is the sparks coming off it, not the beam.
+ *
+ * ## Two layers, and each answers half the brief
+ *
+ * - **`spark_n`** throws small marks out of the *flanks*, alternating side to
+ *   side down the run, with gravity on them so they arc and fall. That is the
+ *   "specks flying off the beam": it reads as something being *cut*, because
+ *   the marks leave the line rather than travelling along it.
+ * - **`scorch_n`** is the ground under it: a flat spray of `brush-mark`, the
+ *   one brush shape that lies on the ground rather than facing the camera, at
+ *   ground height and going nowhere much. That is the impact where the beam
+ *   crosses the ground, and being flat is what stops it competing with the
+ *   sparks for the same silhouette.
+ *
+ * ## What it deliberately is not
+ *
+ * There is no flash, no smoke and no mass. The beam itself is a ground decal in
+ * `world/scene.ts` and it is *continuous*; this is played once per damage
+ * pulse, four times a second, so anything with weight to it would stack eight
+ * deep over one beam and bury the body standing in it. Every mark here is
+ * small, short and thrown clear of the lane's own middle -- the player fighting
+ * this has to be able to see themselves inside it.
+ */
+export function brushBeam(params: BrushBeamParams): EffectDefinition {
+  const nodes = Math.max(2, Math.round(params.nodes ?? 6));
+  const life = Math.max(4, Math.round(params.lifetimeTicks ?? 20));
+  const half = params.width * 0.5;
+  const beamHalf = params.beamWidth * 0.5;
+  const emitters: Emitter[] = [];
+
+  for (let index = 0; index < nodes; index += 1) {
+    // Half a step in from each end, so the run is evenly covered and neither the
+    // muzzle nor the far tip gets a cluster the rest of the beam does not have.
+    const along = (index + 0.5) / nodes;
+    const distance = params.length * along;
+    // Which flank this node sprays from. Alternating rather than drawn, for
+    // `brushLane`'s reason one function up: a side picked per node at random is
+    // a wobble, and a wobble reads as an effect that could not decide.
+    const flank = index % 2 === 0 ? 1 : -1;
+
+    emitters.push({
+      id: `spark_${index}`,
+      // On the beam, which slopes: the cue is played at the machine's feet, so
+      // this is a height above them and the line runs from the head's opening
+      // down to just off the ground at the far end.
+      offset: {
+        x: distance,
+        y: params.fromHeight + (params.toHeight - params.fromHeight) * along,
+        z: 0,
+      },
+      // Thrown **sideways**, out of the lane, at about a third of its
+      // half-width. `bearing` is in the effect's own frame and the effect's
+      // rotation turns it, so one definition serves every aim.
+      shape: {
+        kind: 'fan',
+        angle: 0.8,
+        radius: beamHalf * 0.7,
+        rise: 0.5,
+        bearing: (flank * Math.PI) / 2,
+      },
+      // Every node on the same tick: a laser does not arrive, it is already
+      // there. `brushLane`'s staggered delay is what makes a bolt travel, and
+      // it is exactly wrong here.
+      emission: { kind: 'burst', count: 2 },
+      lifetimeTicks: [Math.round(life * 0.55), life],
+      speed: [46, 118],
+      spreadRadians: 0.5,
+      // They fall. The one thing that makes a spark a spark rather than a mote,
+      // and the reason this layer is not simply `brushAfflictionPulse` aimed
+      // sideways -- that one hangs.
+      gravity: -300,
+      drag: 2.4,
+      angularVelocity: [-3.4, 3.4],
+      // In **world units**, like `brushLane`'s and unlike the affliction
+      // builders', and getting that wrong is the whole reason the first cut
+      // could not be seen. `brushAffliction` authors sizes near 1 because it is
+      // played with `scale` set to a body's radius; this is played by
+      // `addEffect` at `scale: 1`, so a number authored on the affliction's
+      // scale is a mark a fifteenth of the size it was meant to be.
+      //
+      // About half the shaft, and against the *shaft* rather than the lane. A
+      // spark has to be a speck coming off the beam -- the mark is not the
+      // weapon -- and `brushLane`'s 0.78 of its own width is right for a bolt
+      // that fills its lane and would be a hedge here.
+      size: { keys: [[0, beamHalf * 0.6], [0.25, beamHalf * 0.8], [1, beamHalf * 0.5]] },
+      alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
+      // Hot to ember, which is the ramp `sparkHot`/`sparkWarm`/`sparkEmber`
+      // exists for. Not the fire ramp: a spark struck off something is metal
+      // and grit, and `fireCore`'s cream would make the lance look like it was
+      // spraying flame rather than cutting.
+      // Ends on a **red** rather than on `sparkEmber`'s 0x8a3418, which is a
+      // dark brown: over this game's grass that is a hole in the picture rather
+      // than a cooling spark, which is `brushFire`'s own finding about additive
+      // embers arrived at from the other direction.
+      color: { stops: [[0, 'sparkHot'], [0.28, 'sparkWarm'], [1, 'fireDeep']] },
+      render: 'mesh',
+      mesh: { shape: 'brush-flick' },
+      blend: 'alpha',
+      strokeDecay: 'retract',
+    });
+
+    emitters.push({
+      id: `scorch_${index}`,
+      offset: { x: distance, y: BEAM_SCORCH_HEIGHT, z: 0 },
+      // Radial in the ground plane, which is what a circle is -- so the spray
+      // goes out across the ground from where the beam is standing on it
+      // rather than along the beam.
+      shape: { kind: 'circle', radius: half * 0.22 },
+      emission: { kind: 'burst', count: 3 },
+      lifetimeTicks: [Math.round(life * 0.7), Math.round(life * 1.3)],
+      speed: [18, 54],
+      // **It settles on the real ground**, and this is the one part of this
+      // effect that could not be authored as a position.
+      //
+      // The cue is played at the *muzzle* -- `landArea` sends a lane's effect
+      // at the caster's feet -- and these marks are offset up to six hundred
+      // units down its local +X. An offset is a position in the effect's frame
+      // and the frame is flat, so on any slope a mark six hundred units away is
+      // as far off the ground as the ground has moved: floating over a valley,
+      // buried in a rise. `collision` is what closes it, because the system
+      // asks the *scene* for the height under each particle -- so a mark born
+      // inside a hill is clamped onto its surface on its first tick and one
+      // born over a dip falls until it lands.
+      //
+      // `restitution: 0` with one bounce allowed is "come to rest": it settles,
+      // `resting` is set, and it lies there for the rest of its life rather
+      // than being integrated through the ground or bouncing a scorch mark.
+      collision: { restitution: 0, friction: 1, maxBounces: 1 },
+      // Enough to bring it down through the height it is born at, and nowhere
+      // near enough to read as a thrown thing: what falls here is the mark's
+      // first tick, not its arc.
+      gravity: -240,
+      // Heavy drag: these are marks *on* the ground, so they skid outward and
+      // stop rather than travelling.
+      drag: 9,
+      angularVelocity: [-1.6, 1.6],
+      // Broader than a spark and flatter, which is what separates the two
+      // layers at a glance: one is grit leaving the beam and one is the ground
+      // taking it.
+      size: { keys: [[0, half * 0.4], [0.2, half * 0.6], [1, half * 0.44]] },
+      alpha: { keys: [[0, 0.95], [0.55, 0.9], [1, 0]] },
+      color: { stops: [[0, 'fireAmber'], [0.35, 'fireBody'], [1, 'fireDeep']] },
+      render: 'mesh',
+      // The one brush shape that lies flat on the ground, which is what makes
+      // this read as scorch under the beam rather than as more sparks.
+      mesh: { shape: 'brush-mark' },
+      blend: 'alpha',
+      // `fizzle`, not `retract`: this is a mark left *on* something, and spec
+      // 161's rule is that a retract played on one reads as the stroke being
+      // un-painted rather than as it burning out.
+      strokeDecay: 'fizzle',
+    });
+  }
+
+  return {
+    id: params.id,
+    // Two, beside `brushLane` and the affliction beat. The *information* half of
+    // this weapon is the ground decal in `world/scene.ts`, which is a mesh and
+    // is never subject to the instance budget at all -- so a crowded fight that
+    // drops these sparks still draws the beam and still says where not to
+    // stand, which is what priority 3 exists to protect.
+    priority: params.priority ?? 2,
+    // Long, because the effect's origin is the *muzzle* and the paint runs six
+    // hundred units away from it: culled on the origin at a shorter distance,
+    // a beam whose far end is on screen would draw nothing at all.
+    cullDistance: 1800,
+    emitters,
+  };
+}
+
 /** The nominal radius `explosion_brush` is authored at, for the scale maths. */
 /**
  * A fire that stands somewhere and keeps burning (spec 250).

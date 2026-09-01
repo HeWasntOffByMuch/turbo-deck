@@ -712,6 +712,19 @@ async function main(): Promise<void> {
       { id: 'skill.arcLash.impact', label: 'arc (lane)', ticks: [2, 5, 8, 12, 18, 24], half: 190 },
       { id: 'skill.acidSpray.impact', label: 'acid (cone)', ticks: [2, 5, 9, 14, 20, 28], half: 200 },
       { id: 'skill.scorchedEarth.self', label: 'scorch', ticks: [3, 8, 16, 28, 40, 54], half: 240 },
+      // The Warden's lance, one damage pulse of it (spec 259). Judged on this
+      // sheet's questions like the five above, plus one only it has: the beam
+      // it comes off is a *ground decal* drawn by the scene and not by the
+      // particle system, so what has to read here is sparks leaving a line
+      // that is not in the picture. A window wide enough to hold its whole
+      // 620-unit reach, because the near end alone would say nothing about
+      // whether the run is evenly covered.
+      { id: 'warden.laser.impact', label: 'lance, whole run', ticks: [1, 3, 6, 9, 13, 18], half: 380 },
+      // And again close up, because the two questions are different: the row
+      // above answers whether the run is evenly covered and this one answers
+      // whether a mark is a mark. At 380 a spark is seven pixels and every
+      // tile is a pass.
+      { id: 'warden.laser.impact', label: 'lance, close up', ticks: [1, 3, 6, 9, 13, 18], half: 110 },
     ] as const;
     for (const landing of landings) {
       swingRows.push({

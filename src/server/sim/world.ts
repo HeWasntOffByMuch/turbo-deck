@@ -37,6 +37,7 @@ import { RESTORATION } from '../data/restoration.js';
 import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { bolt, goHome, isFriendly, isReturning, notice, playersOf, rally, settle } from './aggro.js';
+import { coolAfterBeam, wardenClaim, wardenOpening } from './warden.js';
 import { beyondLeash, idle } from './idle.js';
 import { approachPoints, type Approach } from './attack-slots.js';
 import { NO_ATTACK_SPEED } from './attack-timing.js';
@@ -1261,6 +1262,17 @@ export function step(
     for (const spawn of advanced.spawns) spawnQueue.push({ owner: casting, spawn });
   }
 
+  // --- 3a': the machine cools (spec 259) ---------------------------------
+  //
+  // Driven off this tick's `castEnded` events, in `rally`'s register: the
+  // alternative is a scan asking every body in the world whether it has just
+  // stopped casting, and the event already says so exactly once. Here rather
+  // than beside `rally` because `advanceCast` ends a channel by writing
+  // `activity: Idle`, and the overheat is a root that has to land on top of
+  // that -- three passes later it would be overwriting nothing and the machine
+  // would have had a tick of freedom in between.
+  for (const [id, body] of coolAfterBeam(working, events, tick)) working.set(id, body);
+
   // --- 3b: projectiles fly, and the ones that connect resolve --------------
   let nextEntityId = state.nextEntityId;
   for (const { owner, spawn } of spawnQueue) {
@@ -2159,6 +2171,16 @@ function monsterIntent(
   const listener = monster.conversationWith === null ? null : entities.get(monster.conversationWith);
   if (listener && listener.health > 0) return conversationDecision(monster, listener);
 
+  // A live laser cycle outranks everything below it too (spec 259), and for the
+  // conversation's reason one line up: a committed beam is a *claim on the
+  // body*, not a mood. Above the leash in particular -- a player who walked
+  // past it mid-beam would otherwise have the Warden drop its target, `goHome`,
+  // and become invulnerable (`isHostile` refuses a returning body) with a beam
+  // it can no longer land still running. Null for every body in the game but
+  // one, at the cost of a map lookup on a table with one row in it.
+  const claimed = wardenClaim(monster, entities, tick);
+  if (claimed) return claimed;
+
   let target = monster.targetId === null ? null : entities.get(monster.targetId) ?? null;
   if (target && target.health <= 0) target = null;
 
@@ -2221,6 +2243,14 @@ function monsterIntent(
   // Routed with the same A* a chase uses, so a fleeing grazer goes round a rock
   // rather than pressing into it.
   if (monster.aggro === AggroValue.Fleeing) return fleeFrom(monster, target, tick, context);
+
+  // And a Warden with its lance ready stops walking and aims (spec 259). Here
+  // rather than folded into the swing below, because what it replaces is the
+  // *approach*: the beam reaches 620 and the melee 100, so a machine that
+  // closed first would spend its whole cooldown walking and fire from a range
+  // nobody has to reposition at. Null for everything else.
+  const aiming = wardenOpening(monster, target, tick);
+  if (aiming) return aiming;
 
   const dx = target.position.x - monster.position.x;
   const dy = target.position.y - monster.position.y;

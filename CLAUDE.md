@@ -68,6 +68,8 @@ change a game outcome.
 | `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too |
 | `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 245). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
+| `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 259), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
+| `npx tsx scripts/probe-warden.ts` | What the Warden is doing, tick by tick (spec 259): the state it is in, the body its lance is committed to, where that lance points against where the body does, the state's own clock, both Guard pools and every pulse that lands. It exists because the encounter *is* timing, which is the one thing a pass/fail test says nothing about -- `warden.test.ts` asserts that stepping aside works, and only this says whether stepping aside is a half-second decision or a two-second one. `--strafe` reacts once the beam is live, `--orbit` never stops moving, `--at N` fights it from further out. On the shipped numbers one beam costs a body that stands still all **eight** of its pulses and a body that moves **two** -- and the gap widens with range rather than closing, because a lane sweeps its tip faster the further out you are: at 400 units the same reaction costs six |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
@@ -6542,6 +6544,17 @@ src/render/iso3d/light-residency.ts, world-lights.ts  the lights standing in the
                  by more than the margin. Spec 208's shape for map chunks and its
                  reason: **the thing that lets go must not fight the thing that
                  takes hold.**
+                 A fixture is no longer the only thing that asks. Since spec 259
+                 a **firing Warden** hangs three red lights along its beam and
+                 offers them here like anything else, which is what makes that
+                 weapon light the ground instead of painting a decal on it. The
+                 decision is entirely about the program key: the count of lights
+                 in a scene is part of it, so a beam with a pool of its own would
+                 recompile every material in the scene at the moment the frame is
+                 busiest. What it costs is that a beam is ranked on distance like
+                 a lamp post and can lose -- firing into a lit village square can
+                 leave it unlit -- and that is one-directional in the right
+                 direction: a beam may go dark, and it can never cost a frame.
                  What the *player* carries is `world/carried-light.ts`, and it
                  exists because two things now decide one light. The rule is one
                  sentence -- **the panel wins where it is asking for something,

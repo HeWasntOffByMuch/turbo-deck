@@ -13,6 +13,7 @@ import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../config.js';
 import { abilityById, ALL_ABILITIES, BASIC_ATTACK_ID, totalCastTicks } from '../data/abilities.js';
 import { ALL_ITEMS, itemById } from '../data/items.js';
 import { ALL_MONSTERS, monsterById } from '../data/monsters.js';
+import { LASER_CYCLES } from '../data/warden.js';
 import { BASE_ATTACK_TIME_TICKS, computeEffectiveStats } from '../player/stats.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type EffectiveStats, type PersistedPlayer } from '../state/types.js';
 import { chunkKeyOf } from '../world/chunks.js';
@@ -206,10 +207,15 @@ describe('the ability table', () => {
    * because two of them out-damaged every real skill they were what
    * `npm run balance` measured the twelve builds with.
    *
-   * Three ways in, and they are the only three: an item grants it as an active
-   * skill, an item or a monster names it as a basic attack, or it is one of the
+   * Four ways in, and they are the only four: an item grants it as an active
+   * skill, an item or a monster names it as a basic attack, a monster's
+   * encounter row in `data/warden.ts` names it (spec 259), or it is one of the
    * two constants the game reaches for directly -- the fallback swing and the
    * flask. A row with none of them is a rule nothing can invoke.
+   *
+   * The fourth is enumerated from the table rather than listed here by id, for
+   * the reason the flask is identified by its cost: a second copy of
+   * `'warden.laser'` in this file is the drift this test exists to catch.
    */
   it('is reachable, every row of it, by an item or a monster or a constant', () => {
     // The flask is identified by what it costs rather than by its id, because
@@ -227,6 +233,11 @@ describe('the ability table', () => {
     for (const monster of ALL_MONSTERS) {
       if (monster.stats.basicAttackId) granted.add(monster.stats.basicAttackId);
     }
+    // A monster whose whole encounter *is* an ability reaches it from its own
+    // row (spec 259). It is not a basic attack -- the Warden also swings -- and
+    // no item grants it, so without this the laser is an orphan by three rules
+    // that were written before an enemy had a cycle.
+    for (const cycle of LASER_CYCLES.values()) granted.add(cycle.abilityId);
     const orphans = ALL_ABILITIES.filter((ability) => !granted.has(ability.id)).map((a) => a.id);
     expect(orphans, 'abilities nothing grants').toEqual([]);
   });
