@@ -72,12 +72,48 @@ Nothing about the *price* is recomputed on this side. The wire carries prices
 rather than rates for buying and buyback; a sale is `sellPrice` against the
 vendor's own row, which is what the model already did.
 
+### Two things the window had to be told
+
+Found by building it rather than by reasoning about it, and both are somebody
+else's rule arriving here.
+
+**The window is registered unscrolled**, which is spec 198's finding one window
+along: a `TabPanel` inside somebody else's scroller measures to its content, so
+what scrolls is the *strip* rather than the body -- the tab headers go off the
+top and there is no way back to Buy without scrolling up first. The character
+sheet is registered `scrolled: false` for exactly this and the shop now is too,
+so the merchant's name, the purse and the three tabs stay put while each tab
+scrolls its own body.
+
+**`SHOP_MIN_SIZE` is re-measured**, and its two halves stop being the same kind
+of number. The width becomes a real minimum: six columns is a *fixed* width and
+the tab body has nothing to offer horizontally, so a narrower window clips the
+last one. The height stays a guard but is now the **tallest tab** (200, a full
+bag of four rows) rather than a stocked list's own 215 rounded up -- because
+with tabs there is no single natural height, and sizing from whichever one
+happens to be showing is the sliver bug in miniature: a shop that opens fine and
+needs resizing the moment you press Sell. That reverses the old rule rather than
+drifting from it, and the reversal is the point: 220 was a floor no real shop
+ever met, and 200 is met by one tab and forces the other two, deliberately.
+
 ### What did not change
 
 The interactions are spec 130's, and the asymmetry is the design: **a Buy takes
 effect on the click and a Sell asks first.** A purchase is undone by a sale at a
 loss you chose; a sale is undone by a buyback list six deep that a seventh sale
 pushes off the end. So the dialog stays on exactly one of the two.
+
+The wire is untouched: `OpenVendor`, `BuyItem`, `SellItem` and `BuyBack` are
+what they were, addressed the same way, and `buy`/`sell`/`buyBack` in
+`player/shop.ts` settle exactly as they did. Nothing here is a rules change.
+
+One thing the widget gains, because it is used outside a container for the first
+time: `ItemSlot.acceptsDrops`. A shop cell is a **button that looks like a
+cell**, and the bag's drag hit-tests the whole layer stack -- so one that took a
+release would light up as a drop candidate, accept it, and swallow a carry with
+nothing emitted and nothing said. Separate from `acceptsSlot`, because "takes
+only helmets" and "is not a container" are different claims and expressing the
+second as a slot id nothing matches would be a lie that happens to work.
 
 ### The purse
 
