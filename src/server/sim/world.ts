@@ -128,6 +128,10 @@ function blankEntity(id: number): ServerEntity {
     kind: EntityKindValue.Prop,
     typeId: '',
     ownerPlayerId: null,
+    // Nothing to hand: this helper has no tick. A body that wants an arrival
+    // drawn overwrites it below, and 0 reads as "long ago" at every client,
+    // which is the right answer for the two kinds that stay blank (spec 263).
+    spawnTick: 0,
     position: { x: 0, y: 0, z: 0 },
     facing: 0,
     health: 1,
@@ -319,6 +323,9 @@ export function spawnEntity(
     kind: spec.kind,
     typeId: spec.typeId,
     ownerPlayerId: spec.ownerPlayerId ?? null,
+    // Off the state rather than the spec, so no caller can forget it and none
+    // can lie about it (spec 263).
+    spawnTick: state.tick,
     position: spec.position,
     facing: spec.facing ?? 0,
     health: spec.health ?? spec.stats.maxHealth,
@@ -2866,6 +2873,10 @@ function runSpawners(
       ...blankEntity(nextEntityId),
       kind: EntityKindValue.Monster,
       typeId: definition.id,
+      // The third place a body is built, and the third that has to say when
+      // (spec 263) -- see the note on `poise` below for what this literal
+      // forgetting a field has already cost once.
+      spawnTick: tick,
       position: { x: point.x, y: point.y, z: context.terrain.heightAt(point.x, point.y) },
       health: definition.stats.maxHealth,
       zoneId: zones.zoneIdAt(point.x, point.y),

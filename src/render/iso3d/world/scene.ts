@@ -36,6 +36,16 @@ import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-m
 import type { ChunkFootprint, ChunkMeshArrays } from '../terrain-arrays.js';
 import type { RegionInstances } from '../props.js';
 import { StaggerFlinches } from './stagger-flinch.js';
+import {
+  SETTLED,
+  SpawnPresentations,
+  arrives,
+  isCommitted,
+  spawnEffectFor,
+  spawnEffectScale,
+  spawnSeed,
+  spawnStyleFor,
+} from './spawn-presentation.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { PerfFlags } from './perf-flags.js';
@@ -686,6 +696,8 @@ export class WorldScene {
   private readonly turnEase = new TurnEase();
   /** The rock a poise break puts on a body (spec 173). Presentation only. */
   private readonly staggerFlinches = new StaggerFlinches();
+  /** How far out of the ground an arriving body is (spec 263). Presentation only. */
+  private readonly spawns = new SpawnPresentations();
   private readonly bodies = new Map<number, Body>();
   /**
    * The paint on every afflicted body, and the beat it lands on (spec 215).
@@ -2052,6 +2064,8 @@ export class WorldScene {
     // does, and is dropped on the same pass (spec 142).
     this.turnEase.retain(live);
     this.staggerFlinches.retain(live);
+    // And the arrival, for the reason both of those are dropped here (spec 263).
+    this.spawns.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
@@ -2137,7 +2151,51 @@ export class WorldScene {
         frame.tick,
       );
 
-      body.group.position.set(x, ground, y);
+      // The arrival (spec 263), on the same clock and added to the same drawn
+      // transform. Read for every body every frame -- a settled one answers
+      // `SETTLED`, whose offsets are zero -- which is what makes an interrupted
+      // emergence cost nothing to unwind: the line below writes the whole
+      // position rather than adjusting it, so there is no state to put back.
+      const arrival = arrives(entity.kind)
+        ? this.spawns.read(
+            {
+              id: entity.id,
+              style: spawnStyleFor(look),
+              spawnTick: entity.spawnTick,
+              dead: entity.maxHealth > 0 && entity.health <= 0,
+              committed: isCommitted(entity.activity),
+            },
+            frame.tick,
+          )
+        : SETTLED;
+      if (arrival.began) {
+        // One `play` and no handle: both arrivals are one-shots the particle
+        // system retires itself, so there is nothing to hold and no stop owed
+        // -- `swing-vfx.ts`'s case exactly. Fired at the ground under the body
+        // rather than at the body, because what the dirt is coming out of is
+        // the floor, and seeded off where and when so two clients watching one
+        // spawn watch the same one.
+        const id = spawnEffectFor(arrival.style);
+        if (this.vfx.system.has(id)) {
+          this.vfx.play(id, {
+            x,
+            y: ground,
+            z: y,
+            scale: spawnEffectScale(look.radius),
+            seed: spawnSeed(entity.id, entity.spawnTick, frame.tick),
+          });
+        }
+      }
+      // How deep the rig sits is the *rig's* answer, because it is
+      // `(BODY_Y + half the body) * sizeScale * bodySize` and every one of those
+      // is a number `MechRig` owns and a look table can retune. Nothing sinks
+      // without one, which is also the whole of why only a mech burrows.
+      const sink = arrival.buried > 0 && body.mech ? arrival.buried * body.mech.hiddenDepth : 0;
+      // Written every frame rather than only while emerging, the rule the
+      // flinch's pitch below follows: a body that has arrived is put back flat.
+      if (body.mech) body.mech.burrow = arrival.bodyDrop;
+
+      body.group.position.set(x, ground - sink, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
       //
       // Unless the rig turns itself (spec 262). A mech whose lower body does not
@@ -2332,6 +2390,11 @@ export class WorldScene {
       this.afflictions.forget(id);
       this.swings.forget(id);
       this.auras.forget(id);
+      // No instance is held -- both arrivals are one-shots that retire
+      // themselves -- so what this prevents is the other leak `swing-vfx.ts`
+      // names: a map that grows one entry per body this client has ever seen
+      // (spec 263).
+      this.spawns.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
       // the rate of the shooting (spec 218).
