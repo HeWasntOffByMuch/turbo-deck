@@ -86,11 +86,25 @@ export class SessionRepository {
   }
 
   /**
-   * Stamp activity. Cheap and frequent, so it is one UPDATE by primary key and
-   * writes exactly one column.
+   * Stamp activity, and carry the expiry along with it (spec 267).
+   *
+   * Cheap and frequent, so it is still one UPDATE by primary key. The second
+   * column is what makes a TTL mean *absence* rather than age: fixed at issue,
+   * a guest who plays every day was signed out for good on day thirty and --
+   * having no account to sign back in with -- lost the character with it.
+   *
+   * `expiresAt` is passed rather than computed here, because the TTL is the
+   * service's and this table should not hold a second opinion about it. It
+   * only ever moves **forward**: `MAX` rather than an assignment, so a caller
+   * that hands over a shorter window cannot quietly shorten a live session.
    */
-  touch(id: string, at: number): void {
-    this.db.run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', at, id);
+  touch(id: string, at: number, expiresAt: number): void {
+    this.db.run(
+      'UPDATE sessions SET last_seen_at = ?, expires_at = MAX(expires_at, ?) WHERE id = ?',
+      at,
+      expiresAt,
+      id,
+    );
   }
 
   /** Returns whether it revoked anything, so a double logout is visible. */

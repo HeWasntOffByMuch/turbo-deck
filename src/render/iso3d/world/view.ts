@@ -606,7 +606,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     transport = new LoopbackTransport();
     // `local` is non-null on this branch by construction; the server is the
     // only thing that needs it as a value rather than as a possibility.
-    server = new GameServer({ seed, ...(local ? { built: local } : {}), transport });
+    // No AFK sweep in a tab (spec 267). Only the remote path above wraps its
+    // channel in a `ReconnectingChannel`, so a loopback client that is logged
+    // out does not come back -- a player who went to make tea would return to a
+    // page with no body in it and no way back short of a reload. On a port an
+    // idle body is in somebody's way; in here there is nobody else.
+    server = new GameServer({
+      seed,
+      ...(local ? { built: local } : {}),
+      transport,
+      afkTimeoutTicks: 0,
+    });
     // Wired by hand rather than through `server.start()`: that would spin up the
     // server's own wall-clock loop, and this view already drives the tick from its
     // animation frame. Registering the handler is the half we want.

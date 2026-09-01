@@ -901,6 +901,38 @@ describe('coming back to a body that is still standing there (spec 150)', () => 
     await first.hello('ana');
     const welcome = first.of(ServerMessageType.Welcome)[0];
     expect(welcome).toBeDefined();
+
+    // In a fight, because since spec 267 that is what leaves a body standing to
+    // be resumed onto: out of combat the reap is on the tick the socket closes,
+    // and this whole describe is about what a *resume* is sent. A real blow at a
+    // dummy rather than a status written by hand -- the claim is that the
+    // departure reads what combat writes.
+    const id = welcome?.entityId ?? -1;
+    for (let i = 0; i < 6; i++) game.tick();
+    const placed = first
+      .of(ServerMessageType.Delta)
+      .flatMap((delta) => delta.upserts)
+      .find((upsert) => upsert.id === id && upsert.position);
+    const at = placed?.position ?? { x: 0, y: 0, z: 0 };
+    game.spawnEntities('dummy', at.x + 40, at.y, 1);
+    await first.input(1, { predictedX: at.x, predictedY: at.y });
+    await game.receive(
+      first.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetX: at.x + 40,
+        targetY: at.y,
+        targetEntityId: 0,
+        afterInputSeq: 1,
+      }),
+    );
+    for (let i = 0; i < 120; i++) game.tick();
+    // The helper's own claim, checked: a swing through empty air would leave
+    // this body as out of combat as it started, and every assertion below would
+    // then be measuring a fresh login under a resume's name.
+    expect(first.of(ServerMessageType.CombatResult).length).toBeGreaterThan(0);
+
     // Not `Goodbye`: an unintentional drop is what leaves a body lingering.
     first.connection.channel.close();
     await Promise.resolve();
