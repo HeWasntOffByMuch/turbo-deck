@@ -75,7 +75,7 @@ async function tickAlive(r: Rig, who: Joined, times: number): Promise<void> {
 /**
  * Put this body in a fight, so that dropping its socket leaves one standing.
  *
- * Since spec 264 the resume grace is bought by `StatusId.InCombat` rather than
+ * Since spec 267 the resume grace is bought by `StatusId.InCombat` rather than
  * by the manner of leaving, and door 3 below is *about* a lingering body -- out
  * of combat there is no longer one to be stale beside. A real swing at a dummy
  * rather than a status written by hand, and polled a tick at a time because
@@ -172,7 +172,7 @@ describe('a second login for a player who is already playing', () => {
     const r = rig();
     const first = await join(r, 'dee');
     await r.tick(4);
-    // In a fight, because that is what leaves a body standing since spec 264 --
+    // In a fight, because that is what leaves a body standing since spec 267 --
     // and a body left standing is precisely what this door is about.
     await fight(r, first.client);
     first.channel.close();

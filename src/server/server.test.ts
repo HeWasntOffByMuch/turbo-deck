@@ -902,7 +902,7 @@ describe('coming back to a body that is still standing there (spec 150)', () => 
     const welcome = first.of(ServerMessageType.Welcome)[0];
     expect(welcome).toBeDefined();
 
-    // In a fight, because since spec 264 that is what leaves a body standing to
+    // In a fight, because since spec 267 that is what leaves a body standing to
     // be resumed onto: out of combat the reap is on the tick the socket closes,
     // and this whole describe is about what a *resume* is sent. A real blow at a
     // dummy rather than a status written by hand -- the claim is that the

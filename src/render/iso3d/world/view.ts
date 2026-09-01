@@ -606,7 +606,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     transport = new LoopbackTransport();
     // `local` is non-null on this branch by construction; the server is the
     // only thing that needs it as a value rather than as a possibility.
-    // No AFK sweep in a tab (spec 264). Only the remote path above wraps its
+    // No AFK sweep in a tab (spec 267). Only the remote path above wraps its
     // channel in a `ReconnectingChannel`, so a loopback client that is logged
     // out does not come back -- a player who went to make tea would return to a
     // page with no body in it and no way back short of a reload. On a port an

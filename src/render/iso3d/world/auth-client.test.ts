@@ -127,7 +127,7 @@ describe('ensuring a token', () => {
   it.each([500, 502, 503, 429])(
     'keeps the stored token when the check fails with %i rather than a refusal',
     async (status) => {
-      // The bug this closes (spec 264): the comment said "401: expired, revoked,
+      // The bug this closes (spec 267): the comment said "401: expired, revoked,
       // or rotated" and the code discarded the credential on *every* status but
       // 404. A proxy hiccup, a restart, a rate limit -- each of them minted a
       // brand-new character, which for a guest is the permanent loss of theirs

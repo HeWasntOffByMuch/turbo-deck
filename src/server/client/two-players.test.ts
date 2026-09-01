@@ -379,7 +379,7 @@ describe('a client that says hello twice', () => {
     expect(countPlayers()).toBe(1);
 
     // And the one body goes when the socket drops. Out of combat that is now
-    // the same tick (spec 264); what this test is about is that there is *one*
+    // the same tick (spec 267); what this test is about is that there is *one*
     // of them to go, which was the bug -- a second Hello used to spawn a second
     // body and leave the first belonging to nobody, reaped by nothing.
     // `resume.test.ts` is where the grace itself is asserted, in both states.

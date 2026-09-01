@@ -134,7 +134,7 @@ export async function ensureAuthToken(
         return { ok: true, token: storedToken, fresh: false, identity: null };
       }
       // Anything that is not the server saying "this token is not a session"
-      // leaves it alone (spec 264). The comment below used to say 401 and the
+      // leaves it alone (spec 267). The comment below used to say 401 and the
       // code said *every* other status too, so a 500, a 502 from a proxy, a 503
       // during a restart or a 429 all discarded the credential and minted a
       // fresh character -- which for a guest is the permanent loss of theirs,

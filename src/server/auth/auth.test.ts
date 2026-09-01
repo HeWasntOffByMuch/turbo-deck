@@ -256,7 +256,7 @@ describe('accounts and sessions', () => {
     }
   });
 
-  it('carries the expiry forward when a live session is touched (spec 264)', async () => {
+  it('carries the expiry forward when a live session is touched (spec 267)', async () => {
     // `expires_at` used to be fixed at issue and never moved, so the TTL
     // measured a session's *age* rather than the player's absence: a guest who
     // played every day was signed out for good on day thirty, and having no

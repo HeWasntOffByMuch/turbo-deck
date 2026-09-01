@@ -279,7 +279,7 @@ export const CONNECTION_TIMEOUT_TICKS = 600;
 
 /**
  * How long a connected player may ask for nothing before being logged out
- * (spec 264). Five minutes.
+ * (spec 267). Five minutes.
  *
  * A separate number from {@link CONNECTION_TIMEOUT_TICKS} because it answers a
  * separate question -- that one is how long a *socket* may be silent, and this

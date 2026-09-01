@@ -86,7 +86,7 @@ export class SessionRepository {
   }
 
   /**
-   * Stamp activity, and carry the expiry along with it (spec 264).
+   * Stamp activity, and carry the expiry along with it (spec 267).
    *
    * Cheap and frequent, so it is still one UPDATE by primary key. The second
    * column is what makes a TTL mean *absence* rather than age: fixed at issue,

@@ -72,7 +72,7 @@ session. Key file:line anchors, kept short for future lookups.
    Loopback single-player server never gets an `authGate` (`view.ts:607`),
    so there the client's own `playerId` (sessionStorage) is used as-is.
 
-## Changed by spec 264 (session lifecycle)
+## Changed by spec 267 (session lifecycle)
 
 - `sessions.touch(id, at, expiresAt)` now slides `expires_at` forward
   (`MAX(expires_at, ?)`, so it only ever grows). The 30d TTL measures

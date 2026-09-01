@@ -202,7 +202,7 @@ export interface GameServerOptions {
   readonly authGate?: AuthGate;
   /**
    * How long a connected player may ask for nothing before being logged out
-   * (spec 264). Defaults to {@link AFK_TIMEOUT_TICKS}; **0 switches it off.**
+   * (spec 267). Defaults to {@link AFK_TIMEOUT_TICKS}; **0 switches it off.**
    *
    * Defaulted **on**, which is the direction that matters: a forgotten opt-out
    * is a tab that logs itself out after five idle minutes, which somebody
@@ -290,7 +290,7 @@ interface Connection {
   /** The last tick anything was heard from this connection (spec 150). */
   lastSeenTick: number;
   /**
-   * The last tick this player *asked for something* (spec 264).
+   * The last tick this player *asked for something* (spec 267).
    *
    * The difference from `lastSeenTick` is the whole feature. That one answers
    * "is this socket up", and since spec 197 a pong answers it -- from the
@@ -301,7 +301,7 @@ interface Connection {
    */
   lastInputTick: number;
   /**
-   * The facing on the last input that stamped `lastInputTick` (spec 264).
+   * The facing on the last input that stamped `lastInputTick` (spec 267).
    *
    * Held because turning is the one thing a player does that carries no move
    * vector and no button: aiming at something and standing still is playing,
@@ -513,7 +513,7 @@ export class GameServer implements AdminHost {
   private readonly store: DataStore;
   /** Null when this server authenticates nobody. See `GameServerOptions`. */
   private readonly authGate: AuthGate | null;
-  /** Idle ticks before a connected player is logged out; 0 is off (spec 264). */
+  /** Idle ticks before a connected player is logged out; 0 is off (spec 267). */
   private readonly afkTimeoutTicks: number;
   /** Where a persistence failure is reported. Null in a tab and in tests. */
   private readonly onSaveError: ((playerId: string, error: unknown) => void) | null;
@@ -815,7 +815,7 @@ export class GameServer implements AdminHost {
     }
 
     // Whether a *player* did that, as opposed to a page that is merely still
-    // loaded (spec 264). One call rather than a line in each of the thirty
+    // loaded (spec 267). One call rather than a line in each of the thirty
     // cases below, so a message kind added later counts as activity by
     // default -- which is the safe direction: the cost of a wrong "yes" is an
     // idle body kept, and of a wrong "no" a player logged out mid-session.
@@ -875,7 +875,7 @@ export class GameServer implements AdminHost {
         break;
 
       case ClientMessageType.Goodbye:
-        // Meant it -- which since spec 264 settles nothing on its own. Out of
+        // Meant it -- which since spec 267 settles nothing on its own. Out of
         // combat there is no lingering body either way, and in a fight saying
         // "I meant to leave" is exactly what the escape the grace forbids would
         // say, so this no longer claims `intentional` and the combat gate in
@@ -1564,7 +1564,7 @@ export class GameServer implements AdminHost {
     this.connections.delete(connection);
 
     // What buys the grace is being *in a fight*, not the manner of leaving
-    // (spec 264). Spec 150 held every body for thirty seconds and gave its
+    // (spec 267). Spec 150 held every body for thirty seconds and gave its
     // reason -- pulling the plug must not be an escape -- which is a statement
     // about a fight rather than about a disconnection, and applied to all of
     // them it made logging off in the village square a statue in the village
@@ -1654,7 +1654,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Is this body in a fight (spec 264)?
+   * Is this body in a fight (spec 267)?
    *
    * `StatusId.InCombat` is the sim's own answer -- stamped by a blow landed, a
    * blow taken and an affliction pulse, and eight seconds wide. It has had one
@@ -1675,7 +1675,7 @@ export class GameServer implements AdminHost {
   }
 
   /**
-   * Note that somebody is actually at the keyboard (spec 264).
+   * Note that somebody is actually at the keyboard (spec 267).
    *
    * Three kinds are refused, and each for its own reason. A `Ping` is the
    * client's heartbeat, which is the whole thing being measured against. A
@@ -1721,7 +1721,7 @@ export class GameServer implements AdminHost {
     }
     for (const connection of [...this.connections]) {
       if (connection.playerId === null) continue;
-      // A player who has stopped asking for anything (spec 264). Checked before
+      // A player who has stopped asking for anything (spec 267). Checked before
       // the socket timeout because the two are different failures with
       // different answers: that one is a socket nobody can reach and this is a
       // socket in perfect health with nobody behind it.

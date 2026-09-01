@@ -68,9 +68,9 @@ async function join(
 }
 
 /**
- * Put this body in a fight, by landing a real blow (spec 264).
+ * Put this body in a fight, by landing a real blow (spec 267).
  *
- * Since spec 264 the resume grace is bought by `StatusId.InCombat` rather than
+ * Since spec 267 the resume grace is bought by `StatusId.InCombat` rather than
  * by the manner of leaving, so every test below that is *about* the grace has
  * to be in one. A real swing at a dummy rather than a status written by hand:
  * the whole claim is that the departure reads what combat writes, and a test
@@ -121,7 +121,7 @@ describe('a dropped socket', () => {
     expect(r.server.playerManager.get('ana')).toBeNull();
   });
 
-  it('takes the body at once when the socket goes out of combat (spec 264)', async () => {
+  it('takes the body at once when the socket goes out of combat (spec 267)', async () => {
     // The other half of the rule above, and the one a player asked for: a
     // character logged off in the village square is not a statue in the village
     // square. Nothing is lost by going now -- `syncFromEntity` writes position,
@@ -147,7 +147,7 @@ describe('a dropped socket', () => {
       ana.client.sendInput({ moveX: 1, moveY: 0, facing: 0, buttons: 0 });
       await r.tick();
     }
-    // In a fight, because since spec 264 that is what leaves a body to come
+    // In a fight, because since spec 267 that is what leaves a body to come
     // back to. Out of combat there is nothing standing there and this is a
     // fresh login, which the test above it covers.
     await fight(r, ana.client);
@@ -201,7 +201,7 @@ describe('a dropped socket', () => {
     ana.client.disconnect();
     await settle();
     await r.tick(4);
-    // No grace -- though since spec 264 that is because this body is out of
+    // No grace -- though since spec 267 that is because this body is out of
     // combat rather than because it said goodbye. Mid-fight the message buys
     // nothing: see `session-lifecycle.test.ts`, where a `Goodbye` from a body
     // in a fight still leaves it standing.
@@ -217,7 +217,7 @@ describe('a dropped socket', () => {
     // The socket is fine; the client has simply stopped talking. Nothing fires
     // a close -- which is exactly the case a dead router produces.
     //
-    // Out of combat the timeout takes the body with it (spec 264): the sweep
+    // Out of combat the timeout takes the body with it (spec 267): the sweep
     // reaches `disconnect`, and what that now asks is whether this body is in a
     // fight rather than how the socket ended.
     await r.tick(CONNECTION_TIMEOUT_TICKS + 4);
@@ -251,7 +251,7 @@ describe('nothing is orphaned by a drop', () => {
     expect(ana.client.view().trade?.stage).toBe(TradeStageValue.Open);
 
     // Mid-fight, so ana's session is still loaded to be counted: out of combat
-    // she is reaped on the tick the socket closes (spec 264) and her half of
+    // she is reaped on the tick the socket closes (spec 267) and her half of
     // the bag is in the store rather than in the manager. What is under test is
     // the trade, and the grace is the state that lets both halves be read.
     await fight(r, ana.client);

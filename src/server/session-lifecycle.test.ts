@@ -1,5 +1,5 @@
 /**
- * When a session ends (spec 264).
+ * When a session ends (spec 267).
  *
  * End to end through the real message path and the real `tick`, for the reason
  * `server.test.ts` gives: the three rules here are all about *wiring* -- which
@@ -179,7 +179,7 @@ async function comeBack(game: GameServer, playerId: string, token: string): Prom
   return back.welcome()?.entityId ?? -1;
 }
 
-describe('what buys the resume grace is being in a fight (spec 264)', () => {
+describe('what buys the resume grace is being in a fight (spec 267)', () => {
   it('reaps the body at once when the tab closes out of combat', async () => {
     const game = server();
     const client = new Client(game);
@@ -223,7 +223,7 @@ describe('what buys the resume grace is being in a fight (spec 264)', () => {
   });
 });
 
-describe('a player who has stopped asking for anything (spec 264)', () => {
+describe('a player who has stopped asking for anything (spec 267)', () => {
   /** Run the clock, feeding the connection whatever an idle tab really sends. */
   async function idleFor(game: GameServer, client: Client, ticks: number): Promise<void> {
     for (let i = 0; i < ticks; i++) {
@@ -329,7 +329,7 @@ describe('a player who has stopped asking for anything (spec 264)', () => {
   });
 
   it('is switched off entirely for a server that asked for that', async () => {
-    // The single-player tab (spec 264). Only the remote path wraps its channel
+    // The single-player tab (spec 267). Only the remote path wraps its channel
     // in a `ReconnectingChannel`, so a loopback client logged out here does not
     // come back -- and there is nobody else in a tab for an idle body to be in
     // the way of. Asserted rather than left to `view.ts`, because "the option
