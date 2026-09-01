@@ -55,7 +55,6 @@
 
 import { EntityActivity, EntityKind } from '../../../server/net/protocol.js';
 import type { Appearance } from './appearance.js';
-import { authoredUnitFor } from './unit-catalog.js';
 import { monsterCritterFor } from './monster-critter.js';
 import { BURROW_DIRT_TICKS } from '../vfx/brush.js';
 
@@ -85,26 +84,63 @@ export const ARRIVAL_GRACE_TICKS = 30;
 export const BURROW_TICKS = BURROW_DIRT_TICKS;
 
 /**
- * When the feet reach the surface, and when they stop digging, as fractions of
+ * When the legs break the surface, and when they stop digging, as fractions of
  * {@link BURROW_TICKS}.
  *
- * The staging the whole thing is for:
+ * The staging:
  *
  * ```
- * 0 ....... FEET_OUT ....... DIG_UNTIL ................ 1
- * buried     legs out        feet planted,        standing
- * (dirt)     knees up        body still down       normally
+ * 0 ......... FEET_OUT ......... DIG_UNTIL ............... 1
+ * under        legs break         knees arch,          standing
+ * (dirt)       the surface        body breaks it
  * ```
  *
- * What makes it read as *being pushed up* rather than as being translated is
- * that the body's own height above the ground is **constant** across the first
- * two stages: `buried` gives the depth up as the feet rise and `bodyDrop` takes
- * exactly as much back, so for the first half of the emergence the only thing
- * that moves is the legs. Only after `DIG_UNTIL` does the body itself come up,
- * and it comes up by the legs straightening under it.
+ * What makes the first stage read as *being pushed up* rather than as being
+ * translated is that the body's own height above the ground does not change at
+ * all across it: `buried` gives the depth up as the feet rise and `bodyDrop`
+ * takes exactly as much back, so the only thing that moves is the legs.
  */
-export const FEET_OUT = 0.34;
-export const DIG_UNTIL = 0.5;
+export const FEET_OUT = 0.26;
+export const DIG_UNTIL = 0.55;
+
+/**
+ * How far the body is still dropped at the end of the dig, 0..1.
+ *
+ * The one number here that was **measured rather than chosen**, and the whole
+ * of what separates a readable emergence from a hole with two stubs beside it.
+ *
+ * A leg has a fixed reach, so how far a knee can arch above the ground is
+ * decided by how much slack is left after it has spanned from a sunken hip to a
+ * planted foot -- and at a drop deep enough to hide the body outright there is
+ * almost none. Photographed through `preview-emergence.ts` at the full depth,
+ * every leg on both bodies came out straight: the small spider's knees cleared
+ * the ground by about a unit and the Warden's did not clear it at all, so the
+ * stage whose entire job is *legs, no body yet* drew nothing on the larger of
+ * the two bodies.
+ *
+ * At 0.78 the small spider's knees stand about seven units clear and *above the
+ * top of its own body*, so what is over the ground through the dig is legs
+ * arching over a shoulder. What it costs is that the body's top edge breaks the
+ * surface during the dig instead of staying under it, which is the right trade
+ * and arguably the better picture: a thing clawing out of a hole is not
+ * invisible.
+ *
+ * It is also what stops the dig being a **pause**. Held at the full depth the
+ * middle stage was two identical frames -- the legs had arrived and nothing
+ * moved until the body came up -- where now the knees rise through the whole of
+ * it, which is what "the feet push against the ground" has to look like.
+ *
+ * **What it cannot fix is the Warden**, and that is a proportion rather than a
+ * tuning failure worth recording. Its reach is 60 against a 34-unit foot offset
+ * and a body 56 tall, so `D + knee(D)` never reaches the body's own height at
+ * any drop: there is no value of this constant at which the Warden's body is
+ * hidden and any part of its leg is above the ground. It is a box on short
+ * legs, and it heaves up with its shoulders and its knees together where the
+ * spider leads with its legs. The staging is tuned to the spider for that
+ * reason -- the reading it can achieve -- and the Warden gets as much of it as
+ * its own body allows.
+ */
+export const DIG_DROP = 0.78;
 
 /** What to add to one body's drawn transform this frame. */
 export interface SpawnStage {
@@ -181,20 +217,24 @@ export function isCommitted(activity: number): boolean {
  * draws each leg from a hip carried through the carriage to a foot that is
  * independent of it, so the body can be pushed down while the feet stay
  * planted. `Humanoid.poseLegs` is sine-driven bone rotation of one skeleton
- * with no plant to hold, so an emergence is not expressible on the critter rig
+ * with no plant to hold, so an emergence is not expressible on the critter rig,
  * and an authored unit would need a clip nobody has authored.
  *
- * Answered with the two predicates `scene.ts`'s own construction chain is built
- * from rather than with a list of type ids, so a spider given a critter row or
- * an authored unit stops burrowing without anybody remembering to edit a table
- * here. The one disagreement it can have with that chain is a type whose
- * authored unit is named but not baked into this build, which falls through to
- * a mech there and reads `generic` here -- a poof on a body that could have
- * burrowed, which is the safe direction to be wrong in.
+ * The rule rather than a list of type ids: this is `bodyFor`'s own construction
+ * chain read back, so a spider given a critter row or an authored unit stops
+ * burrowing without anybody remembering to edit a table here.
+ *
+ * `authored` is passed in rather than looked up, and that is not a courtesy to
+ * the caller. `unit-catalog.ts` reaches the asset registry, which is a
+ * `import.meta.glob` and therefore exists only under a bundler -- importing it
+ * would make this module unloadable from a plain script, which is what the
+ * preview that photographs the emergence is. It is also the *same* call
+ * `bodyFor` makes to decide the rig, so the two cannot come to different
+ * answers about a unit this build has not baked.
  */
-export function spawnStyleFor(appearance: Appearance): SpawnStyle {
+export function spawnStyleFor(appearance: Appearance, authored: boolean): SpawnStyle {
   if (appearance.rig !== 'monster') return 'generic';
-  if (authoredUnitFor(appearance) !== null) return 'generic';
+  if (authored) return 'generic';
   return monsterCritterFor(appearance.typeId) === null ? 'burrow' : 'generic';
 }
 
@@ -354,10 +394,20 @@ export function bodyDropAt(phase: number): number {
   // the ground does not change at all while the legs come out. This is the
   // whole of "the feet emerge first".
   if (p < FEET_OUT) return smoothstep(p / FEET_OUT);
-  // The dig: feet planted, body still under. Nothing moves but the gait.
-  if (p < DIG_UNTIL) return 1;
-  // The push. The legs straighten and the body comes up out of the hole.
-  return 1 - smoothstep((p - DIG_UNTIL) / (1 - DIG_UNTIL));
+  // The dig. The legs are planted and take up their slack, which arches the
+  // knees clear of the ground -- see {@link DIG_DROP} for why this moves at all
+  // rather than holding at the full depth.
+  if (p < DIG_UNTIL) {
+    // Eased *in* rather than smoothly, which is the difference between a body
+    // that heaves and one that floats: the drop barely moves for the first half
+    // of the dig, so there is a real window of legs-out-and-nothing-else before
+    // the shoulders break the surface, and then it accelerates into the push.
+    // It is that window rather than a fourth stage with a constant to name.
+    const t = (p - FEET_OUT) / (DIG_UNTIL - FEET_OUT);
+    return 1 - (1 - DIG_DROP) * t * t;
+  }
+  // The push. The legs straighten under it and the body comes up to standing.
+  return DIG_DROP * (1 - smoothstep((p - DIG_UNTIL) / (1 - DIG_UNTIL)));
 }
 
 function clamp01(v: number): number {

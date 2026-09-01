@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ARRIVAL_GRACE_TICKS,
   BURROW_TICKS,
+  DIG_DROP,
   DIG_UNTIL,
   FEET_OUT,
   SETTLED,
@@ -40,23 +41,20 @@ describe('spawnStyleFor', () => {
   it('burrows the two bodies that share the mech rig', () => {
     // The whole of why these two share a presentation: they share a rig, and it
     // is the only one here whose feet are world-locked.
-    expect(spawnStyleFor(monster('small_spider'))).toBe('burrow');
-    expect(spawnStyleFor(monster('warden'))).toBe('burrow');
+    expect(spawnStyleFor(monster('small_spider'), false)).toBe('burrow');
+    expect(spawnStyleFor(monster('warden'), false)).toBe('burrow');
   });
 
   it('gives the generic arrival to everything that is not on the mech rig', () => {
     // The player, and the two kinds of body that are drawn by another rig: an
     // animal off `monster-critter.ts` and an authored unit off the catalog.
-    expect(spawnStyleFor(appearanceOf({ kind: EntityKind.Player, typeId: 'player' }))).toBe(
-      'generic',
-    );
-    expect(spawnStyleFor(monster('sheep'))).toBe('generic');
+    const player = appearanceOf({ kind: EntityKind.Player, typeId: 'player' });
+    expect(spawnStyleFor(player, false)).toBe('generic');
+    expect(spawnStyleFor(monster('sheep'), false)).toBe('generic');
+    // An authored unit is drawn by a `UnitRig`, which has no world-locked foot
+    // to plant -- so it gets the poof whatever else is true of the row.
     for (const npc of ['npc.merchant', 'npc.quartermaster', 'npc.armourer']) {
-      const look = monster(npc);
-      // Only meaningful while the catalog actually has the unit baked; if it
-      // does not, this row falls through to the mech and the assertion below is
-      // vacuous rather than wrong.
-      if (authoredUnitFor(look) !== null) expect(spawnStyleFor(look)).toBe('generic');
+      expect(spawnStyleFor(monster(npc), true), npc).toBe('generic');
     }
   });
 
@@ -69,8 +67,9 @@ describe('spawnStyleFor', () => {
     let generic = 0;
     for (const row of ALL_MONSTERS) {
       const look = monster(row.id);
-      const mech = authoredUnitFor(look) === null && monsterCritterFor(row.id) === null;
-      expect(spawnStyleFor(look), row.id).toBe(mech ? 'burrow' : 'generic');
+      const authored = authoredUnitFor(look) !== null;
+      const mech = !authored && monsterCritterFor(row.id) === null;
+      expect(spawnStyleFor(look, authored), row.id).toBe(mech ? 'burrow' : 'generic');
       if (mech) burrows += 1;
       else generic += 1;
     }
@@ -102,36 +101,60 @@ describe('spawnStyleFor', () => {
 });
 
 describe('the emergence staging', () => {
-  it('holds the body at its buried depth for the whole time the legs come out', () => {
-    // The claim the whole thing rests on: the body's own height above the
-    // ground is `-(buried + bodyDrop)` in hidden depths, and it is *constant*
-    // until the dig ends. What moves in the first half is the legs and only the
+  it('holds the body at one depth for the whole time the legs come out', () => {
+    // The claim the first stage rests on: the body's own height above the
+    // ground is `-(buried + bodyDrop)` in hidden depths, and it does not change
+    // at all while the feet are rising. What moves is the legs and only the
     // legs -- which is what separates being pushed up from being translated.
-    for (let p = 0; p <= DIG_UNTIL; p += 0.01) {
+    for (let p = 0; p <= FEET_OUT; p += 0.005) {
       expect(buriedAt(p) + bodyDropAt(p)).toBeCloseTo(1, 6);
     }
   });
 
   it('brings the feet out before the body', () => {
-    // Feet under at the start, planted by `FEET_OUT`, and the body still down.
+    // Under at the start, planted by `FEET_OUT`, and the body at its full drop
+    // -- the one instant it is as deep as it ever gets with its feet on the
+    // ground, which is the frame that is legs and nothing else.
     expect(buriedAt(0)).toBeCloseTo(1, 6);
     expect(buriedAt(FEET_OUT)).toBeCloseTo(0, 6);
     expect(bodyDropAt(FEET_OUT)).toBeCloseTo(1, 6);
-    // And still down through the dig, which is the beat where the legs are
-    // working against the ground and nothing has come up yet.
-    expect(bodyDropAt(DIG_UNTIL)).toBeCloseTo(1, 6);
+    // And barely moves through the first half of the dig: the ramp is eased in,
+    // so the window of legs-out-and-nothing-else is a window rather than an
+    // instant.
+    const half = FEET_OUT + (DIG_UNTIL - FEET_OUT) / 2;
+    expect(bodyDropAt(half)).toBeGreaterThan(0.9);
+    // The dig ends with the body still down by most of its depth: the shoulders
+    // are through and the body has not been lifted yet.
+    expect(bodyDropAt(DIG_UNTIL)).toBeCloseTo(DIG_DROP, 6);
+    expect(DIG_DROP).toBeGreaterThan(0.5);
+    expect(DIG_DROP).toBeLessThan(1);
   });
 
-  it('rises monotonically and lands exactly at standing', () => {
+  it('rises monotonically from the moment the feet land, and lands exactly at standing', () => {
     // "Exactly" matters more than "monotonically": an emergence that ended at
-    // 0.001 of a hidden depth is a body permanently a little in the ground.
+    // 0.001 of a hidden depth is a body permanently a little in the ground. And
+    // monotone from `FEET_OUT` rather than from `DIG_UNTIL`, because the dig is
+    // a rise now too -- a body that sank back mid-emergence would read as
+    // slipping.
     expect(buriedAt(1)).toBe(0);
     expect(bodyDropAt(1)).toBe(0);
     let previous = Number.POSITIVE_INFINITY;
-    for (let p = DIG_UNTIL; p <= 1.0001; p += 0.01) {
+    for (let p = FEET_OUT; p <= 1.0001; p += 0.005) {
       const drop = bodyDropAt(p);
       expect(drop).toBeLessThanOrEqual(previous + 1e-9);
       previous = drop;
+    }
+  });
+
+  it('never lets the body sink while it is arriving', () => {
+    // The whole curve, not just half of it: the body's height above the ground
+    // is `-(buried + bodyDrop)`, and it must only ever climb. A stage boundary
+    // that overshot would be a body bobbing back down into its own hole.
+    let previous = Number.NEGATIVE_INFINITY;
+    for (let p = 0; p <= 1.0001; p += 0.005) {
+      const height = -(buriedAt(p) + bodyDropAt(p));
+      expect(height).toBeGreaterThanOrEqual(previous - 1e-9);
+      previous = height;
     }
   });
 

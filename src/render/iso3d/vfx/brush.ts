@@ -2353,10 +2353,10 @@ export interface BrushPoofParams {
  * its own path, which reads as the poof being un-painted.
  */
 export function brushPoof(params: BrushPoofParams): EffectDefinition {
-  const puffs = Math.max(0, params.puffs ?? 14);
+  const puffs = Math.max(0, params.puffs ?? 20);
   // Fewer than the puff by more than half. The skirt is punctuation -- it says
   // the cloud met the ground -- and matched counts read as two clouds.
-  const skirt = Math.max(0, params.skirt ?? 5);
+  const skirt = Math.max(0, params.skirt ?? 7);
   const base = Math.max(0.01, params.base ?? 0.42);
   const puffSize = params.puffSize ?? 0.62;
   const pale = params.pale ?? 'dustSnow';
@@ -2472,12 +2472,12 @@ export interface BrushDirtParams {
  * exactly wrong for something with weight.
  */
 export function brushDirt(params: BrushDirtParams): EffectDefinition {
-  const clods = Math.max(0, params.clods ?? 26);
-  const specks = Math.max(0, params.specks ?? 40);
+  const clods = Math.max(0, params.clods ?? 44);
+  const specks = Math.max(0, params.specks ?? 90);
   // Least of the three. A haze is what is left hanging *after* the weight has
   // fallen, and matched counts read as a dust cloud with some grit in it rather
   // than as earth being thrown.
-  const haze = Math.max(0, params.haze ?? 9);
+  const haze = Math.max(0, params.haze ?? 15);
   const base = Math.max(0.01, params.base ?? 0.5);
   const ticks = Math.max(1, params.ticks ?? BURROW_DIRT_TICKS);
   const bright = params.bright ?? 'dustEarth';
@@ -2513,12 +2513,20 @@ export function brushDirt(params: BrushDirtParams): EffectDefinition {
       gravity: -520,
       drag: 0.7,
       angularVelocity: [-7, 7],
-      size: { keys: [[0, 0.3], [0.35, 0.34], [1, 0.2]] },
+      // Half again over the first cut. Photographed through
+      // `preview-brush-vfx.ts` at 0.3 the whole layer was a few dark pixels a
+      // side -- against grass that is not a clod of earth, it is a speck of
+      // something, and at this size the eye reads dark-and-small as blood.
+      size: { keys: [[0, 0.46], [0.35, 0.5], [1, 0.32]] },
       // Held almost to the end. A clod does not fade, it lands -- so the alpha
       // stays flat and drops over the last fifth, which is the mark being lost
       // in the grass rather than evaporating over it.
       alpha: { keys: [[0, 1], [0.8, 1], [1, 0]] },
-      color: { stops: [[0, bright], [0.35, body], [1, deep]] },
+      // The lit end held past halfway rather than a third, for the same
+      // finding: this ramp's dark end is genuinely dark, and a mark that
+      // reaches it early spends most of its life as a dot the size of a blood
+      // fleck. What has to read is *earth*, so the earth colour is most of it.
+      color: { stops: [[0, bright], [0.62, body], [1, deep]] },
       render: 'mesh',
       mesh: { shape: 'brush-dab' },
       blend: 'alpha',
@@ -2541,9 +2549,15 @@ export function brushDirt(params: BrushDirtParams): EffectDefinition {
       gravity: -700,
       drag: 1.6,
       angularVelocity: [-9, 9],
-      size: { keys: [[0, 0.17], [0.4, 0.13], [1, 0.07]] },
+      size: { keys: [[0, 0.26], [0.4, 0.2], [1, 0.11]] },
       alpha: { keys: [[0, 1], [0.7, 0.9], [1, 0]] },
-      color: { stops: [[0, bright], [0.5, body], [1, deep]] },
+      // **Paler than the clods**, and that is the one place this effect
+      // deliberately leaves the earth ramp. A speck is a few pixels across, and
+      // a few dark pixels on a mid-green field is a hole rather than a mark --
+      // `brushShot` records the same finding about grey smoke. Dry dust off the
+      // top of a hole is lighter than the clods under it anyway, so the honest
+      // colour and the legible one are the same one here.
+      color: { stops: [[0, 'dustStone'], [0.45, bright], [1, body]] },
       render: 'mesh',
       mesh: { shape: 'brush-flick' },
       blend: 'alpha',
@@ -2565,11 +2579,11 @@ export function brushDirt(params: BrushDirtParams): EffectDefinition {
       turbulence: { amplitude: 30, frequency: 0.04 },
       drag: 2.6,
       angularVelocity: [-1.2, 1.2],
-      size: { keys: [[0, 0.42], [0.5, 0.7], [1, 1.05]] },
+      size: { keys: [[0, 0.5], [0.5, 0.85], [1, 1.25]] },
       // Never opaque. This is the layer the body has to be legible *through*,
       // and a solid one would hide the emergence it is there to sell.
-      alpha: { keys: [[0, 0.34], [0.4, 0.42], [1, 0]] },
-      color: { stops: [[0, body], [0.4, 'dustStone'], [1, deep]] },
+      alpha: { keys: [[0, 0.36], [0.4, 0.46], [1, 0]] },
+      color: { stops: [[0, 'dustStone'], [0.45, body], [1, deep]] },
       render: 'mesh',
       mesh: { shape: 'brush-blot' },
       blend: 'alpha',

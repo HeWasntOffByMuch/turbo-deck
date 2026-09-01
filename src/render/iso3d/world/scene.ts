@@ -2160,7 +2160,9 @@ export class WorldScene {
         ? this.spawns.read(
             {
               id: entity.id,
-              style: spawnStyleFor(look),
+              // The same call the construction chain above makes, so what
+              // decided the rig is what decides the arrival.
+              style: spawnStyleFor(look, authoredUnitFor(look) !== null),
               spawnTick: entity.spawnTick,
               dead: entity.maxHealth > 0 && entity.health <= 0,
               committed: isCommitted(entity.activity),
