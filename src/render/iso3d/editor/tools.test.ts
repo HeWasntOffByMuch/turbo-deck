@@ -17,7 +17,9 @@ import { SPAWNER_MONSTER_CHOICES,
   patchFromSelection,
   selectionFrom,
   SELECT_PICK_RADIUS,
+  SPAWNER_ALWAYS,
   SPAWNER_UNSET,
+  SPAWNER_WHEN_CHOICES,
   MODE_COLORS,
   PAINT_COLORS,
   PAINT_MATERIAL_CHOICES,
@@ -29,7 +31,7 @@ import { SPAWNER_MONSTER_CHOICES,
   type MarkerSelection,
 } from './tools.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
-import { FIXTURE_KINDS, FIXTURE_LIGHTS } from '../../../terrain/index.js';
+import { FIXTURE_KINDS, FIXTURE_LIGHTS, SPAWN_WINDOWS } from '../../../terrain/index.js';
 
 /**
  * Spec 058. The panel's *decisions* -- which tool is armed, whose settings that
@@ -328,6 +330,7 @@ describe('the select tool', () => {
     selMonster: s.selMonster,
     selLabel: s.selLabel,
     selRespawnSeconds: s.selRespawnSeconds,
+    selWhen: s.selWhen,
     selLeashRadius: s.selLeashRadius,
   });
 
@@ -398,7 +401,14 @@ describe('the select tool', () => {
   it.each(MARKER_KINDS)('is a no-op to select a %s and commit it untouched', (kind) => {
     const marker =
       kind === 'spawner'
-        ? { kind, id: `${kind}-1`, x: 10, z: 20, label: 'stalker', spawner: { respawnSeconds: 45, leashRadius: 210 } }
+        ? {
+            kind,
+            id: `${kind}-1`,
+            x: 10,
+            z: 20,
+            label: 'stalker',
+            spawner: { respawnSeconds: 45, leashRadius: 210, when: 'night' as const },
+          }
         : { kind, id: `${kind}-1`, x: 10, z: 20, label: 'somewhere' };
     const patch = patchFromSelection(selectionFrom(marker, selectionOf(settings())));
     expect(patchMarker(marker, patch)).toEqual(marker);
@@ -425,6 +435,48 @@ describe('the select tool', () => {
     s.selMonster = 'grazer';
     const was = { kind: 'spawner' as const, id: 'spawner-1', x: 0, z: 0, label: 'grazer', spawner: { leashRadius: 300 } };
     expect(patchMarker(was, patchFromSelection(selectionOf(s))).spawner).toBeUndefined();
+  });
+
+  /**
+   * Spec 266. The window is the third thing a spawner can say and the first
+   * that is not a number, so it gets `SPAWNER_UNSET`'s treatment in string
+   * form: the dropdown always holds a word, and one of the words means "write
+   * no key at all".
+   */
+  it('writes an authored window through', () => {
+    const s = settings();
+    s.selKind = 'spawner';
+    s.selMonster = 'grazer';
+    s.selWhen = 'night';
+    expect(patchFromSelection(selectionOf(s)).spawner).toEqual({ when: 'night' });
+  });
+
+  it('writes no key for a spawner that keeps no hours', () => {
+    const s = settings();
+    s.selKind = 'spawner';
+    s.selMonster = 'grazer';
+    s.selWhen = SPAWNER_ALWAYS;
+    expect(patchFromSelection(selectionOf(s)).spawner).toEqual({});
+  });
+
+  it('loads a window into the panel, and "always" for one with none', () => {
+    const previous = selectionOf(settings());
+    const withWindow = selectionFrom(
+      { kind: 'spawner', id: 'spawner-1', x: 0, z: 0, label: 'grazer', spawner: { when: 'day' } },
+      previous,
+    );
+    expect(withWindow.selWhen).toBe('day');
+    const without = selectionFrom({ kind: 'spawner', id: 'spawner-2', x: 0, z: 0, label: 'grazer' }, previous);
+    expect(without.selWhen).toBe(SPAWNER_ALWAYS);
+  });
+
+  /**
+   * `always` has to be a value the document can never hold, or the dropdown
+   * would have two meanings for one word.
+   */
+  it('offers exactly the two windows and no window', () => {
+    expect(SPAWNER_WHEN_CHOICES).toEqual([SPAWNER_ALWAYS, 'night', 'day']);
+    expect(SPAWN_WINDOWS).not.toContain(SPAWNER_ALWAYS);
   });
 
   /**

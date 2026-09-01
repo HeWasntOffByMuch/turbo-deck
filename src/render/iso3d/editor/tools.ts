@@ -5,8 +5,10 @@ import {
   PLACED_KINDS,
   type MapMarker,
   type MapMarkerKind,
+  SPAWN_WINDOWS,
   type PlacedKind,
   type PropKind,
+  type SpawnWindow,
 } from '../../../terrain/index.js';
 import { ALL_MONSTERS } from '../../../server/data/monsters.js';
 import { DEFAULT_BRUSH, TERRAIN_TOOLS, type TerrainTool } from './brush.js';
@@ -215,6 +217,15 @@ export interface EditorSettings {
   selRespawnSeconds: number;
   /** How far its body may be dragged. {@link SPAWNER_UNSET} = the sim's own. */
   selLeashRadius: number;
+  /**
+   * When this spawner may fill (spec 266). {@link SPAWNER_ALWAYS} = whenever.
+   *
+   * A string a dropdown is bound to rather than an optional, for the reason
+   * `fixtureBrightness` is always a number: `gui.add` refuses a field with no
+   * value in it, hands back `undefined`, and the `.name()` after it throws --
+   * which takes the panel and the whole editor tab with it.
+   */
+  selWhen: string;
   // Nav
   showNav: boolean;
   // Parts (spec 084)
@@ -305,6 +316,7 @@ export function createEditorSettings(): EditorSettings {
     selLabel: '',
     selRespawnSeconds: SPAWNER_UNSET,
     selLeashRadius: SPAWNER_UNSET,
+    selWhen: SPAWNER_ALWAYS,
     showNav: false,
     partTool: 'add',
     recipe: '',
@@ -357,6 +369,19 @@ export const SELECT_PICK_RADIUS = 70;
  * that starts where "unset" is.
  */
 export const SPAWNER_UNSET = 0;
+
+/**
+ * The dropdown value meaning "whenever its timer is up" (spec 266).
+ *
+ * {@link SPAWNER_UNSET}'s idiom in string form and for its reason: the document
+ * says "whenever" by carrying no key at all, and a control needs a value to sit
+ * on. `always` is safe to spend because `SPAWN_WINDOWS` is a closed union the
+ * parser refuses anything outside of, so it can never collide with a window.
+ */
+export const SPAWNER_ALWAYS = 'always';
+
+/** What the When dropdown offers: the two windows, and no window. */
+export const SPAWNER_WHEN_CHOICES: readonly string[] = [SPAWNER_ALWAYS, ...SPAWN_WINDOWS];
 
 /**
  * How wide the ring on the ground is drawn.
@@ -533,7 +558,13 @@ export function armedKindHasMessage(settings: EditorSettings): boolean {
 /** The settings fields the select tool owns, as one object (spec 222). */
 export type MarkerSelection = Pick<
   EditorSettings,
-  'selectedMarkerId' | 'selKind' | 'selMonster' | 'selLabel' | 'selRespawnSeconds' | 'selLeashRadius'
+    | 'selectedMarkerId'
+  | 'selKind'
+  | 'selMonster'
+  | 'selLabel'
+  | 'selRespawnSeconds'
+  | 'selLeashRadius'
+  | 'selWhen'
 >;
 
 /**
@@ -559,6 +590,7 @@ export function selectionFrom(marker: MapMarker, previous: MarkerSelection): Mar
     selLabel: marker.kind === 'spawner' ? previous.selLabel : label,
     selRespawnSeconds: marker.spawner?.respawnSeconds ?? SPAWNER_UNSET,
     selLeashRadius: marker.spawner?.leashRadius ?? SPAWNER_UNSET,
+    selWhen: marker.spawner?.when ?? SPAWNER_ALWAYS,
   };
 }
 
@@ -589,6 +621,13 @@ export function patchFromSelection(selection: MarkerSelection): MarkerPatch {
             ? { respawnSeconds: selection.selRespawnSeconds }
             : {}),
           ...(selection.selLeashRadius > SPAWNER_UNSET ? { leashRadius: selection.selLeashRadius } : {}),
+          // `SPAWNER_ALWAYS` becomes an absent member rather than a written-in
+          // word, the same conversion the two numbers above make: the document
+          // says "whenever" by carrying no key, so a map only gains one when
+          // somebody chose an hour.
+          ...(SPAWN_WINDOWS.includes(selection.selWhen as SpawnWindow)
+            ? { when: selection.selWhen as SpawnWindow }
+            : {}),
         };
   return {
     kind: selection.selKind,
