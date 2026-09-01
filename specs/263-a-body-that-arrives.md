@@ -88,13 +88,11 @@ export interface SpawnStage {
   readonly buried: number;
   /** How far the body is dropped below its own legs, 0..1. */
   readonly bodyDrop: number;
-  /** Whether dirt is being thrown this frame, and how hard. 0 for none. */
-  readonly dirt: number;
 }
 
 export const SETTLED: SpawnStage;   // style 'generic', phase 1, every offset 0
 
-export function spawnStyleFor(appearance: Appearance): SpawnStyle;
+export function spawnStyleFor(appearance: Appearance, authored: boolean): SpawnStyle;
 
 export class SpawnPresentations {
   read(body: SpawnBody, tick: number): SpawnStage;
@@ -104,10 +102,31 @@ export class SpawnPresentations {
 ```
 
 `spawnStyleFor` is `burrow` exactly when the body draws on the mech rig, and it
-answers that with the same two predicates `bodyFor`'s own chain is built from
-(`authoredUnitFor`, then `monsterCritterFor`) rather than a list of type ids —
-so a spider given a critter row stops burrowing without anybody remembering to
-edit a table here.
+answers that with the same predicates `bodyFor`'s own chain is built from rather
+than with a list of type ids — so a spider given a critter row stops burrowing
+without anybody remembering to edit a table here. The authored-unit half is
+passed **in** rather than looked up: `unit-catalog.ts` reaches the asset
+registry, which is an `import.meta.glob` and so exists only under a bundler, and
+importing it would make this module unloadable from a plain script — which is
+what the preview that photographs the emergence is. It is also the same call
+`bodyFor` makes, so the two cannot disagree about a unit this build has not
+baked.
+
+**Two things below were authored blind and corrected against the picture**, and
+both are recorded here rather than only in the code:
+
+- There is a third staging constant, `DIG_DROP`. A leg has a fixed reach, so
+  the arch a knee can make above the ground is whatever slack is left after
+  spanning from a sunken hip to a planted foot — and at a drop deep enough to
+  hide the body outright there is none. At the full depth every leg came out
+  *straight*: the spider's knees cleared the ground by about a unit and the
+  Warden's did not clear it at all. `DIG_DROP` is what the measurement bought,
+  and what it cannot fix is a proportion rather than a tuning failure — the
+  Warden is a box on short legs, and there is **no** drop at which its body is
+  hidden and any part of its leg is above ground.
+- `SpawnStage` has no `dirt` intensity. The dirt's own `emission: 'ramp'` — the
+  one emission kind in the format whose rate is a curve — owns the taper, so
+  the driver's whole obligation is one `play` on the frame it begins.
 
 ### What the rig gains
 
