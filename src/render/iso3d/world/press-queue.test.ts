@@ -1,5 +1,5 @@
 /**
- * A press that waits for the swing (spec 262).
+ * A press that waits for the swing (spec 264).
  *
  * Two halves, `press-to-swing.test.ts`'s split and for its reason. The pure half
  * pins the rule; the wired half drives a real `GameClient` against a real
@@ -40,7 +40,7 @@ const press = (abilityId: string, ...down: string[]): QueuedPress => ({
 
 const FREE = { rooted: false, staggered: false, pending: false, ready: true };
 
-describe('a press waiting for the body (spec 262)', () => {
+describe('a press waiting for the body (spec 264)', () => {
   it('has nothing to do with nothing queued', () => {
     expect(drainPress({ queued: null, ...FREE })).toEqual({ send: null, queued: null });
   });
@@ -89,7 +89,7 @@ describe('a press waiting for the body (spec 262)', () => {
   });
 });
 
-describe('the swing hold, raised at the send (spec 262)', () => {
+describe('the swing hold, raised at the send (spec 264)', () => {
   it('suppresses a direction that was down at the press', () => {
     const hold = swingHold({
       previous: NO_HOLD,
@@ -283,7 +283,7 @@ async function swingThenPress(options: {
   return { rejects, landed, pressedDuring, movedDuring };
 }
 
-describe('a press made during a swing, over the wire (spec 262)', () => {
+describe('a press made during a swing, over the wire (spec 264)', () => {
   for (const during of [CastPhase.Windup, CastPhase.Backswing]) {
     const name = during === CastPhase.Windup ? 'wind-up' : 'follow-through';
 

@@ -11,6 +11,7 @@
 import { describe, expect, it } from 'vitest';
 import { EFFECTS, REGISTRY } from './registry.js';
 import { LIBRARY, aura, burst, fire, puff } from './library.js';
+import { WARDEN_LASER } from '../../../server/data/warden.js';
 import { compileRegistry } from './compile.js';
 import { sampleCurve, compileCurve, sampleGradient, compileGradient } from './curve.js';
 import { VfxSystem } from './system.js';
@@ -97,6 +98,29 @@ describe('the registry as a whole', () => {
     expect(byId.get('aura_channel')?.priority).toBe(3);
     expect(byId.get('hit_critical')?.priority).toBe(3);
     expect(byId.get('puff_footstep')?.priority).toBeLessThanOrEqual(1);
+  });
+
+  it('registers the Warden\u2019s lance under the id the sim actually sends (spec 262)', () => {
+    // `landArea` sends `${ability.id}.impact` at the caster's feet, with the
+    // lane's bearing on it, once per damage pulse -- so registering the effect
+    // under that exact name is the whole of the wiring, and registering it under
+    // anything else is an effect authored and reached by nothing. That is the
+    // state spec 218 found the painted explosion in, and it is silent: `play`
+    // simply does not fire.
+    const byId = new Map(EFFECTS.map((effect) => [effect.id, effect]));
+    const lance = byId.get(`${WARDEN_LASER.abilityId}.impact`);
+    expect(lance, 'the lance cue').toBeDefined();
+    if (!lance) return;
+
+    // And it is authored inside the lane it paints. A mark past the beam's
+    // reach or off its flank would promise ground that is safe -- the same rule
+    // `skill.scorchedEarth.self` keeps about its own field's radius.
+    for (const emitter of lance.emitters) {
+      const offset = emitter.offset ?? { x: 0, y: 0, z: 0 };
+      expect(offset.x, emitter.id).toBeGreaterThanOrEqual(0);
+      expect(offset.x, emitter.id).toBeLessThanOrEqual(WARDEN_LASER.range);
+      expect(Math.abs(offset.z), emitter.id).toBeLessThanOrEqual(WARDEN_LASER.width / 2);
+    }
   });
 
   it('compiles into few enough draw calls to be worth batching', () => {
@@ -1226,5 +1250,69 @@ describe('the aimed landings (spec 235)', () => {
     for (const emitter of rings) {
       expect(emitter.gravity ?? 0, emitter.id).toBeLessThan(-500);
     }
+  });
+});
+
+describe('the Warden’s lance crackles rather than strobes (spec 262)', () => {
+  /**
+   * A beam is *sustained* and its sparks are played eight times over it, so the
+   * one thing they must not do is leave a gap. This is the check the picture
+   * could not settle: a contact sheet samples six ticks of one pulse, and what
+   * is being asked about is the seam between two.
+   *
+   * Driven through the real `VfxSystem` on the sim's own cadence rather than by
+   * reading the definition, because what decides it is the *interaction* of
+   * three authored numbers -- the lifetime range, the pulse interval and the
+   * burst -- and any one of them can be retuned by somebody reading only its
+   * own comment.
+   */
+  it('has marks alive on every tick of a whole beam', () => {
+    const system = new VfxSystem({
+      registry: REGISTRY,
+      hooks: { ground: () => 0 },
+      limits: { maxParticles: 2000, maxInstances: 64, pressureFloor: 0.25 },
+    });
+    const pulses = Math.round(WARDEN_LASER.firingTicks / WARDEN_LASER.pulseIntervalTicks);
+    let emptiest = Number.POSITIVE_INFINITY;
+    for (let tick = 0; tick < WARDEN_LASER.firingTicks; tick++) {
+      if (tick % WARDEN_LASER.pulseIntervalTicks === 0) {
+        // What `addEffect` does with the cue the sim sends: at the caster, along
+        // the lane's bearing, at the authored size.
+        system.play(`${WARDEN_LASER.abilityId}.impact`, { x: 0, y: 0, z: 0, seed: 4242 + tick });
+      }
+      system.update(1);
+      // The opening tick of the beam is the one pulse that has nothing before
+      // it, so it is measured from the second onward.
+      if (tick >= WARDEN_LASER.pulseIntervalTicks) {
+        emptiest = Math.min(emptiest, system.pool.count);
+      }
+    }
+    expect(pulses).toBeGreaterThan(4);
+    // Never empty, and never nearly empty: a handful of marks left over from the
+    // previous beat is what makes the run read as continuous.
+    expect(emptiest).toBeGreaterThan(6);
+  });
+
+  it('does not accumulate over the whole beam either', () => {
+    // The other half of the same number. Marks that outlived several beats would
+    // stack eight deep over a body standing in the beam, which is the one thing
+    // the brief rules out: the paint must not bury the player inside it.
+    const system = new VfxSystem({
+      registry: REGISTRY,
+      hooks: { ground: () => 0 },
+      limits: { maxParticles: 2000, maxInstances: 64, pressureFloor: 0.25 },
+    });
+    let firstPulsePeak = 0;
+    let peak = 0;
+    for (let tick = 0; tick < WARDEN_LASER.firingTicks; tick++) {
+      if (tick % WARDEN_LASER.pulseIntervalTicks === 0) {
+        system.play(`${WARDEN_LASER.abilityId}.impact`, { x: 0, y: 0, z: 0, seed: 99 + tick });
+      }
+      system.update(1);
+      peak = Math.max(peak, system.pool.count);
+      if (tick < WARDEN_LASER.pulseIntervalTicks) firstPulsePeak = Math.max(firstPulsePeak, system.pool.count);
+    }
+    // Under twice one pulse's worth: the overlap is a tail, not a pile.
+    expect(peak).toBeLessThan(firstPulsePeak * 2);
   });
 });

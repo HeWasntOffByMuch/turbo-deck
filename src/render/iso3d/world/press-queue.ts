@@ -1,5 +1,5 @@
 /**
- * A press that waits for the swing (spec 262).
+ * A press that waits for the swing (spec 264).
  *
  * Of the four things in this client that can ask for a cast, three already hold
  * while the body is committed: `autoAttack` and `castOrder` both take `rooted`,

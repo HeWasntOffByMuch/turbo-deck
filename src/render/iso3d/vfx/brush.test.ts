@@ -81,6 +81,73 @@ function peak(effect: EffectDefinition, ticks: number): number {
   return most;
 }
 
+describe('the arrivals (spec 263)', () => {
+  const poof = () => byId('spawn_poof');
+  const dirt = () => byId('spawn_burrow_dirt');
+
+  it('puts marks in the air, both of them', () => {
+    // The check every effect in this file gets: authored correctly and
+    // producing nothing is a silent failure, and a spawn nobody can see is
+    // exactly the bug the whole spec exists to close.
+    // Measured, then floored a little under: a spawn is occasional, so a few
+    // dozen marks is cheap, and the numbers are here so a rate edited down to
+    // nothing fails rather than shipping a silent arrival.
+    expect(peak(poof(), 90)).toBeGreaterThan(20);
+    expect(peak(dirt(), 90)).toBeGreaterThan(40);
+  });
+
+  it('is over quickly, and the poof is the quicker of the two', () => {
+    // A poof marks an instant; the dirt is sized to the digging it comes off.
+    // Both against the same ceiling every other one-shot here is held to: a
+    // cloud that hangs over a fight is a cloud in the way of it.
+    expect(windowTicks(poof())).toBeLessThan(60);
+    expect(windowTicks(poof())).toBeLessThan(windowTicks(dirt()));
+    expect(dirt().durationTicks).toBe(45);
+  });
+
+  it('throws the dirt hardest while the feet are breaking through', () => {
+    // The shape over time that makes this different from every other burst in
+    // the file: `ramp` rather than `burst`, peaking early and ending at zero.
+    for (const emitter of dirt().emitters) {
+      expect(emitter.emission.kind, emitter.id).toBe('ramp');
+      if (emitter.emission.kind !== 'ramp') continue;
+      const keys = emitter.emission.perSecond.keys;
+      const rateAt = (t: number): number =>
+        keys.reduce((best, key) => (key[0] <= t ? key[1] : best), keys[0]?.[1] ?? 0);
+      // Something from the first tick -- the ground is disturbed before there
+      // is anything to see of the body.
+      expect(rateAt(0), emitter.id).toBeGreaterThan(0);
+      // A peak early, while the legs are working.
+      expect(rateAt(0.3), emitter.id).toBeGreaterThan(rateAt(0));
+      expect(rateAt(0.3), emitter.id).toBeGreaterThan(rateAt(0.62));
+      // And nothing at the end, rather than a trickle: marks born on the last
+      // tick are marks still in the air after the body is standing.
+      expect(keys[keys.length - 1]?.[1], emitter.id).toBe(0);
+    }
+  });
+
+  it('paints the poof pale and the dirt brown, out of the palette that exists', () => {
+    // No invented colour, the rule this whole file is written under -- and the
+    // two have to be told apart at a glance, which is what makes one of them
+    // white smoke and the other earth.
+    const stops = (effect: EffectDefinition): string[] =>
+      effect.emitters.flatMap((emitter) => emitter.color.stops.map(([, key]) => key));
+    for (const key of stops(poof())) expect(key).toMatch(/^(dust|smoke)/);
+    for (const key of stops(dirt())) expect(key).toMatch(/^(dustEarth|dustStone|paint)/);
+  });
+
+  it('is pigment rather than light, unlike an explosion', () => {
+    // Additive white over this game's grass is a hole in the frame; additive
+    // brown is not earth. Both stay `alpha`, which is also what keeps them
+    // inside batches the registry already has -- see the ceiling above.
+    for (const effect of [poof(), dirt()]) {
+      for (const emitter of effect.emitters) {
+        expect(emitter.blend, `${effect.id}/${emitter.id}`).toBe('alpha');
+      }
+    }
+  });
+});
+
 describe('the painted vocabulary', () => {
   it('registers every preset in the shipped table', () => {
     const ids = new Set(EFFECTS.map((effect) => effect.id));

@@ -1774,6 +1774,229 @@ export function brushShot(params: BrushShotParams): EffectDefinition {
 
 // --- the shipped presets -----------------------------------------------------
 
+// --- the Warden's lance ------------------------------------------------------
+
+export interface BrushBeamParams {
+  readonly id: string;
+  /** How far the lance reaches. The nodes are strung along this. */
+  readonly length: number;
+  /** The lane's full width -- what the sparks are thrown out of the sides of. */
+  readonly width: number;
+  /**
+   * How wide the *drawn* beam is, which is narrower than the lane it burns.
+   *
+   * Two widths because there are two layers and they belong to two things. A
+   * **spark** comes off the shaft, so it is sized and thrown against the object
+   * you can see; a **scorch** lands on the lane, so it is spread across the
+   * ground the sim damages. Sizing both off the lane was right while the beam
+   * *was* the lane and drew sparks two thirds as wide as the shaft the moment
+   * the shaft became a line through the middle of it.
+   */
+  readonly beamWidth: number;
+  /** How many places along the run throw marks. */
+  readonly nodes?: number;
+  /**
+   * How high the beam is where it leaves the machine, and where it lands.
+   *
+   * The sparks ride the line rather than a constant height, because since the
+   * beam became a shaft out of the head it *slopes*: marks at one height would
+   * be coming off the air under it near the machine and out of the ground under
+   * it at the far end.
+   */
+  readonly fromHeight: number;
+  readonly toHeight: number;
+  readonly lifetimeTicks?: number;
+  readonly priority?: Priority;
+}
+
+/**
+ * How high a ground mark is *born*, before it falls onto the real surface.
+ *
+ * Not where it ends up: the scorch layer carries `collision`, so where it comes
+ * to rest is whatever the scene says the ground is under it. This is only far
+ * enough above the muzzle's own height that a mark down-range has somewhere to
+ * fall from rather than starting inside a rise.
+ */
+const BEAM_SCORCH_HEIGHT = 14;
+
+/**
+ * The sparks a sustained beam throws, and the ground it burns (spec 262).
+ *
+ * A sibling of {@link brushLane} rather than a use of it, and the difference is
+ * the one thing that file already names: *"alternate nodes are pushed to
+ * opposite sides of the centre line ... which is the whole difference between a
+ * bolt and a laser"*. A bolt zigs and arrives end to end; a lance is **ruled**,
+ * so the nodes here sit dead on the centre line and every one of them fires on
+ * the same tick. What moves is the sparks coming off it, not the beam.
+ *
+ * ## Two layers, and each answers half the brief
+ *
+ * - **`spark_n`** throws small marks out of the *flanks*, alternating side to
+ *   side down the run, with gravity on them so they arc and fall. That is the
+ *   "specks flying off the beam": it reads as something being *cut*, because
+ *   the marks leave the line rather than travelling along it.
+ * - **`scorch_n`** is the ground under it: a flat spray of `brush-mark`, the
+ *   one brush shape that lies on the ground rather than facing the camera, at
+ *   ground height and going nowhere much. That is the impact where the beam
+ *   crosses the ground, and being flat is what stops it competing with the
+ *   sparks for the same silhouette.
+ *
+ * ## What it deliberately is not
+ *
+ * There is no flash, no smoke and no mass. The beam itself is a ground decal in
+ * `world/scene.ts` and it is *continuous*; this is played once per damage
+ * pulse, four times a second, so anything with weight to it would stack eight
+ * deep over one beam and bury the body standing in it. Every mark here is
+ * small, short and thrown clear of the lane's own middle -- the player fighting
+ * this has to be able to see themselves inside it.
+ */
+export function brushBeam(params: BrushBeamParams): EffectDefinition {
+  const nodes = Math.max(2, Math.round(params.nodes ?? 6));
+  const life = Math.max(4, Math.round(params.lifetimeTicks ?? 20));
+  const half = params.width * 0.5;
+  const beamHalf = params.beamWidth * 0.5;
+  const emitters: Emitter[] = [];
+
+  for (let index = 0; index < nodes; index += 1) {
+    // Half a step in from each end, so the run is evenly covered and neither the
+    // muzzle nor the far tip gets a cluster the rest of the beam does not have.
+    const along = (index + 0.5) / nodes;
+    const distance = params.length * along;
+    // Which flank this node sprays from. Alternating rather than drawn, for
+    // `brushLane`'s reason one function up: a side picked per node at random is
+    // a wobble, and a wobble reads as an effect that could not decide.
+    const flank = index % 2 === 0 ? 1 : -1;
+
+    emitters.push({
+      id: `spark_${index}`,
+      // On the beam, which slopes: the cue is played at the machine's feet, so
+      // this is a height above them and the line runs from the head's opening
+      // down to just off the ground at the far end.
+      offset: {
+        x: distance,
+        y: params.fromHeight + (params.toHeight - params.fromHeight) * along,
+        z: 0,
+      },
+      // Thrown **sideways**, out of the lane, at about a third of its
+      // half-width. `bearing` is in the effect's own frame and the effect's
+      // rotation turns it, so one definition serves every aim.
+      shape: {
+        kind: 'fan',
+        angle: 0.8,
+        radius: beamHalf * 0.7,
+        rise: 0.5,
+        bearing: (flank * Math.PI) / 2,
+      },
+      // Every node on the same tick: a laser does not arrive, it is already
+      // there. `brushLane`'s staggered delay is what makes a bolt travel, and
+      // it is exactly wrong here.
+      emission: { kind: 'burst', count: 2 },
+      lifetimeTicks: [Math.round(life * 0.55), life],
+      speed: [46, 118],
+      spreadRadians: 0.5,
+      // They fall. The one thing that makes a spark a spark rather than a mote,
+      // and the reason this layer is not simply `brushAfflictionPulse` aimed
+      // sideways -- that one hangs.
+      gravity: -300,
+      drag: 2.4,
+      angularVelocity: [-3.4, 3.4],
+      // In **world units**, like `brushLane`'s and unlike the affliction
+      // builders', and getting that wrong is the whole reason the first cut
+      // could not be seen. `brushAffliction` authors sizes near 1 because it is
+      // played with `scale` set to a body's radius; this is played by
+      // `addEffect` at `scale: 1`, so a number authored on the affliction's
+      // scale is a mark a fifteenth of the size it was meant to be.
+      //
+      // About half the shaft, and against the *shaft* rather than the lane. A
+      // spark has to be a speck coming off the beam -- the mark is not the
+      // weapon -- and `brushLane`'s 0.78 of its own width is right for a bolt
+      // that fills its lane and would be a hedge here.
+      size: { keys: [[0, beamHalf * 0.6], [0.25, beamHalf * 0.8], [1, beamHalf * 0.5]] },
+      alpha: { keys: [[0, 1], [0.6, 1], [1, 0]] },
+      // Hot to ember, which is the ramp `sparkHot`/`sparkWarm`/`sparkEmber`
+      // exists for. Not the fire ramp: a spark struck off something is metal
+      // and grit, and `fireCore`'s cream would make the lance look like it was
+      // spraying flame rather than cutting.
+      // Ends on a **red** rather than on `sparkEmber`'s 0x8a3418, which is a
+      // dark brown: over this game's grass that is a hole in the picture rather
+      // than a cooling spark, which is `brushFire`'s own finding about additive
+      // embers arrived at from the other direction.
+      color: { stops: [[0, 'sparkHot'], [0.28, 'sparkWarm'], [1, 'fireDeep']] },
+      render: 'mesh',
+      mesh: { shape: 'brush-flick' },
+      blend: 'alpha',
+      strokeDecay: 'retract',
+    });
+
+    emitters.push({
+      id: `scorch_${index}`,
+      offset: { x: distance, y: BEAM_SCORCH_HEIGHT, z: 0 },
+      // Radial in the ground plane, which is what a circle is -- so the spray
+      // goes out across the ground from where the beam is standing on it
+      // rather than along the beam.
+      shape: { kind: 'circle', radius: half * 0.22 },
+      emission: { kind: 'burst', count: 3 },
+      lifetimeTicks: [Math.round(life * 0.7), Math.round(life * 1.3)],
+      speed: [18, 54],
+      // **It settles on the real ground**, and this is the one part of this
+      // effect that could not be authored as a position.
+      //
+      // The cue is played at the *muzzle* -- `landArea` sends a lane's effect
+      // at the caster's feet -- and these marks are offset up to six hundred
+      // units down its local +X. An offset is a position in the effect's frame
+      // and the frame is flat, so on any slope a mark six hundred units away is
+      // as far off the ground as the ground has moved: floating over a valley,
+      // buried in a rise. `collision` is what closes it, because the system
+      // asks the *scene* for the height under each particle -- so a mark born
+      // inside a hill is clamped onto its surface on its first tick and one
+      // born over a dip falls until it lands.
+      //
+      // `restitution: 0` with one bounce allowed is "come to rest": it settles,
+      // `resting` is set, and it lies there for the rest of its life rather
+      // than being integrated through the ground or bouncing a scorch mark.
+      collision: { restitution: 0, friction: 1, maxBounces: 1 },
+      // Enough to bring it down through the height it is born at, and nowhere
+      // near enough to read as a thrown thing: what falls here is the mark's
+      // first tick, not its arc.
+      gravity: -240,
+      // Heavy drag: these are marks *on* the ground, so they skid outward and
+      // stop rather than travelling.
+      drag: 9,
+      angularVelocity: [-1.6, 1.6],
+      // Broader than a spark and flatter, which is what separates the two
+      // layers at a glance: one is grit leaving the beam and one is the ground
+      // taking it.
+      size: { keys: [[0, half * 0.4], [0.2, half * 0.6], [1, half * 0.44]] },
+      alpha: { keys: [[0, 0.95], [0.55, 0.9], [1, 0]] },
+      color: { stops: [[0, 'fireAmber'], [0.35, 'fireBody'], [1, 'fireDeep']] },
+      render: 'mesh',
+      // The one brush shape that lies flat on the ground, which is what makes
+      // this read as scorch under the beam rather than as more sparks.
+      mesh: { shape: 'brush-mark' },
+      blend: 'alpha',
+      // `fizzle`, not `retract`: this is a mark left *on* something, and spec
+      // 161's rule is that a retract played on one reads as the stroke being
+      // un-painted rather than as it burning out.
+      strokeDecay: 'fizzle',
+    });
+  }
+
+  return {
+    id: params.id,
+    // Two, beside `brushLane` and the affliction beat. The *information* half of
+    // this weapon is the ground decal in `world/scene.ts`, which is a mesh and
+    // is never subject to the instance budget at all -- so a crowded fight that
+    // drops these sparks still draws the beam and still says where not to
+    // stand, which is what priority 3 exists to protect.
+    priority: params.priority ?? 2,
+    // Long, because the effect's origin is the *muzzle* and the paint runs six
+    // hundred units away from it: culled on the origin at a shorter distance,
+    // a beam whose far end is on screen would draw nothing at all.
+    cullDistance: 1800,
+    emitters,
+  };
+}
+
 /** The nominal radius `explosion_brush` is authored at, for the scale maths. */
 /**
  * A fire that stands somewhere and keeps burning (spec 250).
@@ -2061,6 +2284,329 @@ export const BLOOD_HIT_SCALE = 17;
  */
 export const HEAVY_HIT_SCALE = 1.4;
 
+
+// --- arrivals (spec 263) -----------------------------------------------------
+
+/**
+ * How long a poof emits for, in ticks.
+ *
+ * The whole cue is over inside half a second, and that is the brief rather than
+ * a guess: what this marks is *a body is here now*, and a cloud that hangs is a
+ * cloud the player reads as something still happening. The marks outlive the
+ * emission by their own lifetimes, which is what gives it a tail without giving
+ * it a duration.
+ */
+export const POOF_TICKS = 10;
+
+/**
+ * How long dirt is thrown for, in ticks.
+ *
+ * Sized to the emergence rather than chosen: `BURROW_TICKS` in
+ * `world/spawn-presentation.ts` is the same number, because the dirt is what
+ * the legs are doing and a cloud that outlasts the digging is a cloud coming
+ * off a body that has finished. Asserted equal in `spawn-presentation.test.ts`
+ * rather than left as a comment.
+ */
+export const BURROW_DIRT_TICKS = 45;
+
+export interface BrushPoofParams {
+  readonly id: string;
+  /** Marks in the puff. */
+  readonly puffs?: number;
+  /** Marks in the low skirt that runs out along the ground. */
+  readonly skirt?: number;
+  /** How wide the puff is born, in poof radii. */
+  readonly base?: number;
+  /** A puff mark's length, in poof radii. */
+  readonly puffSize?: number;
+  readonly pale?: PaletteKey;
+  readonly mid?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+  readonly cullDistance?: number;
+}
+
+/**
+ * A body arrives: a quick white poof at the spot (spec 263).
+ *
+ * The default arrival for everything without a rig that can do better. What it
+ * has to say is "look here, that is new", and the two things it must not be are
+ * an explosion and a smokescreen -- a fight can be going on around it, so it
+ * clears out of the way rather than lingering over the body it just announced.
+ *
+ * Three decisions, and each is the opposite of what {@link brushExplosion} does
+ * with the same vocabulary:
+ *
+ *  - **It rises and slows, rather than being thrown.** Speed is low, drag is
+ *    heavy and the only push is a gentle updraft, so the marks bloom outward
+ *    and stop. A burst thrown hard reads as something detonating.
+ *  - **Nothing is additive.** An explosion opens on a `flash` because it is
+ *    light; a poof is *pigment*, and additive white over this game's grass is a
+ *    hole in the frame rather than a puff of smoke.
+ *  - **It grows as it goes and fades from the first tick.** The size curve only
+ *    ever climbs and the alpha only ever falls, which is what dissipating is --
+ *    the shape spreads while the substance leaves, and neither reverses, so
+ *    there is no instant where the cloud looks like it is gathering again.
+ *
+ * `fizzle`, not `retract`, for spec 161's stated reason: these marks are held
+ * long enough to be watched, and a retract played slowly is the brush retracing
+ * its own path, which reads as the poof being un-painted.
+ */
+export function brushPoof(params: BrushPoofParams): EffectDefinition {
+  const puffs = Math.max(0, params.puffs ?? 20);
+  // Fewer than the puff by more than half. The skirt is punctuation -- it says
+  // the cloud met the ground -- and matched counts read as two clouds.
+  const skirt = Math.max(0, params.skirt ?? 7);
+  const base = Math.max(0.01, params.base ?? 0.42);
+  const puffSize = params.puffSize ?? 0.62;
+  const pale = params.pale ?? 'dustSnow';
+  const mid = params.mid ?? 'dustPale';
+  const deep = params.deep ?? 'smokeLight';
+
+  const emitters: Emitter[] = [
+    // (a) The puff. Born on a disc at the body's feet and blooming upward and
+    // out, so the cloud has a width where it meets the ground and a soft top --
+    // a sphere emitter would give it the same silhouette from every side, which
+    // is a ball of smoke rather than something that came *out of* the ground.
+    {
+      id: 'puff',
+      shape: { kind: 'circle', radius: base },
+      emission: { kind: 'burst', count: puffs },
+      lifetimeTicks: [16, 27],
+      // Slow. What sells a poof is the *spread*, and the spread is bought with
+      // size over life rather than with distance travelled: marks thrown far
+      // enough to separate stop being one cloud.
+      speed: [26, 52],
+      spreadRadians: 0.9,
+      acceleration: { x: 0, y: 46, z: 0 },
+      turbulence: { amplitude: 20, frequency: 0.05 },
+      // Heavy, and the number the look turns on: the marks are nearly stopped a
+      // third of the way through their lives, so the cloud settles and thins
+      // where it is instead of drifting off the body it announced.
+      drag: 3.4,
+      angularVelocity: [-2.6, 2.6],
+      size: { keys: [[0, puffSize * 0.45], [0.35, puffSize], [1, puffSize * 1.45]] },
+      alpha: { keys: [[0, 0.95], [0.45, 0.6], [1, 0]] },
+      // Whitest at birth and greying as it thins. The pale end is the whole
+      // read -- a smoke ramp that starts grey is a fire's smoke, and this is
+      // meant to look like displaced air rather than like something burning.
+      color: { stops: [[0, pale], [0.4, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+    },
+    // (b) The skirt. Low, flat and quick: a few marks running out along the
+    // ground under the cloud, which is what stops the puff reading as a ball
+    // hanging in the air above the body.
+    {
+      id: 'skirt',
+      shape: { kind: 'circle', radius: base * 1.2, shell: true },
+      emission: { kind: 'burst', count: skirt },
+      lifetimeTicks: [12, 19],
+      speed: [58, 96],
+      // Narrow, so it stays *on* the ground. The puff above owns the height.
+      spreadRadians: 0.16,
+      drag: 4.2,
+      angularVelocity: [-1.4, 1.4],
+      size: { keys: [[0, puffSize * 0.4], [0.5, puffSize * 0.72], [1, puffSize * 0.9]] },
+      alpha: { keys: [[0, 0.8], [0.4, 0.5], [1, 0]] },
+      color: { stops: [[0, mid], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+    },
+  ];
+
+  return {
+    id: params.id,
+    // Ambient. What tells a player a body arrived is the body; this is the
+    // flourish, and it is the right thing to lose first when a fight is
+    // pressing the pool -- the same call `brushFire` makes.
+    priority: params.priority ?? 1,
+    cullDistance: params.cullDistance ?? 1400,
+    durationTicks: POOF_TICKS,
+    emitters,
+  };
+}
+
+export interface BrushDirtParams {
+  readonly id: string;
+  /** Clod marks a second at the peak of the dig. */
+  readonly clods?: number;
+  /** Speck marks a second at the peak. */
+  readonly specks?: number;
+  /** Haze marks a second at the peak. */
+  readonly haze?: number;
+  /** How wide the dirt is thrown from, in effect radii. */
+  readonly base?: number;
+  /** How long the whole throw lasts, in ticks. */
+  readonly ticks?: number;
+  readonly bright?: PaletteKey;
+  readonly body?: PaletteKey;
+  readonly deep?: PaletteKey;
+  readonly priority?: Priority;
+  readonly cullDistance?: number;
+}
+
+/**
+ * Ground broken from underneath (spec 263): the dirt a body digs its way out
+ * through.
+ *
+ * The one thing that makes this different from every other burst in this file
+ * is that it has a **shape over time**. A hit is an instant and an explosion is
+ * an instant; digging is a job, and the brief is that the dirt is strongest
+ * while the legs are breaking through and tapers as the body clears the
+ * surface. That is `emission: 'ramp'` -- the one emission kind in the format
+ * whose rate is a curve -- rather than three bursts fired by a driver, so the
+ * whole shape is authored in one place and a caller only has to say *when*.
+ *
+ * All three layers ramp on the same curve and start from a non-zero rate: the
+ * first thing that happens is the ground being disturbed, so there is dirt on
+ * the first tick, well before there is anything to see of the body.
+ *
+ * `dustEarth` over `paintBrown` over `paintSoot` -- a lit clod, a wet clod and
+ * the shadow under both. Deliberately *not* `smokeDark`, whose own note in the
+ * palette says it reads as a hole rather than as a painted mass, which is
+ * exactly wrong for something with weight.
+ */
+export function brushDirt(params: BrushDirtParams): EffectDefinition {
+  const clods = Math.max(0, params.clods ?? 44);
+  const specks = Math.max(0, params.specks ?? 90);
+  // Least of the three. A haze is what is left hanging *after* the weight has
+  // fallen, and matched counts read as a dust cloud with some grit in it rather
+  // than as earth being thrown.
+  const haze = Math.max(0, params.haze ?? 15);
+  const base = Math.max(0.01, params.base ?? 0.5);
+  const ticks = Math.max(1, params.ticks ?? BURROW_DIRT_TICKS);
+  const bright = params.bright ?? 'dustEarth';
+  const body = params.body ?? 'paintBrown';
+  const deep = params.deep ?? 'paintSoot';
+
+  /**
+   * The dig, as a rate over the throw's own life.
+   *
+   * Up from a disturbance to a peak a third of the way in -- which is where the
+   * feet are through and pushing -- then away to nothing as the body rises. It
+   * ends at exactly 0 rather than tapering to a trickle, because a ramp that
+   * stops short leaves its last marks born on the final tick and still airborne
+   * a second after the body is standing.
+   */
+  const dig: Curve = { keys: [[0, 0.55], [0.3, 1], [0.62, 0.5], [1, 0]] };
+
+  const emitters: Emitter[] = [
+    // (a) The clods. The weight: few, slow, and the only layer thrown high
+    // enough to arc. `brush-dab` because it takes `velocity` and so points
+    // along its own travel in *world* space -- a lump of earth is read by the
+    // way it tumbles, and a camera-facing card would flatten it into a smear.
+    {
+      id: 'clods',
+      shape: { kind: 'circle', radius: base, shell: true },
+      emission: { kind: 'ramp', perSecond: scaleCurve(dig, clods), overTicks: ticks },
+      lifetimeTicks: [26, 46],
+      speed: [80, 150],
+      // Wide, and upward: the shell disc throws them outward and this is what
+      // lifts them off it. Earth coming out of a hole goes up and out, and a
+      // narrow spread would be a fountain.
+      spreadRadians: 0.85,
+      gravity: -520,
+      drag: 0.7,
+      angularVelocity: [-7, 7],
+      // Half again over the first cut. Photographed through
+      // `preview-brush-vfx.ts` at 0.3 the whole layer was a few dark pixels a
+      // side -- against grass that is not a clod of earth, it is a speck of
+      // something, and at this size the eye reads dark-and-small as blood.
+      size: { keys: [[0, 0.46], [0.35, 0.5], [1, 0.32]] },
+      // Held almost to the end. A clod does not fade, it lands -- so the alpha
+      // stays flat and drops over the last fifth, which is the mark being lost
+      // in the grass rather than evaporating over it.
+      alpha: { keys: [[0, 1], [0.8, 1], [1, 0]] },
+      // The lit end held past halfway rather than a third, for the same
+      // finding: this ramp's dark end is genuinely dark, and a mark that
+      // reaches it early spends most of its life as a dot the size of a blood
+      // fleck. What has to read is *earth*, so the earth colour is most of it.
+      color: { stops: [[0, bright], [0.62, body], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-dab' },
+      blend: 'alpha',
+      // A clod is flicked away fast, which is `retract`'s case exactly -- the
+      // flecks past the tip are the last thing left, and it is over too quickly
+      // to read as the stroke being un-painted.
+      strokeDecay: 'retract',
+    },
+    // (b) The specks. The count: small, fast, flat, and what actually makes the
+    // burst read at a distance. `brush-flick` takes `cardVelocity`, so a speck
+    // always faces the camera and points along its path -- grit is read by its
+    // streak, and one that turned edge-on would vanish mid-flight.
+    {
+      id: 'specks',
+      shape: { kind: 'circle', radius: base * 0.7, shell: true },
+      emission: { kind: 'ramp', perSecond: scaleCurve(dig, specks), overTicks: ticks },
+      lifetimeTicks: [14, 26],
+      speed: [130, 240],
+      spreadRadians: 0.65,
+      gravity: -700,
+      drag: 1.6,
+      angularVelocity: [-9, 9],
+      size: { keys: [[0, 0.26], [0.4, 0.2], [1, 0.11]] },
+      alpha: { keys: [[0, 1], [0.7, 0.9], [1, 0]] },
+      // **Paler than the clods**, and that is the one place this effect
+      // deliberately leaves the earth ramp. A speck is a few pixels across, and
+      // a few dark pixels on a mid-green field is a hole rather than a mark --
+      // `brushShot` records the same finding about grey smoke. Dry dust off the
+      // top of a hole is lighter than the clods under it anyway, so the honest
+      // colour and the legible one are the same one here.
+      color: { stops: [[0, 'dustStone'], [0.45, bright], [1, body]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-flick' },
+      blend: 'alpha',
+      strokeDecay: 'retract',
+    },
+    // (c) The haze. Barely moving, hugging the ground, growing as it thins:
+    // what is left in the air around a hole. Born a little above the ground for
+    // `brushFire`'s smoke reason -- dust that starts in the soil is a hole with
+    // a grey core.
+    {
+      id: 'haze',
+      shape: { kind: 'circle', radius: base * 1.15 },
+      offset: { x: 0, y: 0.18, z: 0 },
+      emission: { kind: 'ramp', perSecond: scaleCurve(dig, haze), overTicks: ticks },
+      lifetimeTicks: [34, 58],
+      speed: [22, 44],
+      spreadRadians: 0.5,
+      acceleration: { x: 0, y: 26, z: 0 },
+      turbulence: { amplitude: 30, frequency: 0.04 },
+      drag: 2.6,
+      angularVelocity: [-1.2, 1.2],
+      size: { keys: [[0, 0.5], [0.5, 0.85], [1, 1.25]] },
+      // Never opaque. This is the layer the body has to be legible *through*,
+      // and a solid one would hide the emergence it is there to sell.
+      alpha: { keys: [[0, 0.36], [0.4, 0.46], [1, 0]] },
+      color: { stops: [[0, 'dustStone'], [0.45, body], [1, deep]] },
+      render: 'mesh',
+      mesh: { shape: 'brush-blot' },
+      blend: 'alpha',
+      strokeDecay: 'fizzle',
+    },
+  ];
+
+  return {
+    id: params.id,
+    priority: params.priority ?? 1,
+    cullDistance: params.cullDistance ?? 1400,
+    // Its own length, so nothing owes it a stop: the ramp is over when this is,
+    // and the marks already in the air live out their own lifetimes.
+    durationTicks: ticks,
+    emitters,
+  };
+}
+
+/** A rate curve at `peak`, so one authored shape serves three layers. */
+function scaleCurve(curve: Curve, peak: number): Curve {
+  return { keys: curve.keys.map(([t, v]) => [t, v * peak] as const) };
+}
+
 export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // The blow that lands, and the blow that finishes. The same language read
   // louder -- more marks, thrown further, held a little longer -- never a
@@ -2269,6 +2815,11 @@ export const BRUSH_EFFECTS: readonly EffectDefinition[] = [
   // standing fire is built is in `brushFire` -- a brazier or a lit torch is a
   // second row at a smaller `scale` and nothing else.
   brushFire({ id: 'fire_camp' }),
+  // The two arrivals (spec 263). One row each, because everything about how an
+  // arrival is built is in the builder above it -- a bigger body's poof is the
+  // same row played at a larger `scale`, which is what the driver already does.
+  brushPoof({ id: 'spawn_poof' }),
+  brushDirt({ id: 'spawn_burrow_dirt' }),
   brushAffliction({
     id: 'affliction_burn',
     cling: 22,

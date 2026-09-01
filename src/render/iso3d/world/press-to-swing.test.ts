@@ -234,7 +234,7 @@ async function walkAndSwing(pressAt: number, ticks: number): Promise<Walked> {
       continue;
     }
     if (i === pressAt) {
-      // The set the press was made with (spec 262). Immediate here, so it is
+      // The set the press was made with (spec 264). Immediate here, so it is
       // simply what is down -- a *queued* press carries the set it was made
       // with several frames earlier.
       pressed = down;

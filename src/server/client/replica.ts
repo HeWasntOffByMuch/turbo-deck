@@ -23,6 +23,18 @@ export interface ReplicatedEntity {
   readonly id: number;
   readonly kind: number;
   readonly typeId: string;
+  /**
+   * The tick the server created this body (spec 263).
+   *
+   * Told once, with the rest of a first sight. What it separates is a body that
+   * has just been made from one this client has merely come within range of --
+   * the two are the same delta otherwise, and drawing an arrival for the second
+   * would poof every monster the player walks toward.
+   *
+   * 0 means "long ago" and is what a drop, a mote and any body from a build
+   * that did not send one read as, so an unknown answer draws nothing.
+   */
+  readonly spawnTick: number;
   readonly x: number;
   readonly y: number;
   readonly z: number;
@@ -103,6 +115,7 @@ export class ReplicatedWorld {
           id: record.id,
           kind: record.kind ?? 0,
           typeId: record.typeId ?? '',
+          spawnTick: record.spawnTick ?? 0,
           x: record.position?.x ?? 0,
           y: record.position?.y ?? 0,
           z: record.position?.z ?? 0,

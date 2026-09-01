@@ -87,7 +87,7 @@ export interface SwingHoldInput {
    * The actions that were down when the press was made, or null when no ability
    * was asked for on this frame.
    *
-   * A set rather than a boolean since spec 262, because a press may now be held
+   * A set rather than a boolean since spec 264, because a press may now be held
    * for a swing and sent several frames later: the directions that belong to it
    * are the ones the *press* was made with, and re-reading them at the send
    * would suppress a direction pressed in between -- which is a withdrawal

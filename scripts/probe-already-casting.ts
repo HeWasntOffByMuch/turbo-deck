@@ -204,7 +204,7 @@ async function play(options: {
             const own = live.get(view.selfEntityId)?.cast ?? null;
             const during = own ? (PHASE_NAMES[own.phase] ?? String(own.phase)) : 'idle';
             pressedDuring[during] = (pressedDuring[during] ?? 0) + 1;
-            // Queued (spec 262), or sent on the press, which is what shipped.
+            // Queued (spec 264), or sent on the press, which is what shipped.
             if (options.queue) queued = { abilityId: flask.id, held: new Set() };
             else client.useAbility(flask.id, view.self.x, view.self.y, 0);
           } else {
@@ -249,7 +249,7 @@ const press = !process.argv.includes('--no-press');
 const queue = !process.argv.includes('--now');
 console.log(
   press
-    ? `swinging and pressing the flask, ${queue ? 'queued (spec 262)' : 'sent on the press'}`
+    ? `swinging and pressing the flask, ${queue ? 'queued (spec 264)' : 'sent on the press'}`
     : 'swinging only',
 );
 for (const weapon of WEAPONS) {

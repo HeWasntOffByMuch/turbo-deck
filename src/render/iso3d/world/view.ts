@@ -27,6 +27,7 @@ import { GameClient, type ClientView } from '../../../server/client/game-client.
 import { LoopbackTransport } from '../../../server/net/transport-loop.js';
 import { afflictionsFromQuery } from './affliction-vfx.js';
 import { fieldsWantedByQuery } from './aura-vfx.js';
+import { drawnWorldClock, parseClockFlag, worldClockReadout } from './sky-source.js';
 
 /**
  * How often `?afflict=` re-applies what it was asked for, in ticks (spec 215).
@@ -657,6 +658,14 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
   let fieldAgainAtTick = 0;
+  /**
+   * `?clock=` -- pin the sky to one hour for this client (spec 263).
+   *
+   * Parsed once here rather than per frame, because it is a decision somebody
+   * took in a URL and not something that can change while the tab is open. Null
+   * is the ordinary case: the world's own clock.
+   */
+  const pinnedClockTick = parseClockFlag(location.search);
   let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
   const wire = new UnreliableChannel(channel, () => wireConditions, Rng.fromSeed(seed));
 
@@ -1254,10 +1263,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the driver's own held set, so one refused by the effect budget or evicted
     // by the instance pool reads as absent.
     const firesLit = scene.heldFires().length;
+    // What time the world thinks it is (spec 263), published from the clock the
+    // *frame* drew with rather than from the tick -- so a `?clock=` pin reads as
+    // the hour it pinned, which is the only way to tell a working pin from one
+    // that parsed and reached nothing.
+    const clockReadout = worldClockReadout(
+      drawnWorldClock(view.estimatedTick, pinnedClockTick),
+      pinnedClockTick !== null,
+    );
     const meshState =
       `${streamedCount}:${drawnChunks.size}:${ingest.pending}:${regionsDrawn}` +
       `:${ingest.dirtyRegionCount}:${propsRefused}:${navGeneration}:${navAdopted}:${navStale}` +
-      `:${aurasDrawn}:${lightsHeld}:${lightsOffered}:${firesLit}`;
+      `:${aurasDrawn}:${lightsHeld}:${lightsOffered}:${firesLit}:${clockReadout}`;
     if (meshState !== lastMeshState) {
       lastMeshState = meshState;
       root.dataset['chunksHeld'] = String(streamedCount);
@@ -1269,6 +1286,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       root.dataset['auras'] = String(aurasDrawn);
       root.dataset['worldLights'] =
         `lit=${String(lightsHeld)} offered=${String(lightsOffered)} fires=${String(firesLit)}`;
+      root.dataset['worldClock'] = clockReadout;
       root.dataset['nav'] =
         `gen=${String(navGeneration)} asked=${String(navAsked)}` +
         ` adopted=${String(navAdopted)} refused=${String(navStale)}`;
@@ -1891,7 +1909,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let swingHeld: ReadonlySet<string> = NO_HOLD;
   /**
    * The directions a press was made with, on the frame the request is sent, or
-   * null (specs 258, 262).
+   * null (specs 258, 264).
    *
    * A set rather than a boolean because a press may now wait for a swing: the
    * edge is raised where the request *leaves*, and what it carries is what was
@@ -1899,7 +1917,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   let castPress: ReadonlySet<string> | null = null;
   /**
-   * A press waiting for the body to be free (spec 262).
+   * A press waiting for the body to be free (spec 264).
    *
    * One slot, and the last press wins -- there is one thing the player reached
    * for and it is whichever one they reached for last, which is the rule
@@ -1907,7 +1925,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   let queuedPress: QueuedPress | null = null;
   /**
-   * Whether an ability has already been asked for on this frame (spec 262).
+   * Whether an ability has already been asked for on this frame (spec 264).
    *
    * The drivers all read one `view`, taken at the top of the frame, so a request
    * sent by the one that runs first is not in the `awaitingCast` the ones after
@@ -2618,7 +2636,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
 
   /**
    * Commit: hold the press until the body can take it, and give up everything
-   * that would fight it (spec 262).
+   * that would fight it (spec 264).
    *
    * A `'none'` gesture is `targeting: 'self'`, so there is nothing to aim and
    * the press *is* the commitment -- which used to mean it was sent from here,
@@ -2642,7 +2660,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the moment the button went down whatever the body is still finishing.
     //
     // The swing hold is the other half of "give up everything that would fight
-    // it" and is the half that cannot be raised here (specs 258, 262): a *held*
+    // it" and is the half that cannot be raised here (specs 258, 264): a *held*
     // direction is not an order, and it fights harder -- asking to move
     // withdraws (spec 079) and outranks a commit on the same tick (spec 092),
     // so a player walking on WASD had every press refused as `withdrawn` before
@@ -2706,7 +2724,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   function clearAim(): void {
     pendingAim = null;
     order = null;
-    // And a press still waiting for the body (spec 262). It is the same kind of
+    // And a press still waiting for the body (spec 264). It is the same kind of
     // thing as the two above -- something the player reached for and has not
     // had yet -- so it belongs in the one list of what backing out drops rather
     // than in a rule of its own.
@@ -3561,7 +3579,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // ...and the third: a request that has been sent and not yet ruled on,
       // which has no cast behind it and so shows up in neither of those --
       // including one `driveQueuedPress` sent a few lines ago, which this
-      // frame's `view` predates (spec 262).
+      // frame's `view` predates (spec 264).
       pending: view.awaitingCast || askedThisFrame,
       readyAtTick: view.cooldowns[swingId] ?? 0,
       // Judged on the heading the *player is looking at* -- the local one, the
@@ -3594,7 +3612,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
-   * One tick of a press that is waiting for the body (spec 262).
+   * One tick of a press that is waiting for the body (spec 264).
    *
    * Runs **before** the two orders below it, and that ordering is what stops a
    * held press being starved: on the tick the body comes free, the press is
@@ -3629,7 +3647,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     queuedPress = step.queued;
     if (!step.send) return;
     // The edge, raised where the request leaves and carrying the set the press
-    // was made with (specs 258, 262). The frame loop reads it into `swingHeld`.
+    // was made with (specs 258, 264). The frame loop reads it into `swingHeld`.
     castPress = step.send.held;
     askedThisFrame = true;
     client.useAbility(step.send.abilityId, me.x, me.y, 0);
@@ -3646,7 +3664,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   function driveCastOrder(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     const standing = order;
     if (!standing) return;
-    // A request has already gone out on this frame (spec 262). `castOrder` has
+    // A request has already gone out on this frame (spec 264). `castOrder` has
     // no `pending` of its own -- spec 080 gave one to `autoAttack` and not to
     // this -- and a second request on one frame is the server taking the first
     // and refusing this one, which would also *spend* the order, since asking
@@ -4066,7 +4084,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const deadNow = view.selfDead;
     if (deadNow && !wasDead) dropOrders();
     wasDead = deadNow;
-    // Before the two orders below it (spec 262): a press that has been waiting
+    // Before the two orders below it (spec 264): a press that has been waiting
     // for a swing is asked for on the tick the body comes free, rather than
     // being beaten to it by the standing attack order's next commit.
     askedThisFrame = false;
@@ -4090,7 +4108,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       previous: swingHeld,
       held,
       // The set the press was made with, on the frame its request went out
-      // (spec 262) -- so a direction held at the press is suppressed and one
+      // (spec 264) -- so a direction held at the press is suppressed and one
       // pressed after it still withdraws, which is what pressing it means.
       pressed: castPress,
       // Both halves of "am I committed", as everything else here reads it: the
@@ -4402,6 +4420,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the bar froze partway and sat there while the wind-up ran on without it.
     const drawnTick = view.estimatedTick + Math.min(1, accumulator / TICK_MS);
 
+    // What time it is in the world (spec 263). Read at the same `drawnTick` the
+    // cast bars are, so the sky and everything else with a duration are on one
+    // clock -- and derived rather than received, because the server's tick is
+    // the clock and this client already holds an estimate of it.
+    const worldClock = drawnWorldClock(drawnTick, pinnedClockTick);
+
     scene.render(view, {
       dt: elapsed / 1000,
       // What an authored unit's state machine advances by (spec 111). The whole
@@ -4410,6 +4434,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // say that and never could.
       ticks,
       tick: drawnTick,
+      clock: worldClock,
       selfFacing: facing,
       cursor,
       targetEntityId: targetId,

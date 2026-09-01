@@ -712,6 +712,19 @@ async function main(): Promise<void> {
       { id: 'skill.arcLash.impact', label: 'arc (lane)', ticks: [2, 5, 8, 12, 18, 24], half: 190 },
       { id: 'skill.acidSpray.impact', label: 'acid (cone)', ticks: [2, 5, 9, 14, 20, 28], half: 200 },
       { id: 'skill.scorchedEarth.self', label: 'scorch', ticks: [3, 8, 16, 28, 40, 54], half: 240 },
+      // The Warden's lance, one damage pulse of it (spec 262). Judged on this
+      // sheet's questions like the five above, plus one only it has: the beam
+      // it comes off is a *ground decal* drawn by the scene and not by the
+      // particle system, so what has to read here is sparks leaving a line
+      // that is not in the picture. A window wide enough to hold its whole
+      // 620-unit reach, because the near end alone would say nothing about
+      // whether the run is evenly covered.
+      { id: 'warden.laser.impact', label: 'lance, whole run', ticks: [1, 3, 6, 9, 13, 18], half: 380 },
+      // And again close up, because the two questions are different: the row
+      // above answers whether the run is evenly covered and this one answers
+      // whether a mark is a mark. At 380 a spark is seven pixels and every
+      // tile is a pass.
+      { id: 'warden.laser.impact', label: 'lance, close up', ticks: [1, 3, 6, 9, 13, 18], half: 110 },
     ] as const;
     for (const landing of landings) {
       swingRows.push({
@@ -794,6 +807,73 @@ async function main(): Promise<void> {
         { label: 'low seat', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 80, scale: FIRE_SITE, elevation: 0.42, halfHeight: FIRE_FRAME },
       ]),
     });
+
+    // --- the two arrivals (spec 263) --------------------------------------
+    //
+    // Here rather than on a sheet of their own for the campfire's reason: they
+    // are ground-anchored one-shots judged on exactly this sheet's questions --
+    // silhouettes rather than stipple, and six seeds that are six paintings by
+    // one artist. What they need that the fire does not is the *front* of their
+    // lives: a poof is over in half a second, so the row is dense early and
+    // stops, where the fire's row runs to two seconds to prove it loops.
+    //
+    // Framed at a body rather than at a blast: both are played at
+    // `spawnEffectScale(radius)`, which for the small spider is about 19 units,
+    // and a blast's camera would make either a smudge in the middle of a field
+    // of grass.
+    const ARRIVAL_FRAME = 78;
+    const ARRIVAL_SITE = 19;
+    shotRows.push({
+      title: 'the poof (ticks; emits for 10, marks live to ~27)',
+      tiles: await series(
+        [2, 5, 9, 14, 22, 32].map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'standing' as const,
+          effectId: 'spawn_poof',
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          scale: ARRIVAL_SITE,
+          halfHeight: ARRIVAL_FRAME,
+        })),
+      ),
+    });
+    shotRows.push({
+      title: 'the burrow dirt (ticks; ramps to a peak at t=14 and ends at 45)',
+      tiles: await series(
+        [3, 9, 16, 26, 38, 52].map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'standing' as const,
+          effectId: 'spawn_burrow_dirt',
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          scale: ARRIVAL_SITE,
+          halfHeight: ARRIVAL_FRAME,
+        })),
+      ),
+    });
+    // One row per effect rather than one shared row: the seeds check compares
+    // consecutive tiles, so a poof next to a dig would report the two effects
+    // differing and say nothing about whether either varies with its seed.
+    for (const arrival of [
+      { id: 'spawn_poof', label: 'poof', ticks: 10 },
+      { id: 'spawn_burrow_dirt', label: 'dirt', ticks: 20 },
+    ] as const) {
+      shotRows.push({
+        title: `six seeds, one ${arrival.label}, at its peak`,
+        check: 'seeds',
+        tiles: await series(
+          SEEDS.map((seed, i) => ({
+            label: `#${i}`,
+            kind: 'standing' as const,
+            effectId: arrival.id,
+            seed,
+            ticks: arrival.ticks,
+            scale: ARRIVAL_SITE,
+            halfHeight: ARRIVAL_FRAME,
+          })),
+        ),
+      });
+    }
 
     const shaderProblems = logs.filter((line) => /error|could not compile|shader/i.test(line) && !/favicon|404/i.test(line));
     if (shaderProblems.length > 0) problems.push(...shaderProblems);

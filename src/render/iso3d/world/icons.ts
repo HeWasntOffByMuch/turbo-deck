@@ -299,6 +299,23 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
   light:
     '<circle cx="12" cy="12" r="3.4"/>'
     + '<path d="M12 2.5v3.4M12 18.1v3.4M2.5 12h3.4M18.1 12h3.4"/>',
+
+  // --- the Warden's recovery (spec 262) ----------------------------------
+  // Overheated -- a thermometer, which is this table's own rule about reaching
+  // for the conventional sign rather than the considered one. What it has to
+  // stay clear of is Burn's tongue of flame and Scorched's bowl of them: a
+  // machine venting is *heat* rather than fire, and the two would read as one
+  // mark in one colour.
+  //
+  // What carries it at 14px is being **bottom-heavy**. Every other mark here is
+  // either centred or top-weighted -- Slowed is the near miss, a filled dot with
+  // a leg under it, and that dot is at the top where this one's bulb is at the
+  // bottom. The two ticks are what stop the stem reading as a bare line.
+  overheated:
+    '<path d="M10.3 13.8V6.6a1.7 1.7 0 0 1 3.4 0v7.2"/>'
+    + '<circle cx="12" cy="17.4" r="3.6"/>'
+    + '<circle cx="12" cy="17.4" r="1.5" fill="currentColor" stroke="none"/>'
+    + '<path d="M6.8 8.6h2.4M6.8 11.6h2.4"/>',
 };
 
 /** One status mark, as markup ready to drop into the HUD. */

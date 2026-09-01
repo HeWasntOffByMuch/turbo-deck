@@ -22,6 +22,7 @@ function entity(overrides: Partial<ReplicatedEntity> = {}): ReplicatedEntity {
     id: 7,
     kind: EntityKind.Monster,
     typeId: 'grazer',
+    spawnTick: 0,
     x: 0,
     y: 0,
     z: 0,

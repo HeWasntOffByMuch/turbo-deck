@@ -36,6 +36,16 @@ import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-m
 import type { ChunkFootprint, ChunkMeshArrays } from '../terrain-arrays.js';
 import type { RegionInstances } from '../props.js';
 import { StaggerFlinches } from './stagger-flinch.js';
+import {
+  SETTLED,
+  SpawnPresentations,
+  arrives,
+  isCommitted,
+  spawnEffectFor,
+  spawnEffectScale,
+  spawnSeed,
+  spawnStyleFor,
+} from './spawn-presentation.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { PerfFlags } from './perf-flags.js';
@@ -52,6 +62,19 @@ import { installPoissonShadows, shadowRadiusFor } from '../shadow-pcf.js';
 import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, defaultMechTuning } from '../rigs.js';
 import { monsterLookFor } from './monster-look.js';
+import {
+  BEAM_GLOW_HEIGHT,
+  BEAM_GLOW_LIGHTS,
+  BEAM_GLOW_RADIUS,
+  beamGlowAt,
+  beamGlowBrightness,
+  beamLookFor,
+  sightDotAt,
+  sightDotCount,
+  type ShaftLook,
+  type SightLook,
+} from './warden-beam.js';
+import { cycleByAbility } from '../../../server/data/warden.js';
 import { DropRig } from '../drop-rig.js';
 import {
   DropPresenter,
@@ -117,6 +140,7 @@ import {
 } from '../player-lights.js';
 import { PlayerLighting } from '../player-lighting.js';
 import { hasConjuredLight, resolveCarriedLights, type CarriedLightFacts } from './carried-light.js';
+import { resolveSkyHours, type WorldClock } from './sky-source.js';
 import type { LightRequest } from '../light-residency.js';
 import { WorldLights } from '../world-lights.js';
 import { FireVfx, type FireSite } from './fire-vfx.js';
@@ -232,6 +256,30 @@ const RANGE_RING_LIFT = 1.1;
 const AIM_SHAPE_LIFT = 1.3;
 const TELEGRAPH_LIFT = 1.5;
 /**
+ * The Warden's lance (spec 262): the shaft, its hot middle, and the pixels of
+ * the sight that precedes it.
+ *
+ * Red, which is this file's own vocabulary for *it is about to hurt* -- but
+ * hotter and deeper than {@link TELEGRAPH_COLOR}'s salmon, because a telegraph
+ * is a place a blow will land and this is the blow. The core is the pale end of
+ * the same ramp rather than white: white on this grass is a hole rather than a
+ * heat, which is the finding `brushFire`'s embers already record one system
+ * over.
+ *
+ * `LANCE_COLOR` is also what the beam's **light** is, and that is one constant
+ * rather than two on purpose: a shaft one red and a pool of another underneath
+ * it is two weapons drawn on top of each other.
+ *
+ * There is no lift among these any more. The lance had a ground decal and the
+ * decals are ordered by one, and since spec 262's third pass it paints nothing
+ * on the ground at all -- the shaft and its core are boxes in the air, ordered
+ * by depth like anything else.
+ */
+const LANCE_COLOR = 0xff3323;
+const LANCE_CORE_COLOR = 0xffc07a;
+/** The sight's pixels, while it is aiming. The shaft's own red, undimmed. */
+const LANCE_SIGHT_COLOR = 0xff4a33;
+/**
  * The two rings drawn under a body, highest of the lot because they are the
  * ones that say *which* -- and because a body being attacked is often standing
  * inside the shape of the blow that is about to land on it.
@@ -289,6 +337,16 @@ export interface FrameInfo {
    * way positions are, so a wind-up fills smoothly rather than in 20Hz steps.
    */
   readonly tick: number;
+  /**
+   * What time it is in the world (spec 263).
+   *
+   * Computed by `view.ts` from the same `tick` above -- the server's clock,
+   * which every client resolves to the same hour because the clock is a pure
+   * function of a tick both ends hold. Pushed in like every other frame fact
+   * rather than read here, because `?clock=` can pin it and a pin is a decision
+   * the mount takes once rather than one this class re-derives per frame.
+   */
+  readonly clock: WorldClock;
   /**
    * The local player's predicted heading (spec 064). Drawn instead of the
    * replicated one for the same reason its position is: facing arrives at 20Hz,
@@ -422,6 +480,21 @@ interface Body {
    * shared default that cut straight through the pig's head.
    */
   headroom: number;
+  /**
+   * The heading this body was last *drawn* at, radians (spec 262).
+   *
+   * The eased yaw of spec 142 rather than the replicated one, and without the
+   * stagger flinch's rock on top: the flinch is a wobble of the model and the
+   * Warden's lance is not attached to the model, it is attached to the aim.
+   *
+   * Here rather than re-derived by whoever wants it, because the two candidates
+   * are both wrong. Reading `group.rotation.y` back gets the flinch with it; and
+   * a beam pointed from the drawn body along the *replicated* heading is a beam
+   * that leads the barrel it is supposed to be coming out of, by however far the
+   * ease is behind -- which is most visible during exactly the sweep the whole
+   * encounter is about.
+   */
+  drawnFacing: number;
   /**
    * The body's footprint radius, for the `surface` sampler (spec 215).
    *
@@ -571,6 +644,15 @@ export class WorldScene {
    * `player-lighting.ts` measures at arm's length.
    */
   private readonly conjuredLights: LightRequest[] = [];
+  /**
+   * The red light a firing lance throws (spec 262).
+   *
+   * The same arrangement one system over: gathered in `syncLances`, where the
+   * beam's *drawn* line is in scope, and spent by `applyWorldLights` later in
+   * the frame. A request rather than a light, so a Warden firing changes what
+   * the pool is pointed at and never how many lights the scene holds.
+   */
+  private readonly lanceLights: LightRequest[] = [];
   /** Scratch for the body anchor, so a frame of lit walking allocates nothing. */
   private readonly lightAnchor = new THREE.Vector3();
   private readonly unwalkable = new THREE.Group();
@@ -625,6 +707,8 @@ export class WorldScene {
   private readonly turnEase = new TurnEase();
   /** The rock a poise break puts on a body (spec 173). Presentation only. */
   private readonly staggerFlinches = new StaggerFlinches();
+  /** How far out of the ground an arriving body is (spec 263). Presentation only. */
+  private readonly spawns = new SpawnPresentations();
   private readonly bodies = new Map<number, Body>();
   /**
    * The paint on every afflicted body, and the beat it lands on (spec 215).
@@ -657,6 +741,16 @@ export class WorldScene {
    */
   private readonly exemptBodies: THREE.Object3D[] = [];
   private readonly telegraphs = new Map<number, GroundDecal>();
+  /**
+   * The Warden's lance, per body: the lane and the hot middle inside it
+   * (spec 262).
+   *
+   * Two decals rather than one, because a band of one flat colour reads as a
+   * painted rectangle and a band with a brighter middle reads as something
+   * *shining* -- and the alternative, a gradient, is a texture this renderer
+   * would have to invent for one effect. A lock-on uses only the first of them.
+   */
+  private readonly lances = new Map<number, Lance>();
   /** Units the cursor may pick this frame, rebuilt as bodies are placed. */
   private readonly hoverTargets: HoverTarget[] = [];
   /**
@@ -1259,7 +1353,16 @@ export class WorldScene {
     return this.worldLights?.heldKeys() ?? [];
   }
 
-  /** How many fixtures are offering themselves to the pool right now. */
+  /**
+   * How many lights are offering themselves to the pool right now.
+   *
+   * *Lights*, not fixtures: the map's own, plus any conjured light on a body
+   * near you, plus the three a firing Warden hangs along its beam (spec 262).
+   * `probe-world-lights.ts` compares this against the fixture count in the map
+   * file it read itself, which is exact only because neither of the other two is
+   * ever up while it is looking -- there is no Warden on the shipped map and
+   * nothing near the square carries a conjured light.
+   */
   worldLightsOffered(): number {
     return this.lightRequests.length;
   }
@@ -1658,6 +1761,8 @@ export class WorldScene {
     this.carryTorch(view.selfEntityId);
 
     this.syncTelegraphs(view, frame);
+    // After `syncBodies`, which is what writes `drawnFacing` (spec 262).
+    this.syncLances(view, frame);
     this.ageEffects();
     // Advanced on whole 60Hz steps, never on `dt`: an effect stepped by elapsed
     // time is a different effect at 30fps and at 144, and "the same seed draws
@@ -1688,7 +1793,7 @@ export class WorldScene {
     this.listenerY = groundY;
     this.listenerZ = me.y;
     this.followSelf(this.framedPoint(me), groundY, dt);
-    this.applyControls();
+    this.applyControls(frame.clock);
     this.applyPlayerLights(me, groundY, {
       // Only ours, because only ours is on the wire (spec 165): a remote
       // player's off hand is not replicated, so a torch in one is a light this
@@ -1851,6 +1956,8 @@ export class WorldScene {
       decal.dispose();
     }
     this.telegraphs.clear();
+    for (const lance of this.lances.values()) this.disposeLance(lance);
+    this.lances.clear();
     this.aimShapeDecal.dispose();
     this.aimRangeDecal.dispose();
     // The two body rings, which leaked their geometry and material while they
@@ -1968,6 +2075,8 @@ export class WorldScene {
     // does, and is dropped on the same pass (spec 142).
     this.turnEase.retain(live);
     this.staggerFlinches.retain(live);
+    // And the arrival, for the reason both of those are dropped here (spec 263).
+    this.spawns.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
@@ -2053,9 +2162,67 @@ export class WorldScene {
         frame.tick,
       );
 
-      body.group.position.set(x, ground, y);
+      // The arrival (spec 263), on the same clock and added to the same drawn
+      // transform. Read for every body every frame -- a settled one answers
+      // `SETTLED`, whose offsets are zero -- which is what makes an interrupted
+      // emergence cost nothing to unwind: the line below writes the whole
+      // position rather than adjusting it, so there is no state to put back.
+      const arrival = arrives(entity.kind)
+        ? this.spawns.read(
+            {
+              id: entity.id,
+              // The same call the construction chain above makes, so what
+              // decided the rig is what decides the arrival.
+              style: spawnStyleFor(look, authoredUnitFor(look) !== null),
+              spawnTick: entity.spawnTick,
+              dead: entity.maxHealth > 0 && entity.health <= 0,
+              committed: isCommitted(entity.activity),
+            },
+            frame.tick,
+          )
+        : SETTLED;
+      if (arrival.began) {
+        // One `play` and no handle: both arrivals are one-shots the particle
+        // system retires itself, so there is nothing to hold and no stop owed
+        // -- `swing-vfx.ts`'s case exactly. Fired at the ground under the body
+        // rather than at the body, because what the dirt is coming out of is
+        // the floor, and seeded off where and when so two clients watching one
+        // spawn watch the same one.
+        const id = spawnEffectFor(arrival.style);
+        if (this.vfx.system.has(id)) {
+          this.vfx.play(id, {
+            x,
+            y: ground,
+            z: y,
+            scale: spawnEffectScale(look.radius),
+            seed: spawnSeed(entity.id, entity.spawnTick, frame.tick),
+          });
+        }
+      }
+      // How deep the rig sits is the *rig's* answer, because it is
+      // `(BODY_Y + half the body) * sizeScale * bodySize` and every one of those
+      // is a number `MechRig` owns and a look table can retune. Nothing sinks
+      // without one, which is also the whole of why only a mech burrows.
+      const sink = arrival.buried > 0 && body.mech ? arrival.buried * body.mech.hiddenDepth : 0;
+      // Written every frame rather than only while emerging, the rule the
+      // flinch's pitch below follows: a body that has arrived is put back flat.
+      if (body.mech) body.mech.burrow = arrival.bodyDrop;
+
+      body.group.position.set(x, ground - sink, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
-      body.group.rotation.y = -facing + flinch.yaw;
+      //
+      // Unless the rig turns itself (spec 262). A mech whose lower body does not
+      // turn carries the *whole* facing on its turret, in the group's own frame
+      // -- so yawing the group as well would turn it twice as far as it was
+      // asked to, and the legs would come round with it, which is the one thing
+      // that reading exists to stop. `movement.ts` has made this check since the
+      // grey walker was built; the game never had a body that needed it.
+      const groupYaw = body.mech?.orientsWithGroupYaw === false ? 0 : -facing;
+      body.group.rotation.y = groupYaw + flinch.yaw;
+      // Kept for anything that has to point *along* this body rather than turn
+      // with it (spec 262). The eased heading, without the flinch's rock: a
+      // beam that wobbled with the model would be a danger zone that lies.
+      body.drawnFacing = facing;
       // Rocked back about the lateral axis. Written every frame rather than
       // only while flinching, so a body that settles is put back flat.
       body.group.rotation.z = flinch.pitch;
@@ -2236,6 +2403,11 @@ export class WorldScene {
       this.afflictions.forget(id);
       this.swings.forget(id);
       this.auras.forget(id);
+      // No instance is held -- both arrivals are one-shots that retire
+      // themselves -- so what this prevents is the other leak `swing-vfx.ts`
+      // names: a map that grows one entry per body this client has ever seen
+      // (spec 263).
+      this.spawns.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
       // the rate of the shooting (spec 218).
@@ -2783,6 +2955,7 @@ export class WorldScene {
         unit: driven,
         highlight: attachHighlight(group),
         headroom: DEFAULT_HEADROOM,
+        drawnFacing: 0,
         radius,
       };
       this.scene.add(authoredBody.group);
@@ -2810,6 +2983,7 @@ export class WorldScene {
         headroom:
           (species.metrics.headY + species.metrics.headRadius) * PLAYER_FIGURE.bodyScale +
           HEADROOM_GAP,
+        drawnFacing: 0,
         radius,
       };
     } else if (rig === 'projectile') {
@@ -2818,7 +2992,7 @@ export class WorldScene {
       const shot = new ShotRig(look ?? 'orb', radius, { tint, detail, outline });
       // A shot never shows a bar, so its headroom is the shared default rather
       // than anything measured off the mesh.
-      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM, radius };
+      body = { group: shot.group, kind: 'projectile', shot, headroom: DEFAULT_HEADROOM, drawnFacing: 0, radius };
     } else {
       // No authored unit for this type, so the procedural rig it has always
       // had. Additive on purpose: the roster moves over when there is a roster.
@@ -2849,6 +3023,7 @@ export class WorldScene {
           headroom:
             (species.metrics.headY + species.metrics.headRadius) * animal.figure.bodyScale +
             HEADROOM_GAP,
+          drawnFacing: 0,
           radius,
         };
       } else {
@@ -2856,6 +3031,11 @@ export class WorldScene {
         const mech = new MechRig(typeId, undefined, {
           tuning: { ...defaultMechTuning(), ...look?.tuning },
           ...(look === null ? {} : { appearance: look.appearance }),
+          // The grey-mech reading (spec 262): the legs plant in a world-fixed
+          // frame and only the turret comes round. Passed through rather than
+          // defaulted here, because the rig reports it back as
+          // `orientsWithGroupYaw` and the frame loop has to honour that.
+          ...(look?.lowerBodyTurns === undefined ? {} : { lowerBodyTurns: look.lowerBodyTurns }),
         });
         body = {
           group: mech.group,
@@ -2863,6 +3043,7 @@ export class WorldScene {
           mech,
           highlight: attachHighlight(mech.group),
           headroom: DEFAULT_HEADROOM,
+          drawnFacing: 0,
           radius,
         };
       }
@@ -2923,6 +3104,211 @@ export class WorldScene {
       this.scene.remove(decal.mesh);
       decal.dispose();
       this.telegraphs.delete(id);
+    }
+  }
+
+  /**
+   * The Warden's lance: a sight while it aims, a shaft while it fires (spec 262).
+   *
+   * Driven off `view.casts` like the telegraph above it, and for the same
+   * reason: a lock-on *is* a wind-up and a beam *is* a channel, so both are a
+   * cast that was already replicated with its ability, its phase and all three
+   * of its ticks. Nothing new crosses the wire for any of this.
+   *
+   * **It comes out of the head.** The origin is `MechRig.openingWorld`, read off
+   * the drawn mesh, so it carries the turret's yaw, the chassis bob and the
+   * pitch springs without this function knowing any of them exist -- and on the
+   * Warden the turret is the *only* part that turns, so the eye is exactly the
+   * part a player is watching to see where the shot will go.
+   *
+   * The **direction**, though, is the body's drawn heading rather than the head's
+   * own axis, and that split is deliberate: the heading is what the sim measures
+   * its lane along, so it is the one a footprint may be drawn from. On this row
+   * the two agree to within float noise -- `yawLag` is 0 -- and where they ever
+   * did not, the beam would come out of the head slightly off its own nose
+   * rather than damaging ground it is not drawn over.
+   */
+  private syncLances(view: ClientView, frame: FrameInfo): void {
+    const live = new Set<number>();
+    // Rebuilt every frame rather than released by event, for `syncTelegraphs`'
+    // reason: a beam ends in half a dozen ways -- it finishes, it is
+    // interrupted, the body dies, the cast is withdrawn, the entity streams out
+    // -- and a light nobody asked for this frame is one the pool parks by
+    // itself.
+    this.lanceLights.length = 0;
+
+    for (const cast of view.casts) {
+      // The ability first, which is a lookup in a one-row map: every ordinary
+      // swing in the frame leaves here without touching the entity list, so the
+      // scan below runs for a lance and for nothing else.
+      if (!cycleByAbility(cast.abilityId)) continue;
+      const body = this.bodies.get(cast.entityId);
+      if (!body) continue;
+      const entity = view.entities.find((candidate) => candidate.id === cast.entityId);
+      if (!entity) continue;
+      const look = beamLookFor(entity.typeId, cast, frame.tick);
+      if (!look) continue;
+      live.add(cast.entityId);
+
+      let lance = this.lances.get(cast.entityId);
+      if (!lance) {
+        lance = this.makeLance(cast.entityId);
+        this.lances.set(cast.entityId, lance);
+      }
+
+      // Where it leaves the machine. The head's opening if this body has one --
+      // a sphere-bodied mech has not -- and otherwise the middle of the body,
+      // which is the honest fallback: a beam out of nowhere is worse than a beam
+      // out of the wrong part.
+      const at = body.group.position;
+      if (!body.mech?.openingWorld(LANCE_FROM)) {
+        LANCE_FROM.set(at.x, at.y + LANCE_FALLBACK_HEIGHT, at.z);
+      }
+      const dirX = Math.cos(body.drawnFacing);
+      const dirZ = Math.sin(body.drawnFacing);
+      const endX = at.x + dirX * look.length;
+      const endZ = at.z + dirZ * look.length;
+      LANCE_TO.set(endX, this.ground(endX, endZ) + look.endLift, endZ);
+
+      if (look.kind === 'lockOn') {
+        this.laySight(lance, look);
+      } else {
+        this.layShaft(lance, look, { x: at.x, z: at.z }, frame.tick);
+      }
+    }
+
+    for (const [id, lance] of this.lances) {
+      if (live.has(id)) continue;
+      this.disposeLance(lance);
+      this.lances.delete(id);
+    }
+  }
+
+  /** One lance's two pictures, built once and shown one at a time. */
+  private makeLance(entityId: number): Lance {
+    const positions = new Float32Array(LANCE_SIGHT_DOTS * 3);
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    const sight = new THREE.Points(
+      geometry,
+      new THREE.PointsMaterial({
+        color: LANCE_SIGHT_COLOR,
+        // In pixels of the buffer the world is drawn into rather than in world
+        // units, which is the whole of "a single-pixel sight": a dot the same
+        // size at every distance and at every zoom, so the line reads as an
+        // instrument rather than as something with perspective on it.
+        sizeAttenuation: false,
+        transparent: true,
+        depthWrite: false,
+      }),
+    );
+    // World-space vertices, so three's bounding sphere is stale the moment the
+    // head turns -- the reason `GroundDecal` gives for the same line.
+    sight.frustumCulled = false;
+    sight.visible = false;
+
+    const shaft = new THREE.Mesh(LANCE_SHAFT_GEOMETRY, beamMaterial(LANCE_COLOR));
+    const core = new THREE.Mesh(LANCE_SHAFT_GEOMETRY, beamMaterial(LANCE_CORE_COLOR));
+    shaft.frustumCulled = false;
+    core.frustumCulled = false;
+    shaft.visible = false;
+    core.visible = false;
+
+    this.scene.add(sight, shaft, core);
+    return { entityId, sight, positions, shaft, core };
+  }
+
+  private disposeLance(lance: Lance): void {
+    this.scene.remove(lance.sight, lance.shaft, lance.core);
+    lance.sight.geometry.dispose();
+    (lance.sight.material as THREE.Material).dispose();
+    // The geometry is the shared unit box and is never disposed; the materials
+    // are this lance's own, made per body so two Wardens firing at once do not
+    // share a shimmer.
+    (lance.shaft.material as THREE.Material).dispose();
+    (lance.core.material as THREE.Material).dispose();
+    // Nothing to release for the lights: they were never held, only *asked* for
+    // once a frame, so a lance that has stopped firing stops asking and the pool
+    // parks the slots on its own.
+  }
+
+  /** The dotted sight: pixels strung along the line, sliding away from the head. */
+  private laySight(lance: Lance, look: SightLook): void {
+    const count = Math.min(LANCE_SIGHT_DOTS, sightDotCount(look));
+    const span = LANCE_SPAN.copy(LANCE_TO).sub(LANCE_FROM);
+    for (let i = 0; i < LANCE_SIGHT_DOTS; i++) {
+      // Every dot past the count is parked on the head rather than left where it
+      // was last frame: the buffer is a fixed size so the geometry is never
+      // rebuilt, and a stale dot in the middle of the field is the one artefact
+      // that arrangement can produce.
+      const along = i < count ? sightDotAt(look, i) / look.length : 0;
+      lance.positions[i * 3] = LANCE_FROM.x + span.x * along;
+      lance.positions[i * 3 + 1] = LANCE_FROM.y + span.y * along;
+      lance.positions[i * 3 + 2] = LANCE_FROM.z + span.z * along;
+    }
+    lance.sight.geometry.getAttribute('position').needsUpdate = true;
+    const material = lance.sight.material as THREE.PointsMaterial;
+    material.size = look.pixel;
+    material.opacity = look.opacity;
+    lance.sight.visible = true;
+    lance.shaft.visible = false;
+    lance.core.visible = false;
+  }
+
+  /**
+   * The shaft, and the red light it throws on the ground under it.
+   *
+   * The lights go in as ordinary {@link LightRequest}s beside the map's own
+   * fixtures rather than as a pool of their own, which is the decision here
+   * worth stating. What it buys is that nothing about the number of lights in
+   * the scene changes when a Warden fires: the count is part of three's program
+   * key, so a beam that allocated its own would recompile every material in the
+   * scene at the moment the frame is busiest. What it costs is that a beam can
+   * be outranked -- `assignLights` ranks on distance to the camera's focus and
+   * will not put a held light out for one less than `swapMargin` nearer -- so
+   * firing into a lit village square can leave the beam unlit. That is the
+   * pool's own graceful degradation and it is one-directional: a beam may go
+   * dark, and it can never cost a frame.
+   *
+   * Gathered here and spent by `applyWorldLights` later in the frame, which is
+   * exactly what the body loop already does with the conjured lights.
+   */
+  private layShaft(
+    lance: Lance,
+    look: ShaftLook,
+    at: { x: number; z: number },
+    tick: number,
+  ): void {
+    layBeamBox(lance.shaft, LANCE_FROM, LANCE_TO, look.width);
+    layBeamBox(lance.core, LANCE_FROM, LANCE_TO, look.coreWidth);
+    (lance.shaft.material as THREE.MeshBasicMaterial).opacity = look.opacity;
+    (lance.core.material as THREE.MeshBasicMaterial).opacity = look.coreOpacity;
+    lance.shaft.visible = true;
+    lance.core.visible = true;
+    lance.sight.visible = false;
+
+    // Along the beam's own line on the ground plane, at a height of their own:
+    // see `BEAM_GLOW_HEIGHT` -- a light down at the shaft's far tip would light
+    // a spot the size of a footprint and nothing else.
+    const dirX = (LANCE_TO.x - at.x) / Math.max(1e-6, look.length);
+    const dirZ = (LANCE_TO.z - at.z) / Math.max(1e-6, look.length);
+    for (let i = 0; i < BEAM_GLOW_LIGHTS; i++) {
+      const along = beamGlowAt(look, i);
+      const x = at.x + dirX * along;
+      const z = at.z + dirZ * along;
+      this.lanceLights.push({
+        // The identity is the light, not the place: it moves down the beam as
+        // the machine sweeps, and a key that moved with it would look to the
+        // residency like a light going out and another coming on -- which is the
+        // one thing the hysteresis exists to prevent.
+        key: `lance:${lance.entityId}:${i}`,
+        x,
+        y: this.ground(x, z) + BEAM_GLOW_HEIGHT,
+        z,
+        color: LANCE_COLOR,
+        brightness: beamGlowBrightness(i, tick),
+        radius: BEAM_GLOW_RADIUS,
+      });
     }
   }
 
@@ -3201,7 +3587,7 @@ export class WorldScene {
     return { x: (me.x + framing.x) / 2, y: (me.y + framing.y) / 2 };
   }
 
-  private applyControls(): void {
+  private applyControls(clock: WorldClock): void {
     const off = this.controls.cameraOffset();
     this.camOffsetTarget.set(off.x, off.y, off.z);
     this.camOffsetCurrent.lerp(this.camOffsetTarget, CAMERA_SMOOTH);
@@ -3219,7 +3605,7 @@ export class WorldScene {
       this.lastHalfWidth = this.halfWidth;
     }
 
-    this.applySun();
+    this.applySun(clock);
     this.syncUnwalkable(this.controls.showUnwalkable());
     // Applied per frame, beside the switches that own these objects the rest of
     // the time: the prop field is replaced whenever a region rebuilds, and the
@@ -3228,8 +3614,13 @@ export class WorldScene {
     if (this.perf.noTerrain && this.terrainMesh) this.terrainMesh.group.visible = false;
   }
 
-  private applySun(): void {
-    const shadow = this.controls.dayNightEnabled() ? this.applyCycleSun() : this.applyManualSun();
+  private applySun(clock: WorldClock): void {
+    // Two things drive this sun since spec 263 -- the world's clock and the
+    // tuning panel -- and `sky-source.ts` holds the one rule that settles them:
+    // the panel wins where it is asking for something, and the game decides
+    // where it is not. `carried-light.ts`'s rule, one system along.
+    const hours = resolveSkyHours(this.controls.skySettings(), clock);
+    const shadow = hours === null ? this.applyManualSun() : this.applyCycleSun(hours);
     this.sun.castShadow = shadow.casting && !this.perf.noShadow;
 
     const frame = shadowFrame(this.halfWidth);
@@ -3250,9 +3641,8 @@ export class WorldScene {
     }
   }
 
-  private applyCycleSun(): HorizonShadow {
-    const sky = this.controls.sky();
-    if (!sky) return this.applyManualSun();
+  private applyCycleSun(hours: number): HorizonShadow {
+    const sky = this.controls.skyAtHours(hours);
 
     const d = sky.lightDirection;
     this.sunDirection.set(d.x, d.y, d.z).normalize();
@@ -3421,6 +3811,7 @@ export class WorldScene {
     this.lightRequests.length = 0;
     for (const light of fixtures) this.lightRequests.push(light);
     for (const light of this.conjuredLights) this.lightRequests.push(light);
+    for (const light of this.lanceLights) this.lightRequests.push(light);
     // The point the camera is framing rather than where the camera is: it parks
     // a constant 6,000 units back, so its own position says nothing about which
     // corner of the world is on screen.
@@ -3497,6 +3888,91 @@ export class WorldScene {
  * closely. What happens per frame is a rewrite of a `Float32Array` that already
  * exists.
  */
+/** One Warden's lance: the sight, and the shaft with its core inside it. */
+interface Lance {
+  /** Whose it is, so the lights it asks for have a key that is stable. */
+  readonly entityId: number;
+  readonly sight: THREE.Points;
+  /** The sight's world-space vertices, rewritten per frame rather than rebuilt. */
+  readonly positions: Float32Array;
+  readonly shaft: THREE.Mesh;
+  readonly core: THREE.Mesh;
+}
+
+/**
+ * How many pixels a sight is made of.
+ *
+ * A fixed count, allocated once, because the pattern *slides*: a count derived
+ * from the length every frame would rebuild the buffer whenever a dot crossed
+ * the far end, which is an allocation sixty times a second for as long as
+ * somebody is being aimed at. It is comfortably more than the shipped reach
+ * needs at `SIGHT_SPACING`, and `laySight` parks the surplus on the head.
+ */
+const LANCE_SIGHT_DOTS = 48;
+
+/**
+ * Where the beam leaves a body whose rig has no opening.
+ *
+ * Only reachable for a sphere-bodied mech, which no laser row uses -- but a beam
+ * out of nowhere is a worse failure than a beam out of the middle of the body,
+ * and this is one line against a rig somebody may retune.
+ */
+const LANCE_FALLBACK_HEIGHT = 40;
+
+/**
+ * The unit box every shaft is drawn with, shared by every lance in the scene.
+ *
+ * Built along +X and centred, so `layBeamBox` is a scale, a midpoint and one
+ * rotation. Shared because it is never written to: what differs between two
+ * lances is the transform and the material, and a geometry per body would be a
+ * fresh buffer upload every time a Warden started firing.
+ */
+const LANCE_SHAFT_GEOMETRY = new THREE.BoxGeometry(1, 1, 1);
+
+/** Scratch, so a frame with a lance in it allocates no vectors. */
+const LANCE_FROM = new THREE.Vector3();
+const LANCE_TO = new THREE.Vector3();
+const LANCE_AXIS = new THREE.Vector3();
+const LANCE_SPAN = new THREE.Vector3();
+const LANCE_X = new THREE.Vector3(1, 0, 0);
+
+/**
+ * The material a beam is made of: unlit, translucent, and never writing depth.
+ *
+ * Unlit because a beam is *light* rather than a surface, so the sun has no
+ * business dimming the side of it that faces away. Not writing depth because two
+ * of these are drawn one inside the other, and a shaft that wrote depth would
+ * hide its own core.
+ */
+function beamMaterial(color: number): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({ color, transparent: true, depthWrite: false });
+}
+
+/**
+ * Lay a unit box along the segment `from -> to`, `thickness` on a side.
+ *
+ * The length is the segment's own 3D length rather than the lance's horizontal
+ * reach: the beam slopes from the head down to the ground, so the two differ by
+ * a few percent -- and a box scaled to the horizontal one would fall short of
+ * the end its far tip is meant to be at.
+ */
+function layBeamBox(
+  mesh: THREE.Mesh,
+  from: THREE.Vector3,
+  to: THREE.Vector3,
+  thickness: number,
+): void {
+  LANCE_AXIS.copy(to).sub(from);
+  const length = LANCE_AXIS.length();
+  if (length < 1e-6) {
+    mesh.visible = false;
+    return;
+  }
+  mesh.position.copy(from).addScaledVector(LANCE_AXIS, 0.5);
+  mesh.quaternion.setFromUnitVectors(LANCE_X, LANCE_AXIS.divideScalar(length));
+  mesh.scale.set(length, thickness, thickness);
+}
+
 /**
  * The material every ground decal shares the shape of: unlit, translucent, and
  * never writing depth, so nothing it is drawn over gets an edge from it.
@@ -3528,7 +4004,9 @@ class GroundDecal {
     this.mesh = new THREE.Mesh(new THREE.BufferGeometry(), material);
     // World-space vertices, so three's bounding sphere is stale the moment the
     // decal moves and culling by it would blink the indicator out at the edge
-    // of the frame. There are three of these; the draw is cheaper than the box.
+    // of the frame. There is a handful of these -- the two aim shapes, a
+    // telegraph per winding cast, a lane per firing Warden -- and the draw is
+    // cheaper than keeping the box honest would be.
     this.mesh.frustumCulled = false;
     this.mesh.visible = false;
   }

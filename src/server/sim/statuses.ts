@@ -222,6 +222,30 @@ export const StatusId = {
 
   /** A conjured light, floating over its carrier. Purely a thing you can see. */
   MagicLight: 'magicLight',
+
+  // --- the Warden's recovery (spec 262) ----------------------------------
+  //
+  // The one entry here written by a *monster's own attack finishing*, and the
+  // only piece of state the Warden's four-state machine stores: the other three
+  // are read off the cast the sim already has. It is in this map rather than in
+  // a field on the entity for the reason the header gives -- what it is, is a
+  // timed state on a body, and one map with one expiry rule is one place to get
+  // right -- and for a second reason the header could not have anticipated: a
+  // status is replicated, so an overheat is a thing every client can see
+  // without a byte being added to the entity delta for it.
+  //
+  // Two things read it. `sim/warden.ts` asks whether the machine may aim again;
+  // a client asks it to tell an overheat from the stagger it otherwise looks
+  // exactly like, since the root is `ActivityValue.Stunned` on purpose -- that
+  // is the state, mechanically, and a second one that also meant "rooted,
+  // silenced, no guard coming back" would be three existing readers duplicated.
+  //
+  // It carries no magnitude. What the window is *worth* is `Exposed`, applied
+  // beside it from `WARDEN_LASER.overheatExposure`, because amplifying damage
+  // is a thing this game already knows how to say.
+
+  /** A machine that has just fired, and cannot do anything at all for a while. */
+  Overheated: 'overheated',
 } as const;
 
 /** Adaptation is per ability id: `adapt:skill.poisonDart`. */
