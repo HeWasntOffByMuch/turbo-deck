@@ -109,6 +109,23 @@ export const StatusId = {
   /** Agility: this body took a hit recently, which is what Perfect Exit reads. */
   RecentlyHit: 'recentlyHit',
   /**
+   * This body has been in a fight and is not yet due back to full (spec 261).
+   *
+   * The one status here whose **expiry is the fact**: it is stamped for the
+   * combat window plus a whole recovery, so `expiresAtTick` is the tick the
+   * body is owed full health on, and `sim/idle.ts` reads it as one. Which is
+   * what makes recovery a comparison against a tick rather than a counter of
+   * how many ticks somebody happened to be near enough to watch -- `world.ts`
+   * steps nothing outside `activeChunks`, and a monster nobody is near is not
+   * slowed but frozen.
+   *
+   * Its lifetime is exactly the ramp's, so it is gone precisely when there is
+   * nothing left to owe: an entry that has been pruned and a body that was
+   * never in a fight are the same answer, which is *no floor*, and neither can
+   * be mistaken for the other.
+   */
+  Recovering: 'recovering',
+  /**
    * Perception+Wisdom: what a Tactician's exposure leaves for everyone else.
    *
    * Declared here with the rest of the well-known ids rather than beside its one

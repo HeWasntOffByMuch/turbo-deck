@@ -18,19 +18,33 @@ import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
 import { HOME_MARGIN, IDLE_PACE, RECOVERY_TICKS, idle, restore } from './idle.js';
-import { NO_STATUSES, StatusId, applyStatus } from './statuses.js';
+import { enterCombat, recoveryRemaining } from './restoration.js';
+import { NO_STATUSES, StatusId, expireStatuses, hasStatus } from './statuses.js';
 import { EntityKindValue, type ServerEntity, type ServerWorldState } from './types.js';
 import { createWorldState, spawnEntity, step, type StepContext } from './world.js';
 
 const CHUNK = 100;
 
-function context(): StepContext {
+/** The chunks around the fixture's own patch of world, as a live set. */
+function activeAround(): Set<string> {
   const activeChunks = new Set<string>();
   for (let dy = -20; dy <= 20; dy++) {
     for (let dx = -20; dx <= 20; dx++) {
       activeChunks.add(chunkKeyOf(600 + dx * CHUNK, 450 + dy * CHUNK, CHUNK));
     }
   }
+  return activeChunks;
+}
+
+/**
+ * A context over a **given** active set, so a test can take a body out of the
+ * simulated world and put it back (spec 261).
+ *
+ * The set is handed in live rather than copied, which is what `ChunkManager`
+ * does too (spec 193): the server refreshes it between ticks, so a test that
+ * edits it between `step` calls is doing what a player walking away does.
+ */
+function contextWith(activeChunks: Set<string>): StepContext {
   return {
     world: DEFAULT_WORLD,
     terrain: FLAT_TERRAIN,
@@ -40,6 +54,10 @@ function context(): StepContext {
     chunkSize: CHUNK,
     spawnPoints: [],
   };
+}
+
+function context(): StepContext {
+  return contextWith(activeAround());
 }
 
 function withMonster(
@@ -329,16 +347,23 @@ describe('recovery', () => {
     if (!definition) throw new Error('no ravager');
     return body({ typeId: 'ravager', stats: definition.stats, health, ...overrides });
   };
+  /** A body whose last blow landed on tick 0, which is what both clocks run from. */
+  const fought = (health: number): ServerEntity =>
+    hurt(health, { statuses: enterCombat(NO_STATUSES, 0) });
+  /** The first tick it may start coming back on: the fight window, closed. */
+  const opens = RESTORATION.rest.combatTicks;
 
   it('is linear, and stops at full', () => {
-    let subject = hurt(1);
+    let subject = fought(1);
     const step = max() / RECOVERY_TICKS;
-    for (let tick = 1; tick <= 10; tick++) {
-      subject = restore(subject, tick);
-      expect(subject.health).toBeCloseTo(1 + tick * step, 6);
+    for (let k = 1; k <= 10; k++) {
+      subject = restore(subject, opens + k - 1);
+      expect(subject.health).toBeCloseTo(1 + k * step, 6);
     }
     // All the way, and no further.
-    for (let tick = 0; tick < RECOVERY_TICKS * 2; tick++) subject = restore(subject, tick);
+    for (let tick = opens; tick < opens + RECOVERY_TICKS * 2; tick++) {
+      subject = restore(subject, tick);
+    }
     expect(subject.health).toBe(max());
   });
 
@@ -348,13 +373,12 @@ describe('recovery', () => {
     // -- so recovery had nowhere to go and the test failed for a reason that
     // had nothing to do with what it is about.
     const half = max() / 2;
-    const subject = hurt(half, {
-      statuses: applyStatus(NO_STATUSES, StatusId.InCombat, 0, RESTORATION.rest.combatTicks),
-    });
+    const subject = fought(half);
     expect(restore(subject, 1).health).toBe(half);
+    expect(restore(subject, opens - 1).health).toBe(half);
     // And resumes the tick that window closes rather than needing anything else
     // to notice it has.
-    expect(restore(subject, RESTORATION.rest.combatTicks).health).toBeGreaterThan(half);
+    expect(restore(subject, opens).health).toBeGreaterThan(half);
   });
 
   it('never revives a corpse', () => {
@@ -381,6 +405,135 @@ describe('recovery', () => {
     };
     state = run(state, SERVER_TICK_RATE * 3, context());
     expect(at(state, one.id).health).toBe(30);
+  });
+});
+
+/**
+ * Spec 261. Recovery is measured on the clock, not in ticks somebody was near
+ * enough to watch.
+ */
+describe('recovery is a comparison, not a counter', () => {
+  const max = () => monsterById('ravager')?.stats.maxHealth ?? 0;
+  const hurt = (health: number, overrides: Partial<ServerEntity> = {}): ServerEntity => {
+    const definition = monsterById('ravager');
+    if (!definition) throw new Error('no ravager');
+    return body({ typeId: 'ravager', stats: definition.stats, health, ...overrides });
+  };
+  const due = RESTORATION.rest.combatTicks + RECOVERY_TICKS;
+
+  it('starts one clock per question, both from the last blow', () => {
+    const statuses = enterCombat(NO_STATUSES, 0);
+    // Still fighting, for the window `advanceRest` reads.
+    expect(hasStatus(statuses, StatusId.InCombat, RESTORATION.rest.combatTicks - 1)).toBe(true);
+    expect(hasStatus(statuses, StatusId.InCombat, RESTORATION.rest.combatTicks)).toBe(false);
+    // And owed, for a whole recovery past that.
+    expect(recoveryRemaining(statuses, 0)).toBe(due);
+    expect(recoveryRemaining(statuses, RESTORATION.rest.combatTicks)).toBe(RECOVERY_TICKS);
+    expect(recoveryRemaining(statuses, due)).toBe(0);
+  });
+
+  it('owes nothing to a body that has never been in a fight', () => {
+    // The clock is the record of a fight, so no clock is no floor -- not a body
+    // handed full health for a wound it got some other way, which is what an
+    // absent entry read as "long ago" would mean.
+    expect(recoveryRemaining(NO_STATUSES, 40)).toBeNull();
+    const scratched = hurt(1);
+    expect(restore(scratched, 40).health).toBeCloseTo(1 + max() / RECOVERY_TICKS, 6);
+  });
+
+  it('reads the clock after it has lapsed, which is what a frozen body keeps', () => {
+    const statuses = enterCombat(NO_STATUSES, 0);
+    const late = due + 5_000;
+    // Dead to `hasStatus`, and still the record of when the body was due back.
+    expect(hasStatus(statuses, StatusId.Recovering, late)).toBe(false);
+    expect(recoveryRemaining(statuses, late)).toBe(0);
+    expect(restore(hurt(1, { statuses }), late).health).toBe(max());
+  });
+
+  it('is pruned exactly when there is nothing left to owe', () => {
+    // Which is what makes an absent clock and a lapsed one safe to answer the
+    // same way. `expireStatuses` drops it on the tick the body is due, and by
+    // then the step has already carried a watched body to full.
+    let subject = hurt(1, { statuses: enterCombat(NO_STATUSES, 0) });
+    for (let tick = 0; tick <= due; tick++) subject = restore(subject, tick);
+    expect(subject.health).toBe(max());
+    expect(expireStatuses(subject.statuses, due)).toEqual(NO_STATUSES);
+  });
+
+  it('leaves the ramp exactly what it was for a body that was watched throughout', () => {
+    // Both answers reach full on the due tick and the step runs from the body's
+    // own health where the floor runs from empty, so the step is the greater at
+    // every tick a body was actually stepped for. The floor is pure catch-up
+    // and can never reshape a watched recovery.
+    const step = max() / RECOVERY_TICKS;
+    for (const start of [1, max() * 0.25, max() * 0.5, max() * 0.9]) {
+      let subject = hurt(start, { statuses: enterCombat(NO_STATUSES, 0) });
+      for (let k = 1; k <= RECOVERY_TICKS; k++) {
+        subject = restore(subject, RESTORATION.rest.combatTicks + k - 1);
+        expect(subject.health).toBeCloseTo(Math.min(max(), start + k * step), 6);
+      }
+    }
+  });
+
+  it('credits a gap it spent frozen part way through the ramp', () => {
+    // The half a watched body and an unwatched one can disagree about: the
+    // clock had already started when the body stopped being stepped.
+    const statuses = enterCombat(NO_STATUSES, 0);
+    const half = RESTORATION.rest.combatTicks + RECOVERY_TICKS / 2;
+    expect(restore(hurt(1, { statuses }), half).health).toBeCloseTo(max() / 2, 6);
+  });
+
+  it('brings a monster nobody was near back whole on the tick it is stepped again', () => {
+    const anchor = { x: 600, y: 450 };
+    let state = createWorldState(1);
+    const ravager = withMonster(state, 'ravager', anchor.x, anchor.y, { anchor, health: 1 });
+    state = ravager.state;
+    // On a sliver, with the fight it lost ending right now.
+    state = {
+      ...state,
+      entities: new Map(state.entities).set(ravager.id, {
+        ...at(state, ravager.id),
+        statuses: enterCombat(NO_STATUSES, state.tick),
+      }),
+    };
+
+    // The player died and respawned across the map, so nothing is near it.
+    const active = activeAround();
+    active.delete(chunkKeyOf(anchor.x, anchor.y, CHUNK));
+    const ctx = contextWith(active);
+    state = run(state, due + SERVER_TICK_RATE, ctx);
+    // Frozen, which is the bug this closes: `world.ts` steps nothing outside
+    // `activeChunks`, so before spec 261 the sliver was still there whenever
+    // the player got back.
+    expect(at(state, ravager.id).health).toBe(1);
+
+    // And back within interest. One tick, because the ticks it spent unwatched
+    // count exactly as the ticks it spent watched would have.
+    active.add(chunkKeyOf(anchor.x, anchor.y, CHUNK));
+    state = run(state, 1, ctx);
+    expect(at(state, ravager.id).health).toBe(max());
+  });
+
+  it('does not spend the gap on the Rng', () => {
+    // The catch-up is arithmetic on a tick, so a body that was away draws
+    // exactly what a body that was never there draws: nothing.
+    const anchor = { x: 600, y: 450 };
+    const gap = due + SERVER_TICK_RATE;
+
+    const withGap = (() => {
+      let state = createWorldState(1);
+      const one = withMonster(state, 'ravager', anchor.x, anchor.y, { anchor, health: 1 });
+      state = one.state;
+      const active = activeAround();
+      active.delete(chunkKeyOf(anchor.x, anchor.y, CHUNK));
+      const ctx = contextWith(active);
+      state = run(state, gap, ctx);
+      active.add(chunkKeyOf(anchor.x, anchor.y, CHUNK));
+      return run(state, 1, ctx).rng.getState();
+    })();
+
+    const empty = run(createWorldState(1), gap + 1, context()).rng.getState();
+    expect(withGap).toEqual(empty);
   });
 });
 
