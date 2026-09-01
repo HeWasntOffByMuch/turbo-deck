@@ -75,6 +75,22 @@ function at(cx: number, cz: number): { x: number; z: number } {
 
 const KEEP_WINDOW = (2 * MAP_CHUNK_KEEP_RADIUS + 1) ** 2;
 
+/**
+ * The map's own chunk extent.
+ *
+ * Derived rather than typed, for the reason the bound below is derived: a
+ * hand-written perimeter is a fact about how big the map happened to be when it
+ * was written, so a map that is later reshaped leaves the walk stepping round
+ * ground that is not there -- every request denied, nothing held, and a feature
+ * that still works reported as broken.
+ */
+const EDGE = {
+  minCx: Math.min(...LAYER.chunks.map((c) => c.cx)),
+  maxCx: Math.max(...LAYER.chunks.map((c) => c.cx)),
+  minCz: Math.min(...LAYER.chunks.map((c) => c.cz)),
+  maxCz: Math.max(...LAYER.chunks.map((c) => c.cz)),
+};
+
 describe('the keep radius', () => {
   it('is wider than the request radius', () => {
     expect(MAP_CHUNK_KEEP_RADIUS).toBeGreaterThan(MAP_CHUNK_REQUEST_RADIUS + 1);
@@ -93,10 +109,10 @@ describe('walking the map', () => {
       peak = Math.max(peak, c.streamed.size);
     };
     for (let lap = 0; lap < 3; lap++) {
-      for (let cx = -10; cx <= 17; cx++) visit(cx, -10);
-      for (let cz = -10; cz <= 14; cz++) visit(17, cz);
-      for (let cx = 17; cx >= -10; cx--) visit(cx, 14);
-      for (let cz = 14; cz >= -10; cz--) visit(-10, cz);
+      for (let cx = EDGE.minCx; cx <= EDGE.maxCx; cx++) visit(cx, EDGE.minCz);
+      for (let cz = EDGE.minCz; cz <= EDGE.maxCz; cz++) visit(EDGE.maxCx, cz);
+      for (let cx = EDGE.maxCx; cx >= EDGE.minCx; cx--) visit(cx, EDGE.maxCz);
+      for (let cz = EDGE.maxCz; cz >= EDGE.minCz; cz--) visit(EDGE.minCx, cz);
     }
     return peak;
   }

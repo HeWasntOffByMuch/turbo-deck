@@ -415,6 +415,15 @@ const BODY_SIZE = 22;
 // exactly to 11 it reads as a smaller body than the cube it replaced.
 const BODY_RADIUS = 13.2;
 
+/**
+ * How far past its own height a burrowed body is sunk (spec 263).
+ *
+ * The body's top edge lands exactly on the ground at 1.0, and a mark sitting
+ * exactly on a surface is a mark z-fighting with it -- so a tenth over, which
+ * on the small spider is about three units and on the Warden about seven.
+ */
+const HIDDEN_MARGIN = 1.1;
+
 // Fixed feel constants (not exposed as sliders).
 const COUPLE_SLACK = 8; // a leg pulls its diagonal partner along if within this of triggering
 const PLACE_JITTER = 4; // per-step foot-placement noise (world units, x size)
@@ -923,6 +932,28 @@ export class MechRig {
   readonly appearance: MechAppearance;
   /** Whether the scene should set group.rotation.y to the heading (spider) or 0 (mech). */
   readonly orientsWithGroupYaw: boolean;
+  /**
+   * How far the body is dropped below its own legs, 0..1 (spec 263).
+   *
+   * 0 is the chassis standing on its suspension, which is every frame of this
+   * rig's life except an emergence -- and is what it draws today, vertex for
+   * vertex, because at 0 the term below is 0.
+   *
+   * What it is *for* is the one thing this rig can do that no other rig here
+   * can. `stabilise` draws each leg from a hip carried through
+   * `carriage.matrix` to a foot that is world-locked and **independent of it**,
+   * so pushing the carriage down does not move the feet: the legs re-solve, the
+   * knees bow up out of the ground, and easing this back to 0 is a body being
+   * lifted by its own legs rather than a model being translated. The same
+   * decoupling that already lets the body bob on its springs while the feet
+   * stay planted.
+   *
+   * Presentation only, and *not* the rig's own state: nothing in here writes
+   * it, nothing reads it back, and the scene sets it every frame -- so an
+   * emergence that is interrupted at any point costs nothing to unwind, because
+   * the next frame simply writes the value it should have.
+   */
+  burrow = 0;
   private readonly lowerBodyTurns: boolean;
   // The lower body (carriage) carries the hips in the leg frame; the upper body
   // (turret) holds the visible body and yaws to face the heading.
@@ -1197,6 +1228,28 @@ export class MechRig {
   /** The mech's current locomotion state, for HUDs (e.g. the movement sandbox). */
   get locomotionState(): LocomotionState {
     return this.state;
+  }
+
+  /**
+   * How far this body has to sit below the ground to be out of sight, in world
+   * units (spec 263).
+   *
+   * A getter here rather than a constant in the scene for `openingWorld`'s
+   * reason one size down: how tall a mech is, is `(BODY_Y + half the body) *
+   * sizeScale * bodySize`, and every one of those is a number this class owns
+   * and a look table can change. A caller carrying its own copy would bury the
+   * spider correctly and leave the Warden's turret standing in the grass the
+   * first time somebody retuned it.
+   *
+   * Measured to the *top* of the body rather than to its middle, with a small
+   * margin over, because what "out of sight" has to mean is that no part of it
+   * is showing -- and floored, so a look with a nonsense scale in it cannot ask
+   * the scene to lift a body into the air.
+   */
+  get hiddenDepth(): number {
+    const scale = Math.max(0.01, finiteOr(this.tuning.sizeScale, 1));
+    const bodySize = Math.max(0.01, finiteOr(this.tuning.bodySize, 1));
+    return Math.max(0, (BODY_Y + BODY_SIZE * 0.5 * bodySize) * scale * HIDDEN_MARGIN);
   }
 
   /**
@@ -1731,9 +1784,16 @@ export class MechRig {
     // Finite-guard every value that feeds the body transform (and thus the hip
     // matrix + body meshes), so a stray spring value can't launch the body.
     const swayCap = 4 * S * REST_Z;
+    // Outside the sway clamp rather than folded into `sHeight` (spec 263). Two
+    // reasons: `sHeight` is a spring, so a target pushed into it would be
+    // smoothed and would lag the staging it is meant to hit exactly; and the
+    // sway cap is sized for a chassis bobbing on its suspension, where this is
+    // deliberately a whole body height. Clamped on its own terms and
+    // finite-guarded like everything else that feeds this transform.
+    const sink = sclamp(this.burrow, 0, 1, 0) * this.hiddenDepth;
     this.carriage.position.set(
       sclamp(this.sSwayX.value, -swayCap, swayCap, 0),
-      sclamp(this.sHeight.value, -swayCap, swayCap, 0),
+      sclamp(this.sHeight.value, -swayCap, swayCap, 0) - sink,
       sclamp(this.sSwayZ.value, -swayCap, swayCap, 0),
     );
     this.carriage.rotation.set(sclamp(this.sRoll.value, -1.2, 1.2, 0), 0, sclamp(-this.sPitch.value, -1.2, 1.2, 0));

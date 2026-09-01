@@ -2,7 +2,7 @@ import type { FixtureKind } from '../../../terrain/vegetation.js';
 import { seedFor, type VfxPlayer } from './affliction-vfx.js';
 
 /**
- * The fire burning in a fixture (specs 250, 263).
+ * The fire burning in a fixture (specs 250, 265).
  *
  * A campfire's prop is a ring of stones, four charred logs and a bed of embers,
  * and nothing in it moves. What makes it a *fire* is this: a painted effect
@@ -59,7 +59,7 @@ import { seedFor, type VfxPlayer } from './affliction-vfx.js';
  */
 export const FIRE_SCALE = 0.72;
 
-/** What a fixture burns with: the effect, how wide, and how far up it (spec 263). */
+/** What a fixture burns with: the effect, how wide, and how far up it (spec 265). */
 export interface FixtureFire {
   readonly id: string;
   /**
@@ -94,7 +94,7 @@ export interface FixtureFire {
  *
  * A lamp post has no row and is right not to: what is inside its lantern is a
  * mantle, which is a made thing that glows steadily, and it says so by emitting
- * its own light's colour (spec 263) rather than by throwing marks.
+ * its own light's colour (spec 265) rather than by throwing marks.
  */
 export const FIXTURE_ART: Readonly<Partial<Record<FixtureKind, FixtureFire>>> = {
   // On the ground, inside the ring of stones. `root: 0` is what it has always

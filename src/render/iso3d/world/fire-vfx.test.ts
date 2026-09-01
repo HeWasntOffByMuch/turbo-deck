@@ -98,7 +98,7 @@ function torch(over: Partial<FireSite> = {}): FireSite {
 const FIRE = FIXTURE_ART.campfire?.id ?? '';
 const TORCH = FIXTURE_ART['torch-stand']?.id ?? '';
 
-describe('which fixtures burn (specs 250, 263)', () => {
+describe('which fixtures burn (specs 250, 265)', () => {
   it('plays a fire for a campfire and a smaller one for a torch', () => {
     const player = new Recorder();
     const fires = new FireVfx(player);
@@ -144,7 +144,7 @@ describe('which fixtures burn (specs 250, 263)', () => {
   });
 });
 
-describe('where a fire is played (specs 250, 263)', () => {
+describe('where a fire is played (specs 250, 265)', () => {
   it('puts a campfire on the ground, not at the flame the light hangs at', () => {
     const player = new Recorder();
     new FireVfx(player).step([site({ x: 40, groundY: 12, lightY: 46, z: 80 })]);

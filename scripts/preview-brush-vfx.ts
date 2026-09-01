@@ -303,7 +303,7 @@ async function main(): Promise<void> {
        * `AFFLICTION_ART`.
        */
       readonly effectId?: string;
-      /** `standing` only: where it stands, relative to the dummy (spec 263). */
+      /** `standing` only: where it stands, relative to the dummy (spec 265). */
       readonly at?: { readonly x?: number; readonly y?: number; readonly z?: number };
       /** `shot` only: how far back the flight begins, so it fits the frame. */
       readonly launch?: number;
@@ -811,7 +811,7 @@ async function main(): Promise<void> {
       ]),
     });
 
-    // The torch beside the campfire (spec 263), each at the scale the game plays
+    // The torch beside the campfire (spec 265), each at the scale the game plays
     // it at, in **one** frame for every cell -- `preview-monsters.ts`'s rule and
     // for its reason: framing each subject on its own extent hides the only
     // thing a row of two fires is being asked, which is whether the small one is
@@ -837,6 +837,72 @@ async function main(): Promise<void> {
         { label: 'torch low seat', kind: 'standing', effectId: 'fire_torch', at: TORCH_AT, seed: SEEDS[1] ?? 1, ticks: 90, scale: TORCH_SITE, elevation: 0.42, halfHeight: 64 },
       ]),
     });
+    // --- the two arrivals (spec 263) --------------------------------------
+    //
+    // Here rather than on a sheet of their own for the campfire's reason: they
+    // are ground-anchored one-shots judged on exactly this sheet's questions --
+    // silhouettes rather than stipple, and six seeds that are six paintings by
+    // one artist. What they need that the fire does not is the *front* of their
+    // lives: a poof is over in half a second, so the row is dense early and
+    // stops, where the fire's row runs to two seconds to prove it loops.
+    //
+    // Framed at a body rather than at a blast: both are played at
+    // `spawnEffectScale(radius)`, which for the small spider is about 19 units,
+    // and a blast's camera would make either a smudge in the middle of a field
+    // of grass.
+    const ARRIVAL_FRAME = 78;
+    const ARRIVAL_SITE = 19;
+    shotRows.push({
+      title: 'the poof (ticks; emits for 10, marks live to ~27)',
+      tiles: await series(
+        [2, 5, 9, 14, 22, 32].map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'standing' as const,
+          effectId: 'spawn_poof',
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          scale: ARRIVAL_SITE,
+          halfHeight: ARRIVAL_FRAME,
+        })),
+      ),
+    });
+    shotRows.push({
+      title: 'the burrow dirt (ticks; ramps to a peak at t=14 and ends at 45)',
+      tiles: await series(
+        [3, 9, 16, 26, 38, 52].map((tick) => ({
+          label: `t=${tick}`,
+          kind: 'standing' as const,
+          effectId: 'spawn_burrow_dirt',
+          seed: SEEDS[0] ?? 1,
+          ticks: tick,
+          scale: ARRIVAL_SITE,
+          halfHeight: ARRIVAL_FRAME,
+        })),
+      ),
+    });
+    // One row per effect rather than one shared row: the seeds check compares
+    // consecutive tiles, so a poof next to a dig would report the two effects
+    // differing and say nothing about whether either varies with its seed.
+    for (const arrival of [
+      { id: 'spawn_poof', label: 'poof', ticks: 10 },
+      { id: 'spawn_burrow_dirt', label: 'dirt', ticks: 20 },
+    ] as const) {
+      shotRows.push({
+        title: `six seeds, one ${arrival.label}, at its peak`,
+        check: 'seeds',
+        tiles: await series(
+          SEEDS.map((seed, i) => ({
+            label: `#${i}`,
+            kind: 'standing' as const,
+            effectId: arrival.id,
+            seed,
+            ticks: arrival.ticks,
+            scale: ARRIVAL_SITE,
+            halfHeight: ARRIVAL_FRAME,
+          })),
+        ),
+      });
+    }
 
     const shaderProblems = logs.filter((line) => /error|could not compile|shader/i.test(line) && !/favicon|404/i.test(line));
     if (shaderProblems.length > 0) problems.push(...shaderProblems);

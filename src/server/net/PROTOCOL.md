@@ -307,7 +307,7 @@ as `MapInfo` and `MapChunk`.
 
 | Bit | Field | Payload |
 |---|---|---|
-| `0x01` | Spawn | `u8 kind` · `str typeId` |
+| `0x01` | Spawn | `u8 kind` · `str typeId` · `u32 spawnTick` |
 | `0x02` | Position | `f32 x` · `f32 y` · `f32 z` |
 | `0x04` | Facing | `f32 facing` |
 | `0x08` | Health | `f32 health` · `f32 maxHealth` |
@@ -327,6 +327,18 @@ with no upserts and no removals is not sent.
 
 `Spawn` is set the first time an entity enters this client's interest set, and
 carries identity so a client never has to infer a field it was not told.
+
+`spawnTick` is the tick the server **created** the body (spec 263), and it is
+the one thing the Spawn bit cannot say by itself: that bit fires the same way
+for a monster made a moment ago and for one the player has spent a minute
+walking toward, so a client drawing an arrival off the bit alone would draw one
+for every body it came within range of. Four bytes, once, on the field that is
+already sent once — `LootDrop`'s decision below and for its stated reason.
+
+A **respawn does not move it**. `respawn` heals and moves the body it already
+has, so no body is created and the Spawn field is not re-sent; a client that
+wants to draw that arrival reads the dead-to-alive edge it watched, which is
+also the only thing another player's client is told about it.
 
 `kind`: `0` player, `1` monster, `2` prop, `3` projectile, `4` mote, `5` drop.
 

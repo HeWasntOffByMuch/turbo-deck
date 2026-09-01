@@ -222,7 +222,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   // Which of them *burn*, from the renderer's own art table rather than from a
-  // list of kinds repeated here (spec 263): a campfire and a standing torch both
+  // list of kinds repeated here (spec 265): a campfire and a standing torch both
   // do and a lamp post does not, and a probe carrying its own copy of that
   // answer would go on passing the day a fourth fixture is added.
   const burners = fixtures.filter((one) => FIXTURE_ART[one.kind as FixtureKind] !== undefined).length;
@@ -282,8 +282,8 @@ async function main(): Promise<void> {
     check(there.lit > 0, 'and the pool is lighting them');
     check(there.lit <= there.offered, 'never more lit than were offered');
     check(there.lit <= POOL_SLOTS, `never more lit than the pool has slots (${String(POOL_SLOTS)})`);
-    // The paint (specs 250, 263). A campfire's prop is stones and charred logs
-    // since 250 and a torch's is a stake with a coal in it since 263, so a fire
+    // The paint (specs 250, 265). A campfire's prop is stones and charred logs
+    // since 250 and a torch's is a stake with a coal in it since 265, so a fire
     // that did not start is a cold ring of stones or an unlit brand -- which
     // looks exactly like one nobody has lit and would never be reported.
     check(

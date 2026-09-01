@@ -68,7 +68,7 @@ interface Tri {
   readonly c: THREE.Vector3;
   readonly color: THREE.Color;
   /**
-   * What this triangle gives off regardless of what falls on it (spec 263).
+   * What this triangle gives off regardless of what falls on it (spec 265).
    *
    * Read off the material rather than assumed, and the reason is the bug this
    * sheet exists to have caught and did not: a lamp's mantle stands *inside* its

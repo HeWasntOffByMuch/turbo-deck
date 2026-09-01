@@ -813,6 +813,15 @@ export interface EntityDelta {
   readonly fields: number;
   readonly kind?: number;
   readonly typeId?: string;
+  /**
+   * The tick this body was created (spec 263). Rides {@link EntityField.Spawn}.
+   *
+   * Identity, in the sense that field's own comment means: it is sent once, on
+   * first sight, and never changes. What it is *for* is telling a body that was
+   * just made from one this client has walked up to -- the Spawn bit alone
+   * cannot, being set on first sight either way.
+   */
+  readonly spawnTick?: number;
   readonly position?: Vec3;
   readonly facing?: number;
   readonly health?: number;
@@ -1373,7 +1382,7 @@ function writeEntityDelta(writer: BufferWriter, entity: EntityDelta): void {
   // facing, mask 6 -- is still one byte.
   writer.varuint(entity.id).varuint(entity.fields);
   if (entity.fields & FIELD_SPAWN) {
-    writer.u8(entity.kind ?? 0).str(entity.typeId ?? '');
+    writer.u8(entity.kind ?? 0).str(entity.typeId ?? '').u32(entity.spawnTick ?? 0);
   }
   if (entity.fields & FIELD_POSITION) {
     const at = entity.position ?? { x: 0, y: 0, z: 0 };
@@ -1431,6 +1440,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   let level: number | undefined;
   let name: string | undefined;
   let turnRate: number | undefined;
+  let spawnTick: number | undefined;
   let poise: number | undefined;
   let shield: number | undefined;
   let shieldUntilTick: number | undefined;
@@ -1439,6 +1449,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
   if (fields & FIELD_SPAWN) {
     kind = reader.u8();
     typeId = reader.str();
+    spawnTick = reader.u32();
   }
   if (fields & FIELD_POSITION) {
     position = { x: reader.f32(), y: reader.f32(), z: reader.f32() };
@@ -1480,6 +1491,7 @@ function readEntityDelta(reader: BufferReader): EntityDelta {
     fields,
     ...(kind === undefined ? {} : { kind }),
     ...(typeId === undefined ? {} : { typeId }),
+    ...(spawnTick === undefined ? {} : { spawnTick }),
     ...(position === undefined ? {} : { position }),
     ...(facing === undefined ? {} : { facing }),
     ...(health === undefined ? {} : { health }),

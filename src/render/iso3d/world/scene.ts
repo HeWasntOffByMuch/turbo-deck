@@ -36,6 +36,16 @@ import { buildTerrainMeshFromChunks, type TerrainMeshHandle } from '../terrain-m
 import type { ChunkFootprint, ChunkMeshArrays } from '../terrain-arrays.js';
 import type { RegionInstances } from '../props.js';
 import { StaggerFlinches } from './stagger-flinch.js';
+import {
+  SETTLED,
+  SpawnPresentations,
+  arrives,
+  isCommitted,
+  spawnEffectFor,
+  spawnEffectScale,
+  spawnSeed,
+  spawnStyleFor,
+} from './spawn-presentation.js';
 import { TurnEase } from '../turn-ease.js';
 import { turnLimitsFor } from './turn-limits.js';
 import type { PerfFlags } from './perf-flags.js';
@@ -130,6 +140,7 @@ import {
 } from '../player-lights.js';
 import { PlayerLighting } from '../player-lighting.js';
 import { hasConjuredLight, resolveCarriedLights, type CarriedLightFacts } from './carried-light.js';
+import { resolveSkyHours, type WorldClock } from './sky-source.js';
 import type { LightRequest } from '../light-residency.js';
 import { WorldLights } from '../world-lights.js';
 import { FireVfx, type FireSite } from './fire-vfx.js';
@@ -326,6 +337,16 @@ export interface FrameInfo {
    * way positions are, so a wind-up fills smoothly rather than in 20Hz steps.
    */
   readonly tick: number;
+  /**
+   * What time it is in the world (spec 264).
+   *
+   * Computed by `view.ts` from the same `tick` above -- the server's clock,
+   * which every client resolves to the same hour because the clock is a pure
+   * function of a tick both ends hold. Pushed in like every other frame fact
+   * rather than read here, because `?clock=` can pin it and a pin is a decision
+   * the mount takes once rather than one this class re-derives per frame.
+   */
+  readonly clock: WorldClock;
   /**
    * The local player's predicted heading (spec 064). Drawn instead of the
    * replicated one for the same reason its position is: facing arrives at 20Hz,
@@ -686,6 +707,8 @@ export class WorldScene {
   private readonly turnEase = new TurnEase();
   /** The rock a poise break puts on a body (spec 173). Presentation only. */
   private readonly staggerFlinches = new StaggerFlinches();
+  /** How far out of the ground an arriving body is (spec 263). Presentation only. */
+  private readonly spawns = new SpawnPresentations();
   private readonly bodies = new Map<number, Body>();
   /**
    * The paint on every afflicted body, and the beat it lands on (spec 215).
@@ -1770,7 +1793,7 @@ export class WorldScene {
     this.listenerY = groundY;
     this.listenerZ = me.y;
     this.followSelf(this.framedPoint(me), groundY, dt);
-    this.applyControls();
+    this.applyControls(frame.clock);
     this.applyPlayerLights(me, groundY, {
       // Only ours, because only ours is on the wire (spec 165): a remote
       // player's off hand is not replicated, so a torch in one is a light this
@@ -2052,6 +2075,8 @@ export class WorldScene {
     // does, and is dropped on the same pass (spec 142).
     this.turnEase.retain(live);
     this.staggerFlinches.retain(live);
+    // And the arrival, for the reason both of those are dropped here (spec 263).
+    this.spawns.retain(live);
   }
 
   private syncBodies(view: ClientView, frame: FrameInfo, dt: number): void {
@@ -2137,7 +2162,53 @@ export class WorldScene {
         frame.tick,
       );
 
-      body.group.position.set(x, ground, y);
+      // The arrival (spec 263), on the same clock and added to the same drawn
+      // transform. Read for every body every frame -- a settled one answers
+      // `SETTLED`, whose offsets are zero -- which is what makes an interrupted
+      // emergence cost nothing to unwind: the line below writes the whole
+      // position rather than adjusting it, so there is no state to put back.
+      const arrival = arrives(entity.kind)
+        ? this.spawns.read(
+            {
+              id: entity.id,
+              // The same call the construction chain above makes, so what
+              // decided the rig is what decides the arrival.
+              style: spawnStyleFor(look, authoredUnitFor(look) !== null),
+              spawnTick: entity.spawnTick,
+              dead: entity.maxHealth > 0 && entity.health <= 0,
+              committed: isCommitted(entity.activity),
+            },
+            frame.tick,
+          )
+        : SETTLED;
+      if (arrival.began) {
+        // One `play` and no handle: both arrivals are one-shots the particle
+        // system retires itself, so there is nothing to hold and no stop owed
+        // -- `swing-vfx.ts`'s case exactly. Fired at the ground under the body
+        // rather than at the body, because what the dirt is coming out of is
+        // the floor, and seeded off where and when so two clients watching one
+        // spawn watch the same one.
+        const id = spawnEffectFor(arrival.style);
+        if (this.vfx.system.has(id)) {
+          this.vfx.play(id, {
+            x,
+            y: ground,
+            z: y,
+            scale: spawnEffectScale(look.radius),
+            seed: spawnSeed(entity.id, entity.spawnTick, frame.tick),
+          });
+        }
+      }
+      // How deep the rig sits is the *rig's* answer, because it is
+      // `(BODY_Y + half the body) * sizeScale * bodySize` and every one of those
+      // is a number `MechRig` owns and a look table can retune. Nothing sinks
+      // without one, which is also the whole of why only a mech burrows.
+      const sink = arrival.buried > 0 && body.mech ? arrival.buried * body.mech.hiddenDepth : 0;
+      // Written every frame rather than only while emerging, the rule the
+      // flinch's pitch below follows: a body that has arrived is put back flat.
+      if (body.mech) body.mech.burrow = arrival.bodyDrop;
+
+      body.group.position.set(x, ground - sink, y);
       // A mesh built facing +x sits at world heading `theta` when yawed -theta.
       //
       // Unless the rig turns itself (spec 262). A mech whose lower body does not
@@ -2332,6 +2403,11 @@ export class WorldScene {
       this.afflictions.forget(id);
       this.swings.forget(id);
       this.auras.forget(id);
+      // No instance is held -- both arrivals are one-shots that retire
+      // themselves -- so what this prevents is the other leak `swing-vfx.ts`
+      // names: a map that grows one entry per body this client has ever seen
+      // (spec 263).
+      this.spawns.forget(id);
       // The same obligation for a shot's paint, and it bites harder: a shot
       // lives a second and a half, so an unstopped one is a leak that runs at
       // the rate of the shooting (spec 218).
@@ -3511,7 +3587,7 @@ export class WorldScene {
     return { x: (me.x + framing.x) / 2, y: (me.y + framing.y) / 2 };
   }
 
-  private applyControls(): void {
+  private applyControls(clock: WorldClock): void {
     const off = this.controls.cameraOffset();
     this.camOffsetTarget.set(off.x, off.y, off.z);
     this.camOffsetCurrent.lerp(this.camOffsetTarget, CAMERA_SMOOTH);
@@ -3529,7 +3605,7 @@ export class WorldScene {
       this.lastHalfWidth = this.halfWidth;
     }
 
-    this.applySun();
+    this.applySun(clock);
     this.syncUnwalkable(this.controls.showUnwalkable());
     // Applied per frame, beside the switches that own these objects the rest of
     // the time: the prop field is replaced whenever a region rebuilds, and the
@@ -3538,8 +3614,13 @@ export class WorldScene {
     if (this.perf.noTerrain && this.terrainMesh) this.terrainMesh.group.visible = false;
   }
 
-  private applySun(): void {
-    const shadow = this.controls.dayNightEnabled() ? this.applyCycleSun() : this.applyManualSun();
+  private applySun(clock: WorldClock): void {
+    // Two things drive this sun since spec 264 -- the world's clock and the
+    // tuning panel -- and `sky-source.ts` holds the one rule that settles them:
+    // the panel wins where it is asking for something, and the game decides
+    // where it is not. `carried-light.ts`'s rule, one system along.
+    const hours = resolveSkyHours(this.controls.skySettings(), clock);
+    const shadow = hours === null ? this.applyManualSun() : this.applyCycleSun(hours);
     this.sun.castShadow = shadow.casting && !this.perf.noShadow;
 
     const frame = shadowFrame(this.halfWidth);
@@ -3560,9 +3641,8 @@ export class WorldScene {
     }
   }
 
-  private applyCycleSun(): HorizonShadow {
-    const sky = this.controls.sky();
-    if (!sky) return this.applyManualSun();
+  private applyCycleSun(hours: number): HorizonShadow {
+    const sky = this.controls.skyAtHours(hours);
 
     const d = sky.lightDirection;
     this.sunDirection.set(d.x, d.y, d.z).normalize();
@@ -3721,7 +3801,7 @@ export class WorldScene {
         x: light.x,
         groundY: light.groundY,
         // Where the light is hung, which is what a flame's root is measured
-        // against (spec 263) -- already the prop's own scale times its row's
+        // against (spec 265) -- already the prop's own scale times its row's
         // height, so a torch placed large burns out of its own bowl.
         lightY: light.y,
         z: light.z,

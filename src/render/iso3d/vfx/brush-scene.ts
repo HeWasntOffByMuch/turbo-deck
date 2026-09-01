@@ -139,7 +139,7 @@ export interface StandingTrigger {
    */
   readonly scale: number;
   /**
-   * Where it stands, relative to the dummy (spec 263). Defaults to the origin,
+   * Where it stands, relative to the dummy (spec 265). Defaults to the origin,
    * which is the dummy's own feet.
    *
    * A campfire is wider than the body beside it and spills out either side of

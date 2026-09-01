@@ -8,6 +8,7 @@ import {
   FIXTURE_LIGHTS,
   fixtureLight,
   footprintRadius,
+  GRAVE_PLAN,
   HOUSE_PLAN,
   SIGN_PLAN,
   STRUCTURE_KINDS,
@@ -117,7 +118,7 @@ interface PropPart {
   /** Base colour, tinted per instance. `foliage` parts also take the autumn turn. */
   readonly color: number;
   /**
-   * What this part gives off regardless of what is shining on it (spec 263):
+   * What this part gives off regardless of what is shining on it (spec 265):
    * three's own `MeshLambertMaterial.emissive`, as an sRGB hex like `color`.
    *
    * For the one thing a prop can be that is *a light*. A point light sits at the
@@ -1307,6 +1308,11 @@ const authored = (index: number, seed: number): number => hashUnit2(index, index
 const HASH_BOARD = 0xb0a2d5;
 const HASH_STONE = 0x57012e;
 const HASH_BRICK = 0xb21c14;
+const HASH_GRAVE = 0x64ab31;
+/** How much the grave's mound is knocked about (spec 263). Rougher than a wall
+ *  stone: a drystone course has to keep overlapping its neighbours after the
+ *  hash has had it, where turned earth only has to stop looking moulded. */
+const MOUND_ROUGH = 0.3;
 
 /** Boards to a tile, and how far each overlaps the one before it. */
 const BOARD_COUNT = 7;
@@ -1850,6 +1856,95 @@ function buildSignParts(): PropPart[] {
   ];
 }
 
+let GRAVE_PARTS: PropPart[] | null = null;
+function graveParts(): PropPart[] {
+  GRAVE_PARTS ??= buildGraveParts();
+  return GRAVE_PARTS;
+}
+
+/**
+ * A grave: a headstone on a plinth, with the earth of the plot heaped in front
+ * of it (spec 263).
+ *
+ * What it has to do is read as *a grave* rather than as a broken wall, from a
+ * hundred units up at this camera's bearing, and the whole of that is the pair.
+ * A slab alone is a stone somebody dropped; a mound alone is a molehill. The two
+ * together, one cold and upright and one dark and lying down, are the only
+ * arrangement here that says a hole was dug and filled in again.
+ *
+ * Its plan comes from {@link GRAVE_PLAN} rather than from numbers typed here,
+ * for the reason the hut's and the sign's do: `FOOTPRINT_BASE` derives the
+ * collider from the stone's two plan dimensions, and a headstone drawn wider
+ * than the plan is a headstone a body stands inside.
+ *
+ * The stone faces the prop's **+Z**, which is the axis the editor's Facing
+ * slider turns -- the same convention the hut's door and the sign's board
+ * already use, so "turn it to face the path" means one thing for all three. The
+ * mound lies on that same +Z, because a reader stands at the *foot* of a grave:
+ * the earth is between them and the stone, and a mound put behind it would draw
+ * a plot running away into the hedge.
+ *
+ * The mound is a knocked-about icosahedron rather than a dome, which is
+ * `rockGeometry`'s whole reason to exist one prop over: turned earth is the last
+ * thing in this world that should be smooth, and a half-sphere in a graveyard
+ * reads as a burial mound at ten times the scale. Its middle sits *at* ground
+ * level, so what shows is the top half and there is no seam to hide -- the same
+ * trick, in the other direction, as sinking a building's walls.
+ */
+function buildGraveParts(): PropPart[] {
+  const { stoneWidth, stoneHeight, stoneThickness, moundLength, moundWidth, moundHeight } = GRAVE_PLAN;
+  // The plinth is what stops the slab reading as a card pushed into the grass --
+  // the sign's frame, one prop over, and for the same reason. Proud of the stone
+  // on every side, and buried like a building's wall so a slope shows no
+  // daylight under it.
+  const plinthHeight = 9;
+  const plinthLength = plinthHeight + BUILDING_SINK;
+  // The mound runs *into* the plinth rather than up to it. `rockGeometry` knocks
+  // every vertex inward by up to half its roughness, so a mound laid exactly
+  // against the base comes out several units short of it -- and a grave with
+  // daylight between the stone and the earth reads as two props that happen to
+  // be near each other. The overlap is that shrinkage, so the two meet however
+  // the hash falls.
+  const plinthFace = (stoneThickness + 8) / 2;
+  const moundCentre = plinthFace + moundLength / 2 - (moundLength / 2) * MOUND_ROUGH;
+  return [
+    {
+      geometry: new THREE.BoxGeometry(stoneWidth + 8, plinthLength, stoneThickness + 8),
+      offsetY: plinthLength / 2 - BUILDING_SINK,
+      color: PALETTE.graveStoneDeep,
+      foliage: false,
+      tintAmount: 0.1,
+    },
+    {
+      // The stone itself, standing on the plinth. `stoneHeight` is measured from
+      // the ground, which is what a person means by how tall a headstone is, so
+      // what is drawn above the plinth is the remainder.
+      geometry: new THREE.BoxGeometry(stoneWidth, stoneHeight - plinthHeight, stoneThickness),
+      offsetY: plinthHeight + (stoneHeight - plinthHeight) / 2,
+      color: PALETTE.graveStone,
+      foliage: false,
+      // A shade more variation than the plinth: a row of markers cut from one
+      // quarry still weathers one stone at a time, and identical slabs down a
+      // row is exactly what `jitterZ` was written to break up on a fence.
+      tintAmount: 0.14,
+      // No `jitterYaw`. A headstone that leans is a headstone nobody has looked
+      // after, which is a fine thing to want and a decision for a level designer
+      // to make with the Facing slider rather than one this geometry makes for
+      // every grave in the world.
+    },
+    {
+      // The plot. Long down the grave, narrow across it, and low -- a bump the
+      // eye reads as ground rather than as an object standing on it.
+      geometry: rockGeometry(HASH_GRAVE, moundWidth / 2, moundHeight, moundLength / 2, MOUND_ROUGH),
+      offsetY: 0,
+      offsetZ: moundCentre,
+      color: PALETTE.graveEarth,
+      foliage: false,
+      tintAmount: 0.12,
+    },
+  ];
+}
+
 /**
  * The light fixtures (spec 250): a campfire, a street lamp on a stake, and a
  * standing torch.
@@ -1866,7 +1961,7 @@ function buildSignParts(): PropPart[] {
  * over. And each sinks a little into the ground, so a fixture on a slope shows
  * no daylight under its base.
  *
- * The one thing worth knowing about their *colour* (spec 263): the parts a light
+ * The one thing worth knowing about their *colour* (spec 265): the parts a light
  * comes out of **emit**, and are the only things in this file that do.
  *
  * That was argued the other way first, and the argument was wrong in a way worth
@@ -2065,7 +2160,7 @@ function buildLampPostParts(): PropPart[] {
       // lamp is a made thing: what separates it from the torch stand beside it
       // at a hundred units is that this one is white and steady.
       //
-      // And it **glows** (spec 263). This is the part the light is coming out
+      // And it **glows** (spec 265). This is the part the light is coming out
       // of: the pool on the street is thrown from a point at its own middle, so
       // nothing but this can say the lamp is lit, and until this it was the one
       // grey box in a lit square. See the header for why standing inside a light
@@ -2123,7 +2218,7 @@ function buildTorchStandParts(): PropPart[] {
       foliage: false,
     },
     {
-      // The coal in the bowl -- and **not** the flame, which is paint (spec 263):
+      // The coal in the bowl -- and **not** the flame, which is paint (spec 265):
       // `fire_torch` in `brush.ts`, played at the rim by `world/fire-vfx.ts`.
       //
       // This is spec 250's campfire decision arriving one prop late. A fire is
@@ -2535,10 +2630,11 @@ export function propGroupParts(group: number): readonly PropPart[] {
   return fenceParts(of.fence);
 }
 
-/** The parts one building draws with (spec 224/260). Memoized; see {@link treeParts}. */
+/** The parts one building draws with (spec 224/260/263). Memoized; see {@link treeParts}. */
 function structureParts(kind: StructureKind): readonly PropPart[] {
   if (kind === 'well') return wellParts();
   if (kind === 'sign') return signParts();
+  if (kind === 'grave') return graveParts();
   return houseParts();
 }
 
@@ -3001,7 +3097,7 @@ export function buildPropField(
     const shared = sharedGeometry(part.geometry, creaseCos, shade.smooth);
     const geometry = shellOf(shared);
     const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
-    // A part that is itself a light (spec 263). Free at this seam and nowhere
+    // A part that is itself a light (spec 265). Free at this seam and nowhere
     // else: the material is built per batch, so the fixtures' glow costs a
     // uniform rather than a batch of its own.
     if (part.emissive !== undefined) {
