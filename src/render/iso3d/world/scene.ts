@@ -53,6 +53,11 @@ import { DETAIL_UNIFORMS, buildDetailTexture } from '../terrain-detail.js';
 import { MechRig, defaultMechTuning } from '../rigs.js';
 import { monsterLookFor } from './monster-look.js';
 import {
+  BEAM_GLOW_HEIGHT,
+  BEAM_GLOW_LIGHTS,
+  BEAM_GLOW_RADIUS,
+  beamGlowAt,
+  beamGlowBrightness,
   beamLookFor,
   sightDotAt,
   sightDotCount,
@@ -154,7 +159,6 @@ import type { AimShape } from './aim.js';
 import {
   SampledGround,
   aimTemplate,
-  laneTemplate,
   bodyRingRadius,
   bodyRingTemplate,
   discTemplate,
@@ -240,7 +244,8 @@ const RANGE_RING_LIFT = 1.1;
 const AIM_SHAPE_LIFT = 1.3;
 const TELEGRAPH_LIFT = 1.5;
 /**
- * The Warden's lance (spec 259). Two decals: the lane, and its hot middle.
+ * The Warden's lance (spec 259): the shaft, its hot middle, and the pixels of
+ * the sight that precedes it.
  *
  * Red, which is this file's own vocabulary for *it is about to hurt* -- but
  * hotter and deeper than {@link TELEGRAPH_COLOR}'s salmon, because a telegraph
@@ -248,23 +253,20 @@ const TELEGRAPH_LIFT = 1.5;
  * the same ramp rather than white: white on this grass is a hole rather than a
  * heat, which is the finding `brushFire`'s embers already record one system
  * over.
+ *
+ * `LANCE_COLOR` is also what the beam's **light** is, and that is one constant
+ * rather than two on purpose: a shaft one red and a pool of another underneath
+ * it is two weapons drawn on top of each other.
+ *
+ * There is no lift among these any more. The lance had a ground decal and the
+ * decals are ordered by one, and since spec 259's third pass it paints nothing
+ * on the ground at all -- the shaft and its core are boxes in the air, ordered
+ * by depth like anything else.
  */
 const LANCE_COLOR = 0xff3323;
 const LANCE_CORE_COLOR = 0xffc07a;
 /** The sight's pixels, while it is aiming. The shaft's own red, undimmed. */
 const LANCE_SIGHT_COLOR = 0xff4a33;
-/**
- * The lane a firing lance burns, above the telegraph.
- *
- * The order is the drawing order, the rule the three lifts above are already
- * written under: the lance's footprint goes over a ground-targeted ring, because
- * a beam that is *firing* outranks a blast that is still winding up.
- *
- * There is one of these rather than two since the beam itself left the ground:
- * the shaft and its core are boxes in the air and are ordered by depth like
- * anything else, so the only thing left needing a lift is the lane under them.
- */
-const LANCE_LIFT = 1.55;
 /**
  * The two rings drawn under a body, highest of the lot because they are the
  * ones that say *which* -- and because a body being attacked is often standing
@@ -620,6 +622,15 @@ export class WorldScene {
    * `player-lighting.ts` measures at arm's length.
    */
   private readonly conjuredLights: LightRequest[] = [];
+  /**
+   * The red light a firing lance throws (spec 259).
+   *
+   * The same arrangement one system over: gathered in `syncLances`, where the
+   * beam's *drawn* line is in scope, and spent by `applyWorldLights` later in
+   * the frame. A request rather than a light, so a Warden firing changes what
+   * the pool is pointed at and never how many lights the scene holds.
+   */
+  private readonly lanceLights: LightRequest[] = [];
   /** Scratch for the body anchor, so a frame of lit walking allocates nothing. */
   private readonly lightAnchor = new THREE.Vector3();
   private readonly unwalkable = new THREE.Group();
@@ -1318,7 +1329,16 @@ export class WorldScene {
     return this.worldLights?.heldKeys() ?? [];
   }
 
-  /** How many fixtures are offering themselves to the pool right now. */
+  /**
+   * How many lights are offering themselves to the pool right now.
+   *
+   * *Lights*, not fixtures: the map's own, plus any conjured light on a body
+   * near you, plus the three a firing Warden hangs along its beam (spec 259).
+   * `probe-world-lights.ts` compares this against the fixture count in the map
+   * file it read itself, which is exact only because neither of the other two is
+   * ever up while it is looking -- there is no Warden on the shipped map and
+   * nothing near the square carries a conjured light.
+   */
   worldLightsOffered(): number {
     return this.lightRequests.length;
   }
@@ -3012,6 +3032,12 @@ export class WorldScene {
    */
   private syncLances(view: ClientView, frame: FrameInfo): void {
     const live = new Set<number>();
+    // Rebuilt every frame rather than released by event, for `syncTelegraphs`'
+    // reason: a beam ends in half a dozen ways -- it finishes, it is
+    // interrupted, the body dies, the cast is withdrawn, the entity streams out
+    // -- and a light nobody asked for this frame is one the pool parks by
+    // itself.
+    this.lanceLights.length = 0;
 
     for (const cast of view.casts) {
       // The ability first, which is a lookup in a one-row map: every ordinary
@@ -3028,7 +3054,7 @@ export class WorldScene {
 
       let lance = this.lances.get(cast.entityId);
       if (!lance) {
-        lance = this.makeLance();
+        lance = this.makeLance(cast.entityId);
         this.lances.set(cast.entityId, lance);
       }
 
@@ -3049,7 +3075,7 @@ export class WorldScene {
       if (look.kind === 'lockOn') {
         this.laySight(lance, look);
       } else {
-        this.layShaft(lance, look, { x: at.x, z: at.z, heading: body.drawnFacing });
+        this.layShaft(lance, look, { x: at.x, z: at.z }, frame.tick);
       }
     }
 
@@ -3060,8 +3086,8 @@ export class WorldScene {
     }
   }
 
-  /** One lance's three pictures, built once and shown one at a time. */
-  private makeLance(): Lance {
+  /** One lance's two pictures, built once and shown one at a time. */
+  private makeLance(entityId: number): Lance {
     const positions = new Float32Array(LANCE_SIGHT_DOTS * 3);
     const geometry = new THREE.BufferGeometry();
     geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -3090,13 +3116,12 @@ export class WorldScene {
     shaft.visible = false;
     core.visible = false;
 
-    const footprint = new GroundDecal(decalMaterial(LANCE_COLOR, 0.3));
-    this.scene.add(sight, shaft, core, footprint.mesh);
-    return { sight, positions, shaft, core, footprint };
+    this.scene.add(sight, shaft, core);
+    return { entityId, sight, positions, shaft, core };
   }
 
   private disposeLance(lance: Lance): void {
-    this.scene.remove(lance.sight, lance.shaft, lance.core, lance.footprint.mesh);
+    this.scene.remove(lance.sight, lance.shaft, lance.core);
     lance.sight.geometry.dispose();
     (lance.sight.material as THREE.Material).dispose();
     // The geometry is the shared unit box and is never disposed; the materials
@@ -3104,7 +3129,9 @@ export class WorldScene {
     // share a shimmer.
     (lance.shaft.material as THREE.Material).dispose();
     (lance.core.material as THREE.Material).dispose();
-    lance.footprint.dispose();
+    // Nothing to release for the lights: they were never held, only *asked* for
+    // once a frame, so a lance that has stopped firing stops asking and the pool
+    // parks the slots on its own.
   }
 
   /** The dotted sight: pixels strung along the line, sliding away from the head. */
@@ -3128,14 +3155,31 @@ export class WorldScene {
     lance.sight.visible = true;
     lance.shaft.visible = false;
     lance.core.visible = false;
-    lance.footprint.hide();
   }
 
-  /** The shaft, and the lane on the ground it is standing on. */
+  /**
+   * The shaft, and the red light it throws on the ground under it.
+   *
+   * The lights go in as ordinary {@link LightRequest}s beside the map's own
+   * fixtures rather than as a pool of their own, which is the decision here
+   * worth stating. What it buys is that nothing about the number of lights in
+   * the scene changes when a Warden fires: the count is part of three's program
+   * key, so a beam that allocated its own would recompile every material in the
+   * scene at the moment the frame is busiest. What it costs is that a beam can
+   * be outranked -- `assignLights` ranks on distance to the camera's focus and
+   * will not put a held light out for one less than `swapMargin` nearer -- so
+   * firing into a lit village square can leave the beam unlit. That is the
+   * pool's own graceful degradation and it is one-directional: a beam may go
+   * dark, and it can never cost a frame.
+   *
+   * Gathered here and spent by `applyWorldLights` later in the frame, which is
+   * exactly what the body loop already does with the conjured lights.
+   */
   private layShaft(
     lance: Lance,
     look: ShaftLook,
-    at: { x: number; z: number; heading: number },
+    at: { x: number; z: number },
+    tick: number,
   ): void {
     layBeamBox(lance.shaft, LANCE_FROM, LANCE_TO, look.width);
     layBeamBox(lance.core, LANCE_FROM, LANCE_TO, look.coreWidth);
@@ -3145,17 +3189,29 @@ export class WorldScene {
     lance.core.visible = true;
     lance.sight.visible = false;
 
-    // The lane, conforming to the ground: the one of the three that is honest
-    // about the width, and the one spec 153's argument is about -- a flat quad
-    // six hundred units long is buried by its own half-width times the gradient
-    // under it, and this is what a player judges "am I in it" from.
-    lance.footprint.lay(
-      `lance:${look.footprintWidth}:${look.length}`,
-      () => laneTemplate(look.length, look.footprintWidth),
-      { x: at.x, z: at.z, heading: at.heading, lift: LANCE_LIFT },
-      this.sampledGround.at,
-    );
-    lance.footprint.material.opacity = look.footprintOpacity;
+    // Along the beam's own line on the ground plane, at a height of their own:
+    // see `BEAM_GLOW_HEIGHT` -- a light down at the shaft's far tip would light
+    // a spot the size of a footprint and nothing else.
+    const dirX = (LANCE_TO.x - at.x) / Math.max(1e-6, look.length);
+    const dirZ = (LANCE_TO.z - at.z) / Math.max(1e-6, look.length);
+    for (let i = 0; i < BEAM_GLOW_LIGHTS; i++) {
+      const along = beamGlowAt(look, i);
+      const x = at.x + dirX * along;
+      const z = at.z + dirZ * along;
+      this.lanceLights.push({
+        // The identity is the light, not the place: it moves down the beam as
+        // the machine sweeps, and a key that moved with it would look to the
+        // residency like a light going out and another coming on -- which is the
+        // one thing the hysteresis exists to prevent.
+        key: `lance:${lance.entityId}:${i}`,
+        x,
+        y: this.ground(x, z) + BEAM_GLOW_HEIGHT,
+        z,
+        color: LANCE_COLOR,
+        brightness: beamGlowBrightness(i, tick),
+        radius: BEAM_GLOW_RADIUS,
+      });
+    }
   }
 
   private ageEffects(): void {
@@ -3653,6 +3709,7 @@ export class WorldScene {
     this.lightRequests.length = 0;
     for (const light of fixtures) this.lightRequests.push(light);
     for (const light of this.conjuredLights) this.lightRequests.push(light);
+    for (const light of this.lanceLights) this.lightRequests.push(light);
     // The point the camera is framing rather than where the camera is: it parks
     // a constant 6,000 units back, so its own position says nothing about which
     // corner of the world is on screen.
@@ -3729,14 +3786,15 @@ export class WorldScene {
  * closely. What happens per frame is a rewrite of a `Float32Array` that already
  * exists.
  */
-/** One Warden's lance: the sight, the shaft inside it, and the lane it burns. */
+/** One Warden's lance: the sight, and the shaft with its core inside it. */
 interface Lance {
+  /** Whose it is, so the lights it asks for have a key that is stable. */
+  readonly entityId: number;
   readonly sight: THREE.Points;
   /** The sight's world-space vertices, rewritten per frame rather than rebuilt. */
   readonly positions: Float32Array;
   readonly shaft: THREE.Mesh;
   readonly core: THREE.Mesh;
-  readonly footprint: GroundDecal;
 }
 
 /**

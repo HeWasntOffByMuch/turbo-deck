@@ -219,8 +219,8 @@ identical solo.
 
 ## The picture
 
-First-pass visuals, and the whole of them is one line drawn two ways, one decal
-under it and one effect already being sent.
+First-pass visuals, and the whole of them is one line drawn two ways, the red
+light it throws, and one effect already being sent.
 
 **The line runs from the head's opening to just off the ground at the far end**,
 and both of its ends are load-bearing. The near end is the opening because that
@@ -236,7 +236,6 @@ body it is hurting.
 | lock-on | 23 dots, `SIGHT_SPACING` 26 apart, sliding outward | 2 raster pixels, unattenuated | 0.38 -> 0.68 as it settles | this way, and soon |
 | firing, the shaft | a box along the line | 34% of the lane, 24 | 0.85 | this line, now |
 | the core | a box inside it | 12% of the lane, 8 | 0.92, shimmering | it is live |
-| firing, the footprint | a ground decal | 70, the lane's own | 0.30 | this ground damages |
 
 The two phases differ in **shape** and not in brightness alone, which is
 deliberate: the retro pass quantizes brightness and cannot quantize a shape, so
@@ -252,16 +251,60 @@ per frame. The count is capped at `LANCE_SIGHT_DOTS` and the surplus is parked o
 the head, because a `Points` cloud rebuilt whenever a dot crosses the end is a
 `Float32Array` sixty times a second for as long as somebody is being aimed at.
 
-The **shaft is narrower than the lane** and the footprint is exactly the lane,
-which is the relationship a fireball already has to its blast: the object you can
-see is smaller than the region it affects, and the mark on the ground is what
-states the region. A shaft drawn at the lane's full width is a girder. That is
-also where "narrower" is spent: `width` is the ground the sim damages and is what
-the fight below was measured against, so it does not move -- what got narrower is
-`SHAFT_FRACTION`, the object. The footprint is the one part that conforms to the
-terrain -- spec 153's argument, since the lane grazes the ground for six hundred
-units and a flat quad that long is buried by its own half-width times the
-gradient under it.
+### Nothing is painted on the ground
+
+There was a decal at the lane's full width under the shaft, on the argument that
+the honest picture of a danger zone is the danger zone. It read as a painted
+road: a hard-edged band six hundred units long over the grass, wider and more
+solid than the weapon making it, and the thing an eye went to.
+
+What replaces it is **light**. A firing beam hangs `BEAM_GLOW_LIGHTS` red point
+lights along itself and the ground under it is lit rather than painted, which is
+the register the rest of this game says it in -- a campfire does not draw a disc
+on the floor either. They go in as ordinary `LightRequest`s beside the map's own
+fixtures rather than as a pool of their own, so **the number of lights in the
+scene never changes when a Warden fires**: the count is part of three's program
+key, and a beam that allocated its own would recompile every material in the
+scene at the moment the frame is busiest. What that costs is that a beam can be
+outranked -- `assignLights` ranks on distance to the camera's focus and will not
+put a held light out for one less than `swapMargin` nearer -- so firing into a
+lit village square can leave the beam unlit. That is the pool's own graceful
+degradation and it is one-directional: a beam may go dark, and it can never cost
+a frame.
+
+Three numbers, and two of them were got wrong first.
+
+**`BEAM_GLOW_HEIGHT` is 145, three times the muzzle's own height**, and it is
+the constant that decides whether this works. What a point light lands on flat
+ground with is `brightness * (radius/2)^2 * facing / d^2`, and directly beneath
+it `d` *is* the height -- so a light on the beam, at the 5 units its far end sits
+at, delivers about two thousand times what it delivers a body-length away. The
+first cut did exactly that and drew white holes in the grass with dark ground
+between them. Lifted, the pool runs 2.3 under the beam, 1.4 a body-length off
+it, 0.7 at 150 units and nothing by 300.
+
+**`GLOW_BRIGHTNESS` is 1.4, under a campfire's 2.2**, and it was chosen against
+the **retro pass** rather than by eye. `preview-lance.ts` reports how far the
+light moves the ground in *colour bands*, and there are five: a wash under half a
+band is one the quantize rounds away, which is the trap spec 074's streak and
+spec 252's ground both fell into. Measured, 15% of the frame moves by a full
+band. At 0.5 it was 2% and mostly invisible; at 3.1 the ground blew out and the
+beam read as lava.
+
+**The flicker is three incommensurate sines**, per light, with a phase of its
+own. One sine is a *pulse* -- machinery idling -- and three that never line up
+have no beat to hear; lit in step they are one lamp on a dimmer, and out of step
+they are an unstable line. It is bounded at two thirds of the peak rather than
+running to zero: a strobe over a weapon somebody is trying to walk out of takes
+the ground away at the moment they most need to see it.
+
+What this costs is worth stating plainly. A lit pool has no edge, so **the shaft
+is now the only hard statement of where the beam is, and it is 34% of the lane**.
+A player at the lane's rim can be hit with nothing solid drawn on them. `width`
+is what the fight below was measured against, so the honest fix if that reads
+badly is to bring the lane down to the shaft -- not to paint the ground again.
+
+### The rest
 
 `world/warden-beam.ts` is the pure half and decides all of it from the replicated
 cast through `data/warden.ts`'s own `wardenPhaseOf` -- the same function the sim
@@ -285,9 +328,10 @@ authored as a position: an offset is a point in the effect's flat frame, and six
 hundred units down-range on a slope that is a mark floating over a valley -- so
 it falls onto whatever the scene says the ground is.
 
-Nothing is drawn during the lock-on but the dots. No flash, no smoke, no mass
-anywhere: the beam is continuous and the sparks are played eight times over it,
-so anything with weight would stack eight deep over the body standing in it.
+Nothing is drawn during the lock-on but the dots. No flash, no smoke, no light
+and no mass anywhere: the beam is continuous and the sparks are played eight
+times over it, so anything with weight would stack eight deep over the body
+standing in it.
 
 ## Tuning, measured
 

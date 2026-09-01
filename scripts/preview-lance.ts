@@ -40,23 +40,23 @@ import { PNG } from 'pngjs';
 
 import { WARDEN_LASER } from '../src/server/data/warden.js';
 import { CastPhase } from '../src/server/sim/types.js';
+import type { HeightAt } from '../src/render/iso3d/world/ground-decal.js';
 import {
-  SampledGround,
-  laneTemplate,
-  projectDecal,
-  vertexCount,
-  type DecalTemplate,
-  type HeightAt,
-} from '../src/render/iso3d/world/ground-decal.js';
-import {
+  BEAM_GLOW_HEIGHT,
+  BEAM_GLOW_LIGHTS,
+  BEAM_GLOW_RADIUS,
   SHAFT_FRACTION,
   SIGHT_SPACING,
+  beamGlowAt,
+  beamGlowBrightness,
   beamLookFor,
   sightDotAt,
   sightDotCount,
   type BeamCast,
+  type ShaftLook,
   type SightLook,
 } from '../src/render/iso3d/world/warden-beam.js';
+import { pointIntensity } from '../src/render/iso3d/player-lights.js';
 import { loadMap } from '../src/terrain/map-world.js';
 import { loadMapFile } from '../src/server/world/map-file.js';
 
@@ -186,7 +186,6 @@ function beamBox(from: Vec3, to: Vec3, thickness: number): Tri[] {
 
 const map = loadMap(loadMapFile().doc);
 const rawHeight: HeightAt = (x, z) => map.world.heightAt(x, z);
-const heightAt = new SampledGround(rawHeight).at;
 
 /** Ground triangles near the window, as `terrain-mesh.ts` winds them. */
 function terrainTriangles(cx: number, cz: number, half: number): Tri[] {
@@ -208,32 +207,6 @@ function terrainTriangles(cx: number, cz: number, half: number): Tri[] {
         );
       }
     }
-  }
-  return tris;
-}
-
-function decalTriangles(
-  template: DecalTemplate,
-  placement: { x: number; z: number; heading: number; lift: number },
-): Tri[] {
-  const world = projectDecal(
-    template,
-    placement,
-    heightAt,
-    new Float32Array(vertexCount(template) * 3),
-  );
-  const vertex = (i: number): [number, number, number] => [
-    world[i * 3] ?? 0,
-    world[i * 3 + 1] ?? 0,
-    world[i * 3 + 2] ?? 0,
-  ];
-  const tris: Tri[] = [];
-  for (let i = 0; i < template.index.length; i += 3) {
-    tris.push({
-      a: vertex(template.index[i] ?? 0),
-      b: vertex(template.index[i + 1] ?? 0),
-      c: vertex(template.index[i + 2] ?? 0),
-    });
   }
   return tris;
 }
@@ -264,6 +237,45 @@ function newCell(): Cell {
   };
 }
 
+/** One point light, as the frame throws it. */
+interface Lamp {
+  readonly at: Vec3;
+  readonly color: RGB;
+  /** three's `intensity`, i.e. `pointIntensity(brightness, radius)`. */
+  readonly intensity: number;
+  /** three's `distance`: the cutoff its window is built on. */
+  readonly distance: number;
+}
+
+/**
+ * The lights lit for the shot being drawn.
+ *
+ * Module state rather than an argument, because `draw` is called once per layer
+ * of a shot and every layer is lit by the same thing. Set by `render` and read
+ * only for opaque geometry -- the beam's own boxes are emissive and are not
+ * shaded at all.
+ */
+let lamps: readonly Lamp[] = [];
+
+const saturate = (x: number): number => Math.min(1, Math.max(0, x));
+
+/**
+ * three's own point-light falloff, transcribed.
+ *
+ * The physical branch of `getDistanceAttenuation` -- `LEGACY_LIGHTS` is off in
+ * this renderer -- borrowed verbatim from `preview-fixtures.ts`, for its stated
+ * reason: a falloff written from memory is a preview that flatters or punishes
+ * `BEAM_GLOW_BRIGHTNESS` by an amount nobody could measure.
+ */
+function attenuation(distance: number, cutoff: number): number {
+  let falloff = 1 / Math.max(distance * distance, 0.01);
+  if (cutoff > 0) {
+    const w = saturate(1 - Math.pow(distance / cutoff, 4));
+    falloff *= w * w;
+  }
+  return falloff;
+}
+
 function draw(
   cell: Cell,
   tris: readonly Tri[],
@@ -291,8 +303,37 @@ function draw(
     );
     if (alpha >= 1 && dot(normal, forward) > 0) continue;
     const lambert = AMBIENT + (1 - AMBIENT) * Math.max(0, Math.abs(dot(normal, light)));
+    // Per triangle, sampled at the centroid, which is what makes this a
+    // *flat*-shaded renderer -- and is why the ground is a grid fine enough for
+    // a pool of light to have a shape on it.
+    const centroid: Vec3 = [
+      (t.a[0] + t.b[0] + t.c[0]) / 3,
+      (t.a[1] + t.b[1] + t.c[1]) / 3,
+      (t.a[2] + t.b[2] + t.c[2]) / 3,
+    ];
+    const glow = [0, 0, 0];
+    for (const lamp of lamps) {
+      const dx = lamp.at[0] - centroid[0];
+      const dy = lamp.at[1] - centroid[1];
+      const dz = lamp.at[2] - centroid[2];
+      const distance = Math.hypot(dx, dy, dz);
+      if (distance <= 0) continue;
+      // The grazing term, which is the one `preview-fixtures.ts` exists to
+      // print: the ground is not facing the light, so what lands on it is the
+      // authored brightness scaled by `height / hypot(height, d)`.
+      const facing = Math.max(0, dot(normal, [dx / distance, dy / distance, dz / distance]));
+      if (facing <= 0) continue;
+      const irradiance = lamp.intensity * attenuation(distance, lamp.distance) * facing;
+      for (let k = 0; k < 3; k++) glow[k] = (glow[k] ?? 0) + (lamp.color[k] ?? 0) * irradiance;
+    }
     const shade: RGB =
-      alpha >= 1 ? [color[0] * lambert, color[1] * lambert, color[2] * lambert] : color;
+      alpha >= 1
+        ? [
+            color[0] * (lambert + (glow[0] ?? 0)),
+            color[1] * (lambert + (glow[1] ?? 0)),
+            color[2] * (lambert + (glow[2] ?? 0)),
+          ]
+        : color;
 
     const px = (u: number): number => ((u - midU) / (2 * HALF) + 0.5) * CELL;
     const py = (v: number): number => (0.5 - (v - midV) / (2 * HALF)) * CELL;
@@ -407,13 +448,78 @@ interface Shot {
   readonly tick: number;
 }
 
-function render(shot: Shot): { cell: Cell; cover: number; lift: readonly number[] } {
-  const cell = newCell();
-  const ground = terrainTriangles(centre[0], centre[2], HALF);
-  draw(cell, ground, GRASS, 1, centre);
-  const before = Float64Array.from(cell.rgb);
+/**
+ * The bodies, drawn last.
+ *
+ * So a player standing in the beam is drawn over it where the beam is on the
+ * ground and behind it where the beam is in the air -- which is the whole
+ * readability question, and is why they are blocks rather than discs.
+ */
+function drawBodies(cell: Cell): void {
+  for (const body of BODIES) {
+    const x = MECH_AT.x + dirX * (body.at[0] ?? 0) - dirZ * (body.at[1] ?? 0);
+    const z = MECH_AT.z + dirZ * (body.at[0] ?? 0) + dirX * (body.at[1] ?? 0);
+    const base = rawHeight(x, z);
+    draw(cell, block([x, base, z], body.radius, body.height), body.color, 1, centre);
+  }
+}
 
+/**
+ * The lights a firing beam hangs along itself, as the frame throws them.
+ *
+ * The same three the scene asks the pool for -- `beamGlowAt` for where and
+ * `beamGlowBrightness` for how much -- through `pointIntensity`, which is the
+ * conversion three's `intensity` field wants. Reproducing the arithmetic here
+ * rather than importing the scene's, because that half is three.js and this
+ * script rasterises in software; what is shared is the two pure functions the
+ * numbers actually come from.
+ */
+function beamLamps(look: ShaftLook, tick: number): Lamp[] {
+  const out: Lamp[] = [];
+  for (let i = 0; i < BEAM_GLOW_LIGHTS; i++) {
+    const along = beamGlowAt(look, i);
+    const x = MECH_AT.x + dirX * along;
+    const z = MECH_AT.z + dirZ * along;
+    out.push({
+      at: [x, rawHeight(x, z) + BEAM_GLOW_HEIGHT, z],
+      color: LANCE,
+      intensity: pointIntensity(beamGlowBrightness(i, tick), BEAM_GLOW_RADIUS),
+      distance: BEAM_GLOW_RADIUS,
+    });
+  }
+  return out;
+}
+
+/** The frame with nothing happening in it, rendered once: what a lift is against. */
+const BARE = ((): Float64Array => {
+  lamps = [];
+  const cell = newCell();
+  draw(cell, terrainTriangles(centre[0], centre[2], HALF), GRASS, 1, centre);
+  drawBodies(cell);
+  return Float64Array.from(cell.rgb);
+})();
+
+interface Shot0 {
+  readonly cell: Cell;
+  /** Fraction of the frame the beam's own geometry paints. */
+  readonly cover: number;
+  /** How far it moves the ground's colour where it paints, in retro bands. */
+  readonly lift: readonly number[];
+  /** Fraction of the frame its *light* moves by half a band or more. */
+  readonly glowArea: number;
+  /** How far it moves it there, in retro bands, averaged over those pixels. */
+  readonly glowLift: number;
+}
+
+function render(shot: Shot): Shot0 {
   const look = beamLookFor('warden', shot.cast, shot.tick);
+  // Set before anything is drawn, because the ground is what the light lands on
+  // and it is the first thing rasterised.
+  lamps = look?.kind === 'firing' ? beamLamps(look, shot.tick) : [];
+
+  const cell = newCell();
+  draw(cell, terrainTriangles(centre[0], centre[2], HALF), GRASS, 1, centre);
+
   if (look) {
     // The line: out of the head's opening, down to just off the ground at the
     // far end. The origin's height is `MechRig`'s in the game and a constant
@@ -425,21 +531,6 @@ function render(shot: Shot): { cell: Cell; cover: number; lift: readonly number[
     const to: Vec3 = [endX, rawHeight(endX, endZ) + look.endLift, endZ];
 
     if (look.kind === 'firing') {
-      // The lane first: it is under the shaft, and drawing it after would put a
-      // translucent decal over the solid thing standing on it.
-      draw(
-        cell,
-        decalTriangles(laneTemplate(look.length, look.footprintWidth), {
-          x: MECH_AT.x,
-          z: MECH_AT.z,
-          heading: HEADING,
-          lift: 1.55,
-        }),
-        LANCE,
-        look.footprintOpacity,
-        centre,
-        true,
-      );
       draw(cell, beamBox(from, to, look.width), LANCE, look.opacity, centre, true);
       draw(cell, beamBox(from, to, look.coreWidth), LANCE_CORE, look.coreOpacity, centre, true);
     } else {
@@ -465,32 +556,48 @@ function render(shot: Shot): { cell: Cell; cover: number; lift: readonly number[
     }
   }
 
-  // The bodies last, so a player standing in the beam is drawn over it where the
-  // beam is on the ground and behind it where the beam is in the air -- which is
-  // the whole readability question, and is why they are blocks rather than discs.
-  for (const body of BODIES) {
-    const x = MECH_AT.x + dirX * (body.at[0] ?? 0) - dirZ * (body.at[1] ?? 0);
-    const z = MECH_AT.z + dirZ * (body.at[0] ?? 0) + dirX * (body.at[1] ?? 0);
-    const base = rawHeight(x, z);
-    draw(cell, block([x, base, z], body.radius, body.height), body.color, 1, centre);
-  }
+  drawBodies(cell);
+  lamps = [];
 
+  const band = 1 / RETRO_LEVELS;
   let painted = 0;
   const sum = [0, 0, 0];
   const was = [0, 0, 0];
+  // The light is measured everywhere the beam does *not* paint, which is the
+  // whole of what replaced the ground decal: the same instrument would report a
+  // hard band and a lit pool identically if it only looked where the beam is.
+  let glowPixels = 0;
+  let glowSum = 0;
   for (let i = 0; i < CELL * CELL; i++) {
-    if (cell.painted[i] !== 1) continue;
-    painted++;
+    let moved = 0;
     for (let k = 0; k < 3; k++) {
-      sum[k] = (sum[k] ?? 0) + (cell.rgb[i * 3 + k] ?? 0);
-      was[k] = (was[k] ?? 0) + (before[i * 3 + k] ?? 0);
+      moved = Math.max(moved, Math.abs((cell.rgb[i * 3 + k] ?? 0) - (BARE[i * 3 + k] ?? 0)));
     }
+    if (cell.painted[i] === 1) {
+      painted++;
+      for (let k = 0; k < 3; k++) {
+        sum[k] = (sum[k] ?? 0) + (cell.rgb[i * 3 + k] ?? 0);
+        was[k] = (was[k] ?? 0) + (BARE[i * 3 + k] ?? 0);
+      }
+      continue;
+    }
+    // Half a band is this file's own threshold for a mark that survives the
+    // quantize at all -- below it the retro pass rounds the change away and the
+    // ground is not lit, it merely differs in a float nobody can see.
+    if (moved < band / 2) continue;
+    glowPixels++;
+    glowSum += moved / band;
   }
-  const band = 1 / RETRO_LEVELS;
   const lift = [0, 1, 2].map((k) =>
     painted === 0 ? 0 : Math.abs((sum[k] ?? 0) - (was[k] ?? 0)) / painted / band,
   );
-  return { cell, cover: painted / (CELL * CELL), lift };
+  return {
+    cell,
+    cover: painted / (CELL * CELL),
+    lift,
+    glowArea: glowPixels / (CELL * CELL),
+    glowLift: glowPixels === 0 ? 0 : glowSum / glowPixels,
+  };
 }
 
 const encode = (linear: number): number => {
@@ -547,11 +654,14 @@ console.log(
     `shaft ${(WARDEN_LASER.width * SHAFT_FRACTION).toFixed(0)}; ` +
     `the sight is ${sightDotCount(sight)} pixels ${SIGHT_SPACING} apart\n`,
 );
-console.log('  phase                     cover   lift (r/g/b, in retro bands)');
+console.log(
+  '  phase                     cover   lift (r/g/b, bands)      lit    by (bands)',
+);
 for (const entry of cells) {
   console.log(
     `  ${entry.shot.label.padEnd(24)} ${(entry.cover * 100).toFixed(2).padStart(5)}%   ` +
-      entry.lift.map((v) => v.toFixed(2)).join(' / '),
+      `${entry.lift.map((v) => v.toFixed(2)).join(' / ').padEnd(22)}  ` +
+      `${(entry.glowArea * 100).toFixed(2).padStart(5)}%  ${entry.glowLift.toFixed(2)}`,
   );
 }
 console.log(`\nwrote ${join(outDir, 'warden-lance.png')}`);

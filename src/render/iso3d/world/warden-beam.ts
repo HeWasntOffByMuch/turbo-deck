@@ -25,14 +25,24 @@
  * level beam at head height would be a weapon that visibly passes over the body
  * it is hurting.
  *
- * ## The width, and which of the two shapes is honest about it
+ * ## Nothing is painted on the ground
  *
- * The **footprint** on the ground is the lane's own width, and it is the
- * truthful one: what is drawn there is what `selectByArea` picks bodies out of.
- * The **shaft** is deliberately narrower, and that is the relationship a
- * fireball already has to its blast -- the object you can see is smaller than
- * the region it affects, and the mark on the ground is what states the region.
- * A shaft drawn at the lane's full width is a girder rather than a beam.
+ * There was a decal at the lane's full width under the shaft, on the argument
+ * that the honest picture of a danger zone is the danger zone. It read as a
+ * painted road: a hard-edged band six hundred units long over the grass, wider
+ * and more solid than the weapon making it, and the thing an eye went to.
+ *
+ * What replaces it is **light**. The beam hangs {@link BEAM_GLOW_LIGHTS} red
+ * point lights along itself and the ground under it is lit rather than painted,
+ * which says the same thing in the register the rest of this game says it in --
+ * a campfire does not draw a disc on the floor either.
+ *
+ * What that costs is stated rather than hidden: a lit pool has no edge, so the
+ * shaft is now the only *hard* statement of where the beam is and it is
+ * {@link SHAFT_FRACTION} of the lane. A player at the lane's rim can be hit with
+ * nothing solid drawn on them. The lane is what the fight was measured against,
+ * so the honest fix if that reads badly is to bring `width` down to the shaft
+ * rather than to paint the ground again.
  *
  * ## Nothing here reads a clock
  *
@@ -78,6 +88,88 @@ export const CORE_FRACTION = 0.12;
  */
 export const SIGHT_SPACING = 26;
 
+/**
+ * How many red lights a firing beam hangs along itself.
+ *
+ * Three, and the number is set from both ends. Fewer leaves gaps -- a point
+ * light's pool is a disc and this thing is six hundred units long, so one in the
+ * middle lights the middle and says nothing about the ends. More is a claim on
+ * the light pool: these go in as ordinary {@link LightRequest}s beside the map's
+ * own fixtures, so every one the beam asks for is one a campfire near the player
+ * may not get.
+ */
+export const BEAM_GLOW_LIGHTS = 3;
+
+/**
+ * How far each one reaches.
+ *
+ * A little under half the run, so three of them overlap rather than beading. The
+ * campfire's own 420 is the calibration this is read against -- a laser should
+ * not out-reach a bonfire, it should be harsher and nearer.
+ */
+export const BEAM_GLOW_RADIUS = 380;
+
+/**
+ * How high above the ground each one sits.
+ *
+ * Three times the muzzle's own height, and the reason is the near field rather
+ * than the far one. What a point light lands on flat ground with is
+ * `brightness * (radius/2)^2 * facing / d^2`, and directly underneath, `d` *is*
+ * the height -- so a light on the beam, at the 5 units its far end sits at,
+ * delivers about two thousand times what it delivers a body-length away. That is
+ * not a bright beam, it is a white hole in the grass with dark ground around it,
+ * which is exactly what the first cut of this drew.
+ *
+ * Height is the only lever on that: it is the term the near field divides by.
+ * At 145 the pool runs 0.50 under the beam to 0.21 at 150 units out, which is a
+ * red wash hugging the line rather than a floodlit field or a row of hot spots.
+ *
+ * Nothing can see where the light *is* -- a point light draws nothing of itself
+ * -- so what this costs is that the three of them together approximate a
+ * six-hundred-unit line of light rather than being on it. The alternative is
+ * more lights lower down, and each one is a slot the map's own fixtures do not
+ * get.
+ */
+export const BEAM_GLOW_HEIGHT = 145;
+
+/**
+ * What one throws with nothing taken off it, in `pointIntensity`'s unit:
+ * illuminance at half {@link BEAM_GLOW_RADIUS}.
+ *
+ * *Under* the campfire's 2.2, which is the opposite of what a laser beside a
+ * bonfire suggests and follows from the height above: this one is lifted to
+ * spread its pool out, so the same authored number would land far harder.
+ *
+ * What it was chosen against is the **retro pass**, not taste.
+ * `preview-lance.ts` reports how far the light moves the ground *in colour
+ * bands*, and there are five of them -- so a wash under half a band is one the
+ * quantize rounds away, which is the trap `wind.ts` and the living ground have
+ * both fallen into. Measured across that sheet: 15% of the frame moved by a
+ * full band. At 0.5 it was 2% and mostly invisible; at 3.1 the ground blew out
+ * to white and the beam read as lava rather than as light.
+ */
+const GLOW_BRIGHTNESS = 1.4;
+
+/**
+ * How much of that the flicker is allowed to take away.
+ *
+ * A third, so the floor is two thirds of the peak. A flicker that reaches zero
+ * is a strobe, and a strobe over a weapon a player is trying to walk out of is
+ * the ground going dark at the moment they most need to see it.
+ */
+const FLICKER_DEPTH = 0.34;
+
+/**
+ * The periods the flicker is built out of, in ticks.
+ *
+ * Three, and deliberately incommensurate: one sine is a *pulse* -- a light
+ * breathing on a fixed beat, which reads as machinery idling rather than as an
+ * arc misbehaving -- and three that never line up have no beat to hear. The
+ * fastest is about 13Hz, which is a crackle; the slowest is about 3.5Hz, which
+ * is the swell under it.
+ */
+const FLICKER_PERIODS: readonly number[] = [4.7, 9.3, 17.1];
+
 /** How many world units the sight's pattern slides per tick, away from the head. */
 const SIGHT_DRIFT = 1.6;
 
@@ -118,7 +210,7 @@ export interface SightLook extends BeamLine {
   readonly opacity: number;
 }
 
-/** The shaft, while it is firing, and the ground it is standing on. */
+/** The shaft, while it is firing. */
 export interface ShaftLook extends BeamLine {
   readonly kind: 'firing';
   /** The visible shaft's thickness. Narrower than the lane -- see the header. */
@@ -126,9 +218,6 @@ export interface ShaftLook extends BeamLine {
   readonly coreWidth: number;
   readonly opacity: number;
   readonly coreOpacity: number;
-  /** The lane's own width, drawn on the ground: what actually damages. */
-  readonly footprintWidth: number;
-  readonly footprintOpacity: number;
 }
 
 export type BeamLook = SightLook | ShaftLook;
@@ -215,11 +304,6 @@ function shaft(cycle: LaserCycle, tick: number): ShaftLook {
     // material three silently accepts and then draws as one -- so the breathing
     // would flatten at the top of every cycle and only ever read as a dimming.
     coreOpacity: Math.min(1, 0.92 * shimmer),
-    // The lane's own, exactly: what is drawn there is what damages.
-    footprintWidth: cycle.width,
-    // Dim. It is underneath a lit shaft and its job is to say where the edges of
-    // the danger are, not to compete with the thing making it dangerous.
-    footprintOpacity: 0.3,
   };
 }
 
@@ -251,4 +335,36 @@ export function sightDotAt(look: SightLook, index: number): number {
   // the head, which is what makes the pattern travel forever out of a fixed
   // number of points.
   return along % look.length;
+}
+
+/**
+ * How far the `index`-th light sits from the head, in world units.
+ *
+ * At the midpoints of an even division rather than at its joints, so none of
+ * them sits on the muzzle -- where the shaft's own colour is already the
+ * brightest thing there is and a light adds nothing -- and none sits past the
+ * end, where it would light ground the beam does not reach.
+ */
+export function beamGlowAt(look: ShaftLook, index: number): number {
+  const step = look.length / BEAM_GLOW_LIGHTS;
+  return step * (index + 0.5);
+}
+
+/**
+ * What the `index`-th light is worth this tick.
+ *
+ * Each light has a phase of its own, which is the difference between a beam that
+ * flickers and a beam that *pulses*: lit together they are one lamp on a dimmer,
+ * and lit out of step they are an unstable line. A pure function of its two
+ * arguments, so every client watching one Warden sees the same flicker with
+ * nothing replicated for it -- the rule the shimmer and the sight's drift are
+ * already under.
+ */
+export function beamGlowBrightness(index: number, tick: number): number {
+  let sum = 0;
+  for (const period of FLICKER_PERIODS) {
+    sum += Math.sin((tick / period + index * 0.37) * Math.PI * 2);
+  }
+  const unit = (sum / FLICKER_PERIODS.length + 1) / 2;
+  return GLOW_BRIGHTNESS * (1 - FLICKER_DEPTH + FLICKER_DEPTH * unit);
 }

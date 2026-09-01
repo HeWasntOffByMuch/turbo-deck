@@ -270,7 +270,9 @@ async function main(): Promise<void> {
     check(there.offered > 0, 'the fixtures on the map offer themselves to the pool');
     check(
       there.offered === fixtures.length,
-      `exactly the ${String(fixtures.length)} fixture(s) the map holds are offered (saw ${String(there.offered)})`,
+      `exactly the ${String(fixtures.length)} fixture(s) the map holds are offered ` +
+        `(saw ${String(there.offered)}; a surplus means something other than a fixture ` +
+        `is asking -- a conjured light on a body, or a Warden firing nearby)`,
     );
     check(there.lit > 0, 'and the pool is lighting them');
     check(there.lit <= there.offered, 'never more lit than were offered');
