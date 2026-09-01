@@ -13,6 +13,7 @@ import { GameClient } from './game-client.js';
 import { CONNECTION_TIMEOUT_TICKS, RESUME_GRACE_TICKS } from '../config.js';
 import { EntityKind, TradeStageValue } from '../net/protocol.js';
 import type { Channel } from '../net/transport.js';
+import { hasStatus, StatusId } from '../sim/statuses.js';
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -66,8 +67,65 @@ async function join(
   return { client, channel, entityId: info.entityId, token: client.sessionToken };
 }
 
+/**
+ * Put this body in a fight, by landing a real blow (spec 267).
+ *
+ * Since spec 267 the resume grace is bought by `StatusId.InCombat` rather than
+ * by the manner of leaving, so every test below that is *about* the grace has
+ * to be in one. A real swing at a dummy rather than a status written by hand:
+ * the whole claim is that the departure reads what combat writes, and a test
+ * that wrote it itself would pass with the two disconnected.
+ *
+ * The dummy rather than a grazer for `status-wire.test.ts`'s reason -- a grazer
+ * dies to the first swing -- and polled a tick at a time rather than swung a
+ * fixed number of times, because what is being waited for is a blow that
+ * *connects*.
+ */
+async function fight(r: Rig, client: GameClient): Promise<void> {
+  const self = client.view().selfEntityId;
+  const at = r.server.world.entities.get(self)?.position ?? { x: 0, y: 0 };
+  r.server.spawnEntities('dummy', at.x + 40, at.y, 1);
+  await r.tick(2);
+  let fighting = false;
+  for (let swing = 0; swing < 12 && !fighting; swing += 1) {
+    client.useAbility('melee.slash', at.x + 40, at.y);
+    for (let step = 0; step < 30 && !fighting; step += 1) {
+      await r.tick(1);
+      fighting = hasStatus(
+        r.server.world.entities.get(self)?.statuses ?? {},
+        StatusId.InCombat,
+        r.server.world.tick,
+      );
+    }
+  }
+  expect(fighting, 'no blow ever landed, so this body is not in a fight').toBe(true);
+}
+
 describe('a dropped socket', () => {
-  it('leaves the body standing, then reaps it', async () => {
+  it('leaves the body standing mid-fight, then reaps it', async () => {
+    const r = rig();
+    const ana = await join(r, 'ana');
+    await r.tick(4);
+    expect(r.bodies()).toBe(1);
+    await fight(r, ana.client);
+
+    ana.channel.close();
+    await settle();
+    await r.tick(4);
+    // Still there: resumable, and not an escape from what was happening.
+    expect(r.bodies()).toBe(1);
+    expect(r.server.world.entities.has(ana.entityId)).toBe(true);
+
+    await r.tick(RESUME_GRACE_TICKS + 2);
+    expect(r.bodies()).toBe(0);
+    expect(r.server.playerManager.get('ana')).toBeNull();
+  });
+
+  it('takes the body at once when the socket goes out of combat (spec 267)', async () => {
+    // The other half of the rule above, and the one a player asked for: a
+    // character logged off in the village square is not a statue in the village
+    // square. Nothing is lost by going now -- `syncFromEntity` writes position,
+    // facing and health into the record on every broadcast.
     const r = rig();
     const ana = await join(r, 'ana');
     await r.tick(4);
@@ -76,11 +134,7 @@ describe('a dropped socket', () => {
     ana.channel.close();
     await settle();
     await r.tick(4);
-    // Still there: resumable, and not an escape from whatever was happening.
-    expect(r.bodies()).toBe(1);
-    expect(r.server.world.entities.has(ana.entityId)).toBe(true);
 
-    await r.tick(RESUME_GRACE_TICKS + 2);
     expect(r.bodies()).toBe(0);
     expect(r.server.playerManager.get('ana')).toBeNull();
   });
@@ -93,6 +147,13 @@ describe('a dropped socket', () => {
       ana.client.sendInput({ moveX: 1, moveY: 0, facing: 0, buttons: 0 });
       await r.tick();
     }
+    // In a fight, because since spec 267 that is what leaves a body to come
+    // back to. Out of combat there is nothing standing there and this is a
+    // fresh login, which the test above it covers.
+    await fight(r, ana.client);
+    // Read *after* the fight: swinging turns the body and the dummy's own bulk
+    // shoves it a couple of units, so a position captured before it is a
+    // position this body is no longer standing on.
     const movedTo = r.server.world.entities.get(ana.entityId)?.position.x ?? 0;
     expect(movedTo).toBeGreaterThan(600);
 
@@ -140,7 +201,10 @@ describe('a dropped socket', () => {
     ana.client.disconnect();
     await settle();
     await r.tick(4);
-    // No grace: leaving on purpose and being dropped are different things.
+    // No grace -- though since spec 267 that is because this body is out of
+    // combat rather than because it said goodbye. Mid-fight the message buys
+    // nothing: see `session-lifecycle.test.ts`, where a `Goodbye` from a body
+    // in a fight still leaves it standing.
     expect(r.bodies()).toBe(0);
   });
 
@@ -152,9 +216,12 @@ describe('a dropped socket', () => {
 
     // The socket is fine; the client has simply stopped talking. Nothing fires
     // a close -- which is exactly the case a dead router produces.
+    //
+    // Out of combat the timeout takes the body with it (spec 267): the sweep
+    // reaches `disconnect`, and what that now asks is whether this body is in a
+    // fight rather than how the socket ended.
     await r.tick(CONNECTION_TIMEOUT_TICKS + 4);
-    expect(r.server.world.entities.has(ana.entityId)).toBe(true);
-    await r.tick(RESUME_GRACE_TICKS + 4);
+    expect(r.server.world.entities.has(ana.entityId)).toBe(false);
     expect(r.bodies()).toBe(0);
   });
 });
@@ -182,6 +249,12 @@ describe('nothing is orphaned by a drop', () => {
     ben.client.respondToTrade(true);
     await r.tick(4);
     expect(ana.client.view().trade?.stage).toBe(TradeStageValue.Open);
+
+    // Mid-fight, so ana's session is still loaded to be counted: out of combat
+    // she is reaped on the tick the socket closes (spec 267) and her half of
+    // the bag is in the store rather than in the manager. What is under test is
+    // the trade, and the grace is the state that lets both halves be read.
+    await fight(r, ana.client);
 
     ana.channel.close();
     await settle();

@@ -124,6 +124,28 @@ describe('ensuring a token', () => {
     ]);
   });
 
+  it.each([500, 502, 503, 429])(
+    'keeps the stored token when the check fails with %i rather than a refusal',
+    async (status) => {
+      // The bug this closes (spec 267): the comment said "401: expired, revoked,
+      // or rotated" and the code discarded the credential on *every* status but
+      // 404. A proxy hiccup, a restart, a rate limit -- each of them minted a
+      // brand-new character, which for a guest is the permanent loss of theirs
+      // and leaves the old player row reachable by nothing.
+      const store = storage({ [AUTH_TOKEN_KEY]: 'tok-mine' });
+      const calls = stubFetch([{ status }]);
+
+      const outcome = await ensureAuthToken('http://localhost:8787', 'tok-mine', store);
+
+      expect(outcome.ok).toBe(false);
+      // The whole point: still theirs on the next load.
+      expect(store.map.get(AUTH_TOKEN_KEY)).toBe('tok-mine');
+      // And no guest was minted -- one call, and it was the check.
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.url).toBe('http://localhost:8787/api/auth/session');
+    },
+  );
+
   it('leaves a stored token alone against a server that does not do auth', async () => {
     // An older build: no endpoint, so the token is meaningless rather than
     // wrong, and the connection is about to succeed without it.
