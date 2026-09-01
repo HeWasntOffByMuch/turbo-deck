@@ -655,6 +655,8 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * eight seconds `FIELD_DEMO_TICKS` grants -- so the ring stays up while
    * somebody walks around under it rather than going out mid-look.
    */
+  const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
+  let fieldAgainAtTick = 0;
   /**
    * `?clock=` -- pin the sky to one hour for this client (spec 263).
    *
@@ -663,8 +665,6 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * is the ordinary case: the world's own clock.
    */
   const pinnedClockTick = parseClockFlag(location.search);
-  const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
-  let fieldAgainAtTick = 0;
   let wireConditions: WireConditions = parseWire(new URLSearchParams(location.search).get('wire'));
   const wire = new UnreliableChannel(channel, () => wireConditions, Rng.fromSeed(seed));
 
