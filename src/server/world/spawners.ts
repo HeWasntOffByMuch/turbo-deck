@@ -12,8 +12,9 @@
  * for the monster that should be there.
  */
 
-import type { MapDocument, MapMarker } from '../../terrain/index.js';
+import { SPAWN_WINDOWS, type MapDocument, type MapMarker, type SpawnWindow } from '../../terrain/index.js';
 import { SERVER_TICK_RATE } from '../config.js';
+import type { WorldClock } from '../data/day-night.js';
 import { monsterById } from '../data/monsters.js';
 
 export interface SpawnPoint {
@@ -42,6 +43,40 @@ export interface SpawnPoint {
    * *document* asked for.
    */
   readonly leashRadius: number | null;
+  /**
+   * When this point is allowed to fill, or null for "whenever its timer is up"
+   * (spec 268).
+   *
+   * Null rather than a third member of the union for the reason the two fields
+   * above are null: this file's job is to say what the *document* asked for, and
+   * a point that asked for nothing is not the same statement as one that asked
+   * for both halves of the day.
+   */
+  readonly when: SpawnWindow | null;
+}
+
+/**
+ * Whether a point with this window may fill right now (spec 268).
+ *
+ * **The one sentence that says what night is.** Two readings were available and
+ * they disagree by twenty real seconds: the named `Night` phase begins at 19:48
+ * where the sun sets at 18:00, so a player who watches it go down and waits
+ * would be watching the rule be wrong. So night is the *horizon* -- `!sunUp` --
+ * which is 2m47s of the cycle's 13m30s against the phase's 2m00s.
+ *
+ * Handed a clock rather than a tick, so `runSpawners` samples once for the whole
+ * pass and a test can state an hour instead of computing one.
+ *
+ * A `when` this function has never heard of is treated as **open**, which is the
+ * safe direction and is unreachable through `parseMap`: a spawner that quietly
+ * never fills is the failure nobody can see, and one that fills too often is a
+ * monster standing somewhere at noon.
+ */
+export function spawnWindowOpen(when: SpawnWindow | null, clock: WorldClock): boolean {
+  if (when === null) return true;
+  if (when === 'night') return !clock.sunUp;
+  if (when === 'day') return clock.sunUp;
+  return true;
 }
 
 export class SpawnerError extends Error {}
@@ -89,6 +124,7 @@ export function spawnPointsFrom(doc: MapDocument): readonly SpawnPoint[] {
           y: originZ + marker.z,
           respawnTicks: respawnTicksOf(marker),
           leashRadius: positiveOrNull(marker.spawner?.leashRadius, marker, 'leashRadius'),
+          when: windowOf(marker),
         });
       }
     }
@@ -112,6 +148,25 @@ export function spawnPointsFrom(doc: MapDocument): readonly SpawnPoint[] {
 function respawnTicksOf(marker: MapMarker): number | null {
   const seconds = positiveOrNull(marker.spawner?.respawnSeconds, marker, 'respawnSeconds');
   return seconds === null ? null : Math.max(1, Math.round(seconds * SERVER_TICK_RATE));
+}
+
+/**
+ * A spawner's window, or null for a point that authors none (spec 268).
+ *
+ * Checked again here rather than trusted from the parser, for the reason the two
+ * numbers beside it are: `spawnPointsFrom` is handed a `MapDocument`, and
+ * nothing in its signature says the document came through `parseMap` -- a
+ * generated one, a test fixture and a hand-built part all reach it. A window
+ * nothing can open is a spawner that never fills, which is an empty patch of
+ * ground and exactly what this file already refuses to boot on.
+ */
+function windowOf(marker: MapMarker): SpawnWindow | null {
+  const when = marker.spawner?.when;
+  if (when === undefined) return null;
+  if (!SPAWN_WINDOWS.includes(when)) {
+    throw new SpawnerError(`spawner ${marker.id} has a when that is not a spawn window: ${String(when)}`);
+  }
+  return when;
 }
 
 /**

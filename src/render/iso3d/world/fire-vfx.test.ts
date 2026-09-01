@@ -19,6 +19,7 @@
 import { describe, expect, it } from 'vitest';
 import type { VfxPlayer } from './affliction-vfx.js';
 import { FireVfx, FIRE_SCALE, FIXTURE_ART, type FireSite } from './fire-vfx.js';
+import { FIXTURE_KINDS, FIXTURE_LIGHTS } from '../../../terrain/vegetation.js';
 
 interface PlayCall {
   readonly id: string;
@@ -71,18 +72,66 @@ class Recorder implements VfxPlayer {
 }
 
 function site(over: Partial<FireSite> = {}): FireSite {
-  return { key: 'a', kind: 'campfire', x: 120, groundY: 30, z: -40, footprint: 34, ...over };
+  return {
+    key: 'a',
+    kind: 'campfire',
+    x: 120,
+    groundY: 30,
+    lightY: 30 + FIXTURE_LIGHTS.campfire.height,
+    z: -40,
+    footprint: 34,
+    ...over,
+  };
 }
 
-const FIRE = FIXTURE_ART.campfire ?? '';
+/** A torch standing on the same ground, at the height its own light hangs. */
+function torch(over: Partial<FireSite> = {}): FireSite {
+  return site({
+    key: 't',
+    kind: 'torch-stand',
+    lightY: 30 + FIXTURE_LIGHTS['torch-stand'].height,
+    footprint: 10,
+    ...over,
+  });
+}
 
-describe('which fixtures burn (spec 250)', () => {
-  it('plays a fire for a campfire and nothing for a lamp post', () => {
+const FIRE = FIXTURE_ART.campfire?.id ?? '';
+const TORCH = FIXTURE_ART['torch-stand']?.id ?? '';
+
+describe('which fixtures burn (specs 250, 265)', () => {
+  it('plays a fire for a campfire and a smaller one for a torch', () => {
     const player = new Recorder();
     const fires = new FireVfx(player);
-    fires.step([site(), site({ key: 'b', kind: 'lamp-post' }), site({ key: 'c', kind: 'torch-stand' })]);
-    expect(player.ids).toEqual([FIRE]);
-    expect(fires.keys()).toEqual(['a']);
+    fires.step([site(), site({ key: 'b', kind: 'lamp-post' }), torch()]);
+    expect(player.ids).toEqual([FIRE, TORCH]);
+    expect(fires.keys()).toEqual(['a', 't']);
+  });
+
+  /**
+   * A lamp post is the row that is deliberately absent: what is in its lantern is
+   * a mantle, and a mantle says it is lit by glowing rather than by burning.
+   */
+  it('plays nothing for a lamp post', () => {
+    const player = new Recorder();
+    const fires = new FireVfx(player);
+    fires.step([site({ key: 'b', kind: 'lamp-post' })]);
+    expect(player.played).toHaveLength(0);
+    expect(fires.keys()).toEqual([]);
+  });
+
+  /**
+   * The one thing `props.ts` says nobody would think to check: a lamp whose flame
+   * is not inside its own lantern. A light hangs *in* a flame, so a root above it
+   * is a fire burning off the top of the fixture holding it.
+   */
+  it('roots every fire at or under the light hung in it', () => {
+    for (const kind of FIXTURE_KINDS) {
+      const art = FIXTURE_ART[kind];
+      if (!art) continue;
+      expect(art.root, kind).toBeGreaterThanOrEqual(0);
+      expect(art.root, kind).toBeLessThanOrEqual(1);
+      expect(art.scale, kind).toBeGreaterThan(0);
+    }
   });
 
   it('starts nothing for an effect the registry has not got', () => {
@@ -95,21 +144,60 @@ describe('which fixtures burn (spec 250)', () => {
   });
 });
 
-describe('where a fire is played (spec 250)', () => {
-  it('puts it on the ground, not at the flame the light hangs at', () => {
+describe('where a fire is played (specs 250, 265)', () => {
+  it('puts a campfire on the ground, not at the flame the light hangs at', () => {
     const player = new Recorder();
-    new FireVfx(player).step([site({ x: 40, groundY: 12, z: 80 })]);
+    new FireVfx(player).step([site({ x: 40, groundY: 12, lightY: 46, z: 80 })]);
     const call = player.played[0];
     expect(call?.x).toBe(40);
     expect(call?.y).toBe(12);
     expect(call?.z).toBe(80);
   });
 
-  it('sizes it inside the ring of stones rather than across it', () => {
+  /** A torch's fire is in its bowl, which is most of the way up its own stake. */
+  it('puts a torch at its head rather than at its feet', () => {
+    const player = new Recorder();
+    new FireVfx(player).step([torch({ groundY: 100, lightY: 178 })]);
+    const y = player.played[0]?.y ?? 0;
+    expect(y).toBeGreaterThan(160);
+    expect(y).toBeLessThanOrEqual(178);
+  });
+
+  /**
+   * The reason the root is a *fraction* rather than a height: a prop placed at
+   * twice the size is twice as tall, and its light is already hung to match.
+   */
+  it('carries the flame up with a torch placed larger', () => {
+    const player = new Recorder();
+    const ground = 30;
+    const single = 30 + FIXTURE_LIGHTS['torch-stand'].height;
+    new FireVfx(player).step([
+      torch({ key: 'one', groundY: ground, lightY: single, footprint: 10 }),
+      torch({ key: 'two', groundY: ground, lightY: ground + (single - ground) * 2, footprint: 20 }),
+    ]);
+    const [small, large] = player.played;
+    expect((large?.y ?? 0) - ground).toBeCloseTo(((small?.y ?? 0) - ground) * 2, 5);
+    expect(large?.scale).toBeCloseTo((small?.scale ?? 0) * 2, 5);
+  });
+
+  it('sizes a campfire inside the ring of stones rather than across it', () => {
     const player = new Recorder();
     new FireVfx(player).step([site({ footprint: 34 })]);
     expect(player.played[0]?.scale).toBeCloseTo(34 * FIRE_SCALE);
     expect(FIRE_SCALE).toBeLessThan(1);
+  });
+
+  /**
+   * The other way round for a torch, and on purpose: its footprint is the
+   * *pole's* collider, and the bowl the fire sits in is wider than the pole.
+   */
+  it('draws a torch a little wider than the pole a body walks round', () => {
+    const player = new Recorder();
+    new FireVfx(player).step([torch({ footprint: 10 })]);
+    const scale = player.played[0]?.scale ?? 0;
+    expect(scale).toBeGreaterThan(10);
+    // And still much smaller than the campfire beside it: a torch is a torch.
+    expect(scale).toBeLessThan(34 * FIRE_SCALE);
   });
 
   it('seeds off where it stands, so two clients watch the same fire', () => {

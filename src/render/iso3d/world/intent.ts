@@ -83,8 +83,19 @@ export interface SwingHoldInput {
   readonly previous: ReadonlySet<string>;
   /** Every action id physically down right now. */
   readonly held: ReadonlySet<string>;
-  /** An ability was asked for on this frame. */
-  readonly pressed: boolean;
+  /**
+   * The actions that were down when the press was made, or null when no ability
+   * was asked for on this frame.
+   *
+   * A set rather than a boolean since spec 264, because a press may now be held
+   * for a swing and sent several frames later: the directions that belong to it
+   * are the ones the *press* was made with, and re-reading them at the send
+   * would suppress a direction pressed in between -- which is a withdrawal
+   * (spec 079), and is exactly what the player asked for by pressing it.
+   *
+   * An immediate press passes the live `held` set, which is the same thing.
+   */
+  readonly pressed: ReadonlySet<string> | null;
   /** A cast -- confirmed or only asked for -- is live. */
   readonly casting: boolean;
   /** That cast has passed its attack point (spec 144). */
@@ -131,8 +142,11 @@ export function swingHold(input: SwingHoldInput): ReadonlySet<string> {
       : [];
   if (!input.pressed) return carried.length === 0 ? NO_HOLD : new Set(carried);
   const next = new Set(carried);
-  for (const action of input.held) {
-    if (action in MOVE_ACTIONS) next.add(action);
+  for (const action of input.pressed) {
+    // Still down, which is the release-drops-out rule reused rather than
+    // restated: a key let go between a queued press and its send is a key the
+    // player has taken back, and pressing it again withdraws.
+    if (action in MOVE_ACTIONS && input.held.has(action)) next.add(action);
   }
   return next;
 }

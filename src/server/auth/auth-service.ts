@@ -342,7 +342,13 @@ export class AuthService {
     if (session === null) return null;
 
     const at = this.now();
-    if (at - session.lastSeenAt >= TOUCH_INTERVAL_MS) this.sessions.touch(session.id, at);
+    // Slides the expiry as well as the stamp (spec 267), so the TTL measures
+    // how long somebody has been away rather than how long ago they first
+    // signed in -- which for a guest is the difference between a credential
+    // that keeps their character and one that drops it on a fixed date.
+    if (at - session.lastSeenAt >= TOUCH_INTERVAL_MS) {
+      this.sessions.touch(session.id, at, at + this.ttl);
+    }
 
     // The display name lives on the account when there is one and on the player
     // otherwise, which is the same rule the rest of the server follows: a guest

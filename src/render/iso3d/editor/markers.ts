@@ -1,9 +1,10 @@
-import type {
-  ChunkCoord,
-  MapChunkStore,
-  MapMarker,
-  MapMarkerKind,
-  MapSpawnerSettings,
+import {
+  spawnerSettingsEmpty,
+  type ChunkCoord,
+  type MapChunkStore,
+  type MapMarker,
+  type MapMarkerKind,
+  type MapSpawnerSettings,
 } from '../../../terrain/index.js';
 
 /**
@@ -215,7 +216,7 @@ export function patchMarker(marker: MapMarker, patch: MarkerPatch): MapMarker {
   const kept =
     kind !== 'spawner' || spawner === undefined
       ? undefined
-      : spawner.respawnSeconds === undefined && spawner.leashRadius === undefined
+      : spawnerSettingsEmpty(spawner)
         ? undefined
         : spawner;
   return {

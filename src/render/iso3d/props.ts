@@ -5,6 +5,7 @@ import {
   FENCE_KINDS,
   FENCE_TILE_LENGTH,
   FIXTURE_KINDS,
+  FIXTURE_LIGHTS,
   fixtureLight,
   footprintRadius,
   GRAVE_PLAN,
@@ -116,6 +117,29 @@ interface PropPart {
   readonly scaleY?: number;
   /** Base colour, tinted per instance. `foliage` parts also take the autumn turn. */
   readonly color: number;
+  /**
+   * What this part gives off regardless of what is shining on it (spec 265):
+   * three's own `MeshLambertMaterial.emissive`, as an sRGB hex like `color`.
+   *
+   * For the one thing a prop can be that is *a light*. A point light sits at the
+   * middle of the fixture emitting it, so for every outward-facing triangle of
+   * the mantle or the coal around it the vector to that light points **inward**
+   * and `N.L` is negative: a lamp's own lamp is behind every face of its mantle,
+   * top and bottom included, and the brightest object in the frame is lit by
+   * ambient alone. The game already knew -- the *carried* torch's core is a
+   * `MeshBasicMaterial` and `palette.ts` calls the core tones "the unlit meshes
+   * at each light's centre" -- and this is that rule at a price the prop field
+   * can pay: a batch already builds a material of its own (spec 181), so an
+   * emissive is a uniform on a material that exists rather than a fifth kind of
+   * batch.
+   *
+   * Unlike `color` it is **not** tinted per instance: `instanceColor` multiplies
+   * the diffuse term and nothing else, which is the right way round. Weathering
+   * is a property of a plank; how brightly a flame burns is not.
+   */
+  readonly emissive?: number;
+  /** How much of {@link emissive} is given off. Under 1, or the sum clips to white. */
+  readonly emissiveIntensity?: number;
   readonly foliage: boolean;
   /**
    * Which foliage tier this is, counted from the bottom. A tree only grows the
@@ -1937,13 +1961,38 @@ function buildGraveParts(): PropPart[] {
  * over. And each sinks a little into the ground, so a fixture on a slope shows
  * no daylight under its base.
  *
- * The one thing worth knowing about their *colour*: the burning parts are drawn
- * bright rather than emissive, because a prop batch is `MeshLambertMaterial` and
- * an unlit material here would be a fifth kind of batch for three props. They
- * are standing inside their own point light, which is what actually makes them
- * the brightest thing in the frame -- so the geometry only has to be pale enough
- * not to fight it.
+ * The one thing worth knowing about their *colour* (spec 265): the parts a light
+ * comes out of **emit**, and are the only things in this file that do.
+ *
+ * That was argued the other way first, and the argument was wrong in a way worth
+ * writing down, because it is plausible. It said a pale colour was enough since
+ * these parts "are standing inside their own point light" -- and a point light at
+ * a part's own centre lights **none** of it: for every outward-facing triangle
+ * the vector to the light points inward, so `N.L` is negative. A lamp's mantle
+ * spans 110 to 134 about a light hung at 122, which puts that light behind its
+ * four sides, under its top face and over its bottom one. Every face of the one
+ * object in the frame that is emitting light was taking ambient alone, over a
+ * street the same light had made bright. The game already had the answer for the
+ * torch the player *carries*, whose core is a `MeshBasicMaterial`; this is that
+ * answer at a price a prop batch can pay, since a batch builds its own material
+ * anyway (spec 181) and an emissive is a uniform on it.
+ *
+ * What a fixture emits is {@link FIXTURE_LIGHTS}`[kind].color` -- **the colour it
+ * lights with** -- rather than a second hex beside it, so retuning a lamp's light
+ * retunes the thing the light is coming out of and the two cannot drift.
  */
+
+/**
+ * How much of its own light colour a fixture's burning part gives off.
+ *
+ * Under 1 on purpose. Emissive *adds* to the lit diffuse, so at 1 a warm mantle
+ * over any daylight at all sums past white on every channel and the colour that
+ * says which fixture this is -- a lamp's pale gold against a torch's orange --
+ * is the first thing to be clipped away. At 0.8 the core still reaches the top
+ * band of the retro quantize at night and keeps its hue in daylight, which is
+ * the whole job: bright, and still warm.
+ */
+const FIXTURE_GLOW = 0.8;
 
 /** How far a fixture's base is buried. `BUILDING_SINK`'s reason, less deep. */
 const FIXTURE_SINK = 5;
@@ -2110,9 +2159,17 @@ function buildLampPostParts(): PropPart[] {
       // The mantle, inside the cage. Pale rather than flame-coloured, because a
       // lamp is a made thing: what separates it from the torch stand beside it
       // at a hundred units is that this one is white and steady.
+      //
+      // And it **glows** (spec 265). This is the part the light is coming out
+      // of: the pool on the street is thrown from a point at its own middle, so
+      // nothing but this can say the lamp is lit, and until this it was the one
+      // grey box in a lit square. See the header for why standing inside a light
+      // is the opposite of being lit by it.
       geometry: new THREE.BoxGeometry(19, 24, 19),
       offsetY: LAMP_HEAD_HEIGHT,
       color: PALETTE.lampMantle,
+      emissive: FIXTURE_LIGHTS['lamp-post'].color,
+      emissiveIntensity: FIXTURE_GLOW,
       foliage: false,
     },
   ];
@@ -2161,9 +2218,25 @@ function buildTorchStandParts(): PropPart[] {
       foliage: false,
     },
     {
-      geometry: new THREE.ConeGeometry(9, 24, 5),
-      offsetY: TORCH_HEAD_HEIGHT + 9,
+      // The coal in the bowl -- and **not** the flame, which is paint (spec 265):
+      // `fire_torch` in `brush.ts`, played at the rim by `world/fire-vfx.ts`.
+      //
+      // This is spec 250's campfire decision arriving one prop late. A fire is
+      // the one subject in this file that *moves*, so a solid can only be a
+      // picture of one instant of it -- and the cone that stood here was a
+      // 24-unit cream spike, taller than the bowl is wide, which a cloud of
+      // brush marks does not sit on top of so much as fight.
+      //
+      // What is left is the campfire's ember bed one prop over, and it is here
+      // for that part's two reasons: it is what the paint's root sits *in*, and
+      // it is what is still burning when a distant torch's paint is culled --
+      // which matters more here than there, because a torch whose flame is gone
+      // is a bare stick throwing a pool of light out of nothing.
+      geometry: new THREE.ConeGeometry(7, 12, 5),
+      offsetY: TORCH_HEAD_HEIGHT - 2,
       color: PALETTE.torchCore,
+      emissive: FIXTURE_LIGHTS['torch-stand'].color,
+      emissiveIntensity: FIXTURE_GLOW,
       foliage: false,
       jitterYaw: 0.9,
     },
@@ -3024,6 +3097,13 @@ export function buildPropField(
     const shared = sharedGeometry(part.geometry, creaseCos, shade.smooth);
     const geometry = shellOf(shared);
     const material = new THREE.MeshLambertMaterial({ flatShading: !shade.smooth });
+    // A part that is itself a light (spec 265). Free at this seam and nowhere
+    // else: the material is built per batch, so the fixtures' glow costs a
+    // uniform rather than a batch of its own.
+    if (part.emissive !== undefined) {
+      material.emissive = new THREE.Color(part.emissive);
+      material.emissiveIntensity = part.emissiveIntensity ?? 1;
+    }
     const mesh = new THREE.InstancedMesh(geometry, material, batch.count);
     // Assigned rather than filled, so the arrays the worker transferred are the
     // arrays the attribute holds -- `set` would copy 16 floats per instance back

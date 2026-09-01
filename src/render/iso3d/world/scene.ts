@@ -338,7 +338,7 @@ export interface FrameInfo {
    */
   readonly tick: number;
   /**
-   * What time it is in the world (spec 263).
+   * What time it is in the world (spec 264).
    *
    * Computed by `view.ts` from the same `tick` above -- the server's clock,
    * which every client resolves to the same hour because the clock is a pure
@@ -3615,7 +3615,7 @@ export class WorldScene {
   }
 
   private applySun(clock: WorldClock): void {
-    // Two things drive this sun since spec 263 -- the world's clock and the
+    // Two things drive this sun since spec 264 -- the world's clock and the
     // tuning panel -- and `sky-source.ts` holds the one rule that settles them:
     // the panel wins where it is asking for something, and the game decides
     // where it is not. `carried-light.ts`'s rule, one system along.
@@ -3800,6 +3800,10 @@ export class WorldScene {
         kind: light.kind,
         x: light.x,
         groundY: light.groundY,
+        // Where the light is hung, which is what a flame's root is measured
+        // against (spec 265) -- already the prop's own scale times its row's
+        // height, so a torch placed large burns out of its own bowl.
+        lightY: light.y,
         z: light.z,
         footprint: light.footprint,
       });

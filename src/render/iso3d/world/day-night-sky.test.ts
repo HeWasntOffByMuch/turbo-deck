@@ -9,13 +9,13 @@ import {
 import { SKY_KEY_HOURS, skyAt } from '../daynight.js';
 
 /**
- * Where the server's clock (spec 263) meets the sky spec 047 authored.
+ * Where the server's clock (spec 264) meets the sky spec 047 authored.
  *
  * On this side of the fence rather than beside `day-night.ts`, because
  * `src/server/data/` is deterministic core and may not import the renderer --
  * and because every claim here is about the *ramp*, which is the renderer's.
  */
-describe('the clock against the sky ramp (spec 263)', () => {
+describe('the clock against the sky ramp (spec 264)', () => {
   it('puts every segment boundary on a keyframe', () => {
     // The segments *are* the ramp's own structure, which is what keeps the rate
     // changing where the colour is not.

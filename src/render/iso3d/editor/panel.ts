@@ -26,6 +26,7 @@ import {
   ROCK_TOOL_COLORS,
   SPAWNER_MONSTER_CHOICES,
   SPAWNER_UNSET,
+  SPAWNER_WHEN_CHOICES,
   SPECIES_CHOICES,
   STRUCTURE_CHOICES,
   TERRAIN_TOOL_CHOICES,
@@ -504,6 +505,14 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
     .add(s, 'selLeashRadius', SPAWNER_UNSET, 800, 10)
     .name('Leash (0=default)')
     .onChange(opts.onSelectionEdit);
+  // A dropdown rather than a slider, because a window is not a quantity (spec
+  // 268) -- and `always` is a real option in the list rather than an unticked
+  // box, so what the document says is readable without knowing which value is
+  // the empty one.
+  const selWhen = select
+    .add(s, 'selWhen', [...SPAWNER_WHEN_CHOICES])
+    .name('Spawns')
+    .onChange(opts.onSelectionEdit);
   select.add({ remove: opts.onSelectionDelete }, 'remove').name('Delete marker');
 
   const parts = gui.addFolder('Parts');
@@ -630,10 +639,12 @@ export function buildEditorPanel(opts: EditorPanelOptions): EditorPanel {
       selMonster.enable();
       selRespawn.enable();
       selLeash.enable();
+      selWhen.enable();
     } else {
       selMonster.disable();
       selRespawn.disable();
       selLeash.disable();
+      selWhen.disable();
     }
     // The free-text label is every kind's *but* a spawner's, whose label is the
     // monster above -- so the two rows are never live at once.

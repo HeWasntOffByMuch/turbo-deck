@@ -190,6 +190,7 @@ import { spawnerLabels } from './spawner-overlay.js';
 import type { WorldAnchor } from './damage-popup.js';
 import { XpGains } from './xp-gain.js';
 import { castRefusalText } from './error-log.js';
+import { drainPress, type QueuedPress } from './press-queue.js';
 import { backoffTicksFor, KEEPALIVE_MS } from './keepalive.js';
 
 const TICK_MS = 1000 / SERVER_TICK_RATE;
@@ -605,7 +606,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     transport = new LoopbackTransport();
     // `local` is non-null on this branch by construction; the server is the
     // only thing that needs it as a value rather than as a possibility.
-    server = new GameServer({ seed, ...(local ? { built: local } : {}), transport });
+    // No AFK sweep in a tab (spec 267). Only the remote path above wraps its
+    // channel in a `ReconnectingChannel`, so a loopback client that is logged
+    // out does not come back -- a player who went to make tea would return to a
+    // page with no body in it and no way back short of a reload. On a port an
+    // idle body is in somebody's way; in here there is nobody else.
+    server = new GameServer({
+      seed,
+      ...(local ? { built: local } : {}),
+      transport,
+      afkTimeoutTicks: 0,
+    });
     // Wired by hand rather than through `server.start()`: that would spin up the
     // server's own wall-clock loop, and this view already drives the tick from its
     // animation frame. Registering the handler is the half we want.
@@ -658,7 +669,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   const forcedField = server === null ? false : fieldsWantedByQuery(location.search);
   let fieldAgainAtTick = 0;
   /**
-   * `?clock=` -- pin the sky to one hour for this client (spec 263).
+   * `?clock=` -- pin the sky to one hour for this client (spec 264).
    *
    * Parsed once here rather than per frame, because it is a decision somebody
    * took in a URL and not something that can change while the tab is open. Null
@@ -1262,7 +1273,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the driver's own held set, so one refused by the effect budget or evicted
     // by the instance pool reads as absent.
     const firesLit = scene.heldFires().length;
-    // What time the world thinks it is (spec 263), published from the clock the
+    // What time the world thinks it is (spec 264), published from the clock the
     // *frame* drew with rather than from the tick -- so a `?clock=` pin reads as
     // the hour it pinned, which is the only way to tell a working pin from one
     // that parsed and reached nothing.
@@ -1906,7 +1917,32 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * {@link swingHold}.
    */
   let swingHeld: ReadonlySet<string> = NO_HOLD;
-  let castPressed = false;
+  /**
+   * The directions a press was made with, on the frame the request is sent, or
+   * null (specs 258, 264).
+   *
+   * A set rather than a boolean because a press may now wait for a swing: the
+   * edge is raised where the request *leaves*, and what it carries is what was
+   * down when the button was pressed, several frames earlier.
+   */
+  let castPress: ReadonlySet<string> | null = null;
+  /**
+   * A press waiting for the body to be free (spec 264).
+   *
+   * One slot, and the last press wins -- there is one thing the player reached
+   * for and it is whichever one they reached for last, which is the rule
+   * {@link pendingAim} already states one gesture over.
+   */
+  let queuedPress: QueuedPress | null = null;
+  /**
+   * Whether an ability has already been asked for on this frame (spec 264).
+   *
+   * The drivers all read one `view`, taken at the top of the frame, so a request
+   * sent by the one that runs first is not in the `awaitingCast` the ones after
+   * it read -- and two requests on one frame is the server taking the first and
+   * refusing the second. This is `pending` for the rest of the frame.
+   */
+  let askedThisFrame = false;
   /**
    * Held raw key *codes*, for the input that is deliberately not rebindable.
    *
@@ -2600,7 +2636,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       return;
     }
     if (start.kind === 'cast') {
-      castNow(abilityId, worldAim(), 0);
+      queueCast(abilityId);
       return;
     }
     // A second press replaces the first rather than queueing behind it. There
@@ -2608,8 +2644,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     pendingAim = { abilityId, gesture: start.gesture };
   }
 
-  /** Commit: send the request, and give up everything that would fight it. */
-  function castNow(abilityId: string, at: { x: number; y: number }, targetEntityId: number): void {
+  /**
+   * Commit: hold the press until the body can take it, and give up everything
+   * that would fight it (spec 264).
+   *
+   * A `'none'` gesture is `targeting: 'self'`, so there is nothing to aim and
+   * the press *is* the commitment -- which used to mean it was sent from here,
+   * during whatever swing the player happened to be in, and refused. It is
+   * remembered instead and asked for by {@link driveQueuedPress} on the first
+   * tick the body is free, which is what an aimed skill has done through
+   * `AimOrder` since spec 080.
+   */
+  function queueCast(abilityId: string): void {
     // Committing to a blow cancels where you were going. The server roots a
     // caster anyway, so a standing order would simply resume the moment the cast
     // ended -- walking off mid-fight, seconds after the click that ordered it,
@@ -2619,14 +2665,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // ...and it calls off the auto-attack, for the same reason held keys
     // outrank a move order: reaching for a hotbar slot is taking control back.
     targetId = null;
-    // ...and it stops the walk (spec 258). Clearing the order above is only half
-    // of "give up everything that would fight it": a *held* direction is not an
-    // order, and it fights harder -- asking to move withdraws (spec 079) and
-    // outranks a commit on the same tick (spec 092), so a player walking on WASD
-    // had every single press refused as `withdrawn` before it started. The frame
-    // loop reads this edge into `swingHeld`.
-    castPressed = true;
-    client.useAbility(abilityId, at.x, at.y, targetEntityId);
+    // These three are the *press* rather than the send, and stay here: what
+    // they say is that the player has taken control back, which is true from
+    // the moment the button went down whatever the body is still finishing.
+    //
+    // The swing hold is the other half of "give up everything that would fight
+    // it" and is the half that cannot be raised here (specs 258, 264): a *held*
+    // direction is not an order, and it fights harder -- asking to move
+    // withdraws (spec 079) and outranks a commit on the same tick (spec 092),
+    // so a player walking on WASD had every press refused as `withdrawn` before
+    // it started. The edge is consumed on the frame it is raised, so raising it
+    // now would spend it on the swing already in progress and leave none for
+    // the cast it belongs to. The set is captured here and raised at the send.
+    queuedPress = { abilityId, held: new Set(held) };
   }
 
   /**
@@ -2683,6 +2734,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   function clearAim(): void {
     pendingAim = null;
     order = null;
+    // And a press still waiting for the body (spec 264). It is the same kind of
+    // thing as the two above -- something the player reached for and has not
+    // had yet -- so it belongs in the one list of what backing out drops rather
+    // than in a rule of its own.
+    queuedPress = null;
   }
 
   /**
@@ -3531,8 +3587,10 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // client has only asked for. `selfRoot` is already the union of the two.
       rooted: view.selfRoot !== null,
       // ...and the third: a request that has been sent and not yet ruled on,
-      // which has no cast behind it and so shows up in neither of those.
-      pending: view.awaitingCast,
+      // which has no cast behind it and so shows up in neither of those --
+      // including one `driveQueuedPress` sent a few lines ago, which this
+      // frame's `view` predates (spec 264).
+      pending: view.awaitingCast || askedThisFrame,
       readyAtTick: view.cooldowns[swingId] ?? 0,
       // Judged on the heading the *player is looking at* -- the local one, the
       // one the body is drawn with -- so that "off cooldown and fully turned"
@@ -3564,6 +3622,48 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   }
 
   /**
+   * One tick of a press that is waiting for the body (spec 264).
+   *
+   * Runs **before** the two orders below it, and that ordering is what stops a
+   * held press being starved: on the tick the body comes free, the press is
+   * asked for first and `autoAttack`'s own `pending` gate then closes behind it,
+   * so the standing attack order does not commit the next swing over the top of
+   * a press that has been waiting for the last one.
+   *
+   * A self-cast is aimed at the caster whatever point comes with the request --
+   * `startCast` says so outright -- so the aim is this body's own position and
+   * there is nothing captured at the press to go stale.
+   */
+  function driveQueuedPress(
+    view: ReturnType<typeof client.view>,
+    me: { x: number; y: number },
+  ): void {
+    const step = drainPress({
+      queued: queuedPress,
+      // Both halves of "am I committed": the server's cast and the one this
+      // client has only asked for.
+      rooted: view.selfRoot !== null,
+      // A break clears the cast, so `rooted` is false right through a stagger
+      // and cannot stand in for it (spec 173).
+      staggered: view.selfStaggered,
+      // ...and the third: a request already sent and not yet ruled on, which
+      // has no cast behind it and so shows up in neither of those (spec 080).
+      pending: view.awaitingCast,
+      // The server's own number played back, exactly as `startAim` read it at
+      // the press. A press made during the *first* one's wind-up is dropped
+      // here rather than waiting that cast out to be refused `onCooldown`.
+      ready: view.estimatedTick >= (view.cooldowns[queuedPress?.abilityId ?? ''] ?? 0),
+    });
+    queuedPress = step.queued;
+    if (!step.send) return;
+    // The edge, raised where the request leaves and carrying the set the press
+    // was made with (specs 258, 264). The frame loop reads it into `swingHeld`.
+    castPress = step.send.held;
+    askedThisFrame = true;
+    client.useAbility(step.send.abilityId, me.x, me.y, 0);
+  }
+
+  /**
    * One tick of a confirmed aim (spec 080): close the gap, then throw it.
    *
    * The same shape as `driveAutoAttack` above and deliberately so -- both feed
@@ -3574,6 +3674,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   function driveCastOrder(view: ReturnType<typeof client.view>, me: { x: number; y: number }): void {
     const standing = order;
     if (!standing) return;
+    // A request has already gone out on this frame (spec 264). `castOrder` has
+    // no `pending` of its own -- spec 080 gave one to `autoAttack` and not to
+    // this -- and a second request on one frame is the server taking the first
+    // and refusing this one, which would also *spend* the order, since asking
+    // is what drops it. Held whole for a frame instead: one frame of not
+    // re-pointing a chase is invisible, and losing the order is not.
+    if (askedThisFrame) return;
 
     const mark =
       standing.targetEntityId === 0
@@ -3987,6 +4094,11 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const deadNow = view.selfDead;
     if (deadNow && !wasDead) dropOrders();
     wasDead = deadNow;
+    // Before the two orders below it (spec 264): a press that has been waiting
+    // for a swing is asked for on the tick the body comes free, rather than
+    // being beaten to it by the standing attack order's next commit.
+    askedThisFrame = false;
+    driveQueuedPress(view, me);
     driveCastOrder(view, me);
     driveAutoAttack(view, me);
     drivePickup(view, me);
@@ -4005,13 +4117,16 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     swingHeld = swingHold({
       previous: swingHeld,
       held,
-      pressed: castPressed,
+      // The set the press was made with, on the frame its request went out
+      // (spec 264) -- so a direction held at the press is suppressed and one
+      // pressed after it still withdraws, which is what pressing it means.
+      pressed: castPress,
       // Both halves of "am I committed", as everything else here reads it: the
       // server's cast and the one this client has only asked for.
       casting: view.selfRoot !== null,
       committed: ownCast !== null && committedPhase(ownCast.phase),
     });
-    castPressed = false;
+    castPress = null;
 
     const intent = moveIntent({
       held: heldAfterHold(held, swingHeld),
@@ -4315,7 +4430,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the bar froze partway and sat there while the wind-up ran on without it.
     const drawnTick = view.estimatedTick + Math.min(1, accumulator / TICK_MS);
 
-    // What time it is in the world (spec 263). Read at the same `drawnTick` the
+    // What time it is in the world (spec 264). Read at the same `drawnTick` the
     // cast bars are, so the sky and everything else with a duration are on one
     // clock -- and derived rather than received, because the server's tick is
     // the clock and this client already holds an estimate of it.

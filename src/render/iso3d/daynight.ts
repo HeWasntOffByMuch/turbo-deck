@@ -187,7 +187,7 @@ const SKY_KEYS: readonly SkyKey[] = [
  * The hours the ramp is authored at, in clock order.
  *
  * Exported so the thing that *drives* this clock can assert it lands its own
- * segment boundaries on keyframes (spec 263). That is not tidiness: a boundary
+ * segment boundaries on keyframes (spec 264). That is not tidiness: a boundary
  * is where a piecewise clock's rate jumps, and one landing in the middle of a
  * colour transition is the one way such a clock shows a kink.
  */

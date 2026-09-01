@@ -574,8 +574,8 @@ describe('chunk activation gates simulation', () => {
 /** Spec 073. Every enemy in the world stands where the map document put it. */
 describe("the map's spawners", () => {
   const POINTS = [
-    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470, respawnTicks: null, leashRadius: null },
-    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430, respawnTicks: null, leashRadius: null },
+    { id: 'spawner-1', monsterId: 'grazer', x: 620, y: 470, respawnTicks: null, leashRadius: null, when: null },
+    { id: 'spawner-2', monsterId: 'stalker', x: 660, y: 430, respawnTicks: null, leashRadius: null, when: null },
   ];
 
   function spawnerContext(overrides: Partial<StepContext> = {}): StepContext {
@@ -718,6 +718,7 @@ describe("a spawner's own numbers", () => {
     y,
     respawnTicks: settings.respawnTicks ?? null,
     leashRadius: settings.leashRadius ?? null,
+    when: null,
   });
 
   const ctxFor = (points: readonly SpawnPoint[], config?: Partial<LiveConfig>): StepContext =>

@@ -303,6 +303,8 @@ async function main(): Promise<void> {
        * `AFFLICTION_ART`.
        */
       readonly effectId?: string;
+      /** `standing` only: where it stands, relative to the dummy (spec 265). */
+      readonly at?: { readonly x?: number; readonly y?: number; readonly z?: number };
       /** `shot` only: how far back the flight begins, so it fits the frame. */
       readonly launch?: number;
       /** `shot` only: world units a second, along the flight. */
@@ -373,6 +375,7 @@ async function main(): Promise<void> {
           api.standing(input.effectId ?? 'fire_camp', {
             seed: input.seed,
             scale: input.scale ?? 24,
+            ...(input.at ?? {}),
           });
         } else if (input.kind === 'swing') {
           api.swing(input.effectId ?? 'swing_arc', {
@@ -808,6 +811,32 @@ async function main(): Promise<void> {
       ]),
     });
 
+    // The torch beside the campfire (spec 265), each at the scale the game plays
+    // it at, in **one** frame for every cell -- `preview-monsters.ts`'s rule and
+    // for its reason: framing each subject on its own extent hides the only
+    // thing a row of two fires is being asked, which is whether the small one is
+    // small. A torch's footprint is 10 and its row draws at 1.15 of it; a
+    // campfire's is 34 at 0.72.
+    const TORCH_SITE = 11.5;
+    // Beside the dummy and up at its own bowl, which is not framing: a torch's
+    // fire is born at `FIXTURE_LIGHTS['torch-stand'].height` and one drawn on
+    // the ground behind a post is a photograph of a post.
+    const TORCH_AT = { x: 34, y: 72, z: 0 };
+    shotRows.push({
+      title: 'a torch is the campfire, smaller and shorter (one frame for both)',
+      tiles: await series([
+        { label: 'camp t=40', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 40, scale: FIRE_SITE, halfHeight: FIRE_FRAME },
+        { label: 'camp t=90', kind: 'standing', seed: SEEDS[1] ?? 1, ticks: 90, scale: FIRE_SITE, halfHeight: FIRE_FRAME },
+        { label: 'torch t=40', kind: 'standing', effectId: 'fire_torch', at: TORCH_AT, seed: SEEDS[1] ?? 1, ticks: 40, scale: TORCH_SITE, halfHeight: FIRE_FRAME },
+        { label: 'torch t=90', kind: 'standing', effectId: 'fire_torch', at: TORCH_AT, seed: SEEDS[1] ?? 1, ticks: 90, scale: TORCH_SITE, halfHeight: FIRE_FRAME },
+        // Close, because this is what a player standing next to one sees: the
+        // gaps between the marks are the whole reason a flame is paint.
+        // 64 rather than tighter, because the camera looks at `halfHeight * 0.2
+        // + 20` and a closer frame would put the bowl off the top of it.
+        { label: 'torch close', kind: 'standing', effectId: 'fire_torch', at: TORCH_AT, seed: SEEDS[2] ?? 2, ticks: 90, scale: TORCH_SITE, halfHeight: 64 },
+        { label: 'torch low seat', kind: 'standing', effectId: 'fire_torch', at: TORCH_AT, seed: SEEDS[1] ?? 1, ticks: 90, scale: TORCH_SITE, elevation: 0.42, halfHeight: 64 },
+      ]),
+    });
     // --- the two arrivals (spec 263) --------------------------------------
     //
     // Here rather than on a sheet of their own for the campfire's reason: they

@@ -1060,6 +1060,7 @@ export async function mountEditor(container: HTMLElement): Promise<ViewHandle> {
     return (
       `${marker.id} kind:${marker.kind} label:${marker.label ?? ''} ` +
       `respawn:${String(marker.spawner?.respawnSeconds ?? 0)} leash:${String(marker.spawner?.leashRadius ?? 0)} ` +
+      `when:${marker.spawner?.when ?? 'always'} ` +
       `at:${String(Math.round(marker.x))},${String(Math.round(marker.z))}`
     );
   };

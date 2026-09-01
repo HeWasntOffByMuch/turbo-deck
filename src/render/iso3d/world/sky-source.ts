@@ -10,11 +10,11 @@ import {
 } from '../../../server/data/day-night.js';
 
 /**
- * Whose clock the sky follows (spec 263).
+ * Whose clock the sky follows (spec 264).
  *
  * `carried-light.ts`'s shape one system along, and it holds that module's rule
  * for that module's reason -- **the panel wins where it is asking for something,
- * and the game decides where it is not.** Until spec 263 only the panel decided,
+ * and the game decides where it is not.** Until spec 264 only the panel decided,
  * and it decided for one client at a time, which is the one thing a shared
  * cycle cannot be.
  *
@@ -26,7 +26,7 @@ import {
 /** What the panel's Sky section is asking for. */
 export interface SkySettings {
   /**
-   * `Day/night cycle`, and since spec 263 it opens **ticked**. Unticked hands
+   * `Day/night cycle`, and since spec 264 it opens **ticked**. Unticked hands
    * the sun to the manual `Direction`/`Elevation` sliders, which is what it has
    * always meant and what spec 033 built them for.
    */
@@ -57,7 +57,7 @@ export function resolveSkyHours(settings: SkySettings, clock: WorldClock | null)
 }
 
 /**
- * `?clock=` -- pin what this client draws to one hour (spec 263).
+ * `?clock=` -- pin what this client draws to one hour (spec 264).
  *
  * In the register of `?seed=`, `?slots=` and `?field=`, and needed rather than
  * convenient: a sky that moves is a sky no harness can photograph twice, and

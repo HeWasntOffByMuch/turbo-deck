@@ -67,6 +67,7 @@ function points(n: number): SpawnPoint[] {
       y: (Math.floor(i / cols) - half) * SPACING,
       respawnTicks: null,
       leashRadius: null,
+      when: null,
     });
   }
   return out;

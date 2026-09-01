@@ -22,7 +22,7 @@ function span(fromHours: number, toHours: number): number {
   return raw > 0 ? raw : raw + 24;
 }
 
-describe('the cycle table (spec 263)', () => {
+describe('the cycle table (spec 264)', () => {
   it('sums to exactly one day, in hours, in seconds and in ticks', () => {
     const hours = DAY_NIGHT_CYCLE.reduce((sum, part) => sum + span(part.fromHours, part.toHours), 0);
     expect(hours).toBeCloseTo(24, 9);
@@ -81,7 +81,7 @@ describe('the cycle table (spec 263)', () => {
   });
 });
 
-describe('the world clock (spec 263)', () => {
+describe('the world clock (spec 264)', () => {
   it('is a pure function of the tick, memo and all', () => {
     const first = worldClockAt(1234);
     worldClockAt(99999);
@@ -167,7 +167,7 @@ describe('the world clock (spec 263)', () => {
   });
 });
 
-describe('darkness, the hook that is a number (spec 263)', () => {
+describe('darkness, the hook that is a number (spec 264)', () => {
   it('is flat at both ends and continuous at all four boundaries', () => {
     let worst = 0;
     for (let tick = 1; tick <= CYCLE_TICKS; tick++) {
@@ -203,7 +203,7 @@ describe('darkness, the hook that is a number (spec 263)', () => {
   });
 });
 
-describe('sunUp (spec 263)', () => {
+describe('sunUp (spec 264)', () => {
   it('is the horizon rather than the phase name', () => {
     for (let tick = 0; tick < CYCLE_TICKS; tick += 7) {
       const clock = worldClockAt(tick);
@@ -240,7 +240,7 @@ describe('sunUp (spec 263)', () => {
   });
 });
 
-describe('the edge and the countdown (spec 263)', () => {
+describe('the edge and the countdown (spec 264)', () => {
   it('reports a phase beginning on exactly four ticks per cycle', () => {
     const began: DayPhaseValue[] = [];
     for (let tick = 0; tick < CYCLE_TICKS; tick++) {
@@ -281,7 +281,7 @@ describe('the edge and the countdown (spec 263)', () => {
   });
 });
 
-describe('pinning an hour (spec 263)', () => {
+describe('pinning an hour (spec 264)', () => {
   it('inverts the clock to within a tick, everywhere', () => {
     for (let hours = 0; hours < 24; hours += 0.05) {
       const tick = tickForHours(hours);
@@ -330,7 +330,7 @@ describe('pinning an hour (spec 263)', () => {
   });
 });
 
-describe('the readout (spec 263)', () => {
+describe('the readout (spec 264)', () => {
   it('formats an hour as a clock face', () => {
     expect(formatWorldHours(7.5)).toBe('07:30');
     expect(formatWorldHours(0)).toBe('00:00');
