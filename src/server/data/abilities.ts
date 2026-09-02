@@ -327,6 +327,29 @@ export interface AbilityDefinition {
    */
   readonly castLook?: CastLook;
   /**
+   * How hard this ability lands on a **Guard** pool, as a multiple of the
+   * caster's `staggerPower` (spec 271).
+   *
+   * **Absent carries no Guard pressure**, and that is the load-bearing default:
+   * before this spec every non-basic blow multiplied `staggerPower` by
+   * `abilityPoiseFactor`, which nothing granted, so the whole table read zero.
+   * Keeping zero as the default means this spec turns Guard pressure on for the
+   * rows that ask for it and moves nothing for the rows that do not -- an
+   * Ember Toss did not pressure a Guard yesterday and does not today.
+   *
+   * A basic attack never reads this. It takes the **weapon's** impact, because
+   * what a swing weighs is a fact about what is being swung; see
+   * `ItemDefinition.guardImpact`.
+   *
+   * The scale is calibrated against a basic attack at 1: below it is a quick
+   * jab, around it is a committed blow, and above it is a row whose whole
+   * identity is the Guard bar. **A multi-hit or area row is authored against
+   * the number of bodies it can reach**, not against its own weight -- Guard
+   * pressure resolves per target, so a factor that reads fairly on one enemy is
+   * that factor again on every enemy in the circle.
+   */
+  readonly guardImpact?: number;
+  /**
    * This ability is an **active skill** and may only be cast out of a skill slot
    * (spec 188).
    *
@@ -610,22 +633,36 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 85,
     damage: 2,
     // Getting inside a guard is force and footwork. Its damage is small on
-    // purpose -- the flat `poiseDamage` is the skill -- so what these letters
-    // move is the smaller half of it.
+    // purpose -- the Guard pressure is the skill -- so what these letters move
+    // is the smaller half of it.
     scaling: { strength: G.B, agility: G.D },
-    // Order is the skill. The guard comes off first, so the poise damage that
-    // follows lands on a pool that is already down -- which is what makes this
-    // a *setup* for somebody else's stagger rather than a stagger of its own.
-    effects: [
-      { kind: 'poise', amount: -50 },
-      { kind: 'poiseDamage', amount: 6 },
-      { kind: 'damage' },
-    ],
+    // **The heaviest thing in the table, and the reason this row was redesigned**
+    // (spec 271). It used to open with `{ kind: 'poise', amount: -50 }`: a flat
+    // write straight into the pool, scaling with nothing, against a ravager's 49
+    // Guard. One press emptied an ordinary enemy at Strength 5 exactly as at
+    // Strength 60, and the `poiseDamage: 6` behind it then broke a pool that was
+    // already at zero -- so the one skill named after Strength's own mechanic was
+    // the one thing in the game that ignored every point of it.
+    //
+    // It is a multiplier now. At 3.4 it is a little over three swings of Guard
+    // pressure in one press, which is worth a six-second cooldown and four of
+    // your own Guard, and it is the *build* that decides whether that breaks
+    // anything: 10.6 at Strength 5, 80.6 at Strength 60 with Crushing Blows.
+    guardImpact: 3.4,
+    // Guard first, then health. Both go through their own pipeline -- the Guard
+    // through `applyPoiseDamage`, so hyper-armour reduces it, the immunity window
+    // refuses the break and a break it does cause pays out like any other.
+    effects: [{ kind: 'poiseDamage' }, { kind: 'damage' }],
     description: 'You do not get inside a guard politely.',
   },
   {
     id: 'skill.stunningBlow',
     name: 'Stunning Blow',
+    // Above a swing (spec 271): a blow thrown to put somebody down carries more
+    // into the Guard bar than the swing it interrupts. Under Guard Break's,
+    // because this row already buys the stagger outright and a skill that was
+    // also the best Guard pressure in the game would leave that one nothing.
+    guardImpact: 1.2,
     kind: 'melee',
     targeting: 'unit',
     skill: true,
@@ -643,8 +680,10 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       { kind: 'damage' },
       // Guard damage as well as the stun, so it is worth throwing at a body
       // whose immunity window is still up: the pool it takes is real even when
-      // the stun is refused.
-      { kind: 'poiseDamage', amount: 8 },
+      // the stun is refused. Scaled since spec 271 -- it was a flat 8, which a
+      // Strength character's own swing had passed by the time they could buy
+      // the sigil that grants this.
+      { kind: 'poiseDamage' },
       { kind: 'stun', ticks: seconds(1.4) },
     ],
     description: 'Wound up from the shoulder, and telegraphed the whole way.',
@@ -652,6 +691,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'skill.whirlwind',
     name: 'Whirlwind',
+    // **Low because it is an area** (spec 271). Guard pressure resolves per
+    // target, so this number is paid once for every body in the circle -- at a
+    // committed blow's 0.7 a Whirlwind into four enemies would be 2.8 swings of
+    // Guard pressure for one press. Authored against the reach rather than
+    // against how heavy the blow feels, which is the rule on
+    // `AbilityDefinition.guardImpact`.
+    guardImpact: 0.45,
     // The kind that reads {@link AbilityDefinition.area}: no body is named and
     // the shape decides who is caught.
     kind: 'area',
@@ -679,6 +725,11 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'skill.cripplingStrike',
     name: 'Crippling Strike',
+    // A quick one (spec 271). It is Agility's row and it is still a physical
+    // blow, so it carries something -- Guard pressure is a property of the blow
+    // rather than of the attribute that pays for it, and what makes it
+    // Strength's mechanic is that `staggerPower` is what this multiplies.
+    guardImpact: 0.4,
     // One character over what a 92px slot holds in a 5x7 face at scale 1.
     shortName: 'Cripple',
     kind: 'melee',
@@ -779,6 +830,9 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'skill.rendingCut',
     name: 'Rending Cut',
+    // The reference committed blow (spec 271): a little under a full swing,
+    // because what this row is for is the bleed behind it.
+    guardImpact: 0.7,
     kind: 'melee',
     targeting: 'unit',
     skill: true,

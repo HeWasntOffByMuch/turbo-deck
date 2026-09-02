@@ -33,9 +33,9 @@ import type { AbilityDefinition } from '../data/abilities.js';
 import { subjectOf, type SkillEffect } from '../data/skill-effects.js';
 import { applyDot } from './damage-over-time.js';
 import { applyHealing } from './healing.js';
-import { resolveBlow } from './blow.js';
+import { resolveBlow, rewardBreak } from './blow.js';
 import { abilityEffectPowerOf } from '../data/ability-scaling.js';
-import { applyPoiseDamage, isUnstaggerable, stagger } from './poise.js';
+import { applyPoiseDamage, guardImpactOf, isUnstaggerable, poiseDamageOf, stagger } from './poise.js';
 import { applyStatus, clearStatus } from './statuses.js';
 import type { ServerEntity, ServerSimEvent } from './types.js';
 
@@ -148,7 +148,16 @@ function applyOne(
       // Through the break machinery, so hyper-armour reduces it, the immunity
       // window refuses the break, and emptying the pool staggers exactly the way
       // a weapon emptying it does.
-      const poised = applyPoiseDamage(target, effect.amount, tick, false);
+      //
+      // **Scaled unless the row opts out** (spec 271). With no `amount` this is
+      // `staggerPower * guardImpact * multiplier` -- the same expression a basic
+      // attack goes through, so Strength and Crushing Blows reach a skill's
+      // Guard pressure without a second formula to keep in step. A row that
+      // authors `amount` is stating an absolute, which is what a body with no
+      // progression behind it wants.
+      const amount =
+        effect.amount ?? poiseDamageOf(caster.stats, guardImpactOf(ability, caster.stats), 1);
+      const poised = applyPoiseDamage(target, amount * (effect.multiplier ?? 1), tick, false);
       if (!poised.broke) return still(poised.entity);
       // The **caster's** duration, for `resolveBlow`'s reason (spec 243):
       // `staggerTicks` is how long a break you caused lasts, so a skill that
@@ -161,7 +170,16 @@ function applyOne(
         tick,
         poised.interrupted,
       );
-      return still(struck.entity, struck.events);
+      // And the break pays the breaker (spec 271). The same `rewardBreak`
+      // `resolveBlow` calls, so Momentum is granted by a Guard broken with a
+      // skill exactly as by one broken with a swing -- without this the ability
+      // half of the loop stopped at the break.
+      return {
+        caster: rewardBreak(caster, tick),
+        target: struck.entity,
+        events: struck.events,
+        rng,
+      };
     }
 
     case 'stun': {

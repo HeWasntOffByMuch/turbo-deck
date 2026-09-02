@@ -228,20 +228,25 @@ describe('derived numbers match the row they came from', () => {
 });
 
 describe('effects are described in the row order', () => {
-  it('puts Guard Break’s strip before its damage', () => {
+  it('puts Guard Break’s Guard pressure before its damage', () => {
     const ability = abilityById('skill.guardBreak');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const text = technicalText(describeAbility(ability));
     // Read off the row rather than spelled here: what this asserts is the
-    // *order* the three lines come in, and a hand-written number turns it into
-    // a test that fails whenever somebody retunes the skill.
-    const strip = text.indexOf('Removes 50 Guard');
-    const guardDamage = text.indexOf('Guard damage');
+    // *order* the lines come in, and a hand-written number turns it into a test
+    // that fails whenever somebody retunes the skill.
+    //
+    // The strip this used to look for is gone (spec 271): the row opened with a
+    // flat `poise: -50` that scaled with nothing, so the skill named after
+    // Strength's own mechanic ignored every point of it. What is asserted now is
+    // that the Guard line states a *multiplier* -- the sign that it goes through
+    // `poiseDamageOf` rather than around it.
+    const guardDamage = text.indexOf(`${ability.guardImpact}x your Guard damage`);
     const damage = text.indexOf(`Deals ${ability.damage} damage`);
-    expect(strip).toBeGreaterThanOrEqual(0);
-    expect(guardDamage).toBeGreaterThan(strip);
+    expect(guardDamage).toBeGreaterThanOrEqual(0);
     expect(damage).toBeGreaterThan(guardDamage);
+    expect(text).not.toContain('Removes');
   });
 
   it('names the status a skill applies, with its duration', () => {

@@ -325,6 +325,16 @@ describe('every trait actually reaches the sim', () => {
       // rather than off the bundle, because the bundle is derived from them and
       // asking it here would be the one cycle this design does not have.
       'masteryRelief',
+      // **Deliberately dormant since spec 271.** A health gate on Unstoppable's
+      // all-cast hyper-armour, from the Strength+Constitution pair spec 244
+      // deleted. Its only surviving grant set it to exactly 1 -- "always" -- so
+      // `if (gate < 1)` could never run and the sim carried a threshold no
+      // content could set. The grant and the branch are both gone; the field
+      // stays because `TRAIT_WIRE_ORDER` is protocol and removing an entry
+      // renumbers every trait after it. It is listed here rather than given a
+      // fractional grant, because inventing a low-health Strength mechanic to
+      // keep a field alive is how this list got long in the first place.
+      'juggernautBelow',
     ]);
 
     // `derived.ts` is excluded, and excluding it is the whole point: it is the

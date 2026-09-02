@@ -51,7 +51,7 @@ import { hasAffliction } from '../data/status-semantics.js';
 import { applyArmor } from '../player/stats.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
-import { applyPoiseDamage, isResolute, poiseDamageOf, stagger } from './poise.js';
+import { applyPoiseDamage, guardImpactOf, isResolute, poiseDamageOf, stagger } from './poise.js';
 import { enterCombat, markAssist } from './restoration.js';
 import {
   adaptationAgainst,
@@ -347,9 +347,13 @@ export function resolveBlow(
   // what a *live* exchange leaves behind.
   if (!killed) {
     const poiseMultiplier = weakPoint ? 1 + A.exploitPoiseFactor : 1;
+    // What the blow weighs (spec 271): the weapon's impact for a swing, the
+    // ability's own for a skill. Zero for a row that authors none, which is
+    // every row that carried no Guard pressure before this spec.
+    const impact = guardImpactOf(ability, attacker.stats);
     const poised = applyPoiseDamage(
       target,
-      poiseDamageOf(attacker.stats, isBasicAttack, poiseMultiplier),
+      poiseDamageOf(attacker.stats, impact, poiseMultiplier),
       tick,
       isBasicAttack,
     );
@@ -426,8 +430,16 @@ export function resolveBlow(
   return { attacker, target, events, rng };
 }
 
-/** What breaking somebody's guard is worth to the breaker. */
-function rewardBreak(attacker: ServerEntity, tick: number): ServerEntity {
+/**
+ * What breaking somebody's guard is worth to the breaker.
+ *
+ * Exported since spec 271 because a skill can break a Guard too: `skill-effects`
+ * calls it on the `poiseDamage` break path, so a break caused by Guard Break
+ * pays out exactly as one caused by a swing. Without that, the ability half of
+ * the Strength loop stopped at the break and never reached Momentum -- which is
+ * the whole of "break -> seize initiative".
+ */
+export function rewardBreak(attacker: ServerEntity, tick: number): ServerEntity {
   const A = attacker.stats.traits;
   let next = attacker;
 

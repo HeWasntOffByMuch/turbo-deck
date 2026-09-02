@@ -141,13 +141,28 @@ export type SkillEffect = { readonly on?: EffectSubject } & (
   /**
    * Guard damage on top of what the blow itself carries.
    *
-   * Absolute, unlike `poiseDamageOf`'s `staggerPower * multiplier`, because a
-   * skill that says "and 40 guard" should mean 40 to everyone -- a Strength
-   * character already gets more out of every blow and does not also need the
-   * skill's stated number to scale. Runs through `applyPoiseDamage`, so
-   * hyper-armour, the immunity window and the break itself all apply.
+   * **Scaled by default since spec 271**: with neither field it resolves through
+   * `poiseDamageOf` against the ability's own `guardImpact`, so the skill's
+   * Guard pressure is the caster's force -- Strength, Crushing Blows, the lot --
+   * exactly as a basic attack's is. `multiplier` scales that.
+   *
+   * It used to be absolute and required, on the argument that "and 40 guard"
+   * should mean 40 to everyone. That argument is right for a body with no
+   * progression behind it and wrong for a player: it made Guard Break, the one
+   * skill whose entire identity is the Guard bar, land the same blow at
+   * Strength 5 as at Strength 60. So `amount` survives as the opt-out for a
+   * caster who genuinely has no force to scale -- the Warden, whose laser
+   * authors a flat number because a boss's numbers are its own -- and player
+   * rows take the scaled path.
+   *
+   * Either way it runs through `applyPoiseDamage`, so hyper-armour, the
+   * immunity window and the break itself all apply.
    */
-  | { readonly kind: 'poiseDamage'; readonly amount: number }
+  | {
+      readonly kind: 'poiseDamage';
+      readonly amount?: number;
+      readonly multiplier?: number;
+    }
   /**
    * A stagger, applied directly rather than as the consequence of a break.
    *

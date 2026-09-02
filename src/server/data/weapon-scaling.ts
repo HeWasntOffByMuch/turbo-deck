@@ -181,6 +181,39 @@ export const UNARMED_DAMAGE: WeaponDamage = { min: 1, max: 2 };
 export const NO_WEAPON_DAMAGE: WeaponDamage = { min: 1, max: 1 };
 
 /**
+ * Guard impact for a weapon that authors none, and for an empty hand (spec 271).
+ *
+ * **1, so this spec moved no Guard number it did not mean to move.** A basic
+ * attack's pressure was `staggerPower` exactly; it is now
+ * `staggerPower * impact`, and a default of 1 is what makes those the same
+ * sentence for every row and every fixture that says nothing. A monster gets it
+ * through `NO_WEAPON` for the same reason -- its `attackDamage` says how hard
+ * it hits and no row in `data/monsters.ts` has ever said how heavily.
+ *
+ * A fist is the default too rather than something lighter, which is a decision
+ * and not an oversight: {@link UNARMED_DAMAGE}'s own comment says losing your
+ * sword should be a setback rather than a cliff, and an unarmed body that had
+ * also lost its ability to pressure a Guard would be barred from the whole
+ * Strength loop by being disarmed.
+ */
+export const DEFAULT_WEAPON_GUARD_IMPACT = 1;
+
+/**
+ * A weapon's Guard impact, or the default (spec 271).
+ *
+ * {@link damageOf}'s totality, and it is worth having for the same reason: a
+ * hand-edited row carrying `-2` or a string is a multiplier that would turn a
+ * blow into a heal or a `NaN` into the pool, and refusing it once here is one
+ * check against one at every swing. Zero is *allowed* -- a weapon that lands no
+ * Guard pressure at all is a legitimate thing to author -- so the floor is 0
+ * rather than the default.
+ */
+export function guardImpactOfWeapon(impact: number | undefined, held: boolean): number {
+  if (!held || impact === undefined) return DEFAULT_WEAPON_GUARD_IMPACT;
+  return Number.isFinite(impact) ? Math.max(0, impact) : DEFAULT_WEAPON_GUARD_IMPACT;
+}
+
+/**
  * A row's damage, or the stated default for an empty hand.
  *
  * The same totality {@link scalingOf} has, and the same two cases: a *missing*
@@ -220,6 +253,7 @@ export const NO_WEAPON = {
   scalingAttributes: NO_SCALING_ATTRIBUTES,
   weaponDamageMin: UNARMED_DAMAGE.min,
   weaponDamageMax: UNARMED_DAMAGE.max,
+  weaponGuardImpact: DEFAULT_WEAPON_GUARD_IMPACT,
 } as const;
 
 /**

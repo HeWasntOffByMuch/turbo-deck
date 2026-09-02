@@ -429,8 +429,22 @@ function effectLine(effect: SkillEffect, ability: AbilityDefinition): readonly s
       return [`Deals ${amount(scaled)} damage.`];
     }
 
-    case 'poiseDamage':
-      return [`Deals ${amount(effect.amount)} ${GUARD_NAME} damage.`];
+    case 'poiseDamage': {
+      // Two forms since spec 271, and the line has to say which, because they
+      // answer differently to everything the player has bought: an authored
+      // `amount` is an absolute, and the scaled form is the caster's own
+      // `staggerPower` -- Strength, Crushing Blows, all of it -- times what this
+      // row weighs. Naming the multiplier rather than a number is the only
+      // honest thing available here: the number depends on who is casting, and
+      // this table describes a row rather than a character.
+      if (effect.amount !== undefined) {
+        const flat = effect.amount * (effect.multiplier ?? 1);
+        return [`Deals ${amount(flat)} ${GUARD_NAME} damage.`];
+      }
+      const impact = (ability.guardImpact ?? 0) * (effect.multiplier ?? 1);
+      if (impact <= 0) return [];
+      return [`Deals ${amount(impact)}x your ${GUARD_NAME} damage.`];
+    }
 
     case 'poise':
       // The pool written directly, which `sim/skill-effects.ts` is explicit
