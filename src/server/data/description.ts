@@ -708,7 +708,6 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   // says *recovery*.
   { key: 'backswingCancelReduction', where: 'trait', name: 'Backswing you may break off', form: 'percent' },
   { key: 'handlingReduction', where: 'trait', name: 'Wind-up reduction for abilities that launch something', form: 'percent' },
-  { key: 'heavyWindupReduction', where: 'trait', name: 'Wind-up reduction for heavy abilities', form: 'percent' },
 
   { key: 'flowTicks', where: 'trait', name: 'Flow duration', form: 'seconds' },
   { key: 'flowDurationPct', where: 'trait', name: 'Flow duration', form: 'percent' },
@@ -725,6 +724,13 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'momentumWindupScale', where: 'trait', name: 'Wind-up reduction while Momentum is held', form: 'percent' },
   { key: 'perfectExitResource', where: 'trait', name: `${RESOURCE_NAME} on a perfect exit`, form: 'flat' },
   { key: 'perfectExitWindowTicks', where: 'trait', name: 'Perfect exit window', form: 'seconds' },
+  // Executioner's pair (spec 271). Two lines rather than one composed sentence,
+  // because they are two independently-moving numbers -- each tier raises the
+  // payoff and widens the window -- and `GRANT_LABELS` states one field each.
+  // "Staggered" is the controlled term for a broken Guard, so the condition
+  // names it rather than saying "broken".
+  { key: 'executeBonus', where: 'trait', name: 'Damage to Staggered targets under the threshold', form: 'percent' },
+  { key: 'executeBelow', where: 'trait', name: 'Execute health threshold', form: 'percent' },
   { key: 'overkillResource', where: 'trait', name: `${RESOURCE_NAME} on an overkill`, form: 'flat' },
 
   // The two below are **not** reductions and their names must not become one.

@@ -348,7 +348,10 @@ export function deriveTraits(
     overkillResource: Math.max(0, t.overkillResource),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
-    heavyWindupScale: reduction(t.heavyWindupReduction),
+    // Dormant since spec 271, pinned at its neutral value. Heavy Handling was
+    // the only grant and its consumer's gate was unreachable; the field stays
+    // because `TRAIT_WIRE_ORDER` is protocol.
+    heavyWindupScale: 1,
 
     attackPointScale,
     backswingCancelPct,

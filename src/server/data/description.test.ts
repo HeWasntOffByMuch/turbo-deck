@@ -550,15 +550,20 @@ describe('the passive skill tree (spec 191)', () => {
         if (!labelled.has(`trait:${key}`)) missing.add(`trait:${key}`);
       }
     }
-    // The three that cannot be turned into a signed quantity reading correctly
-    // in English, each left to its row's authored sentence on purpose:
-    // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
-    // *lowers* a requirement, and `overflowHealthPerResource` is a price the
-    // skill charges for a benefit -- and since spec 239 it is a *capability*
-    // rather than a rate, since the rate itself is `SCALING`'s and what a layer
-    // grants is the relief beside it, which does have a label.
+    // The two that cannot be turned into a signed quantity reading correctly in
+    // English, each left to its row's authored sentence on purpose:
+    // `masteryRelief` is a count that *lowers* a requirement, and
+    // `overflowHealthPerResource` is a price the skill charges for a benefit --
+    // and since spec 239 it is a *capability* rather than a rate, since the rate
+    // itself is `SCALING`'s and what a layer grants is the relief beside it,
+    // which does have a label.
+    //
+    // `juggernautBelow` was a third until spec 271, and it left this list by
+    // ceasing to be granted rather than by gaining a label: it was a health gate
+    // whose only source set it to 1, so the branch reading it could never run.
+    // Executioner's `executeBelow` is a health threshold too and *is* labelled,
+    // which is the distinction -- that one is a number the player moves.
     expect([...missing].sort()).toEqual([
-      'trait:juggernautBelow',
       'trait:masteryRelief',
       'trait:overflowHealthPerResource',
     ]);

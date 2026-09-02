@@ -135,11 +135,11 @@ import { createAudioEngine } from '../../audio/engine.js';
 import { BUS_LABELS, BUSES } from '../../audio/events.js';
 import { EMPTY_CATALOG, parseCatalog } from '../../audio/catalog.js';
 import { loadMix, saveMix, withBus, withMaster, withMuted } from '../../audio/mix.js';
+import { isHeavySwing } from './audio-wire.js';
 import { AudioDriver } from './audio-driver.js';
 import { fieldStatusesOn } from './aura-vfx.js';
 import { CastPhase } from '../../../server/sim/types.js';
 import { TradeStageValue } from '../../../server/net/protocol.js';
-import { HEAVY_ABILITY_DAMAGE } from '../../../server/sim/abilities.js';
 import type { UiSoundId } from '../../../ui/core/sound.js';
 import catalogUrl from '../../../../assets/audio/sfx.json?url';
 import {
@@ -1855,7 +1855,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const ability = abilityById(cast.abilityId);
     audioDriver.windup(
       cast.abilityId,
-      (ability?.damage ?? 0) >= HEAVY_ABILITY_DAMAGE,
+      isHeavySwing(ability),
       {
         x: caster.x,
         y: scene.groundAt(caster.x, caster.y) + BLOOD_HEIGHT,

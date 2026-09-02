@@ -101,14 +101,54 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('str.followThrough', 'strength', 'Brutal Follow-Through', T2, 3, "on breaking an enemy's guard",
     { traits: { momentumTicks: Math.round(SCALING.agility.flowTicks * 0.5), momentumWindupScale: 0.12 } },
     'A break opens a window: your next blow starts faster.'),
-  specialization('str.heavyHandling', 'strength', 'Heavy Handling', T2, 3, 'casting a heavy ability',
-    { traits: { heavyWindupReduction: 0.15 } },
-    'Oversized weapons stop punishing you for their weight.'),
-  specialization('str.overkill', 'strength', 'Overkill', T2, 3, 'on a kill that overkilled by a quarter',
+  // **Heavy Handling was here, and it did nothing** (spec 271). Its consumer was
+  // `ability.damage >= HEAVY_ABILITY_DAMAGE`, a threshold spec 217 set to 6 so
+  // that `melee.heavy` (damage exactly 6) would keep clearing it -- and spec 237
+  // then deleted `melee.heavy` as one of seven rows nothing granted. It was the
+  // only row that ever cleared the bar, so from that commit three purchasable
+  // points bought a number nothing multiplied. Every test stayed green, and
+  // `audit:progression` reported it ACTIVE, because the derived value does move:
+  // what nothing checked was whether any content could reach the branch reading
+  // it.
+  //
+  // Executioner is the replacement rather than a lowered threshold, because
+  // moving the bar until one current ability happens to qualify is a number
+  // chosen to make a row true rather than a mechanic anybody asked for. What the
+  // tree was actually missing is the step between the break and the kill: it
+  // could pressure a Guard, break it, and take the tempo, and then had nothing
+  // that cared whether the body in front of it was already beaten.
+  //
+  // The condition is the loop's own: `blow.ts` has read
+  // `executeBonus > 0 && staggered && healthFraction <= executeBelow` since spec
+  // 147 and nothing has granted it since spec 244 deleted the pair that did.
+  // Staggered *and* low, never low alone -- a flat bonus against hurt enemies is
+  // a damage passive that any attribute could carry, and what makes this
+  // Strength's is that the target is only staggered because Strength put it
+  // there.
+  //
+  // Both numbers move per tier and that is the whole progression: more payoff,
+  // and a wider window to collect it in. Three tiers reach +36% inside 30% of a
+  // health bar.
+  specialization('str.executioner', 'strength', 'Executioner', T2, 3, 'against a staggered target below the threshold',
+    { traits: { executeBonus: 0.12, executeBelow: 0.1 } },
+    'I broke you. Now I finish you.'),
+  // **Renamed from "Overkill" (spec 271), id unchanged because it is persisted.**
+  // `data/restoration.ts` has a separate `bonus.overkill` -- a *health* reward,
+  // scaled by the Strength attribute rather than by this row -- and it is the
+  // largest sustain source a Strength build has. Two mechanics called the same
+  // word, paying different currencies off the same excess, is a tooltip a player
+  // cannot reason about.
+  specialization('str.overkill', 'strength', 'Brutal Reserve', T2, 3, 'on a kill that overkilled by a quarter',
     { traits: { overkillResource: 4 } },
     'Force spent past what was needed comes back to you.'),
+  // `juggernautBelow` went with spec 271. It was a health gate on the all-cast
+  // armour below, from the Strength+Constitution pair spec 244 deleted, and its
+  // only surviving grant set it to exactly 1 -- "always" -- so the branch
+  // reading it could never run. Granting it was the capstone shipping a third
+  // effect that could not evaluate; the two that remain are what the row has
+  // always actually done.
   specialization('str.unstoppable', 'strength', 'Unstoppable', T3, 1, 'while committed to any cast',
-    { traits: { windupPoiseArmor: 0.12, poiseArmorAllCasts: 1, juggernautBelow: 1 } },
+    { traits: { windupPoiseArmor: 0.12, poiseArmorAllCasts: 1 } },
     'Nothing takes you off a blow you have committed to. Only while you are committed.'),
 
   // ======================= AGILITY ========================

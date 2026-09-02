@@ -335,6 +335,12 @@ describe('every trait actually reaches the sim', () => {
       // fractional grant, because inventing a low-health Strength mechanic to
       // keep a field alive is how this list got long in the first place.
       'juggernautBelow',
+      // Dormant since spec 271 too, and for the same protocol reason. Heavy
+      // Handling was its only grant, and the branch that read it -- an
+      // `ability.damage >= HEAVY_ABILITY_DAMAGE` gate -- had been unreachable
+      // since spec 237 deleted the one ability that cleared the bar. `derived.ts`
+      // pins it at 1.
+      'heavyWindupScale',
     ]);
 
     // `derived.ts` is excluded, and excluding it is the whole point: it is the

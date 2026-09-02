@@ -481,8 +481,9 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 70,
     // Nothing, since spec 217: a basic attack's damage is the weapon's own
     // range, rolled in `resolveBlow`. Left as a field rather than removed
-    // because `attackTimingFor` still reads it against `HEAVY_ABILITY_DAMAGE`,
-    // and a swing is not heavy at any weapon's numbers.
+    // because the type requires one and `resolveBlow` adds it -- the reason it
+    // used to give (a `HEAVY_ABILITY_DAMAGE` comparison in `attackTimingFor`)
+    // went with that constant in spec 271.
     damage: 0,
     // The weapon's, whole. `basicAttack` takes the range directly in
     // `resolveBlow`, so this is documentation of a branch rather than the

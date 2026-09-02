@@ -238,12 +238,6 @@ export function attackTimingFor(
   );
 }
 
-/** Abilities this heavy count as heavy, for Strength's Heavy Handling. */
-// Divided by seven with the ability damage it measures (spec 217). Left at 40 it
-// would be a threshold no ability in the table could reach, so Strength's Heavy
-// Handling would silently stop applying to anything.
-export const HEAVY_ABILITY_DAMAGE = 6;
-
 /**
  * Everything that shortens a wind-up, multiplied together.
  *
@@ -252,11 +246,15 @@ export const HEAVY_ABILITY_DAMAGE = 6;
  *  - **handling** (Agility) -- anything that launches a projectile. Draw and
  *    release. It does not touch the interval, so a bow's rate of fire is
  *    identical; the archer is simply rooted for less of it.
- *  - **heavy** (Strength) -- an ability over {@link HEAVY_ABILITY_DAMAGE}. The
- *    brief's "reduces penalties for oversized weapons", expressed as the penalty
- *    actually being reduced rather than as a flat speed-up.
- *  - **momentum** (Strength+Agility) -- won by breaking a guard, and gone in a
- *    second and a bit.
+ *  - **momentum** (Strength) -- won by breaking a guard, and gone in a second
+ *    and a bit.
+ *
+ * There were five until spec 271. The fifth was **heavy** (Strength), gated on
+ * `ability.damage >= HEAVY_ABILITY_DAMAGE`, and it had been unreachable since
+ * spec 237 deleted `melee.heavy` -- the only row that ever cleared the bar. Both
+ * the branch and the constant are gone with the specialization that granted the
+ * trait; `heavyWindupScale` survives on `TraitStats` pinned at 1, because
+ * `TRAIT_WIRE_ORDER` is protocol and removing an entry renumbers the rest.
  *  - **prepared** (Intelligence) -- bought with two seconds of stillness, and
  *    consumed by the cast that uses it.
  *
@@ -280,8 +278,6 @@ export function windupScaleFor(
   const spellblade =
     traits.spellbladeHandling > 0 && !ability.basicAttack && hasStatus(statuses, StatusId.Flow, tick);
   if (launches || spellblade) scale *= traits.handlingScale;
-
-  if (ability.damage >= HEAVY_ABILITY_DAMAGE) scale *= traits.heavyWindupScale;
 
   const momentum = statusOf(statuses, StatusId.Momentum, tick);
   if (momentum) scale *= 1 - momentum.magnitude;

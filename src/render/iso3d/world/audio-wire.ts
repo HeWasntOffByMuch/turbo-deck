@@ -202,6 +202,28 @@ const ELEMENT_IMPACTS: Readonly<Record<Element, SoundEventId | null>> = {
  * The two are exclusive on purpose -- a fire staff that whooshed *and* ignited
  * on one press is two attacks' worth of sound for one attack.
  */
+/**
+ * How much Guard impact makes a blow sound heavy (spec 271).
+ *
+ * The gate used to be `ability.damage >= HEAVY_ABILITY_DAMAGE`, and it had been
+ * unreachable since spec 237 deleted the one ability that cleared it -- so
+ * `combat.swing.heavy` was a recording nothing in the game could play. This is
+ * the same question asked of the field that now answers it: `guardImpact` is
+ * what the content table says a blow *weighs*, which is exactly what a heavy
+ * swing sounds like.
+ *
+ * Presentation, so the threshold lives here rather than in the sim: what counts
+ * as heavy to a listener is a mixing decision, and nothing about a game outcome
+ * turns on it. At 1.2 it catches Stunning Blow and Guard Break and leaves the
+ * quick rows on the light swing.
+ */
+export const HEAVY_SWING_IMPACT = 1.2;
+
+/** Whether this ability's blow is heavy enough to be *heard* as one. */
+export function isHeavySwing(ability: { readonly guardImpact?: number } | null | undefined): boolean {
+  return (ability?.guardImpact ?? 0) >= HEAVY_SWING_IMPACT;
+}
+
 export function soundForWindup(
   abilityId: string,
   isHeavy: boolean,
