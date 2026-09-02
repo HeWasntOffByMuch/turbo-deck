@@ -30,8 +30,10 @@ import {
   type PersistedPlayer,
   type SpecializationAllocation,
 } from '../state/types.js';
+import { attackTimingFor } from './abilities.js';
 import { resolveBlow } from './blow.js';
 import { guardImpactOf, poiseDamageOf, staggerImmune } from './poise.js';
+import { applyStatus, StatusId } from './statuses.js';
 import { Rng } from '../../shared/prng.js';
 import { ActivityValue, AggroValue, EntityKindValue, type ServerEntity } from './types.js';
 import { blankProgression } from './world.js';
@@ -502,5 +504,65 @@ describe('Brutal Reserve', () => {
     if (exact.target.health === 0) {
       expect(exact.attacker.resource).toBe(0);
     }
+  });
+});
+
+describe('Brutal Follow-Through turns a break into tempo, not into cadence', () => {
+  const follow = (tier: number): SpecializationAllocation[] => [
+    { specializationId: 'str.followThrough', tier },
+  ];
+
+  it('grants Momentum for a Guard broken with a skill, as for one broken with a swing', () => {
+    // Newly load-bearing (spec 271): Guard Break's pressure goes through
+    // `resolveBlow` now, and the break reward has to travel with it or the
+    // ability half of the loop stops at the break.
+    const stats = statsFor({ strength: 60 }, allStrengthTiers(60), 'maul.iron');
+    const attacker = body(stats);
+    for (const ability of [SLASH, GUARD_BREAK]) {
+      const out = resolveBlow(ability, attacker, dummy(4), 50, Rng.fromSeed(2));
+      expect(out.target.activity, ability.id).toBe(ActivityValue.Stunned);
+      expect(out.attacker.statuses['momentum'], ability.id).toBeDefined();
+    }
+  });
+
+  it('shortens the next wind-up and leaves the attack interval alone', () => {
+    // The rule the whole tree is held to: Strength may buy a conditional tempo
+    // advantage and may never buy attacks per second. Asserted through the real
+    // `attackTimingFor`, with and without a live Momentum.
+    const stats = statsFor({ strength: 40 }, follow(3), 'sword.worn');
+    const plain = body(stats);
+    const carrying = body(stats, {
+      statuses: applyStatus(
+        {},
+        StatusId.Momentum,
+        0,
+        stats.traits.momentumTicks,
+        { magnitude: stats.traits.momentumWindupScale },
+      ),
+    });
+
+    const before = attackTimingFor(SLASH, plain, 0);
+    const after = attackTimingFor(SLASH, carrying, 0);
+    expect(after.attackPointTicks).toBeLessThan(before.attackPointTicks);
+    expect(after.intervalTicks).toBe(before.intervalTicks);
+  });
+
+  it('is worth more per tier, and still never the interval', () => {
+    const points: number[] = [];
+    for (const tier of [1, 2, 3]) {
+      const stats = statsFor({ strength: 40 }, follow(tier), 'sword.worn');
+      const carrying = body(stats, {
+        statuses: applyStatus({}, StatusId.Momentum, 0, stats.traits.momentumTicks, {
+          magnitude: stats.traits.momentumWindupScale,
+        }),
+      });
+      const timing = attackTimingFor(SLASH, carrying, 0);
+      points.push(timing.attackPointTicks);
+      expect(timing.intervalTicks).toBe(
+        attackTimingFor(SLASH, body(stats), 0).intervalTicks,
+      );
+    }
+    expect((points[1] ?? 0)).toBeLessThan(points[0] ?? 0);
+    expect((points[2] ?? 0)).toBeLessThan(points[1] ?? 0);
   });
 });
