@@ -30,6 +30,7 @@ import { PATH_REPLAN_TICKS, PATH_RETRY_TICKS, PATH_WAYPOINT_EPS } from '../../si
 import type { Vec2, WorldColliders } from '../../sim/types.js';
 import type { LiveConfig } from '../config.js';
 import { SERVER_PLAYER_RADIUS, SERVER_TICK_RATE } from '../config.js';
+import { SCALING } from '../data/scaling.js';
 import { rarityOf } from '../data/items.js';
 import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
@@ -207,6 +208,7 @@ export function blankProgression(): Pick<
   | 'shieldUntilTick'
   | 'statuses'
   | 'stillSinceTick'
+  | 'lastAttackTick'
   | 'restoration'
   | 'fallbackCharges'
   | 'restingTicks'
@@ -218,6 +220,7 @@ export function blankProgression(): Pick<
     shieldUntilTick: 0,
     statuses: NO_STATUSES,
     stillSinceTick: 0,
+    lastAttackTick: 0,
     // The health economy starts empty and the flask starts full (spec 156). A
     // body that enters the world part-way to a mote would make the meter a
     // function of when it spawned; a body that enters with no insurance would
@@ -1626,6 +1629,25 @@ export function advanceProgression(
   let statuses = expireStatuses(entity.statuses, tick);
   const busy = moved || entity.cast !== null;
   const stillSinceTick = busy ? tick : entity.stillSinceTick;
+
+  // **Patient Read**, banked by not attacking (spec 272). Prepared's shape
+  // directly below, against a different clock and deliberately so: that one
+  // reads `stillSinceTick` and is switched off by moving, this one reads
+  // `lastAttackTick` and is not -- so a Perception character repositions,
+  // dodges and tracks the whole time and pays for the read in the attacks they
+  // did not throw.
+  //
+  // Granted here rather than at the blow because this pass runs in 1c and casts
+  // resolve in 3, so a read banked on this tick is available to a blow landing
+  // on it. Steady Aim asked its question from inside pass 3 about a field pass
+  // 1c had just stamped, which is exactly why it could never be satisfied.
+  if (
+    traits.patientReadTicks > 0 &&
+    tick - entity.lastAttackTick >= traits.patientReadTicks &&
+    !hasStatus(statuses, StatusId.PatientRead, tick)
+  ) {
+    statuses = applyStatus(statuses, StatusId.PatientRead, tick, SCALING.perception.patientReadHoldTicks);
+  }
 
   if (
     !busy &&

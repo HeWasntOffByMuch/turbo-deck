@@ -98,6 +98,15 @@ export const StatusId = {
   Exposed: 'exposed',
   /** Perception: an enemy that has just committed an attack. */
   Vulnerable: 'vulnerable',
+  /**
+   * Perception: banked by **not attacking**, spent on the next weak point.
+   *
+   * Prepared's counterpart and deliberately not its twin (spec 272): that one
+   * is banked by holding still and Intelligence owns it, this one is banked by
+   * withholding the attack, so a Perception character pays in tempo rather than
+   * in position and may move the whole time.
+   */
+  PatientRead: 'patientRead',
   /** Strength+Intelligence: armour reduced. */
   Sundered: 'sundered',
   /** Wisdom: efficiency built by landing things. */

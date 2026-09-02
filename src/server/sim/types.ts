@@ -666,6 +666,20 @@ export interface ServerEntity {
    * is the length of the current lull.
    */
   readonly stillSinceTick: number;
+  /**
+   * The last tick this body **committed** an attack (spec 272).
+   *
+   * Perception's Patient Read asks "how long since I last attacked", which is a
+   * different question from `stillSinceTick`'s "how long since I did anything"
+   * -- and has to be, or the mechanic would be Intelligence's Prepared with a
+   * Perception label on it. Moving, being hit and casting all stamp that one;
+   * only an attack becoming real stamps this one.
+   *
+   * The **commit**, never the wind-up: a swing withdrawn from is a feint rather
+   * than an attack, and costs the time it took and nothing else -- the boundary
+   * spec 144 already draws for the refund.
+   */
+  readonly lastAttackTick: number;
 
   // --- the health economy (spec 156) --------------------------------------
   /**

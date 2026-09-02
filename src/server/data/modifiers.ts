@@ -150,8 +150,6 @@ export interface TraitModifier {
 
   // --- Perception ---
   readonly weakPointChance?: number;
-  /** Sums, applied as `weakPointMultiplier * (1 + total)`. */
-  readonly weakPointPayoffPct?: number;
   readonly exposeTicks?: number;
   readonly exposedDamagePct?: number;
   /**
@@ -159,7 +157,7 @@ export interface TraitModifier {
    *
    * The capability flag {@link grantsPrepared} is, for the same reason and with
    * the same history: `deriveTraits` inferred it from
-   * `vulnerableWeakPointFactor > 0`, so the Perception 10 skill -- which grants
+   * `openingReadFactor > 0`, so the Perception 10 skill -- which grants
    * a longer Vulnerable *window* -- did nothing whatsoever until the Perception
    * 35 milestone. Twenty-five points of a purchasable, ranked skill doing
    * exactly nothing.
@@ -171,15 +169,28 @@ export interface TraitModifier {
    */
   readonly grantsOpeningRead?: number;
   readonly openingReadTicks?: number;
-  /** Sums as a **bonus above 1**: 1.0 here is "double weak-point chance". */
-  readonly vulnerableWeakPointFactor?: number;
-  readonly steadyAimPct?: number;
-  readonly steadyAimTicks?: number;
+  /**
+   * Opening Read's share of the **remaining** weak-point probability (spec 272).
+   *
+   * Sums, and is clamped into `[0, 1)` once. It was a multiplier above 1, which
+   * made Weak-Point Study and Opening Read compete for one clamp; as a share of
+   * what is left they compose, and neither can erase the other's purchase.
+   */
+  readonly openingReadFactor?: number;
+  /**
+   * What a consumed Patient Read adds to a weak point (spec 272).
+   *
+   * This is `weakPointPayoffPct` repurposed. That field was dormant and folded
+   * into `weakPointMultiplier` as a **passive**, which is the flat "+X% on
+   * every weak point" this mechanic exists not to be: the payoff has to be the
+   * thing the waiting bought, so it is conditional on the read and consumed
+   * with it.
+   */
+  readonly patientReadPayoffPct?: number;
   readonly exploitDamagePct?: number;
   readonly exploitPoiseFactor?: number;
   readonly weakPointResource?: number;
   readonly weakPointKillHeal?: number;
-  readonly abilityWeakPoints?: number;
   readonly vsVulnerableReduction?: number;
   readonly exposedTeamResource?: number;
 
@@ -337,19 +348,16 @@ function zeroTraits(): TraitTotals {
     staggerImmuneBelow: 0,
     overhealShieldTicks: 0,
     weakPointChance: 0,
-    weakPointPayoffPct: 0,
     exposeTicks: 0,
     exposedDamagePct: 0,
     grantsOpeningRead: 0,
     openingReadTicks: 0,
-    vulnerableWeakPointFactor: 0,
-    steadyAimPct: 0,
-    steadyAimTicks: 0,
+    openingReadFactor: 0,
+    patientReadPayoffPct: 0,
     exploitDamagePct: 0,
     exploitPoiseFactor: 0,
     weakPointResource: 0,
     weakPointKillHeal: 0,
-    abilityWeakPoints: 0,
     vsVulnerableReduction: 0,
     exposedTeamResource: 0,
     costReduction: 0,

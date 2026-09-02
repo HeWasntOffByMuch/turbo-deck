@@ -254,13 +254,28 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
       traits: {
         grantsOpeningRead: 1,
         openingReadTicks: Math.round(SCALING.perception.openingReadTicks * 0.25),
-        vulnerableWeakPointFactor: 0.15,
+        // A share of the remaining probability rather than a multiplier
+        // (spec 272), so this and Weak-Point Study compose instead of competing
+        // for one clamp. The milestone still owns most of it.
+        openingReadFactor: 0.06,
       },
     },
     'A committed enemy has told you something. The window stays open longer, and you use it better.'),
-  specialization('per.steadyAim', 'perception', 'Steady Aim', T2, 3, 'after half a second without moving',
-    { traits: { steadyAimPct: 0.12, steadyAimTicks: 0 } },
-    'Standing still is a cost. This is what it buys.'),
+  // **Patient Read replaces Steady Aim** (spec 272). That one read
+  // `tick - stillSinceTick` at the instant of impact, and `startCast` stamps
+  // that field while `advanceProgression` re-stamps it every tick a cast is
+  // live -- in pass 1c, where casts resolve in pass 3 of the same tick. The
+  // gate needed 30 and was handed 0 in all 153 sampled blows: not rare,
+  // unsatisfiable. Three purchasable tiers worth nothing.
+  //
+  // Replaced rather than repaired, because the repaired version would have been
+  // Intelligence's. Prepared already owns "stand still, gain casting tempo"
+  // (spec 270); the cost here is **offensive pressure** instead, so a Perception
+  // character may move, reposition, dodge and track the whole time and pays in
+  // the attacks they did not throw.
+  specialization('per.patientRead', 'perception', 'Patient Read', T2, 3, 'a weak point after not attacking',
+    { traits: { patientReadPayoffPct: 0.35 } },
+    'Wait, and watch. The next seam you find is worth far more than the ones you swing through.'),
   specialization('per.huntersEye', 'perception', "Hunter's Eye", T2, 3, 'passive',
     { traits: { exposeTicks: 30 } },
     'What you have marked stays marked, for everyone.'),
