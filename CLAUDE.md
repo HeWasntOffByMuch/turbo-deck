@@ -68,6 +68,7 @@ change a game outcome.
 | `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet. Runs twice, `probe-map-editor.ts`'s shape: once over `dist/`, where Save must *say* there is no dev server, and once against a real `npx vite`, where a file chosen in the tab has to reach `assets/audio/raw/`, be encoded, be offered by the picker, be assigned, and land in the catalog on disk |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too |
+| `npx tsx scripts/probe-constitution.ts` | What one whole track is *worth*, as opposed to whether its rows are wired up. `audit:progression` asks whether a purchase moves a number and `npm run balance` fights presets that buy **no tiers at all** -- every `pure.*` row has `tierShare: 0` and bins 27 of its 82 points -- so neither has ever measured a Constitution character. Six sheets: the durability curve at every value on the track with and without the tiers that value opens, each mechanic driven through the sim function that owns it, the moving/still split, guard longevity against the roster, a ravager stream, and a gauntlet. The pair it exists for is EHP against KILLS: at CON 60 with all sixteen tiers a body is 778 effective health against a fresh character's 115 and takes 0.6 damage a second where the fresh one takes 2.5 and dies -- and it kills exactly as many ravagers as it did at CON 25, because Constitution buys no offence at all. The gauntlet prints incoming DPS beside each outcome rather than only the outcome, since how many of a ring of eight are in *reach* is `sim/crowd.ts`'s answer rather than the probe's, so survival is not monotone in the count and the DPS column is the thing that says so. `docs/constitution-progression-review.md` is what it was written for |
 | `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 245). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
@@ -190,6 +191,30 @@ docs/            durable direction that outlives one spec.
                  now holds. Read it before touching progression; it is the
                  companion to the next one, which is about what a *number* may do
                  rather than about what a *point* buys.
+                 constitution-progression-review.md is the first review of a
+                 single track end to end -- what its nine nodes grant, whether
+                 each reaches the sim, whether they compose, and what the whole
+                 thing is worth -- measured through
+                 `scripts/probe-constitution.ts` rather than read off the
+                 tables. Three things in it are findings rather than
+                 description, and the first is the one to act on.
+                 **`poiseRegenMoving` is granted by nothing**, and `regenPoise`
+                 zeroes the rate on any tick the body moved, so Steady Frame's
+                 three ranks and the CON 20 milestone that deepens them -- the
+                 whole guard-regeneration half of the track -- are worth exactly
+                 zero to a repositioning body, with the branch's own comment
+                 pointing at the Agility+Constitution pair spec 244 deleted and
+                 no tooltip mentioning movement at all. **Second Wind is outside
+                 the healing pipeline**: it bypasses `applyHealing`, so the
+                 track's largest single heal takes neither the `healingScale`
+                 nor the desperation surge that Constitution itself bought,
+                 cannot overflow into Overflow Vitality's shield, and -- firing
+                 at 30% and landing at 61% -- ejects the character from both of
+                 the low-health windows the same tier is built around. And the
+                 **track finishes at level 18**: 55 attribute points to the cap
+                 plus sixteen tiers is 71 of the 242 a level-60 character has,
+                 so Constitution is a chassis rather than a build and nothing on
+                 it answers what the 40th point buys that the 30th did not.
                  progression-and-scaling.md (specs 238-242) is the rules
                  progression and combat-scaling work is decided against: what an
                  ability is allowed to scale with and in what order the three
