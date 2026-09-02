@@ -650,10 +650,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // your own Guard, and it is the *build* that decides whether that breaks
     // anything: 10.6 at Strength 5, 80.6 at Strength 60 with Crushing Blows.
     guardImpact: 3.4,
-    // Guard first, then health. Both go through their own pipeline -- the Guard
-    // through `applyPoiseDamage`, so hyper-armour reduces it, the immunity window
-    // refuses the break and a break it does cause pays out like any other.
-    effects: [{ kind: 'poiseDamage' }, { kind: 'damage' }],
+    // One blow, carrying both. `resolveBlow` spends Guard out of `guardImpact`
+    // above exactly as it does for a basic attack's weapon, so hyper-armour
+    // reduces it, the immunity window refuses the break, and a break it causes
+    // pays Momentum like any other. Listing a `poiseDamage` effect *as well*
+    // would land the pressure twice for one press, which is the trap a row with
+    // both fields falls into -- see `SkillEffect`'s `poiseDamage`.
+    effects: [{ kind: 'damage' }],
     description: 'You do not get inside a guard politely.',
   },
   {
@@ -678,13 +681,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Wound up from the shoulder. Pure Strength.
     scaling: { strength: G.A },
     effects: [
+      // The blow carries `guardImpact` above, so this row takes a real bite out
+      // of the pool as well as landing the stun -- worth throwing at a body
+      // whose immunity window is still up, since the Guard it spends is real
+      // even when the stun is refused. It was a flat `poiseDamage: 8` until spec
+      // 271, which a Strength character's own swing had overtaken by the time
+      // they could buy the sigil that grants this.
       { kind: 'damage' },
-      // Guard damage as well as the stun, so it is worth throwing at a body
-      // whose immunity window is still up: the pool it takes is real even when
-      // the stun is refused. Scaled since spec 271 -- it was a flat 8, which a
-      // Strength character's own swing had passed by the time they could buy
-      // the sigil that grants this.
-      { kind: 'poiseDamage' },
       { kind: 'stun', ticks: seconds(1.4) },
     ],
     description: 'Wound up from the shoulder, and telegraphed the whole way.',

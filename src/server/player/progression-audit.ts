@@ -37,6 +37,8 @@
  */
 
 import { ATTRIBUTE_KEYS, type AttributeKey } from '../data/attributes.js';
+import { ALL_ABILITIES } from '../data/abilities.js';
+import { ALL_ITEMS } from '../data/items.js';
 import { ALL_MILESTONES, type MilestoneDefinition } from '../data/milestones.js';
 import { MILESTONE_THRESHOLDS, SCALING } from '../data/scaling.js';
 import { ALL_SPECIALIZATIONS, type SpecializationDefinition } from '../data/specializations.js';
@@ -565,3 +567,135 @@ export function regressionKeys(report: AuditReport): readonly string[] {
 
 /** Every attribute, so a caller can iterate without importing the table. */
 export const AUDIT_ATTRIBUTES: readonly AttributeKey[] = ATTRIBUTE_KEYS;
+
+// --- content reachability (spec 271) --------------------------------------
+
+/**
+ * A trait whose consumer is gated on a **property of content**, and the
+ * condition some row has to satisfy before the trait can do anything.
+ *
+ * This is the half of the audit that was missing, and Heavy Handling is the
+ * case it was written for. That specialization granted `heavyWindupReduction`,
+ * `deriveTraits` turned it into a `heavyWindupScale` that moved from 1.0 to 0.55
+ * as tiers were bought, and every check above reported it ACTIVE -- correctly,
+ * by its own question, which is whether a purchase moves a number the sim reads.
+ * The number moved. What no check asked was whether anything could ever reach
+ * the line that reads it: the consumer was
+ * `ability.damage >= HEAVY_ABILITY_DAMAGE`, and spec 237 had deleted the one
+ * ability in the table that cleared the bar. Three purchasable points bought a
+ * multiplier nothing multiplied, for thirty-four specs, with a green suite.
+ *
+ * **Deliberately a small hand-written table rather than anything clever.** The
+ * general version of this question -- can any input reach this branch -- is
+ * symbolic execution, and a half-built one would be a tool nobody trusts. What
+ * is here instead is one row per gate that actually exists in the sim, each
+ * naming its condition in prose and answering it against the real content
+ * tables. Adding a gate to the sim means adding a row here, which is a habit
+ * rather than a guarantee -- but it is the same habit `TRAIT_DIRECTION` already
+ * asks for, and that one is enforced by a test asserting it covers `TraitStats`
+ * exactly.
+ */
+export interface TraitGate {
+  readonly trait: keyof TraitStats;
+  /** The condition in the sim, as prose, for the report to print. */
+  readonly gate: string;
+  /** Ids of the content rows that satisfy it. Empty means the trait is dead. */
+  readonly satisfiedBy: () => readonly string[];
+}
+
+/** Every content-gated trait consumer in the sim, and what satisfies it. */
+export const TRAIT_GATES: readonly TraitGate[] = [
+  {
+    trait: 'handlingScale',
+    gate: 'an ability that launches a projectile (`ability.projectile !== undefined`)',
+    satisfiedBy: () => ALL_ABILITIES.filter((a) => a.projectile !== undefined).map((a) => a.id),
+  },
+  {
+    trait: 'spellRadiusPct',
+    gate: 'an ability with a shape or a blast radius (`ability.area` or `ability.radius`)',
+    satisfiedBy: () =>
+      ALL_ABILITIES.filter((a) => a.area !== undefined || a.radius !== undefined).map((a) => a.id),
+  },
+  {
+    trait: 'spellRangePct',
+    gate: 'an ability cast at range (`ability.range > 0`)',
+    satisfiedBy: () => ALL_ABILITIES.filter((a) => a.range > 0).map((a) => a.id),
+  },
+  {
+    trait: 'preparedWindupScale',
+    gate: 'an ability that is not a basic attack',
+    satisfiedBy: () => ALL_ABILITIES.filter((a) => a.basicAttack !== true).map((a) => a.id),
+  },
+  {
+    // Spec 271's fallback. It only decides anything for an ability that authors
+    // no `guardImpact` of its own -- a row that authors one never reads it.
+    trait: 'abilityPoiseFactor',
+    gate: 'an ability with no authored `guardImpact` of its own',
+    satisfiedBy: () =>
+      ALL_ABILITIES.filter((a) => a.basicAttack !== true && a.guardImpact === undefined).map(
+        (a) => a.id,
+      ),
+  },
+  {
+    // Momentum is won by breaking a Guard, so something has to be able to break
+    // one. Since spec 271 that means content carrying Guard impact: a weapon a
+    // basic attack swings, or an ability that authors its own.
+    trait: 'momentumWindupScale',
+    gate: 'a weapon or ability that carries Guard impact',
+    satisfiedBy: () => [
+      ...ALL_ITEMS.filter((i) => (i.guardImpact ?? 0) > 0).map((i) => i.id),
+      ...ALL_ABILITIES.filter((a) => (a.guardImpact ?? 0) > 0).map((a) => a.id),
+    ],
+  },
+];
+
+export interface ReachabilityAudit {
+  readonly trait: keyof TraitStats;
+  readonly gate: string;
+  /** How many content rows satisfy the gate. Zero is the finding. */
+  readonly satisfying: number;
+  /** A few satisfying ids, for the report. */
+  readonly examples: readonly string[];
+  /** Specializations that grant this trait, and are therefore dead with it. */
+  readonly granters: readonly string[];
+  readonly reachable: boolean;
+}
+
+/**
+ * Which content-gated traits no row can currently reach.
+ *
+ * `granters` is the part that turns this from a curiosity into a finding: a
+ * gate nothing satisfies is only a *problem* if a player can spend points on
+ * it. A trait that is dormant and granted by nothing is the state a dozen
+ * former-synergy fields are deliberately in, and reporting those as failures
+ * would make the check noise.
+ */
+export function auditReachability(
+  gates: readonly TraitGate[] = TRAIT_GATES,
+  specializations: readonly SpecializationDefinition[] = ALL_SPECIALIZATIONS,
+): readonly ReachabilityAudit[] {
+  return gates.map((gate) => {
+    const satisfying = gate.satisfiedBy();
+    const granters = specializations
+      .filter((skill) => {
+        const traits = (skill.perTier.traits ?? {}) as Record<string, number | undefined>;
+        return (traits[gate.trait] ?? 0) !== 0;
+      })
+      .map((skill) => skill.id);
+    return {
+      trait: gate.trait,
+      gate: gate.gate,
+      satisfying: satisfying.length,
+      examples: satisfying.slice(0, 3),
+      granters,
+      reachable: satisfying.length > 0,
+    };
+  });
+}
+
+/** The reachability rows worth printing: a gate nothing satisfies. */
+export function unreachableTraits(
+  rows: readonly ReachabilityAudit[] = auditReachability(),
+): readonly ReachabilityAudit[] {
+  return rows.filter((row) => !row.reachable);
+}

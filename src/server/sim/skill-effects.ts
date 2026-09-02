@@ -17,9 +17,11 @@
  *
  * Two orderings are load-bearing:
  *
- *  - **Effects run in the order the row lists them**, so Guard Break's
- *    `poise: -50` comes off before its `poiseDamage: 25` is measured against
- *    the pool. Reordering a row is a balance change and is meant to be.
+ *  - **Effects run in the order the row lists them**, so a row that drains a
+ *    pool before measuring against it gets what it asked for. Reordering a row
+ *    is a balance change and is meant to be. (Guard Break was the example here
+ *    until spec 271 took its `poise: -50` away: its Guard pressure is carried by
+ *    its own blow now, out of `ability.guardImpact`.)
  *  - **The Rng is threaded**, exactly as it is everywhere else in this sim. Only
  *    `damage` draws from it -- through `resolveBlow`, which rolls crit first and
  *    always -- so a skill that lists two damage effects draws twice, every
@@ -35,7 +37,7 @@ import { applyDot } from './damage-over-time.js';
 import { applyHealing } from './healing.js';
 import { resolveBlow, rewardBreak } from './blow.js';
 import { abilityEffectPowerOf } from '../data/ability-scaling.js';
-import { applyPoiseDamage, guardImpactOf, isUnstaggerable, poiseDamageOf, stagger } from './poise.js';
+import { applyPoiseDamage, isUnstaggerable, stagger } from './poise.js';
 import { applyStatus, clearStatus } from './statuses.js';
 import type { ServerEntity, ServerSimEvent } from './types.js';
 
@@ -149,15 +151,11 @@ function applyOne(
       // window refuses the break, and emptying the pool staggers exactly the way
       // a weapon emptying it does.
       //
-      // **Scaled unless the row opts out** (spec 271). With no `amount` this is
-      // `staggerPower * guardImpact * multiplier` -- the same expression a basic
-      // attack goes through, so Strength and Crushing Blows reach a skill's
-      // Guard pressure without a second formula to keep in step. A row that
-      // authors `amount` is stating an absolute, which is what a body with no
-      // progression behind it wants.
-      const amount =
-        effect.amount ?? poiseDamageOf(caster.stats, guardImpactOf(ability, caster.stats), 1);
-      const poised = applyPoiseDamage(target, amount * (effect.multiplier ?? 1), tick, false);
+      // **An absolute**, and the one way to author one (spec 271). A skill's
+      // ordinary Guard pressure is `ability.guardImpact`, carried by its own
+      // blow through `resolveBlow`; this is for a caster with no progression to
+      // scale. Authoring both would land Guard pressure twice for one press.
+      const poised = applyPoiseDamage(target, effect.amount, tick, false);
       if (!poised.broke) return still(poised.entity);
       // The **caster's** duration, for `resolveBlow`'s reason (spec 243):
       // `staggerTicks` is how long a break you caused lasts, so a skill that

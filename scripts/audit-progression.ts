@@ -25,12 +25,14 @@ import { SCALING } from '../src/server/data/scaling.js';
 import { ALL_SPECIALIZATIONS } from '../src/server/data/specializations.js';
 import { coefficientOf, SCALING_ATTRIBUTES } from '../src/server/data/weapon-scaling.js';
 import {
+  auditReachability,
   auditProgression,
   findingKey,
   findings,
   regressionKeys,
   type TierAudit,
   type Verdict,
+  unreachableTraits,
 } from '../src/server/player/progression-audit.js';
 
 const ALL = process.argv.includes('--all');
@@ -128,8 +130,38 @@ for (const ability of ALL_ABILITIES) {
 }
 console.log('');
 
+// --- content reachability (spec 271) --------------------------------------
+// The pass that would have caught Heavy Handling. Everything above asks whether
+// a purchase *moves a number*; this asks whether any content can reach the line
+// that reads it. Heavy Handling moved `heavyWindupScale` from 1.0 to 0.55 and
+// audited ACTIVE for thirty-four specs while its consumer's gate --
+// `ability.damage >= HEAVY_ABILITY_DAMAGE` -- was unreachable by every row in
+// the table, because spec 237 had deleted the only ability that cleared it.
+const reach = auditReachability();
+const dead = unreachableTraits(reach);
+console.log('--- content reachability (spec 271) ---');
+for (const row of reach) {
+  const mark = row.reachable ? 'ok  ' : 'DEAD';
+  const who = row.granters.length > 0 ? `granted by ${row.granters.join(', ')}` : 'granted by nothing';
+  console.log(
+    `  ${mark} ${pad(row.trait, 22)} ${pad(String(row.satisfying) + ' row(s)', 10)} ${row.gate}`,
+  );
+  if (!row.reachable) console.log(`       ${who}`);
+}
+console.log('');
+
 const bad = findings(report);
 const worse = regressionKeys(report);
-console.log(`=== ${String(bad.length + worse.length)} finding(s) ===`);
+// A dead gate is only a *finding* when a player can spend points on it. A
+// dormant trait nothing grants is the state a dozen former-synergy fields are
+// deliberately in, and counting those would make this check noise.
+const sold = dead.filter((row) => row.granters.length > 0);
+console.log(`=== ${String(bad.length + worse.length + sold.length)} finding(s) ===`);
 for (const row of bad) console.log(`  ${row.verdict.padEnd(10)} ${findingKey(row)}  -- ${row.note}`);
 for (const key of worse) console.log(`  ${'BACKWARDS'.padEnd(10)} ${key}`);
+for (const row of sold) {
+  console.log(
+    `  ${'UNREACHABLE'.padEnd(10)} ${row.granters.join(', ')} grants ${row.trait}` +
+      `, whose consumer needs ${row.gate} -- no content satisfies it`,
+  );
+}

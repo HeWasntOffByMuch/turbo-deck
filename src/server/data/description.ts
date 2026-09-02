@@ -398,6 +398,7 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   if (ability.effects && ability.effects.length > 0) {
     const out: string[] = [];
     for (const effect of ability.effects) out.push(...effectLine(effect, ability));
+    out.push(...guardImpactLines(ability));
     return out;
   }
 
@@ -411,9 +412,30 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   // choosing between weapons.
   if (ability.basicAttack === true) out.push('Deals your weapon damage.');
   else if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
+  out.push(...guardImpactLines(ability));
   const healing = healLine(ability.healing ?? 0, ability.healingFraction ?? 0, true);
   if (healing) out.push(healing);
   return out;
+}
+
+/**
+ * What this row's blow does to a **Guard** pool (spec 271).
+ *
+ * A multiple rather than a number, and that is the only honest line available:
+ * the amount is the caster's own `staggerPower` times this, so it depends on who
+ * is holding the sigil, and this table describes a row rather than a character.
+ * The multiple is what the row itself states.
+ *
+ * A basic attack says nothing here on purpose. Its impact is the *weapon's*, so
+ * a line on the ability would be describing something the ability does not own
+ * -- the same reason `Deals your weapon damage` stands in for a damage number
+ * one line up.
+ */
+function guardImpactLines(ability: AbilityDefinition): readonly string[] {
+  if (ability.basicAttack === true) return [];
+  const impact = ability.guardImpact ?? 0;
+  if (impact <= 0) return [];
+  return [`Deals ${amount(impact)}x your ${GUARD_NAME} damage.`];
 }
 
 /** One effect. Returns more than one line where the effect has a stacking rule. */
@@ -429,22 +451,8 @@ function effectLine(effect: SkillEffect, ability: AbilityDefinition): readonly s
       return [`Deals ${amount(scaled)} damage.`];
     }
 
-    case 'poiseDamage': {
-      // Two forms since spec 271, and the line has to say which, because they
-      // answer differently to everything the player has bought: an authored
-      // `amount` is an absolute, and the scaled form is the caster's own
-      // `staggerPower` -- Strength, Crushing Blows, all of it -- times what this
-      // row weighs. Naming the multiplier rather than a number is the only
-      // honest thing available here: the number depends on who is casting, and
-      // this table describes a row rather than a character.
-      if (effect.amount !== undefined) {
-        const flat = effect.amount * (effect.multiplier ?? 1);
-        return [`Deals ${amount(flat)} ${GUARD_NAME} damage.`];
-      }
-      const impact = (ability.guardImpact ?? 0) * (effect.multiplier ?? 1);
-      if (impact <= 0) return [];
-      return [`Deals ${amount(impact)}x your ${GUARD_NAME} damage.`];
-    }
+    case 'poiseDamage':
+      return [`Deals ${amount(effect.amount)} ${GUARD_NAME} damage.`];
 
     case 'poise':
       // The pool written directly, which `sim/skill-effects.ts` is explicit
