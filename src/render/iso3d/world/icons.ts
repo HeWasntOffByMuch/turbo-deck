@@ -224,6 +224,11 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
   momentum: '<path d="M3 12h12"/><path d="M10 7l5 5-5 5"/><path d="M19 5v14"/>',
   // Prepared -- a held charge: a diamond wound tight, with nothing leaving it.
   prepared: '<path d="M12 3l6 9-6 9-6-9z"/><path d="M12 8v8"/>',
+  // Patient Read -- an eye. The one mark in this table that is about *looking*
+  // rather than about a condition, which is what the mechanic is: the reticle
+  // shape is already Vulnerable's and would say the wrong thing here.
+  patientRead: '<path d="M2.5 12s4-6 9.5-6 9.5 6 9.5 6-4 6-9.5 6-9.5-6-9.5-6z"/>' +
+    '<circle cx="12" cy="12" r="2.5"/>',
   // Attuned -- concentric rings, the stack reading as depth rather than count.
   attuned: '<circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="4"/>',
   // Exposed -- a seam opened up. Two halves parted, with the gap the subject.

@@ -135,9 +135,11 @@ describe('the wire indices the marks cross on', () => {
     magicLight: 17,
     // Appended by spec 262, on the same terms.
     overheated: 18,
+    // Appended by spec 272, on the same terms.
+    patientRead: 19,
   };
 
-  it('carries exactly the nineteen ids it carried when they were written down', () => {
+  it('carries exactly the twenty ids it carried when they were written down', () => {
     const actual = Object.fromEntries(STATUS_VISUALS.map((visual) => [visual.id, visual.wire]));
     expect(actual).toEqual(EXPECTED_WIRE);
   });

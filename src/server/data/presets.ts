@@ -77,13 +77,13 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
   pure('agility', 'Pure Agility', 'Solves problems by not being there. Same attack rate as everyone; a quarter of the rooted time.'),
   pure('intelligence', 'Pure Intelligence', 'Solves problems by changing their shape. Reach, radius, and health spent as mana.'),
   pure('constitution', 'Pure Constitution', 'Solves problems by outlasting them. Cannot be staggered when it matters, and turns every heal into a buffer.'),
-  pure('perception', 'Pure Perception', 'Solves problems by reading them. Doubles its weak-point chance against anything that has just committed.'),
+  pure('perception', 'Pure Perception', 'Solves problems by reading them. Closes most of the gap to a certain weak point against anything that has just committed, and turns the ones it lands into sustain.'),
   pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out. Casts twice as often as the table intended, and adapts to whatever keeps hitting it.'),
 
   hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Below half health every cast is armoured.', 'strength', 'constitution'),
-  hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
+  hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns, and every follow-through walked out of is another attempt at a seam.', 'agility', 'perception'),
   hybrid('pair.intWis', 'INT/WIS', 'The archmage. A prepared cast is free of the shaping premium and refunds its cooldown.', 'intelligence', 'wisdom'),
-  hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
+  hybrid('pair.strPer', 'STR/PER', 'The executioner. Strength supplies the number and Perception multiplies it; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
   hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
   hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
 

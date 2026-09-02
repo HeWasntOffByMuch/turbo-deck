@@ -1060,6 +1060,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
         magnitude: 0.1,
       },
       { kind: 'applyStatus', statusId: StatusId.Prepared, durationTicks: TEST_STATUS_TICKS },
+      { kind: 'applyStatus', statusId: StatusId.PatientRead, durationTicks: TEST_STATUS_TICKS },
       { kind: 'applyStatus', statusId: StatusId.Attuned, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
       {
         kind: 'applyStatus',

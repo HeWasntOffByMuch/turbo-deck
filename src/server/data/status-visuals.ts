@@ -34,6 +34,7 @@ export type StatusIconId =
   | 'flow'
   | 'momentum'
   | 'prepared'
+  | 'patientRead'
   | 'attuned'
   | 'exposed'
   | 'vulnerable'
@@ -147,6 +148,18 @@ const DEFINITIONS: readonly StatusVisual[] = [
     icon: 'momentum',
     maxStacks: 1,
     effect: 'Shortens the wind-up of your next cast. Spent when you cast.',
+  },
+  {
+    // Perception's counterpart to Prepared, and it rides for the same reason:
+    // the player has paid for it in attacks not thrown and cannot spend it
+    // deliberately unless they can see they are holding it (spec 272).
+    id: StatusId.PatientRead,
+    wire: 19,
+    name: 'Patient Read',
+    kind: 'boon',
+    icon: 'patientRead',
+    maxStacks: 1,
+    effect: 'Your next weak point hits far harder. Spent when one lands.',
   },
   {
     id: StatusId.Prepared,

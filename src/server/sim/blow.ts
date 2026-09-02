@@ -50,6 +50,7 @@ import { elementOfAbility, precisionOf, type AbilityDefinition } from '../data/a
 import { abilityAttributeBonus, abilityGradesOf, abilityWeaponFactor } from '../data/ability-scaling.js';
 import { hasAffliction } from '../data/status-semantics.js';
 import { applyArmor } from '../player/stats.js';
+import type { TraitStats } from '../state/types.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
 import { applyPoiseDamage, isResolute, poiseDamageOf, stagger } from './poise.js';
@@ -122,6 +123,47 @@ export function rollBetween(rng: Rng, min: number, max: number): [number, Rng] {
 
 function healthFraction(entity: ServerEntity): number {
   return entity.stats.maxHealth > 0 ? entity.health / entity.stats.maxHealth : 1;
+}
+
+/**
+ * The chance this blow finds a weak point (spec 272).
+ *
+ * Three terms, and the order they compose in is the whole of why no purchase is
+ * ever discarded:
+ *
+ *   base      what Weak-Point Study and the attribute bought, already capped by
+ *             `weakPointCap` on the way out of `deriveTraits`
+ *   opened    against a Vulnerable body, Opening Read takes a share of the
+ *             probability that is *left* -- `base + (1 - base) * factor`
+ *   precision the ability's own share of it, 1 for a basic attack
+ *
+ * The middle line used to be a **multiplier**, so the two Perception lines
+ * competed for one clamp: at Perception 60 with both maxed the raw value was
+ * 1.176 against a bare 0.95 literal, discarding 19% of the purchase during
+ * exactly the window it was bought for. As a share of the remainder,
+ * `d(opened)/d(base)` is `1 - factor` and therefore positive, so every
+ * Weak-Point Study tier still raises the answer at maximum Opening Read -- a
+ * property of the form rather than of the tuning, and asserted as one.
+ *
+ * {@link WEAK_POINT_CHANCE_CAP} is a failsafe on a number arriving from a
+ * modifier rather than a ceiling the tree reaches: the highest legal value is
+ * 0.792.
+ *
+ * Exported because `weak-point-chance.test.ts` asserts the shape directly, and
+ * because a second copy of this arithmetic in a tooltip is the drift the one
+ * answer exists to prevent.
+ */
+export function weakPointChanceFor(
+  traits: TraitStats,
+  ability: AbilityDefinition,
+  vulnerable: boolean,
+  flowStacks = 0,
+): number {
+  const precision = precisionOf(ability);
+  if (precision <= 0) return 0;
+  const base = traits.weakPointChance + flowStacks * traits.flowWeakPoint;
+  const opened = vulnerable ? base + (1 - base) * traits.openingReadFactor : base;
+  return Math.min(WEAK_POINT_CHANCE_CAP, Math.max(0, opened * precision));
 }
 
 /**
@@ -198,12 +240,9 @@ export function resolveBlow(
   //
   // `WEAK_POINT_CHANCE_CAP` is a failsafe on a number arriving from a modifier
   // rather than a ceiling the tree reaches: the highest legal value is 0.792.
-  const precision = precisionOf(ability);
   const vulnerable = hasStatus(target.statuses, StatusId.Vulnerable, tick);
   const flowStacks = stacksOf(attacker.statuses, StatusId.Flow, tick);
-  const readBase = A.weakPointChance + flowStacks * A.flowWeakPoint;
-  const opened = vulnerable ? readBase + (1 - readBase) * A.openingReadFactor : readBase;
-  const weakPointChance = precision > 0 ? Math.min(WEAK_POINT_CHANCE_CAP, opened * precision) : 0;
+  const weakPointChance = weakPointChanceFor(A, ability, vulnerable, flowStacks);
   let weakPoint = false;
   if (weakPointChance > 0) {
     const [roll, afterWeak] = rng.nextInt(0, 9999);
