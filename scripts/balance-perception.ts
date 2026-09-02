@@ -70,6 +70,11 @@ function flag(name: string, fallback: string): string {
 const SECONDS = Number(flag('seconds', '120'));
 const SEED = Number(flag('seed', '1'));
 const MONSTER = flag('monster', 'stalker');
+/** Which scenario the build table is fought in. The five-row table below always
+ *  runs all of them; this is for asking "which build" inside one of them. */
+const TABLE_SCENARIO = flag('scenario', 'duel') as Scenario;
+
+type Scenario = 'duel' | 'mobile' | 'pack' | 'team' | 'stream';
 
 const CHUNK = 100;
 const AT = { x: 600, y: 450 };
@@ -159,8 +164,6 @@ function pointsOf(build: Build): number {
 }
 
 // --- the run ---------------------------------------------------------------
-
-type Scenario = 'duel' | 'mobile' | 'pack' | 'team' | 'stream';
 
 interface Counts {
   seconds: number;
@@ -419,23 +422,23 @@ const pct = (a: number, b: number): string => (b > 0 ? `${n1((a / b) * 100)}%` :
 
 console.log(`\n  Perception loop, ${String(SECONDS)}s vs ${MONSTER}, seed ${String(SEED)}\n`);
 
-console.log('  --- the loop, in a duel ---');
+console.log(`  --- the loop, in the ${TABLE_SCENARIO} scenario ---`);
 console.log(
   `  ${pad('BUILD', 24)} ${pad('PTS', 4)} ${pad('DPS', 6)} ${pad('WEAK%', 7)} ${pad('WP/min', 7)} ` +
     `${pad('BASIC', 6)} ${pad('ABIL', 5)} ${pad('EXPO%', 7)} ${pad('EXPL', 5)} ${pad('VULN', 5)} ` +
-    `${pad('RES', 6)} ${pad('HEAL', 6)} ${pad('TAKEN', 6)}`,
+    `${pad('RES', 6)} ${pad('HEAL', 6)} ${pad('KILLS', 6)} ${pad('TAKEN', 6)}`,
 );
 console.log('  ' + '-'.repeat(112));
 const duels = new Map<string, Counts>();
 for (const build of BUILDS) {
-  const c = run(build, 'duel');
+  const c = run(build, TABLE_SCENARIO);
   duels.set(build.name, c);
   console.log(
     `  ${pad(build.name, 24)} ${pad(String(pointsOf(build)), 4)} ${pad(n1(c.damage / c.seconds), 6)} ` +
       `${pad(pct(c.weakPoints, c.blows), 7)} ${pad(n1((c.weakPoints / c.seconds) * 60), 7)} ` +
       `${pad(String(c.wpBasic), 6)} ${pad(String(c.wpAbility), 5)} ${pad(pct(c.exposedTicks, c.observedTicks), 7)} ` +
       `${pad(String(c.exploits), 5)} ${pad(String(c.vulnerableHits), 5)} ${pad(n1(c.resourceCredited), 6)} ` +
-      `${pad(n1(c.healthGained), 6)} ${pad(n1(c.taken), 6)}`,
+      `${pad(n1(c.healthCredited), 6)} ${pad(String(c.kills), 6)} ${pad(n1(c.taken), 6)}`,
   );
 }
 
