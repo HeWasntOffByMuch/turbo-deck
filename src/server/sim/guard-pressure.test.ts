@@ -127,10 +127,32 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
   };
 }
 
-const SLASH = abilityById('melee.slash')!;
-const GUARD_BREAK = abilityById('skill.guardBreak')!;
-const WHIRLWIND = abilityById('skill.whirlwind')!;
-const EMBER = abilityById('skill.emberToss')!;
+/**
+ * A table lookup that must succeed, without a non-null assertion.
+ *
+ * Every id below is a literal from the shipped tables, so a null here is a row
+ * that was renamed or removed -- which should fail loudly at load rather than as
+ * a confusing assertion twenty lines later.
+ */
+function must<T>(value: T | null | undefined, what: string): T {
+  if (value === null || value === undefined) throw new Error(`missing fixture: ${what}`);
+  return value;
+}
+
+const SLASH = must(abilityById('melee.slash'), 'melee.slash');
+const GUARD_BREAK = must(abilityById('skill.guardBreak'), 'skill.guardBreak');
+const WHIRLWIND = must(abilityById('skill.whirlwind'), 'skill.whirlwind');
+const EMBER = must(abilityById('skill.emberToss'), 'skill.emberToss');
+
+/** Guard impact a row states, which every row used below does state. */
+function impactOf(ability: { readonly id: string; readonly guardImpact?: number }): number {
+  return must(ability.guardImpact, `${ability.id}.guardImpact`);
+}
+
+/** A weapon row's stated impact. */
+function weaponImpact(id: string): number {
+  return must(must(itemById(id), id).guardImpact, `${id}.guardImpact`);
+}
 
 /** A target with a stated Guard pool and enough health not to die first. */
 function dummy(poise: number): ServerEntity {
@@ -148,8 +170,8 @@ function dummy(poise: number): ServerEntity {
 describe('Guard pressure is force times impact', () => {
   it('gives a basic attack the weapon’s impact and an ability its own', () => {
     const maul = statsFor({ strength: 40 }, [], 'maul.iron');
-    expect(guardImpactOf(SLASH, maul)).toBe(itemById('maul.iron')?.guardImpact);
-    expect(guardImpactOf(GUARD_BREAK, maul)).toBe(GUARD_BREAK.guardImpact);
+    expect(guardImpactOf(SLASH, maul)).toBe(weaponImpact('maul.iron'));
+    expect(guardImpactOf(GUARD_BREAK, maul)).toBe(impactOf(GUARD_BREAK));
   });
 
   it('carries zero for an ability that authors no impact', () => {
@@ -189,7 +211,7 @@ describe('Crushing Blows reaches both halves of the loop', () => {
       seen.push(poiseDamageOf(stats, guardImpactOf(SLASH, stats), 1));
     }
     for (let i = 1; i < seen.length; i++) {
-      expect(seen[i]!, `tier ${i} must beat tier ${i - 1}`).toBeGreaterThan(seen[i - 1]!);
+      expect((seen[i] ?? 0), `tier ${i} must beat tier ${i - 1}`).toBeGreaterThan(seen[i - 1] ?? 0);
     }
   });
 
@@ -247,7 +269,7 @@ describe('Guard Break is a Guard-pressure ability', () => {
     const target = dummy(100000);
     const out = resolveBlow(GUARD_BREAK, attacker, target, 0, Rng.fromSeed(1));
     const spent = target.poise - out.target.poise;
-    expect(spent).toBeCloseTo(poiseDamageOf(stats, GUARD_BREAK.guardImpact!, 1), 4);
+    expect(spent).toBeCloseTo(poiseDamageOf(stats, impactOf(GUARD_BREAK), 1), 4);
   });
 
   it('carries its Guard pressure on its own blow rather than as an extra effect', () => {
@@ -261,7 +283,7 @@ describe('Guard Break is a Guard-pressure ability', () => {
     // monster fraction, which is what `withTraits` gives that row.
     const ravager = Math.max(SCALING.combat.minPoise, 140 * SCALING.combat.monsterPoiseFraction);
     const low = statsFor({ strength: SCALING.startingAttribute }, [], 'sword.worn');
-    const press = poiseDamageOf(low, GUARD_BREAK.guardImpact!, 1);
+    const press = poiseDamageOf(low, impactOf(GUARD_BREAK), 1);
     expect(press).toBeGreaterThan(0);
     expect(press).toBeLessThan(ravager);
   });
@@ -269,14 +291,14 @@ describe('Guard Break is a Guard-pressure ability', () => {
   it('does break that target at high Strength, and by a wide margin', () => {
     const ravager = Math.max(SCALING.combat.minPoise, 140 * SCALING.combat.monsterPoiseFraction);
     const high = statsFor({ strength: 60 }, allStrengthTiers(60), 'sword.worn');
-    expect(poiseDamageOf(high, GUARD_BREAK.guardImpact!, 1)).toBeGreaterThan(ravager);
+    expect(poiseDamageOf(high, impactOf(GUARD_BREAK), 1)).toBeGreaterThan(ravager);
   });
 
   it('is improved by Crushing Blows specifically', () => {
     const without = statsFor({ strength: 40 }, [], 'sword.worn');
     const with3 = statsFor({ strength: 40 }, [{ specializationId: 'str.crushingBlows', tier: 3 }], 'sword.worn');
-    expect(poiseDamageOf(with3, GUARD_BREAK.guardImpact!, 1)).toBeGreaterThan(
-      poiseDamageOf(without, GUARD_BREAK.guardImpact!, 1),
+    expect(poiseDamageOf(with3, impactOf(GUARD_BREAK), 1)).toBeGreaterThan(
+      poiseDamageOf(without, impactOf(GUARD_BREAK), 1),
     );
   });
 
@@ -312,14 +334,14 @@ describe('an area ability does not multiply Guard pressure per body', () => {
     // body caught, so an area row is authored against its reach. Asserted as a
     // relation between rows rather than against a number, so a retune of either
     // keeps the ordering honest.
-    expect(WHIRLWIND.guardImpact!).toBeLessThan(GUARD_BREAK.guardImpact!);
-    expect(WHIRLWIND.guardImpact!).toBeLessThan(itemById('sword.worn')!.guardImpact!);
+    expect(impactOf(WHIRLWIND)).toBeLessThan(impactOf(GUARD_BREAK));
+    expect(impactOf(WHIRLWIND)).toBeLessThan(weaponImpact('sword.worn'));
   });
 
   it('spends the same pressure on each of several targets, and no more', () => {
     const stats = statsFor({ strength: 40 }, [], 'sword.worn');
     const attacker = body(stats);
-    const expected = poiseDamageOf(stats, WHIRLWIND.guardImpact!, 1);
+    const expected = poiseDamageOf(stats, impactOf(WHIRLWIND), 1);
     for (const id of [2, 3, 4]) {
       const target = { ...dummy(1000), id };
       const out = resolveBlow(WHIRLWIND, attacker, target, 0, Rng.fromSeed(1));
@@ -363,9 +385,9 @@ describe('weapons carry their own Guard impact', () => {
     // Strength and outweighs the bow, which is `D`; the stars are an `S` -- in
     // Agility -- and are the lightest thing in the table. No ordering by grade
     // survives all three.
-    const staff = itemById('staff.emberwood')!.guardImpact!;
-    const bow = itemById('bow.hunting')!.guardImpact!;
-    const stars = itemById('stars.weighted')!.guardImpact!;
+    const staff = weaponImpact('staff.emberwood');
+    const bow = weaponImpact('bow.hunting');
+    const stars = weaponImpact('stars.weighted');
     expect(staff).toBeGreaterThan(bow);
     expect(stars).toBeLessThan(bow);
   });
@@ -430,7 +452,7 @@ describe('Executioner punishes a body already overpowered', () => {
   it('pays more with every tier', () => {
     const seen = [0, 1, 2, 3].map((tier) => hit(tier === 0 ? [] : tiers(tier), staggeredAndLow));
     for (let i = 1; i < seen.length; i++) {
-      expect(seen[i]!, `tier ${i} must beat tier ${i - 1}`).toBeGreaterThan(seen[i - 1]!);
+      expect((seen[i] ?? 0), `tier ${i} must beat tier ${i - 1}`).toBeGreaterThan(seen[i - 1] ?? 0);
     }
   });
 
@@ -438,14 +460,17 @@ describe('Executioner punishes a body already overpowered', () => {
     const seen = [1, 2, 3].map(
       (tier) => statsFor({ strength: 40 }, tiers(tier)).traits.executeBelow,
     );
-    expect(seen[1]!).toBeGreaterThan(seen[0]!);
-    expect(seen[2]!).toBeGreaterThan(seen[1]!);
-    expect(seen[2]!).toBeLessThanOrEqual(1);
+    expect((seen[1] ?? 0)).toBeGreaterThan((seen[0] ?? 0));
+    expect((seen[2] ?? 0)).toBeGreaterThan((seen[1] ?? 0));
+    expect((seen[2] ?? 0)).toBeLessThanOrEqual(1);
   });
 });
 
 describe('Brutal Reserve', () => {
-  const row = ALL_SPECIALIZATIONS.find((s) => s.id === 'str.overkill')!;
+  const row = must(
+    ALL_SPECIALIZATIONS.find((s) => s.id === 'str.overkill'),
+    'str.overkill',
+  );
 
   it('no longer shares a name with the restoration system’s overkill', () => {
     expect(row.name).toBe('Brutal Reserve');

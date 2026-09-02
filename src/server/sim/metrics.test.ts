@@ -21,6 +21,7 @@ const REASONS = {
   cancelled: CastEndReason.Cancelled,
   backswingCancelled: CastEndReason.BackswingCancelled,
   backswingPhase: CastPhase.Backswing,
+  interrupted: CastEndReason.Interrupted,
 };
 
 function hit(attackerId: number, targetId: number, damage: number, extra: Partial<Extract<ServerSimEvent, { kind: 'hit' }>> = {}): ServerSimEvent {

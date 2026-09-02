@@ -55,7 +55,9 @@ describe('content reachability', () => {
   it('reports the Heavy Handling case: a trait that moves and a gate nothing satisfies', () => {
     const rows = auditReachability([HEAVY_GATE], [HEAVY_HANDLING]);
     expect(rows).toHaveLength(1);
-    const row = rows[0]!;
+    const row = rows[0];
+    expect(row).toBeDefined();
+    if (!row) return;
     expect(row.reachable).toBe(false);
     expect(row.satisfying).toBe(0);
     // And it names who was selling it, which is what turns a dead gate into a

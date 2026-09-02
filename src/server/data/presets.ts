@@ -47,6 +47,26 @@ export interface BuildPreset {
    * when nothing is buyable, which is the most **specialized** a build can be.
    */
   readonly tierShare: number;
+  /**
+   * Specialization ids this build buys **first**, in order (spec 271).
+   *
+   * Absent is the default and the default is the honest one: cheapest threshold
+   * first, then by id, so which tiers a spending preset takes is a property of
+   * the tables rather than of whoever wrote the row. That is what keeps the four
+   * `spend.*` presets a comparison between *policies*.
+   *
+   * What it cannot answer is a comparison between two builds on the same track,
+   * which is what the Strength rows need: "Guard pressure" and "execution" are
+   * both Strength at the same attribute value with the same points, differing
+   * only in where they went. Those are hand-picked by definition, so the field
+   * exists to say so out loud rather than to have the difference smuggled in as
+   * a tierShare that happens to stop in the right place.
+   *
+   * Preferences are still gated on their milestone: naming a tier does not buy
+   * it before the track can hold it. Anything not listed is bought by the
+   * default rule once the listed ones are full.
+   */
+  readonly prefer?: readonly string[];
 }
 
 /**
@@ -73,17 +93,24 @@ function hybrid(
 }
 
 export const BUILD_PRESETS: readonly BuildPreset[] = [
-  pure('strength', 'Pure Strength', 'Solves problems by ending them. Staggers, executes, and takes the resource back off the corpse.'),
+  // Premises rewritten by spec 271. All three of these described the pair
+  // synergies spec 244 deleted -- Pure Strength's "executes" and STR/PER's
+  // "60% more" were `executeBonus`, which nothing had granted for twenty-seven
+  // specs, and STR/CON's armour-below-half was `juggernautBelow`, whose branch
+  // could not run. A premise naming a mechanic that does not exist is worse in
+  // this file than anywhere else: it is the line printed beside the row in the
+  // table somebody reads to decide whether the attribute is balanced.
+  pure('strength', 'Pure Strength', 'Solves problems by ending them. Breaks a guard, takes the tempo, and finishes what is already down.'),
   pure('agility', 'Pure Agility', 'Solves problems by not being there. Same attack rate as everyone; a quarter of the rooted time.'),
   pure('intelligence', 'Pure Intelligence', 'Solves problems by changing their shape. Reach, radius, and health spent as mana.'),
   pure('constitution', 'Pure Constitution', 'Solves problems by outlasting them. Cannot be staggered when it matters, and turns every heal into a buffer.'),
   pure('perception', 'Pure Perception', 'Solves problems by reading them. Doubles its weak-point chance against anything that has just committed.'),
   pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out. Casts twice as often as the table intended, and adapts to whatever keeps hitting it.'),
 
-  hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Below half health every cast is armoured.', 'strength', 'constitution'),
+  hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Hard to break, and hard to knock out of the blow that breaks you.', 'strength', 'constitution'),
   hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
   hybrid('pair.intWis', 'INT/WIS', 'The archmage. A prepared cast is free of the shaping premium and refunds its cooldown.', 'intelligence', 'wisdom'),
-  hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
+  hybrid('pair.strPer', 'STR/PER', 'The opportunist. Reads the opening, and hits the Guard hardest where it is already weakest.', 'strength', 'perception'),
   hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
   hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
 
@@ -117,6 +144,37 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
     into: ['strength', 'perception'],
     level: PRESET_LEVEL,
     tierShare: 0.4,
+  },
+  // The full Strength loop, bought (spec 271): Crushing Blows into a break, the
+  // break into Momentum, Executioner onto what is left, Brutal Reserve paying
+  // for the next skill -- with the commitment armour that keeps all of it
+  // swinging while four things hit back. Run it with `--foes=4`; at one opponent
+  // nothing interrupts anybody and the defensive half reads as a flat row.
+  //
+  // **One row rather than the three this started as.** "Guard pressure",
+  // "execution" and "tempo" were authored as separate plans with `prefer` lists
+  // and came back byte-identical, for a reason worth recording rather than
+  // tuning around: the whole Strength tree costs 16 points, and a level-20 build
+  // that caps the attribute still has 27 spare -- so a Strength player buys
+  // *everything* and there is no internal choice to measure. `prefer` stays
+  // because it says which plan a row means and will bind the moment the tree
+  // grows or `costPerTier` stops being 1; three identical rows in a balance
+  // table would not.
+  {
+    id: 'spend.strLoop',
+    name: 'STR loop',
+    premise: 'The whole Strength loop bought: pressure, break, Momentum, execute, recover.',
+    into: ['strength'],
+    level: PRESET_LEVEL,
+    tierShare: 0.5,
+    prefer: [
+      'str.crushingBlows',
+      'str.committedSwing',
+      'str.followThrough',
+      'str.executioner',
+      'str.overkill',
+      'str.unstoppable',
+    ],
   },
   {
     id: 'spend.generalist',
@@ -186,6 +244,7 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
   const levels = Math.max(0, preset.level - 1);
   let budget = SCALING.startingPoints + SCALING.pointsPerLevel * levels;
   const wanted = new Set(preset.into);
+  const preferred = preset.prefer ?? [];
 
   /** The next tier this build would take, or null. Cheapest threshold first. */
   const nextTier = (): string | null => {
@@ -196,8 +255,13 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
         (tiers.get(specialization.id) ?? 0) < specialization.maxTier,
     );
     if (open.length === 0) return null;
-    // Lowest threshold, then id, so the choice is a property of the tables
-    // rather than of authoring order.
+    // A named preference first, in the order the row lists them, and still only
+    // where its milestone is reached (spec 271).
+    for (const id of preferred) {
+      if (open.some((specialization) => specialization.id === id)) return id;
+    }
+    // Otherwise: lowest threshold, then id, so the choice is a property of the
+    // tables rather than of authoring order.
     open.sort((a, b) => a.requires - b.requires || (a.id < b.id ? -1 : 1));
     return open[0]?.id ?? null;
   };

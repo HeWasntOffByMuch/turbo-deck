@@ -95,6 +95,15 @@ function flag(name: string, fallback: string): string {
 
 const seconds = Number(flag('seconds', '30'));
 const monsterId = flag('monster', 'ravager');
+// How many opponents are kept alive in front of the build at once (spec 271).
+//
+// One is the attribute comparison this table has always been, and it measures
+// exactly one thing badly: **whether a commitment survives**. Hyper-armour is
+// worth nothing until something is trying to knock you out of a swing, and a
+// single opponent whose own attacks are on a cadence lands too few to interrupt
+// anybody. So `--foes 4` is the Strength scenario -- a build that has to keep
+// swinging while it is being hit -- and the column that reads it is INTR.
+const foeCount = Math.max(1, Math.round(Number(flag('foes', '1'))));
 const seed = Number(flag('seed', '1'));
 const only = flag('preset', '');
 
@@ -125,6 +134,7 @@ const REASONS = {
   cancelled: CastEndReason.Cancelled,
   backswingCancelled: CastEndReason.BackswingCancelled,
   backswingPhase: CastPhase.Backswing,
+  interrupted: CastEndReason.Interrupted,
 };
 
 /**
@@ -254,26 +264,39 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
   let metrics = EMPTY_METRICS;
   let seq = 0;
   let foeId = 0;
+  const foeIds: number[] = [];
   let cancels = 0;
 
   for (let tick = 1; tick <= Math.round(seconds * SERVER_TICK_RATE); tick++) {
     const self = state.entities.get(selfId);
     if (!self || self.health <= 0) break;
 
-    // Keep exactly one live opponent in front of the build.
-    const foe = foeId > 0 ? state.entities.get(foeId) : undefined;
-    if (!foe || foe.health <= 0) {
+    // Keep `foeCount` live opponents in front of the build. `foeId` stays the
+    // one the policy swings at -- what the extra bodies are for is the pressure
+    // they apply, not a second target to choose between.
+    const live = foeIds.filter((id) => (state.entities.get(id)?.health ?? 0) > 0);
+    foeIds.length = 0;
+    foeIds.push(...live);
+    while (foeIds.length < foeCount) {
+      // Spread around the build rather than stacked on one spot, so the crowd
+      // pass does not spend the fight shoving them off each other.
+      const at = foeIds.length;
+      const angle = (at / foeCount) * Math.PI * 2;
       const next = spawnEntity(state, {
         kind: EntityKindValue.Monster,
         typeId: monster.id,
-        position: { x: ORIGIN.x + 60, y: ORIGIN.y, z: 0 },
+        position: {
+          x: ORIGIN.x + Math.cos(angle) * 60,
+          y: ORIGIN.y + Math.sin(angle) * 60,
+          z: 0,
+        },
         stats: monster.stats,
         radius: monster.radius,
         zoneId: 'greenmarch',
         targetId: selfId,
       });
       state = next.state;
-      foeId = next.entity.id;
+      foeIds.push(next.entity.id);
       // Each opponent gets its own spawner id (spec 156). Without one they all
       // share a per-type farm key, and this harness -- which is a stream of the
       // same monster at the same spot -- decays to the floor within seconds and
@@ -282,6 +305,7 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
       // is a camp of distinct spawn points rather than one corner farmed.
       state = replaceEntity(state, { ...next.entity, spawnerId: `bench-${next.entity.id}` });
     }
+    foeId = foeIds[0] ?? 0;
 
     const target = state.entities.get(foeId);
     seq += 1;
@@ -537,6 +561,42 @@ for (const row of rows) {
   );
 }
 
+// --- the commitment table (spec 271) --------------------------------------
+// What the table above cannot see. Strength's defensive half is entirely about
+// a swing *surviving*, and against one opponent nothing interrupts anybody, so
+// every hyper-armour tier in the tree reads as a flat row. Run with `--foes 4`
+// and these columns move.
+//
+// BREAKS is Guard breaks caused, TTB the seconds of fight per break, INTR the
+// casts taken away by something other than the player's own decision, and HELD
+// the fraction of committed casts that survived to land. HELD is the one to
+// read: it is what Committed Swing and Unstoppable are bought for.
+console.log('');
+console.log(`  Commitment and Guard pressure -- ${String(foeCount)} opponent(s):`);
+console.log('');
+console.log(
+  `  ${pad('BUILD', 16)}${pad('BREAKS', 8)}${pad('TTB s', 8)}${pad('COMMIT', 8)}` +
+    `${pad('INTR', 6)}${pad('HELD%', 7)}${pad('STAG TAKEN', 12)}${pad('TAKEN', 8)}${pad('KILLS', 6)}`,
+);
+console.log(`  ${'-'.repeat(80)}`);
+for (const row of rows) {
+  const m = row.metrics;
+  const secondsFought = m.ticks / SERVER_TICK_RATE;
+  const breaks = m.staggersCaused;
+  const committed = m.castsCommitted;
+  // A cast that committed and was not taken away. `castsInterrupted` counts the
+  // ones a break or a death removed; a withdrawal is the player's own choice and
+  // is deliberately not counted against them here.
+  const held = committed > 0 ? (committed - m.castsInterrupted) / committed : 1;
+  console.log(
+    `  ${pad(row.preset.name, 16)}${pad(String(breaks), 8)}` +
+      `${pad(breaks > 0 ? num(secondsFought / breaks, 2) : '-', 8)}` +
+      `${pad(String(committed), 8)}${pad(String(m.castsInterrupted), 6)}` +
+      `${pad(num(held * 100), 7)}${pad(String(m.staggersTaken), 12)}` +
+      `${pad(num(m.damageTaken), 8)}${pad(String(m.kills), 6)}`,
+  );
+}
+
 // --- the health economy (spec 156) ---------------------------------------
 // A second table rather than ten more columns, because it answers a different
 // question. The one above asks whether the six builds *fight* differently; this
@@ -725,11 +785,22 @@ if (base && top) {
 
 // The line the table exists to make checkable. A build that cannot kill the
 // thing in front of it is not a build, whatever its other numbers say.
+//
+// **Only in the one-opponent scenario** (spec 271). `--foes` is a stress test,
+// and a build failing to win against four ravagers at once is a fact about the
+// scenario rather than a broken row -- three of the six pure builds kill nothing
+// at `--foes=4`, which is the scenario doing its job. Failing the run there
+// would make the flag unusable, so the guard states its scope instead.
 const broken = rows.filter((row) => row.metrics.kills === 0);
 console.log('');
-if (broken.length > 0) {
+if (broken.length > 0 && foeCount === 1) {
   console.log(`  !! ${broken.map((row) => row.preset.name).join(', ')} killed nothing.\n`);
   process.exitCode = 1;
+} else if (broken.length > 0) {
+  console.log(
+    `  ${broken.map((row) => row.preset.name).join(', ')} killed nothing` +
+      ` -- expected against ${String(foeCount)} at once, not a failure.\n`,
+  );
 } else {
   console.log(`  every build won at least once. Baseline: ${startingBaseStats().strength} in each.\n`);
 }
