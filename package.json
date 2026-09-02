@@ -24,6 +24,7 @@
     "db:status": "tsx scripts/db-status.ts",
     "bake:ui-goldens": "tsx scripts/bake-ui-goldens.ts",
     "balance": "tsx scripts/balance-builds.ts",
+    "balance:perception": "tsx scripts/balance-perception.ts",
     "audit:progression": "tsx scripts/audit-progression.ts",
     "spec:next": "tsx scripts/spec-numbers.ts",
     "check:specs": "tsx scripts/spec-numbers.ts --strict",

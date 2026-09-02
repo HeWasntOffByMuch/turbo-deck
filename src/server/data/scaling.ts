@@ -281,10 +281,18 @@ export const SCALING = {
      * tuning, and both are tested: the derivative with respect to the base is
      * `1 - factor`, which is positive, so **every Weak-Point Study tier still
      * raises the final chance at maximum Opening Read**; and the highest legal
-     * value is `weakPointCap + (1 - weakPointCap) * (this + 3 tiers)` = 0.792,
+     * value is `weakPointCap + (1 - weakPointCap) * (this + 3 tiers)` = 0.892,
      * so legal progression provably cannot reach {@link WEAK_POINT_CHANCE_CAP}.
+     *
+     * 0.55 rather than a round number because it is **calibrated against what
+     * this replaced**: the old form doubled the chance, so at Perception 60 with
+     * the milestone alone it gave `0.36 x 2 = 0.72`, and `0.36 + 0.64 x 0.55` is
+     * 0.712. A character who bought nothing but the attribute is therefore left
+     * where they were, and what changes is that the purchases above them stop
+     * being thrown away. Picking 0.3 first cost Pure Perception half its kills
+     * in `npm run balance`, which is what measuring it caught.
      */
-    openingReadShare: 0.3,
+    openingReadShare: 0.55,
     /**
      * How long Perception must go **without committing an attack** for Patient
      * Read to bank (spec 272).

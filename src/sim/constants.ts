@@ -159,12 +159,13 @@ export const MAX_DAMAGE_REDUCTION = 0.85;
  * caps stop competing and start composing:
  *
  *   base    <= weakPointCap                       = 0.60
- *   opened  <= base + (1 - base) * maxShare       = 0.792
- *   final   <= opened * precision                 <= 0.792
+ *   opened  <= base + (1 - base) * contentMax     = 0.892
+ *   final   <= opened * precision                 <= 0.892
  *
  * So this is a failsafe on a number arriving from a modifier rather than a
- * ceiling any legal build reaches -- and `perception-chance.test.ts` asserts
- * that gap rather than leaving it as arithmetic in a comment.
+ * ceiling any legal build reaches -- and `weak-point-chance.test.ts` asserts
+ * that gap over the whole legal progression rather than leaving it as
+ * arithmetic in a comment.
  */
 export const WEAK_POINT_CHANCE_CAP = 0.95;
 
@@ -174,7 +175,7 @@ export const WEAK_POINT_CHANCE_CAP = 0.95;
  * Strictly below 1, because `base + (1 - base) * 1` is certainty whatever was
  * spent on the base -- which is the "one line erases the other's purchase"
  * failure this composition replaced, arriving from the other side. The content
- * reaches 0.48 of this.
+ * reaches 0.73 of this.
  */
 export const OPENING_READ_MAX_SHARE = 0.8;
 
