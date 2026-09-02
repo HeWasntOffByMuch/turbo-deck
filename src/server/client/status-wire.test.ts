@@ -23,9 +23,22 @@ import { GameServer } from '../server.js';
 import { GameClient } from './game-client.js';
 import { StatusId } from '../sim/statuses.js';
 import { ADAPTED_ID, STATUS_VISUALS, visualByWire, visualFor } from '../data/status-visuals.js';
+
 import { statusMarks } from '../../render/iso3d/world/status-marks.js';
 import { EntityKindValue } from '../sim/types.js';
 import type { WireStatus } from '../net/messages.js';
+/**
+ * Every mark `skill.testStatuses` can put on a body.
+ *
+ * All of them but one (spec 270). `Preparing` is the single status
+ * `advanceProgression` *owns*: it is written while a body builds its artillery
+ * stance and cleared on any body that cannot prime at all, so no ability row may
+ * hand it out and the fixture below correctly never carries it. Derived from the
+ * table rather than hard-coded, so a twenty-third row still fails this file until
+ * the marking skill applies it.
+ */
+const APPLICABLE_VISUALS = STATUS_VISUALS.filter((visual) => visual.id !== StatusId.Preparing);
+
 
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -96,7 +109,7 @@ describe('a status over the real wire (spec 186)', () => {
     await r.tick(4);
 
     const marks = statusMarks(seenBy(eve, self), eve.view().estimatedTick);
-    expect(marks).toHaveLength(STATUS_VISUALS.length);
+    expect(marks).toHaveLength(APPLICABLE_VISUALS.length);
     // Including the collapsed family, which the trigger reaches through a real
     // `adapt:` key rather than by inventing one nothing else would read.
     expect(marks.map((one) => one.id)).toContain(ADAPTED_ID);
@@ -122,7 +135,7 @@ describe('a status over the real wire (spec 186)', () => {
     await r.tick(4);
 
     const throughBob = seenBy(bob, target);
-    expect(throughBob.length).toBe(STATUS_VISUALS.length);
+    expect(throughBob.length).toBe(APPLICABLE_VISUALS.length);
     // Bob's picture of Eve is Eve's picture of Eve. A status is a fact about a
     // body, not a private note to whoever caused it.
     expect(throughBob).toEqual(seenBy(eve, target));
@@ -214,7 +227,7 @@ describe('a status over the real wire (spec 186)', () => {
 
     demo(r, positionOf(r, self));
     await r.tick(4);
-    expect(seenBy(eve, self).length).toBe(STATUS_VISUALS.length);
+    expect(seenBy(eve, self).length).toBe(APPLICABLE_VISUALS.length);
 
     // Past the demo window. The empty list has to be *sent*, or a status could
     // only ever be added.
@@ -253,6 +266,6 @@ describe('a status over the real wire (spec 186)', () => {
     await r.tick(6);
 
     const marks = statusMarks(seenBy(bob, target), bob.view().estimatedTick);
-    expect(marks.length).toBe(STATUS_VISUALS.length);
+    expect(marks.length).toBe(APPLICABLE_VISUALS.length);
   });
 });

@@ -729,6 +729,17 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   // and each is worth a line, because before that spec a player could buy the
   // skill granting it and get nothing at all.
   { key: 'grantsPrepared', where: 'trait', form: 'flag', name: 'Standing still primes your next ability.' },
+  // Arcane Weaving (spec 270). The flag says what the mechanic *is* and the
+  // percentage says what a tier is worth, which is the split every capability in
+  // this table already uses -- a player reading a tier-2 tooltip needs the
+  // sentence once and the number scaled.
+  { key: 'grantsWeave', where: 'trait', form: 'flag', name: 'Casting a different ability than the last builds Weave.' },
+  { key: 'weaveEffectPct', where: 'trait', name: 'Affliction strength per Weave stack', form: 'percent' },
+  // `appliesSundered` carried no label while it was authored as a zero and
+  // therefore never drawn (spec 270 gave it a real value). A flag, because what
+  // it grants is a capability rather than a quantity: how much armour Sundered
+  // takes is `SUNDER_ARMOR`'s, shared with every other source of it.
+  { key: 'appliesSundered', where: 'trait', form: 'flag', name: 'Your blows sunder a target that is already afflicted.' },
   { key: 'overflowCostReduction', where: 'trait', name: 'Relief on Arcane Overflow’s health cost', form: 'percent' },
 
   {

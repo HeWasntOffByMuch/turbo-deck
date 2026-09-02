@@ -82,9 +82,15 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
 
   hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Below half health every cast is armoured.', 'strength', 'constitution'),
   hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
-  hybrid('pair.intWis', 'INT/WIS', 'The archmage. A prepared cast is free of the shaping premium and refunds its cooldown.', 'intelligence', 'wisdom'),
+  // Both of the Intelligence hybrid premises described **deleted pair bonuses**
+  // until spec 270 -- `preparedMastery` for the archmage and `spellbladeHandling`
+  // for the spellblade -- and `npm run balance` printed them beside every run.
+  // What is left is the systemic interaction, which is the thing spec 244
+  // removed the authored layer to make legible: Intelligence buys the magazine
+  // and Wisdom buys the reload, with no row saying so.
+  hybrid('pair.intWis', 'INT/WIS', 'The archmage. A large pool that actually refills: sustained casting where pure Intelligence runs dry.', 'intelligence', 'wisdom'),
   hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
-  hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
+  hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Spell damage on a body that can leave a follow-through early -- and that gives up the artillery stance to do it.', 'agility', 'intelligence'),
   hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
 
   // The spending axis (spec 244). The twelve above are the attribute comparison
@@ -117,6 +123,20 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
     into: ['strength', 'perception'],
     level: PRESET_LEVEL,
     tierShare: 0.4,
+  },
+  // The Intelligence spending row (spec 270). Every `spend.*` preset was
+  // Strength-flavoured, so the axis spec 244 created had never been measured on
+  // the track with the most tier-gated capabilities -- which is exactly how a
+  // tree with three specializations priced in an irrelevant resource stayed
+  // green for twenty-six specs. 0.55 buys the whole Intelligence row and still
+  // advances the attribute far enough to open it.
+  {
+    id: 'spend.intCaster',
+    name: 'INT specialized',
+    premise: 'Intelligence only as far as the next milestone, then every specialization it unlocked. The caster the tree describes.',
+    into: ['intelligence'],
+    level: PRESET_LEVEL,
+    tierShare: 0.55,
   },
   {
     id: 'spend.generalist',

@@ -469,17 +469,24 @@ describe('the passive skill tree (spec 191)', () => {
   });
 
   it('skips a socket rather than claiming an effect', () => {
-    // A zero in `perTier` is a documented "this row is about that trait" whose
-    // magnitude comes from a milestone or a synergy. Catalysis authors
-    // `appliesSundered: 0`, which reaches nothing, and Opening Read authors
-    // `vulnerableWeakPointFactor: 0`. Neither may produce a line.
+    // A zero in `perTier` may never produce a line, whatever it is there for.
+    // Two kinds of zero survive and they are not the same thing: a *delta onto
+    // a base in `SCALING`* (`per.steadyAim`'s `steadyAimTicks`,
+    // `con.secondWind`'s `secondWindBelow`) is a row saying "the base is right",
+    // and a **socket** was a row naming a trait whose magnitude was to arrive
+    // from somewhere else. The second kind is gone: spec 244 deleted the
+    // somewhere-else, and spec 270 gave Catalysis's `appliesSundered` a real
+    // value rather than leaving a purchasable row describing a dead mechanic.
     for (const skill of ALL_SPECIALIZATIONS) {
       expect(technicalText(describeSpecialization(skill, 0)), skill.id).not.toMatch(/[+-]0[^.\d]/);
     }
+    // Catalysis grants two lines now -- the damage against an afflicted target,
+    // and the sunder that is the other half of the same trigger. One line here
+    // would mean the socket had come back.
     const catalysis = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'int.catalysis');
     expect(catalysis).toBeDefined();
     if (!catalysis) return;
-    expect(grantsOf(catalysis.perTier)).toHaveLength(1);
+    expect(grantsOf(catalysis.perTier)).toHaveLength(2);
   });
 
   it('never appends a rate to a flag', () => {

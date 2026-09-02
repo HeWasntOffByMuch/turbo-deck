@@ -49,7 +49,10 @@ export type StatusIconId =
   | 'decay'
   | 'scorched'
   | 'light'
-  | 'overheated';
+  | 'overheated'
+  | 'preparing'
+  | 'weave'
+  | 'overdrawn';
 
 /**
  * Which way a status cuts.
@@ -158,6 +161,42 @@ const DEFINITIONS: readonly StatusVisual[] = [
     indefinite: true,
     effect:
       'Shortens the wind-up of your next ability. Does not apply to basic attacks.',
+  },
+  // The stance being taken, and the only row here whose **countdown is the
+  // point** (spec 270). `expiresAtTick` is the tick the caster comes up, so an
+  // opponent reading this mark is reading exactly how long they have to close
+  // the distance -- which is the counterplay the whole mechanic is priced
+  // against. Replicated like every other status, so it costs no wire field.
+  {
+    id: StatusId.Preparing,
+    wire: 19,
+    name: 'Preparing',
+    kind: 'boon',
+    icon: 'preparing',
+    maxStacks: 1,
+    effect: 'Planting a firing position. Becomes Prepared if this body is not moved or hit.',
+  },
+  {
+    id: StatusId.Weave,
+    wire: 20,
+    name: 'Weave',
+    kind: 'boon',
+    icon: 'weave',
+    maxStacks: 3,
+    effect: 'Each stack strengthens the afflictions you apply. Built by casting a different ability than the last.',
+  },
+  // A notice, not a boon, and drawn as one: nothing in the sim reads it and it
+  // is here so a player can tell their own spell from an attacker they cannot
+  // see. `kind` is `affliction` because that is what decides the colour, and
+  // "something bad just happened to you" is the true half of what it says.
+  {
+    id: StatusId.Overdrawn,
+    wire: 21,
+    name: 'Overdrawn',
+    kind: 'affliction',
+    icon: 'overdrawn',
+    maxStacks: 1,
+    effect: 'That cast was paid for with health, because the resource was not there.',
   },
   {
     id: StatusId.Attuned,

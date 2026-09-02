@@ -428,6 +428,19 @@ export interface TraitStats {
   readonly vsAfflictedPct: number;
   /** This body's blows apply `sundered` (armour down) when 1. */
   readonly appliesSundered: number;
+  /**
+   * What one Weave stack adds to the magnitude of afflictions this body applies
+   * (spec 270).
+   *
+   * The capability flag that gates it (`grantsWeave`) is a **modifier field
+   * only**, like `grantsPrepared` and `grantsAdaptation` beside it: a flag whose
+   * one reader is `deriveTraits` has no business on the wire, and
+   * `weaveMaxStacks > 0` is already the answer to "does this body weave" for
+   * everything downstream.
+   */
+  readonly weaveEffectPct: number;
+  readonly weaveMaxStacks: number;
+  readonly weaveTicks: number;
   /** Health per point of missing resource an overflow cast may pay. 0 refuses. */
   readonly overflowHealthPerResource: number;
   /** Fraction of ability damage dealt that becomes shield. */
@@ -596,6 +609,9 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'preparedMastery',
   'vsAfflictedPct',
   'appliesSundered',
+  'weaveEffectPct',
+  'weaveMaxStacks',
+  'weaveTicks',
   'overflowHealthPerResource',
   'damageToShield',
   'maxPoise',

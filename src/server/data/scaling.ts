@@ -216,19 +216,93 @@ export const SCALING = {
   },
 
   intelligence: {
-    spellPowerPer: 0.04,
-    resourcePer: 2,
+    /**
+     * Resource pool per point (spec 270).
+     *
+     * 2 until this spec, which at the hard cap was a 145-point pool against
+     * abilities costing 5 to 7 -- a magazine of roughly thirty casts, which is
+     * not a magazine, it is an assumption that you will never reload. 1.4 keeps
+     * Intelligence far and away the largest pool in the game (109 at the cap
+     * against Wisdom's 65) while making the number of casts in it something a
+     * player can count.
+     */
+    resourcePer: 1.4,
     /** Geometry. Gated behind the INT 20 milestone; zero until then. */
     radiusPer: 0.006,
     rangePer: 0.004,
     /** Extra damage against anything carrying a status. */
     vsAfflictedPer: 0.006,
-    /** Health paid per point of missing resource by an overflow cast. */
+    /** Health paid per point of missing resource by an overdraw cast. */
     overflowHealthPerResource: 2,
-    /** Fraction of *current* health an overflow cast may spend. */
+    /** Fraction of *current* health one overdraw cast may spend. */
     overflowHealthFraction: 0.4,
-    prepareTicks: seconds(2),
+    /**
+     * The artillery stance (spec 270): how long a body must stay planted before
+     * `Prepared` is banked, and what counts as leaving.
+     *
+     * **The duration is the cost of the mechanic**, so it is authored where a
+     * cost belongs rather than being whatever fell out of three reductions. At
+     * 2s base a fully-invested caster lands at 1.95s -- the tiers buy a stance
+     * that is *sharper*, not one that is nearly free. Before this spec the same
+     * table bottomed out at 0.6s, which is not a decision anybody makes; it is
+     * a proc that happens to them.
+     */
+    prepareTicks: seconds(2.75),
+    /**
+     * However much is stacked on it, a stance is never shorter than this.
+     *
+     * A real floor rather than the old `rate * 0.25` (0.25s), which existed to
+     * stop a divide-by-nothing and would have let a future source turn the
+     * stance back into a proc. Nothing in the shipped tree reaches it: three
+     * tiers plus the milestone come to 1.95s against this 1.5s, which is the
+     * state a guard should be in.
+     */
+    prepareFloorTicks: seconds(1.5),
+    /**
+     * What one Prepared Casting tier and the Intelligence 35 milestone each take
+     * off the stance.
+     *
+     * **Absolute rather than a fraction of the base** (spec 270). They were
+     * authored as `prepareTicks * 0.15` and `* 0.25`, so raising the base to
+     * make the stance a real commitment would have raised the reductions with
+     * it and landed in the same place -- the tuning knob quietly cancelling
+     * itself. Stated in seconds, the base and what buys it down are two
+     * decisions instead of one.
+     *
+     * 2.75s less 0.35s less three tiers of 0.15s is 1.95s: a caster who has
+     * bought the whole row plants for two seconds rather than for a fifth of
+     * one, and what the tiers bought is a sharper opener rather than an absent
+     * cost.
+     */
+    prepareTierRelief: seconds(0.15),
+    prepareMilestoneRelief: seconds(0.35),
     preparedWindupScale: 0.5,
+    /**
+     * How far a body may be displaced in one tick and still be standing still.
+     *
+     * The stance asks whether the *player chose to move*, and exact float
+     * equality on position answers a different question: a body pressed against
+     * a prop is pushed out of it by `resolveMovement` with a zero intent, and a
+     * player given `bumps` would take crowd nudges as well. A walk is 2.58
+     * units a tick at `MOVE_SPEED`, so this is about a seventh of one step --
+     * far above any resolution jitter and far below anything a person would
+     * call walking.
+     */
+    stanceMoveEpsilon: 0.35,
+    /**
+     * The most of the shaping premium Efficient Construction may ever pay off.
+     *
+     * Under 1 on purpose (spec 270). A specialization whose whole job is to
+     * delete another specialization's drawback is not progression, it is an
+     * apology for it -- so shaping stays more expensive than not shaping at
+     * every level of investment, and what the tiers buy is how much more.
+     * Three tiers of `shapingCostRelief: 0.2` reach exactly this, so every tier
+     * is worth its whole step and none of it disappears into the clamp.
+     */
+    shapingReliefCap: 0.6,
+    /** Arcane Weaving: how long a stack lives, and how many may be held. */
+    weaveTicks: seconds(6),
+    weaveMaxStacks: 3,
   },
 
   constitution: {
@@ -278,7 +352,17 @@ export const SCALING = {
     cooldownFloor: 0.5,
     healingPer: 0.012,
     resourcePer: 1,
-    regenPer: 0.12,
+    /**
+     * Resource per second per point of Wisdom (spec 270).
+     *
+     * Raised with the flat baseline's fall, and by more than enough to cover it:
+     * a Wisdom specialist regenerates 11.4/s where they used to get 9.2/s, so
+     * the attribute that owns sustain got *better* at it while the build that
+     * bought none of it lost the free ride. That direction is the point --
+     * lowering the floor alone would have been a nerf to everybody, and this is
+     * meant to be a transfer.
+     */
+    regenPer: 0.2,
     attunedTicks: seconds(6),
     attunedMaxStacks: 3,
     adaptationTicks: seconds(10),

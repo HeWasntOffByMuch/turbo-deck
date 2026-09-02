@@ -1110,6 +1110,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       // `sim/warden.ts` and asked only of a body with a laser cycle, so on a
       // training dummy this is the mark and nothing else.
       { kind: 'applyStatus', statusId: StatusId.Overheated, durationTicks: TEST_STATUS_TICKS },
+      // Two of spec 270's three. `Preparing` is deliberately absent and is the
+      // one mark in the table this row **cannot** apply: `advanceProgression`
+      // owns it, and clears it on any body that cannot prime at all -- which a
+      // monster cannot. A row that applied it would be writing a claim the very
+      // next tick of the sim correctly erases.
+      { kind: 'applyStatus', statusId: StatusId.Weave, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
+      { kind: 'applyStatus', statusId: StatusId.Overdrawn, durationTicks: TEST_STATUS_TICKS },
       // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
       // They are inverted -- carrying one means the mechanic has fired and has
       // not re-armed -- so applying them would silently switch two mechanics off

@@ -38,22 +38,20 @@ import {
  * can tell the two apart.
  */
 const ALLOWED_RANKS: Readonly<Record<string, string>> = {
-  // Spell Shaping buys radius and range **at a premium**, and says so in its own
-  // description: "Wider and further, at a premium only Efficient Construction
-  // pays off." `shapingCostPct` rising with the rank is the trade-off the skill
-  // *is*, and `int.efficientConstruction` exists to pay it off. The audit
-  // correctly flags a `down` field going up; this is the one place the game
-  // explicitly presents that as the deal.
-  ...Object.fromEntries(
-    ALL_SPECIALIZATIONS.filter((skill) => skill.id === 'int.shaping').flatMap((skill) =>
-      contextsFor(skill).flatMap((context) =>
-        Array.from({ length: skill.maxTier }, (_, index) => [
-          `${skill.id} ${String(index)}->${String(index + 1)} @ ${context.attribute} ${String(context.value)}`,
-          'the shaping premium is the trade-off the skill is, and it is stated on the row',
-        ]),
-      ),
-    ),
-  ),
+  // **Empty since spec 270, and that is the point.**
+  //
+  // It held fifteen entries -- every Spell Shaping tier at every context -- for
+  // the honest reason that the premium *is* the deal that specialization offers.
+  // What was wrong was where the exemption lived: a list in a test file cannot
+  // be read by anybody looking at the tree, and `npm run audit:progression`
+  // still printed all fifteen as BACKWARDS to whoever ran it.
+  //
+  // `INTENDED_TRADEOFFS` in `progression-audit.ts` is that declaration moved
+  // next to the thing it describes, keyed by specialization *and* field so it
+  // cannot silently excuse a cost appearing on some future row. The audit no
+  // longer reports those cells, so this list has nothing left to excuse -- and
+  // the staleness test below is what makes leaving them here an error rather
+  // than a leftover.
 };
 
 /**

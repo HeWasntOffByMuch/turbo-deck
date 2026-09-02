@@ -286,11 +286,26 @@ export function windupScaleFor(
   const momentum = statusOf(statuses, StatusId.Momentum, tick);
   if (momentum) scale *= 1 - momentum.magnitude;
 
-  if (!ability.basicAttack && hasStatus(statuses, StatusId.Prepared, tick)) {
+  if (preparedApplies(ability) && hasStatus(statuses, StatusId.Prepared, tick)) {
     scale *= traits.preparedWindupScale;
   }
 
   return Math.max(0.05, scale);
+}
+
+/**
+ * Whether this cast is one `Prepared` does anything for (spec 270).
+ *
+ * **The one answer**, read by `windupScaleFor` above and by the consume site in
+ * `advanceCast`. It is a named function rather than an inlined condition
+ * because those two were allowed to disagree and did: the benefit was gated on
+ * `!ability.basicAttack` and the clear was gated on nothing, so a basic attack
+ * spent the charge and got no discount for it. `autoAttack` is a standing
+ * order, so that was not an edge case -- it was what happened to anybody who
+ * stood still and then let their character swing.
+ */
+export function preparedApplies(ability: AbilityDefinition): boolean {
+  return ability.basicAttack !== true;
 }
 
 /**
@@ -376,6 +391,16 @@ export function cooldownScaleFor(
 
 /** What a prepared cast takes off its own cooldown, for the Archmage pair. */
 export const PREPARED_COOLDOWN_REFUND = 0.25;
+
+/**
+ * How long `Overdrawn` sits on a body that just paid health for a spell.
+ *
+ * Long enough to read at a glance and gone before the next cast in any real
+ * rotation, because it is a *notice* and not a state: nothing in the sim reads
+ * it, so a longer window would only make a caster who overdrew twice look like a
+ * caster who overdrew once.
+ */
+export const OVERDRAWN_TICKS = 90;
 
 /**
  * What this cast actually costs (spec 147).
@@ -725,6 +750,23 @@ export function startCast(
         overflow + extra.health > 0
           ? Math.max(1, entity.health - overflow - extra.health)
           : entity.health,
+      // The tell (spec 270). An overdraw writes health directly -- it never goes
+      // through `resolveBlow`, so no `hit` event fires and no damage number
+      // floats -- while the health bar's white chunk and its kick are the same
+      // ones a blow leaves. Without a mark of its own the capstone's entire
+      // feedback is indistinguishable from being shot by something off screen,
+      // which is the state spec 269 measured it in.
+      //
+      // A status rather than a new wire message, because a status is already
+      // replicated, already drawn over the head and already in the mini-HUD: the
+      // cheapest thing that cannot be mistaken for damage. `extra.health` is
+      // deliberately not marked -- a skill's own blood price is authored on the
+      // row and shown in its tooltip, where this is a thing the *economy* did to
+      // you at the moment you could not pay.
+      statuses:
+        overflow > 0
+          ? applyStatus(entity.statuses, StatusId.Overdrawn, tick, OVERDRAWN_TICKS)
+          : entity.statuses,
       // Guard, spent (spec 188). Floored at zero rather than allowed to empty
       // into a break: `extraCostsFor` has already refused a cast that could not
       // afford it, so this floor is arithmetic hygiene rather than a rule.
@@ -1397,7 +1439,15 @@ export function advanceCast(
     // Consumed here rather than at the commit (spec 147): the charges are spent
     // by an attack that *happened*, which is what makes a withdrawal cost
     // nothing but time for them as it does for the resource.
-    let statuses = clearStatus(caster.statuses, StatusId.Prepared);
+    //
+    // Gated on the same predicate that grants the benefit (spec 270). A basic
+    // attack neither shortens its wind-up nor spends the charge, so a planted
+    // caster whose auto-attack fires still has its stance to spend on the spell
+    // it was taken for.
+    const spendsPrepared = preparedApplies(ability) && hasStatus(caster.statuses, StatusId.Prepared, tick);
+    let statuses = spendsPrepared
+      ? clearStatus(caster.statuses, StatusId.Prepared)
+      : caster.statuses;
     statuses = clearStatus(statuses, StatusId.Momentum);
     // And the body is *open* for a beat -- the tell Perception's Opening Read
     // exists to see (spec 147).
@@ -1408,9 +1458,38 @@ export function advanceCast(
     // `vulnerableWeakPointFactor` -- the ability to *use* the window -- which is
     // the difference between an information mechanic and a hidden damage buff.
     statuses = applyStatus(statuses, StatusId.Vulnerable, tick, OPENING_READ_TICKS);
+
+    // --- Arcane Weaving (spec 270) --------------------------------------
+    //
+    // A stack for a non-basic ability whose id differs from the last one woven;
+    // nothing at all for a repeat. Deliberately *nothing* rather than a reset:
+    // the mechanic asks the player to vary what they throw, and punishing a
+    // repeat by wiping the chain would make one mistimed press cost the whole
+    // rotation. A repeat simply does not refresh the window, so leaning on one
+    // button lets the stacks lapse on their own -- which is the same sentence
+    // said by the clock instead of by a penalty.
+    //
+    // Basic attacks are outside it: an auto-attack is not a choice the player
+    // is making between spells, and letting it advance the chain would make the
+    // whole mechanic fire itself.
+    const weaveTraits = caster.stats.traits;
+    const weaves = weaveTraits.weaveMaxStacks > 0 && ability.basicAttack !== true;
+    const woven = weaves && ability.id !== caster.lastWovenAbilityId;
+    if (woven) {
+      statuses = applyStatus(statuses, StatusId.Weave, tick, weaveTraits.weaveTicks, {
+        maxStacks: weaveTraits.weaveMaxStacks,
+      });
+    }
+
     caster = {
       ...caster,
       statuses,
+      // Restart the stance's clock on the cast that spent it (spec 270), so one
+      // preparation buys one cast and a caster that stays planted earns the
+      // next one. Nothing else re-stamps it here: a cast that did *not* spend
+      // the charge leaves the stance exactly as it found it.
+      stanceSinceTick: spendsPrepared ? tick : caster.stanceSinceTick,
+      lastWovenAbilityId: weaves ? ability.id : caster.lastWovenAbilityId,
       cast: isChannel
         ? { ...committed, phase: CastPhase.Channel, nextPulseTick: tick }
         : committed,

@@ -320,6 +320,11 @@ export function resolveBlow(
       shield: shieldLive - absorbed,
       activity: killed ? ActivityValue.Dead : target.activity,
       stillSinceTick: tick,
+      // Taking a blow breaks the artillery stance as well as the lull
+      // (spec 270). Two fields because they answer to two attributes -- this
+      // one is Intelligence's and is otherwise untouched by casting -- and one
+      // sentence, so a hit cannot reset one and leave the other running.
+      stanceSinceTick: tick,
     },
     attacker,
     tick,
@@ -506,7 +511,18 @@ function markTarget(
       });
     }
   }
-  if (A.appliesSundered > 0 && ability.basicAttack === true) {
+  // Catalysis's second half (spec 270). The gate was `ability.basicAttack ===
+  // true`, which is what the field meant when a Strength/Intelligence pair
+  // granted it and nothing does now; read against **the target already carrying
+  // an affliction** it is the specialization's own trigger instead, and the
+  // sentence the row prints -- *what is already suffering suffers more, and its
+  // armour gives* -- is one mechanic rather than two unrelated ones sharing a
+  // tooltip.
+  //
+  // Asked of the statuses the target had **coming in**, not of `statuses`: this
+  // blow may have just applied the affliction itself, and sundering off your own
+  // application would make the "already" in the trigger a lie.
+  if (A.appliesSundered > 0 && hasAffliction(target.statuses, tick)) {
     statuses = applyStatus(statuses, StatusId.Sundered, tick, SUNDER_TICKS, { magnitude: SUNDER_ARMOR });
   }
 

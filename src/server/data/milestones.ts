@@ -158,7 +158,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     grants: {
       traits: {
         grantsPrepared: 1,
-        prepareTicks: -Math.round(SCALING.intelligence.prepareTicks * 0.25),
+        prepareTicks: -SCALING.intelligence.prepareMilestoneRelief,
         preparedWindupScale: -0.1,
       },
     },

@@ -131,8 +131,28 @@ export const MAX_CRIT_CHANCE = 0.5;
 export const BASE_RESOURCE = 20;
 export const RESOURCE_PER_INTELLIGENCE = SCALING.intelligence.resourcePer;
 export const RESOURCE_PER_WISDOM = SCALING.wisdom.resourcePer;
-/** Resource regained per second, before modifiers. Wisdom adds to it. */
-export const RESOURCE_REGEN_PER_SECOND = 2;
+/**
+ * Resource regained per second before Wisdom, and **the magazine's whole
+ * premise** (spec 270).
+ *
+ * 2/s until this spec, which is what made the Intelligence economy decorative:
+ * a four-slot rotation draws about 2.2/s, so every build in the game refilled
+ * about as fast as it could spend whatever its pool happened to be. The shaping
+ * premium could not be felt, Efficient Construction bought back nothing, and
+ * Arcane Overflow -- a capstone that fires on an empty pool -- waited on a state
+ * Intelligence's own 2-per-point pool guaranteed never arrived.
+ *
+ * Dropped to a trickle, with the rate moved onto {@link REGEN_PER_WISDOM}, so
+ * the split the design states is the split the numbers make: **Intelligence buys
+ * the magazine and Wisdom buys the reload.** A high-Wisdom character regenerates
+ * *more* than before this spec; a character who bought none regenerates a fifth
+ * of what they did, and eventually has to stop casting.
+ *
+ * Deliberately not zero. Zero would make a body that had spent its pool
+ * permanently unable to cast until it died, which is a wall rather than a
+ * pressure -- and would make the flask, not Wisdom, the only answer.
+ */
+export const RESOURCE_REGEN_PER_SECOND = 0.4;
 export const REGEN_PER_WISDOM = SCALING.wisdom.regenPer;
 
 const BASE_MOVE_SPEED = CHARACTERS[0]?.moveSpeed ?? 147.5;
@@ -297,7 +317,15 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   );
   const resourceRegen = Math.max(
     0,
-    (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * wisdom) / SERVER_TICK_RATE + bonus.resourceRegen,
+    // Measured from `above()` since spec 270 -- the baseline rule `scaling.ts`
+    // states for every other scale, and the reason the first cut of this change
+    // barely moved: at the raw value a character who had spent *nothing* on
+    // Wisdom still collected five points of reload, which was most of what a
+    // pure-Intelligence build was living on. Wisdom investment is the reload
+    // now, and the starting five buy nothing, so `RESOURCE_REGEN_PER_SECOND` is
+    // genuinely what a body with no Wisdom gets.
+    (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * above(wisdom)) / SERVER_TICK_RATE +
+      bonus.resourceRegen,
   );
 
   return {

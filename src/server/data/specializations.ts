@@ -160,12 +160,17 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Reading a blow and stepping out of your own turns the exchange around.'),
 
   // ===================== INTELLIGENCE =====================
-  specialization('int.potency', 'intelligence', 'Arcane Potency', T1, 3, 'passive',
-    { spellPower: 0.05 },
-    'The straightforward one. Everything you throw hits harder.'),
+  // `int.potency` stood here until spec 270 and was +5% spell power a tier: the
+  // one row in the Intelligence tree whose trigger was `passive` and whose grant
+  // was a percentage, which is the shape this file's own header calls a row that
+  // failed. Advancing Intelligence is already how you get more spell power, so
+  // the slot was buying a second, slower copy of the attribute.
+  specialization('int.weaving', 'intelligence', 'Arcane Weaving', T1, 3, 'casting a different ability than the last',
+    { traits: { grantsWeave: 1, weaveEffectPct: 0.09 } },
+    'Vary what you throw and every affliction you land bites harder.'),
   specialization('int.shaping', 'intelligence', 'Spell Shaping', T1, 3, 'ground and projectile abilities',
     { traits: { spellRadiusPct: 0.08, spellRangePct: 0.05, shapingCostPct: 0.1 } },
-    'Wider and further, at a premium only Efficient Construction pays off.'),
+    'Wider and further, and you pay for the space you take.'),
   // `grantsPrepared` (spec 239). Both of its numbers are *reductions*, so
   // before this the specialization's only effect on `deriveTraits`' old gate
   // (`preparedWindupScale > 0`) was to fail it -- Prepared did not exist for a
@@ -175,7 +180,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     {
       traits: {
         grantsPrepared: 1,
-        prepareTicks: -Math.round(SCALING.intelligence.prepareTicks * 0.15),
+        prepareTicks: -SCALING.intelligence.prepareTierRelief,
         // -0.06 rather than -0.08: the scale is floored at 0.2, and with the
         // milestone's -0.1 on top of a 0.5 base, -0.08 a tier put tier 3
         // through the floor and made half of it disappear. Three tiers and the
@@ -184,12 +189,24 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
       },
     },
     'Less stillness to prime, and a sharper opener when you do.'),
+  // `appliesSundered: 1` rather than `: 0` (spec 270). The zero was a *socket* --
+  // a documented "this row is about that trait" whose magnitude was to come from
+  // a pair -- and spec 244 deleted the pairs, so it sat in a purchasable row
+  // describing a mechanic nobody could reach. It is the row's own second half
+  // now: `blow.ts` sunders a target that is **already afflicted**, which is this
+  // specialization's stated trigger rather than a basic-attack rule bolted to it.
   specialization('int.catalysis', 'intelligence', 'Catalysis', T2, 3, 'hitting anything already afflicted',
-    { traits: { vsAfflictedPct: 0.08, appliesSundered: 0 } },
-    'Statuses are fuel. Anything already suffering suffers more.'),
+    { traits: { vsAfflictedPct: 0.08, appliesSundered: 1 } },
+    'Statuses are fuel. What is already suffering suffers more, and its armour gives.'),
+  // 0.2 a tier rather than 0.4 (spec 270). Three tiers reach
+  // `shapingReliefCap` exactly, so every tier delivers its whole step -- at 0.4
+  // the sum was 1.2 into a clamp of 1, which wasted half of tier 3 and, worse,
+  // left the premium at exactly zero: a shaped cast cost what an unshaped one
+  // cost, and the drawback the signature specialization is built around stopped
+  // existing for anybody who finished the track.
   specialization('int.efficientConstruction', 'intelligence', 'Efficient Construction', T2, 3, 'passive',
-    { traits: { shapingCostRelief: 0.4 } },
-    'Pays off the shaping premium. It can never make an unshaped cast cheaper.'),
+    { traits: { shapingCostRelief: 0.2 } },
+    'Pays down the shaping premium. Space is always dearer than no space.'),
   // Enables Overflow **and relieves it** (spec 239). Both this and the
   // Intelligence 50 milestone granted the rate and the two summed, so arriving
   // at the milestone doubled the health an overflow cast costs. The rate is now

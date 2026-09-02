@@ -116,6 +116,16 @@ export interface TraitModifier {
   readonly preparedMastery?: number;
   readonly vsAfflictedPct?: number;
   readonly appliesSundered?: number;
+  /**
+   * Arcane Weaving's capability flag (spec 270).
+   *
+   * A flag rather than a number the mechanic is inferred from, which is spec
+   * 239's lesson applied before it could be learned again here: `weaveEffectPct`
+   * is what a *tier* is worth, and inferring "do you have Weaving" from it would
+   * mean a future source granting a reduction switched the chain off.
+   */
+  readonly grantsWeave?: number;
+  readonly weaveEffectPct?: number;
   readonly overflowHealthPerResource?: number;
   /** Sums, applied as `overflowHealthPerResource * (1 - total)`. */
   readonly overflowCostReduction?: number;
@@ -322,6 +332,8 @@ function zeroTraits(): TraitTotals {
     preparedMastery: 0,
     vsAfflictedPct: 0,
     appliesSundered: 0,
+    grantsWeave: 0,
+    weaveEffectPct: 0,
     overflowHealthPerResource: 0,
     overflowCostReduction: 0,
     damageToShield: 0,
