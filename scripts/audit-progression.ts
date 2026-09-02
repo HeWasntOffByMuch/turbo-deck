@@ -22,6 +22,7 @@ import {
   isUnscaled,
 } from '../src/server/data/ability-scaling.js';
 import { SCALING } from '../src/server/data/scaling.js';
+import { observeAll } from '../src/server/sim/observed-effects.js';
 import { ALL_SPECIALIZATIONS } from '../src/server/data/specializations.js';
 import { coefficientOf, SCALING_ATTRIBUTES } from '../src/server/data/weapon-scaling.js';
 import {
@@ -128,8 +129,31 @@ for (const ability of ALL_ABILITIES) {
 }
 console.log('');
 
+// --- what a real fight was actually seen to do (spec 272) ------------------
+//
+// The pass above proves a purchase moves a trait. It cannot prove the runtime
+// gate reading that trait ever opens, which is how Steady Aim scored twelve
+// clean ACTIVE cells while being incapable of firing. Each row below carries
+// its *own* scenario, chosen to trigger it, so a NOT OBSERVED means the fight
+// written to make it fire did not -- never that a short generic fight missed a
+// rare effect.
+console.log('--- conditional effects, observed in a real fight (spec 272) ---');
+const observations = observeAll();
+for (const seen of observations) {
+  const mark = seen.observed ? 'OBSERVED' : 'NOT OBSERVED';
+  console.log(
+    `  ${pad(mark, 13)} ${pad(seen.id, 26)} ${pad(`x${String(seen.count)}`, 7)} ` +
+      `${pad(`${String(seen.blows)} blows`, 10)} -- ${seen.gate}`,
+  );
+}
+const unobserved = observations.filter((seen) => !seen.observed);
+console.log('');
+
 const bad = findings(report);
 const worse = regressionKeys(report);
-console.log(`=== ${String(bad.length + worse.length)} finding(s) ===`);
+console.log(`=== ${String(bad.length + worse.length + unobserved.length)} finding(s) ===`);
 for (const row of bad) console.log(`  ${row.verdict.padEnd(10)} ${findingKey(row)}  -- ${row.note}`);
 for (const key of worse) console.log(`  ${'BACKWARDS'.padEnd(10)} ${key}`);
+for (const seen of unobserved) {
+  console.log(`  ${'UNREACHED'.padEnd(10)} ${seen.id}  -- ${seen.gate}`);
+}
