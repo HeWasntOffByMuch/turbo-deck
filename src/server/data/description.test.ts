@@ -440,7 +440,14 @@ describe('the passive skill tree (spec 191)', () => {
     // and the trigger, and a player could not read a single figure off any of
     // the thirty-six rows.
     for (const skill of ALL_SPECIALIZATIONS) {
-      if (grantsOf(skill.perTier).length === 0) continue;
+      const grants = grantsOf(skill.perTier);
+      if (grants.length === 0) continue;
+      // A row that grants only **capabilities** states sentences rather than
+      // numbers, and should (spec 273). `con.deathsDoor` is the first: what it
+      // buys is which branch of `regenPoise` applies while you are badly hurt,
+      // and there is no quantity in that. `whole` is exactly the flag form's own
+      // marker, so this reads the shape of the grant rather than a list of ids.
+      if (grants.every((grant) => grant.whole === true)) continue;
       const text = technicalText(describeSpecialization(skill, 0));
       expect(text, skill.id).toMatch(/[+-]\d/);
     }

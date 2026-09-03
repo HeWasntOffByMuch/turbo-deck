@@ -20,7 +20,11 @@
 
 import { ATTRIBUTE_KEYS, type AttributeKey } from './attributes.js';
 import { SCALING } from './scaling.js';
-import { ALL_SPECIALIZATIONS } from './specializations.js';
+import {
+  ALL_SPECIALIZATIONS,
+  costOfNextTier,
+  type SpecializationDefinition,
+} from './specializations.js';
 import type { SpecializationAllocation } from '../state/types.js';
 
 export interface BuildPreset {
@@ -80,12 +84,14 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
   pure('perception', 'Pure Perception', 'Solves problems by reading them. Doubles its weak-point chance against anything that has just committed.'),
   pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out. Casts twice as often as the table intended, and adapts to whatever keeps hitting it.'),
 
-  hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Below half health every cast is armoured.', 'strength', 'constitution'),
+  hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Force applied and force absorbed, from one body.', 'strength', 'constitution'),
   hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
   hybrid('pair.intWis', 'INT/WIS', 'The archmage. A prepared cast is free of the shaping premium and refunds its cooldown.', 'intelligence', 'wisdom'),
   hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
   hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
-  hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
+  hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. A big pool, and every restorative that lands in it worth more.', 'constitution', 'wisdom'),
+  hybrid('pair.conPer', 'CON/PER', 'The grinder. Outlasts the fight and takes the openings the fight gives up.', 'constitution', 'perception'),
+  hybrid('pair.conInt', 'CON/INT', 'The siege engine. A body that will not fall over, throwing spells from inside the crowd.', 'constitution', 'intelligence'),
 
   // The spending axis (spec 244). The twelve above are the attribute comparison
   // and every one of them spends nothing on tiers, which is what they always did
@@ -115,6 +121,66 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
     name: 'STR/PER mixed',
     premise: 'Two tracks and their specializations in equal measure. The build a player actually makes.',
     into: ['strength', 'perception'],
+    level: PRESET_LEVEL,
+    tierShare: 0.4,
+  },
+
+  // The Constitution rows (spec 273). Until this spec the harness had never
+  // measured a Constitution build that spends on Constitution: the twelve
+  // pure/pair presets are `tierShare: 0` by construction, and all four
+  // `spend.*` rows above are Strength or Strength/Perception. So the track's
+  // own review had to read `pure.constitution` -- CON 60, no tiers, and 27 of
+  // its 82 points binned against the hard cap -- as the Constitution row.
+  //
+  // Two of these are the spending axis for this track and three are the
+  // *hybrid* question, which is the one that actually decides whether the
+  // redesign is safe: pure Constitution contributes almost no offence, so the
+  // danger case is never pure CON, it is a durability chassis carrying a full
+  // offensive identity. They buy tiers, deliberately, because a hybrid that
+  // spends nothing is the strawman all over again.
+  {
+    id: 'spend.con',
+    name: 'CON specialized',
+    premise: 'Constitution to the next milestone, then everything it unlocked. The endurance build a player makes.',
+    into: ['constitution'],
+    // A quarter: enough that the early tree fills in, not enough to reach the
+    // mastery rows. `spend.conFull` is the one that takes everything, and two
+    // presets producing the identical spread would be a duplicate row costing a
+    // thirty-second fight to say what the row beside it says.
+    level: PRESET_LEVEL,
+    tierShare: 0.25,
+  },
+  {
+    id: 'spend.conFull',
+    name: 'CON full',
+    premise: 'Constitution as far as it goes and every tier on the track, mastery included.',
+    into: ['constitution'],
+    // High enough that the deal is "take every tier the track offers as soon as
+    // it opens", which at this level reaches the cap and the mastery rows both.
+    level: PRESET_LEVEL,
+    tierShare: 0.45,
+  },
+  {
+    id: 'spend.conStr',
+    name: 'CON/STR spend',
+    premise: 'The danger case: a durability chassis carrying a real offensive identity, both of them bought into.',
+    into: ['constitution', 'strength'],
+    level: PRESET_LEVEL,
+    tierShare: 0.4,
+  },
+  {
+    id: 'spend.conPer',
+    name: 'CON/PER spend',
+    premise: 'The same question with exploitation rather than force behind it.',
+    into: ['constitution', 'perception'],
+    level: PRESET_LEVEL,
+    tierShare: 0.4,
+  },
+  {
+    id: 'spend.conWis',
+    name: 'CON/WIS spend',
+    premise: 'Maximum sustain interaction: the pool, and everything that makes what lands in it worth more.',
+    into: ['constitution', 'wisdom'],
     level: PRESET_LEVEL,
     tierShare: 0.4,
   },
@@ -188,7 +254,7 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
   const wanted = new Set(preset.into);
 
   /** The next tier this build would take, or null. Cheapest threshold first. */
-  const nextTier = (): string | null => {
+  const nextTier = (): SpecializationDefinition | null => {
     const open = ALL_SPECIALIZATIONS.filter(
       (specialization) =>
         wanted.has(specialization.attribute) &&
@@ -199,7 +265,7 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
     // Lowest threshold, then id, so the choice is a property of the tables
     // rather than of authoring order.
     open.sort((a, b) => a.requires - b.requires || (a.id < b.id ? -1 : 1));
-    return open[0]?.id ?? null;
+    return open[0] ?? null;
   };
 
   let spent = 0;
@@ -210,12 +276,24 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
     const wantTier = spent > 0 ? onTiers / spent < preset.tierShare : preset.tierShare > 0;
     const tier = wantTier ? nextTier() : null;
     if (tier !== null) {
-      tiers.set(tier, (tiers.get(tier) ?? 0) + 1);
-      onTiers += 1;
-      spent += 1;
-      budget -= 1;
+      // **What the tier costs, not one** (spec 273). This charged a flat point
+      // whatever `costPerTier` said, which was harmless while every row was
+      // absent-and-therefore-1 and silently under-pays the moment a mastery row
+      // exists -- so a preset would hold purchases no real character could
+      // afford, and the harness would be comparing a build nobody can make.
+      const cost = costOfNextTier(tier);
+      if (cost <= budget) {
+        tiers.set(tier.id, (tiers.get(tier.id) ?? 0) + 1);
+        onTiers += cost;
+        spent += cost;
+        budget -= cost;
+        stalled = 0;
+        continue;
+      }
+      // Cannot afford it: fall through and advance the track instead, exactly as
+      // an unavailable tier does. A mastery rank costs four points, so a budget
+      // with three left has to put them somewhere.
       stalled = 0;
-      continue;
     }
 
     // No tier wanted, or none available: advance the track instead. That

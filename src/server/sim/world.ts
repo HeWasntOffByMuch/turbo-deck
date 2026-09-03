@@ -34,6 +34,7 @@ import { rarityOf } from '../data/items.js';
 import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
+import { SCALING } from '../data/scaling.js';
 import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { bolt, goHome, isFriendly, isReturning, notice, playersOf, rally, settle } from './aggro.js';
@@ -50,7 +51,7 @@ import {
   type CrowdBody,
   type CrowdPush,
 } from './crowd.js';
-import { healingScaleOf, pulseDots } from './damage-over-time.js';
+import { pulseDots } from './damage-over-time.js';
 import { pulseAuraFields } from './aura-field.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise, staggered } from './poise.js';
@@ -1640,7 +1641,10 @@ export function advanceProgression(
   }
 
   const shieldLive = tick < entity.shieldUntilTick;
-  const shield = shieldLive ? entity.shield : 0;
+  let shield = shieldLive ? entity.shield : 0;
+  let shieldUntilTick = entity.shieldUntilTick;
+  let resource = entity.resource;
+  let restoration = entity.restoration;
   const poise = regenPoise(entity, tick, moved, staggered);
 
   // Second Wind (spec 147, fixed in 232). Constitution's one comeback, and the
@@ -1665,13 +1669,33 @@ export function advanceProgression(
   const armed = traits.secondWindHeal > 0 && entity.stats.maxHealth > 0 && health > 0;
   const hurt = armed && health / entity.stats.maxHealth <= traits.secondWindBelow;
   if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
-    // Suppressed like every other restoration (spec 190). Second Wind bypasses
-    // `applyHealing` entirely, so a Decay that only reached that function would
-    // stop working at exactly the moment a Constitution build needs it -- which
-    // is the one moment somebody would notice and file it as a bug.
-    const comeback =
-      entity.stats.maxHealth * traits.secondWindHeal * healingScaleOf(statuses, tick);
-    health = Math.min(entity.stats.maxHealth, health + comeback);
+    // **Through the pipeline, and capped at the band** (spec 273).
+    //
+    // It used to be a bare `min(maxHealth, health + maxHealth * heal)` with only
+    // Decay's suppression on it, which made the track's largest single heal the
+    // one heal that took none of what the track itself sells: not
+    // `healingScale`, not the desperation surge Constitution owns outright, and
+    // with its remainder discarded rather than becoming Overflow Vitality's
+    // shield. `applyHealing` is where all of that lives, so this goes through it.
+    //
+    // The ceiling is the danger threshold, and that is the whole design. At 36%
+    // of maximum this heal used to fire at 30% and land at 61%, which is above
+    // Hard to Kill's window, above the stagger immunity's, and above the
+    // surge's -- one purchase at CON 25 switching off the other two. Capped at
+    // `dangerBelow` the body stabilizes at the *top* of the band it is fighting
+    // in (`isResolute` compares with `<=`), and everything the ceiling turns
+    // away overflows into the shield, which is durability rather than health.
+    const restored = applyHealing(
+      { ...entity, statuses },
+      entity.stats.maxHealth * traits.secondWindHeal,
+      tick,
+      entity.stats.maxHealth * SCALING.constitution.dangerBelow,
+    );
+    health = restored.entity.health;
+    shield = restored.entity.shield;
+    shieldUntilTick = restored.entity.shieldUntilTick;
+    resource = restored.entity.resource;
+    restoration = restored.entity.restoration;
     // Held rather than timed, exactly as `Prepared` above is and for the mirror
     // of its reason: that one is banked until it is spent, this one is spent
     // until it is banked, and neither has a clock that should end it.
@@ -1687,12 +1711,25 @@ export function advanceProgression(
     statuses === entity.statuses &&
     stillSinceTick === entity.stillSinceTick &&
     shield === entity.shield &&
+    shieldUntilTick === entity.shieldUntilTick &&
+    resource === entity.resource &&
+    restoration === entity.restoration &&
     poise === entity.poise &&
     health === entity.health
   ) {
     return entity;
   }
-  return { ...entity, statuses, stillSinceTick, shield, poise, health };
+  return {
+    ...entity,
+    statuses,
+    stillSinceTick,
+    shield,
+    shieldUntilTick,
+    resource,
+    restoration,
+    poise,
+    health,
+  };
 }
 
 // --- the health economy (spec 156) --------------------------------------

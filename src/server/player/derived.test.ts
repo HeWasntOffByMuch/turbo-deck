@@ -20,6 +20,7 @@ import { ATTRIBUTE_KEYS, type AttributeKey } from '../data/attributes.js';
 import { ALL_MILESTONES } from '../data/milestones.js';
 import { BUILD_PRESETS, fullSpreadOf, spreadOf } from '../data/presets.js';
 import { above, reciprocal, SCALING, softCap } from '../data/scaling.js';
+import { costOfNextTier, specializationById } from '../data/specializations.js';
 import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type BaseStats, type PersistedPlayer } from '../state/types.js';
 import { startingBaseStats } from './attributes.js';
@@ -242,7 +243,14 @@ describe('the build presets', () => {
       // Tiers come out of the same pool since spec 244, so conservation is over
       // both kinds of spend. Twelve of the presets buy none and are the
       // attribute comparison unchanged; the four `spend.*` rows are the axis.
-      const onTiers = specializations.reduce((sum, held) => sum + held.tier, 0);
+      // **Points, not ranks** (spec 273). A rank costs `costPerTier`, which is 1
+      // for every core row and more for Constitution's mastery rows -- so
+      // counting ranks would have this assert conservation over the wrong
+      // currency the moment a preset buys one.
+      const onTiers = specializations.reduce((sum, held) => {
+        const definition = specializationById(held.specializationId);
+        return sum + held.tier * (definition ? costOfNextTier(definition) : 1);
+      }, 0);
       const budget = SCALING.startingPoints + SCALING.pointsPerLevel * (preset.level - 1);
       // Conservation rather than "spends it all": a pure build at this level has
       // more points than one attribute can hold, which is exactly what the hard

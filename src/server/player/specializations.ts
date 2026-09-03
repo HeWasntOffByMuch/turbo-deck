@@ -27,6 +27,7 @@
  */
 
 import {
+  costOfNextTier,
   specializationById,
   ALL_SPECIALIZATIONS,
   type SpecializationDefinition,
@@ -40,6 +41,10 @@ export type SpecializationRejection =
   | 'noPointsAvailable'
   | 'alreadyMaxTier'
   | 'attributeTooLow';
+
+// Re-exported from the content layer (spec 273): the arithmetic moved beside
+// the field it reads, and every caller still asks this module for it.
+export { costOfNextTier };
 
 export type SpecializationValidation =
   | { readonly ok: true; readonly specialization: SpecializationDefinition }
@@ -80,10 +85,7 @@ export function effectiveRequirement(
   return Math.max(1, specialization.requires - masteryRelief(held));
 }
 
-/** What one more tier costs. A field rather than a constant, unused so far. */
-export function costOfNextTier(specialization: SpecializationDefinition): number {
-  return Math.max(1, Math.floor(specialization.costPerTier ?? 1));
-}
+
 
 /**
  * Whether one more tier may go into `specializationId`.

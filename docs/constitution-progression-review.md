@@ -1,5 +1,11 @@
 # The Constitution track: a review
 
+> **Status: acted on.** All three findings below were fixed by **spec 273**
+> (`specs/273-constitution-endures.md`). This document is kept as the
+> measurement they were found by rather than rewritten to describe the answer —
+> so the tables and probe output here describe the track *before* that spec.
+> Re-run `npx tsx scripts/probe-constitution.ts` for what it does now.
+
 *Reviewed at spec 269 / `main` @ 1cd0734. Every number below is measured, not
 read off a table: `npx tsx scripts/probe-constitution.ts` prints all of them,
 `npm run audit:progression -- --all` prints the per-tier verdicts, and

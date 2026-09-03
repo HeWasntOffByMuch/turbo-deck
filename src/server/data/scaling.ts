@@ -238,8 +238,54 @@ export const SCALING = {
     /** Poise per second, before the calm multiplier. */
     poiseRegenBase: 1,
     poiseRegenPer: 0.0875,
+    /**
+     * What a *moving* body keeps of its Guard regeneration (spec 273).
+     *
+     * It was not a fraction at all: `regenPoise` set the rate to **zero** on any
+     * tick the body moved unless `poiseRegenMoving` was granted, and nothing in
+     * the game granted it -- the branch's comment pointed at the
+     * Agility+Constitution pair spec 244 deleted. So Steady Frame's three ranks
+     * and the CON 20 milestone that deepens them were worth exactly zero to a
+     * repositioning body, in a game whose thesis is committing to a blow and
+     * withdrawing from it.
+     *
+     * A fraction rather than a switch, and 0.3 rather than a token: standing
+     * still has to remain clearly the strongest recovery posture, and
+     * repositioning has to remain a viable endurance tactic. Measured against
+     * the real loop in `scripts/probe-constitution.ts`.
+     *
+     * This is the **player** baseline: `NEUTRAL_TRAITS` keeps 0 and
+     * `monsterTraits` spreads it, so no monster gains Guard while chasing. A
+     * monster that did would be a broad enemy rebalance and a nerf to
+     * Strength's stagger pressure, which spec 273 explicitly is not.
+     */
+    poiseRegenMovingBase: 0.3,
+    /**
+     * And never more than this, however much is granted.
+     *
+     * Strictly below 1 so that moving can never match standing -- which is what
+     * stops continuous kiting from refilling Guard as efficiently as
+     * deliberately holding ground. Asserted rather than assumed.
+     */
+    poiseRegenMovingCap: 0.75,
     armorPer: 0.008,
     healingPer: 0.006,
+    /**
+     * The low-health band, named once (spec 273).
+     *
+     * Four literals sat at 0.3: `resoluteBelow`'s floor, `secondWindBelow`'s
+     * floor, and the Hard to Kill milestone's `resoluteBelow` and
+     * `staggerImmuneBelow`. They are the same number because they are the same
+     * *band* -- the health at which Constitution's low-health identity turns on
+     * -- and Second Wind's recovery ceiling is now a fifth reader of it.
+     *
+     * That last one is the reason this is a constant rather than four numbers
+     * that happen to agree: Second Wind stabilizes the body at exactly the top
+     * of the band, and `isResolute` compares with `<=`, so the mechanics the
+     * threshold armed are all still on afterwards. Retuning the band moves the
+     * ceiling with it, which is the only way that claim stays true.
+     */
+    dangerBelow: 0.3,
     /** Shield ceiling, as a fraction of max health. */
     shieldFraction: 0.25,
     shieldTicks: seconds(8),

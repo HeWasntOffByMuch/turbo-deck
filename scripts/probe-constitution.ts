@@ -1,5 +1,5 @@
 /**
- * What Constitution actually buys, measured (specs 147, 239, 244).
+ * What Constitution actually buys, measured (specs 147, 239, 244, 273).
  *
  * `npm run audit:progression` asks whether a purchase moves a trait the sim
  * reads, and `npm run balance` fights twelve attribute presets that spend
@@ -18,10 +18,16 @@
  *     function that owns it, so a mechanic that is wired to nothing reads as a
  *     zero here rather than as an authored number in a table.
  *  3. **The moving/still split**, which is its own sheet because it is the one
- *     number in the track that changes by a factor of infinity depending on
- *     something the tooltip does not say.
- *  4. **A duel**, the balance harness's own, run for a Constitution build that
- *     spends on its own tiers -- which no preset in `data/presets.ts` does.
+ *     number in the track that used to change by a factor of infinity depending
+ *     on something no tooltip said.
+ *  4. **Guard longevity** against the roster.
+ *  5. **The loop**, sampled off the real entity every tick of a real fight:
+ *     Guard recovered split by the posture it was recovered in, breaks suffered,
+ *     time spent below the danger threshold, what Second Wind restored and where
+ *     it went, and how much a shield ate.
+ *  6. **The hybrids**, which is the row that decides whether the redesign is
+ *     safe -- pure Constitution contributes almost no offence, so the danger
+ *     case is a durability chassis carrying a full offensive identity.
  *
  * Nothing here is part of a build. It exists to be run and read.
  */
@@ -29,6 +35,7 @@
 import { DEFAULT_LIVE_CONFIG, SERVER_TICK_RATE } from '../src/server/config.js';
 import { ATTRIBUTE_KEYS } from '../src/server/data/attributes.js';
 import { monsterById } from '../src/server/data/monsters.js';
+import { BUILD_PRESETS, fullSpreadOf, type BuildPreset, type Spread } from '../src/server/data/presets.js';
 import { SCALING } from '../src/server/data/scaling.js';
 import { ALL_SPECIALIZATIONS } from '../src/server/data/specializations.js';
 import { STARTER_EQUIPMENT } from '../src/server/player/player-manager.js';
@@ -40,6 +47,7 @@ import {
 } from '../src/server/state/types.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
 import { applyHealing } from '../src/server/sim/healing.js';
+import { hasStatus, StatusId } from '../src/server/sim/statuses.js';
 import {
   applyPoiseDamage,
   isResolute,
@@ -100,6 +108,16 @@ function tiersAt(constitution: number): SpecializationAllocation[] {
     specializationId: s.id,
     tier: s.maxTier,
   }));
+}
+
+/** A preset's spread as a record the sim can spawn. */
+function recordFor(preset: BuildPreset, spread: Spread): PersistedPlayer {
+  return {
+    ...recordAt(SCALING.startingAttribute, spread.specializations),
+    id: preset.id,
+    displayName: preset.name,
+    baseStats: spread.attributes as unknown as BaseStats,
+  };
 }
 
 function recordAt(constitution: number, specializations: readonly SpecializationAllocation[]): PersistedPlayer {
@@ -248,8 +266,9 @@ const TICK = 1000;
 
 // ---------------------------------------------------------------- sheet 3
 console.log('\n\n=== the moving/still split ===\n');
-console.log('  `regenPoise` zeroes the rate on any tick the body changed position, unless');
-console.log('  `poiseRegenMoving` is granted. Nothing in the tables grants it.\n');
+console.log('  Movement scales the rate rather than switching it off (spec 273). Standing still');
+console.log('  is always strongest, and the kept fraction is capped strictly below 1, so kiting');
+console.log('  can never recover Guard as fast as holding ground.\n');
 console.log(`  ${pad('CON', 5)}${pad('TIERS', 7)}${pad('STILL/s', 10)}${pad('CASTING/s', 11)}${pad('MOVING/s', 10)}${pad('STAGGERED/s', 12)}`);
 console.log(`  ${'-'.repeat(55)}`);
 for (const constitution of [5, 25, 60]) {
@@ -295,25 +314,73 @@ for (const constitution of [5, 25, 60]) {
 }
 console.log('');
 
-// ---------------------------------------------------------------- sheet 5
+
+// ---------------------------------------------------------------- the loop
 /**
- * A stream of ravagers, weapon only.
+ * A fight, measured as the loop Constitution is supposed to be (spec 273).
  *
- * `npm run balance` throws the heaviest ready ability and falls back to the
- * weapon, which is the right policy for comparing six attributes. This one
- * swings and nothing else, deliberately: a Constitution build's offence *is*
- * the weapon, so weapon-only is a floor on its damage and exact on its
- * defence -- and it makes the tiers the only variable between the rows.
+ * `npm run balance` asks whether six attributes fight differently and answers in
+ * DPS and health per kill, which says almost nothing about a track whose whole
+ * job is not dying. This samples the real entity every tick and reports what the
+ * loop actually did: how much Guard came back and in which posture, how long the
+ * body spent below the danger threshold, what Second Wind restored and where it
+ * went, and how much of the incoming damage a shield ate.
+ *
+ * Weapon only, so DAMAGE is a floor and everything defensive is exact -- and the
+ * tiers stay the only variable between rows.
  */
-interface Duel {
+interface Loop {
   readonly kills: number;
   readonly taken: number;
   readonly survivedFor: number;
   readonly endHealth: number;
-  readonly staggers: number;
+  readonly breaks: number;
+  readonly regen: { standing: number; moving: number; casting: number; staggered: number };
+  readonly ticks: { moving: number; casting: number; staggered: number; resolute: number };
+  readonly secondWind: { fired: number; healed: number; shield: number; at: number };
+  readonly shieldGained: number;
+  readonly shieldTicks: number;
+  readonly absorbed: number;
 }
 
-function duel(record: PersistedPlayer, ticks: number, foes = 1): Duel {
+function emptyLoop(ticks: number): Loop {
+  return {
+    kills: 0,
+    taken: 0,
+    survivedFor: ticks,
+    endHealth: 0,
+    breaks: 0,
+    regen: { standing: 0, moving: 0, casting: 0, staggered: 0 },
+    ticks: { moving: 0, casting: 0, staggered: 0, resolute: 0 },
+    secondWind: { fired: 0, healed: 0, shield: 0, at: 0 },
+    shieldGained: 0,
+    shieldTicks: 0,
+    absorbed: 0,
+  };
+}
+
+const STUNNED = 3;
+
+/**
+ * How the body behaves. `hold` stands its ground and swings; `kite` never stops
+ * moving, which is the only way the moving branch of `regenPoise` is exercised
+ * at all -- a probe that stands still measures a rule about movement at zero.
+ */
+type Policy = 'hold' | 'kite';
+
+/** How fast a repositioning body moves, as a fraction of its own speed. */
+const KITE_PACE = 0.3;
+
+interface Scenario {
+  readonly foes?: number;
+  readonly policy?: Policy;
+  /** Fraction of maximum health the body starts on. */
+  readonly startHealth?: number;
+}
+
+function fight(record: PersistedPlayer, ticks: number, scenario: Scenario = {}): Loop {
+  const foes = scenario.foes ?? 1;
+  const policy = scenario.policy ?? 'hold';
   const stats = computeEffectiveStats(record);
   const monster = monsterById('ravager');
   if (!monster) throw new Error('no ravager');
@@ -329,15 +396,27 @@ function duel(record: PersistedPlayer, ticks: number, foes = 1): Duel {
   });
   state = spawned.state;
   const selfId = spawned.entity.id;
+  if (scenario.startHealth !== undefined) {
+    state = replaceEntity(state, {
+      ...spawned.entity,
+      health: stats.maxHealth * scenario.startHealth,
+    });
+  }
 
+  const out = emptyLoop(ticks);
+  const regen = { standing: 0, moving: 0, casting: 0, staggered: 0 };
+  const spent = { moving: 0, casting: 0, staggered: 0, resolute: 0 };
+  const wind = { fired: 0, healed: 0, shield: 0, at: 0 };
   let kills = 0;
   let taken = 0;
-  let staggers = 0;
+  let breaks = 0;
+  let shieldGained = 0;
+  let shieldTicks = 0;
+  let absorbed = 0;
+  let survivedFor = ticks;
   const foeIds: number[] = [];
   let seq = 0;
-  let last = stats.maxHealth;
   let wasStaggered = false;
-  let survivedFor = ticks;
 
   for (let tick = 1; tick <= ticks; tick++) {
     const self = state.entities.get(selfId);
@@ -345,9 +424,8 @@ function duel(record: PersistedPlayer, ticks: number, foes = 1): Duel {
       survivedFor = tick;
       break;
     }
-    // Keep exactly `foes` live opponents in front of the build, replacing each
-    // as it dies. Spread round a ring so they are not stacked on one point --
-    // `sim/crowd.ts` would otherwise spend the fight pushing them apart.
+    // Keep `foes` live opponents, spread round a ring so `sim/crowd.ts` is not
+    // spending the fight pushing them off one point.
     for (let slot = 0; slot < foes; slot++) {
       const held = foeIds[slot];
       const live = held ? state.entities.get(held) : undefined;
@@ -372,8 +450,14 @@ function duel(record: PersistedPlayer, ticks: number, foes = 1): Duel {
     const input: ServerInput = {
       entityId: selfId,
       seq,
-      moveX: 0,
-      moveY: 0,
+      // Repositioning **inside** a fight, not fleeing one. A circle rather than a
+      // straight line, and at a third of full speed: at full speed the body
+      // simply outruns a ravager, takes 5.5 damage in ninety seconds and
+      // measures the leash instead of the loop -- and with the Guard pool never
+      // drained, "Guard recovered while moving" reads as zero for a reason that
+      // has nothing to do with the rule being measured.
+      moveX: policy === 'kite' ? Math.cos(tick / 40) * KITE_PACE : 0,
+      moveY: policy === 'kite' ? Math.sin(tick / 40) * KITE_PACE : 0,
       facing: 0,
       buttons: 0,
       predictedX: self.position.x,
@@ -386,84 +470,204 @@ function duel(record: PersistedPlayer, ticks: number, foes = 1): Duel {
       castTargetEntityId: target?.id ?? 0,
       cancelCast: false,
     };
+
+    const before = self;
     state = step(state, [input], CONTEXT).state;
     const after = state.entities.get(selfId);
-    if (after) {
-      if (after.health < last) taken += last - after.health;
-      last = after.health;
-      const now = after.activity === 3;
-      if (now && !wasStaggered) staggers += 1;
-      wasStaggered = now;
+    if (!after) {
+      survivedFor = tick;
+      break;
+    }
+
+    // --- what posture this tick was in, read off the tick it started in ------
+    const moved =
+      after.position.x !== before.position.x || after.position.y !== before.position.y;
+    const staggeredNow = before.activity === STUNNED;
+    const casting = before.cast !== null;
+    if (staggeredNow) spent.staggered += 1;
+    else if (moved) spent.moving += 1;
+    else if (casting) spent.casting += 1;
+    if (before.stats.maxHealth > 0 && before.health / before.stats.maxHealth <= DANGER) {
+      spent.resolute += 1;
+    }
+
+    // --- Guard: what came back, and in which posture ------------------------
+    const poiseUp = after.poise - before.poise;
+    // A break refills the pool whole, so it is not regeneration and is counted
+    // as a break instead. `activity` going to Stunned is the edge.
+    const broke = after.activity === STUNNED && !wasStaggered;
+    if (broke) breaks += 1;
+    if (poiseUp > 0 && !broke) {
+      if (staggeredNow) regen.staggered += poiseUp;
+      else if (moved) regen.moving += poiseUp;
+      else if (casting) regen.casting += poiseUp;
+      else regen.standing += poiseUp;
+    }
+    wasStaggered = after.activity === STUNNED;
+
+    // --- health, shield, and the comeback ------------------------------------
+    if (after.health < before.health) taken += before.health - after.health;
+    const shieldUp = after.shield - before.shield;
+    if (shieldUp > 0) shieldGained += shieldUp;
+    if (shieldUp < 0 && tick < after.shieldUntilTick) absorbed += -shieldUp;
+    if (after.shield > 0) shieldTicks += 1;
+
+    const wasSpent = hasStatus(before.statuses, StatusId.SecondWindSpent, tick);
+    const isSpent = hasStatus(after.statuses, StatusId.SecondWindSpent, tick);
+    if (!wasSpent && isSpent) {
+      wind.fired += 1;
+      wind.healed += Math.max(0, after.health - before.health);
+      wind.shield += Math.max(0, shieldUp);
+      wind.at = after.stats.maxHealth > 0 ? after.health / after.stats.maxHealth : 0;
     }
   }
+
   const end = state.entities.get(selfId);
-  return { kills, taken, survivedFor, endHealth: end?.health ?? 0, staggers };
+  return {
+    ...out,
+    kills,
+    taken,
+    survivedFor,
+    endHealth: end?.health ?? 0,
+    breaks,
+    regen,
+    ticks: spent,
+    secondWind: wind,
+    shieldGained,
+    shieldTicks,
+    absorbed,
+  };
 }
 
-console.log('\n\n=== a stream of ravagers, weapon only, 60s ===\n');
-console.log('  Same policy for every row: swing whenever free, never move, never cast a skill.');
-console.log('  So DAMAGE is a floor and TAKEN/SURVIVED are exact. `npm run balance` reports');
-console.log('  Pure Constitution at 1 kill in 30s with the full rotation and no tiers bought.\n');
-console.log(
-  `  ${pad('BUILD', 22)}${pad('HP', 8)}${pad('EHP', 8)}${pad('KILLS', 7)}` +
-    `${pad('TAKEN', 8)}${pad('END HP', 9)}${pad('STAGGERS', 10)}${pad('ALIVE', 7)}`,
-);
-console.log(`  ${'-'.repeat(80)}`);
+const DANGER = SCALING.constitution.dangerBelow;
+const FIGHT_TICKS = 90 * SERVER_TICK_RATE;
 
-const DUEL_TICKS = 60 * SERVER_TICK_RATE;
-const ROWS: readonly (readonly [string, number, boolean])[] = [
-  ['fresh (CON 5)', 5, false],
-  ['CON 25, no tiers', 25, false],
-  ['CON 25, all tiers', 25, true],
-  ['CON 40, no tiers', 40, false],
-  ['CON 40, all tiers', 40, true],
-  ['CON 60, no tiers', 60, false],
-  ['CON 60, all tiers', 60, true],
+interface Contender {
+  readonly name: string;
+  readonly record: PersistedPlayer;
+}
+
+function con(name: string, constitution: number, withTiers: boolean): Contender {
+  return { name, record: recordAt(constitution, withTiers ? tiersAt(constitution) : []) };
+}
+
+const LADDER: readonly Contender[] = [
+  con('fresh (CON 5)', 5, false),
+  con('CON 25, no tiers', 25, false),
+  con('CON 25, all tiers', 25, true),
+  con('CON 40, all tiers', 40, true),
+  con('CON 60, no tiers', 60, false),
+  con('CON 60, all tiers', 60, true),
 ];
-for (const [name, constitution, withTiers] of ROWS) {
-  const record = recordAt(constitution, withTiers ? tiersAt(constitution) : []);
-  const stats = computeEffectiveStats(record);
-  const result = duel(record, DUEL_TICKS);
-  const ehp = stats.maxHealth / Math.max(0.01, 1 - stats.armor);
+
+const SCENARIOS: readonly (readonly [string, Scenario])[] = [
+  ['stationary', {}],
+  ['mobile', { policy: 'kite' }],
+  ['crowd (4)', { foes: 4 }],
+  ['low-health (4)', { foes: 4, startHealth: 0.32 }],
+];
+
+console.log('\n\n=== the loop, against a stream of ravagers (90s, weapon only) ===\n');
+console.log('  What the track is supposed to be: take pressure -> recover Guard -> survive the');
+console.log('  breaking point -> stabilize low -> convert healing into durability -> outlast.');
+console.log('  Four scenarios, because one measures one posture: `mobile` never stops moving,');
+console.log('  which is the only way the moving branch is exercised at all, and `low-health`');
+console.log('  starts just above the band so the comeback is reached rather than hoped for.\n');
+
+const RESULTS = new Map<string, Loop>();
+for (const [scenarioName, scenario] of SCENARIOS) {
+  console.log(`  --- ${scenarioName} ---\n`);
   console.log(
-    `  ${pad(name, 22)}${pad(num(stats.maxHealth), 8)}${pad(num(ehp), 8)}` +
-      `${pad(String(result.kills), 7)}${pad(num(result.taken), 8)}${pad(num(result.endHealth), 9)}` +
-      `${pad(String(result.staggers), 10)}` +
-      `${pad(result.survivedFor >= DUEL_TICKS ? 'yes' : `${num(result.survivedFor / SERVER_TICK_RATE)}s`, 7)}`,
+    `  ${pad('BUILD', 20)}${pad('KILLS', 7)}${pad('TAKEN', 8)}${pad('END HP', 9)}` +
+      `${pad('BREAKS', 8)}${pad('MOVE%', 7)}${pad('LOW%', 7)}${pad('GUARD/s MOVING', 16)}${pad('ALIVE', 9)}`,
+  );
+  console.log(`  ${'-'.repeat(91)}`);
+  for (const entry of LADDER) {
+    const loop = fight(entry.record, FIGHT_TICKS, scenario);
+    RESULTS.set(`${scenarioName}|${entry.name}`, loop);
+    const lived = loop.survivedFor;
+    const movingRate =
+      loop.ticks.moving > 0 ? (loop.regen.moving / loop.ticks.moving) * SERVER_TICK_RATE : 0;
+    console.log(
+      `  ${pad(entry.name, 20)}${pad(String(loop.kills), 7)}${pad(num(loop.taken), 8)}` +
+        `${pad(num(loop.endHealth), 9)}${pad(String(loop.breaks), 8)}` +
+        `${pad(`${num((loop.ticks.moving / lived) * 100, 0)}%`, 7)}` +
+        `${pad(`${num((loop.ticks.resolute / lived) * 100, 0)}%`, 7)}` +
+        `${pad(num(movingRate, 2), 16)}` +
+        `${pad(lived >= FIGHT_TICKS ? 'yes' : `${num(lived / SERVER_TICK_RATE)}s`, 9)}`,
+    );
+  }
+  console.log('');
+}
+
+console.log('  Guard recovered, by the posture it was recovered in (mobile scenario).');
+console.log('  That scenario moves on every tick by construction, so MOVING is the whole of');
+console.log('  the recovery -- and before spec 273 every one of these numbers was zero.\n');
+console.log(
+  `  ${pad('BUILD', 20)}${pad('STANDING', 10)}${pad('MOVING', 9)}${pad('CASTING', 9)}` +
+    `${pad('STAGGERED', 11)}${pad('MOVING/s', 10)}`,
+);
+console.log(`  ${'-'.repeat(73)}`);
+for (const entry of LADDER) {
+  const loop = RESULTS.get(`mobile|${entry.name}`);
+  if (!loop) continue;
+  const rate =
+    loop.ticks.moving > 0 ? (loop.regen.moving / loop.ticks.moving) * SERVER_TICK_RATE : 0;
+  console.log(
+    `  ${pad(entry.name, 20)}${pad(num(loop.regen.standing), 10)}${pad(num(loop.regen.moving), 9)}` +
+      `${pad(num(loop.regen.casting), 9)}${pad(num(loop.regen.staggered), 11)}` +
+      `${pad(num(rate, 2), 10)}`,
   );
 }
-console.log('');
 
-// ---------------------------------------------------------------- sheet 6
-console.log('\n\n=== the gauntlet: how many ravagers at once ===\n');
-console.log('  120s, weapon only, never moving. The column is how many live ravagers are held');
-console.log('  in front of the build at all times, and each cell reports the damage that');
-console.log('  actually landed per second beside the outcome -- because how many of a ring of');
-console.log('  eight are in *reach* is `sim/crowd.ts`\'s answer rather than this probe\'s, so');
-console.log('  the pressure is not monotone in the count and the DPS column is what says so.\n');
+console.log('\n  Second Wind and the shield (low-health scenario):\n');
 console.log(
-  `  ${pad('BUILD', 22)}${[1, 2, 4, 8].map((n) => pad(`${String(n)} FOE`, 18)).join('')}`,
+  `  ${pad('BUILD', 20)}${pad('FIRED', 7)}${pad('HEALED', 9)}${pad('-> SHIELD', 11)}` +
+    `${pad('LANDED AT', 11)}${pad('SHIELD MADE', 13)}${pad('ABSORBED', 10)}${pad('SHIELD UP%', 11)}`,
 );
-console.log(`  ${'-'.repeat(94)}`);
-const GAUNTLET_TICKS = 120 * SERVER_TICK_RATE;
-for (const [name, constitution, withTiers] of [
-  ['fresh (CON 5)', 5, false],
-  ['CON 25, all tiers', 25, true],
-  ['CON 40, all tiers', 40, true],
-  ['CON 60, all tiers', 60, true],
-] as readonly (readonly [string, number, boolean])[]) {
-  const record = recordAt(constitution, withTiers ? tiersAt(constitution) : []);
-  const cells = [1, 2, 4, 8]
-    .map((foes) => {
-      const r = duel(record, GAUNTLET_TICKS, foes);
-      const dps = r.taken / (r.survivedFor / SERVER_TICK_RATE);
-      const verdict =
-        r.survivedFor >= GAUNTLET_TICKS
-          ? `alive ${num(dps, 1)}/s`
-          : `died ${num(r.survivedFor / SERVER_TICK_RATE)}s ${num(dps, 1)}/s`;
-      return pad(verdict, 18);
-    })
-    .join('');
-  console.log(`  ${pad(name, 22)}${cells}`);
+console.log(`  ${'-'.repeat(92)}`);
+for (const entry of LADDER) {
+  const loop = RESULTS.get(`low-health (4)|${entry.name}`);
+  if (!loop) continue;
+  console.log(
+    `  ${pad(entry.name, 20)}${pad(String(loop.secondWind.fired), 7)}` +
+      `${pad(num(loop.secondWind.healed), 9)}${pad(num(loop.secondWind.shield), 11)}` +
+      `${pad(loop.secondWind.fired > 0 ? `${num(loop.secondWind.at * 100, 0)}%` : '-', 11)}` +
+      `${pad(num(loop.shieldGained), 13)}${pad(num(loop.absorbed), 10)}` +
+      `${pad(`${num((loop.shieldTicks / loop.survivedFor) * 100, 0)}%`, 11)}`,
+  );
+}
+
+// ---------------------------------------------------------------- hybrids
+console.log('\n\n=== hybrids: is it a chassis, or is it immortality with a weapon? ===\n');
+console.log('  The danger case is never pure Constitution -- it contributes almost no offence.');
+console.log('  It is a durability chassis carrying a full offensive identity, so these are the');
+console.log('  rows that decide whether the redesign is safe. Four ravagers at once, so that');
+console.log('  survival separates them, with three Constitution-free controls for scale.\n');
+console.log(
+  `  ${pad('BUILD', 20)}${pad('SPREAD', 26)}${pad('KILLS', 7)}${pad('TAKEN/s', 9)}` +
+    `${pad('BREAKS', 8)}${pad('LOW%', 7)}${pad('ALIVE', 8)}`,
+);
+console.log(`  ${'-'.repeat(86)}`);
+// Two rows carry no Constitution at all and are the controls: without them the
+// sheet cannot say whether a hybrid's kill count is *high* or merely present.
+const CONTROLS = new Set(['pure.strength', 'spend.specialized', 'pair.strPer']);
+for (const preset of BUILD_PRESETS) {
+  const spread = fullSpreadOf(preset);
+  if (spread.attributes.constitution <= SCALING.startingAttribute && !CONTROLS.has(preset.id)) {
+    continue;
+  }
+  const record = recordFor(preset, spread);
+  const loop = fight(record, FIGHT_TICKS, { foes: 4 });
+  const lived = loop.survivedFor;
+  const spreadText = ATTRIBUTE_KEYS.filter((k) => spread.attributes[k] > SCALING.startingAttribute)
+    .map((k) => `${k.slice(0, 3).toUpperCase()}${String(spread.attributes[k])}`)
+    .join(' ');
+  console.log(
+    `  ${pad(preset.name, 20)}${pad(spreadText, 26)}${pad(String(loop.kills), 7)}` +
+      `${pad(num((loop.taken / lived) * SERVER_TICK_RATE, 2), 9)}${pad(String(loop.breaks), 8)}` +
+      `${pad(`${num((loop.ticks.resolute / lived) * 100, 0)}%`, 7)}` +
+      `${pad(lived >= FIGHT_TICKS ? 'yes' : `${num(lived / SERVER_TICK_RATE)}s`, 8)}`,
+  );
 }
 console.log('');

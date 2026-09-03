@@ -68,7 +68,7 @@ change a game outcome.
 | `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet. Runs twice, `probe-map-editor.ts`'s shape: once over `dist/`, where Save must *say* there is no dev server, and once against a real `npx vite`, where a file chosen in the tab has to reach `assets/audio/raw/`, be encoded, be offered by the picker, be assigned, and land in the catalog on disk |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too |
-| `npx tsx scripts/probe-constitution.ts` | What one whole track is *worth*, as opposed to whether its rows are wired up. `audit:progression` asks whether a purchase moves a number and `npm run balance` fights presets that buy **no tiers at all** -- every `pure.*` row has `tierShare: 0` and bins 27 of its 82 points -- so neither has ever measured a Constitution character. Six sheets: the durability curve at every value on the track with and without the tiers that value opens, each mechanic driven through the sim function that owns it, the moving/still split, guard longevity against the roster, a ravager stream, and a gauntlet. The pair it exists for is EHP against KILLS: at CON 60 with all sixteen tiers a body is 778 effective health against a fresh character's 115 and takes 0.6 damage a second where the fresh one takes 2.5 and dies -- and it kills exactly as many ravagers as it did at CON 25, because Constitution buys no offence at all. The gauntlet prints incoming DPS beside each outcome rather than only the outcome, since how many of a ring of eight are in *reach* is `sim/crowd.ts`'s answer rather than the probe's, so survival is not monotone in the count and the DPS column is the thing that says so. `docs/constitution-progression-review.md` is what it was written for |
+| `npx tsx scripts/probe-constitution.ts` | What one whole track is *worth*, as opposed to whether its rows are wired up, and since spec 273 what its **loop** does under four kinds of pressure -- stationary, mobile, a crowd of four, and starting inside the danger band. Guard recovered is split by the posture it was recovered in, which is the only way a rule about movement can be measured at all: the first version of the fight sheet stood perfectly still and reported the moving column as zero for a reason that had nothing to do with the rule. The second version kited at *full* speed, outran the ravager, took 5.5 damage in ninety seconds and reported zero again -- with the pool never drained, recovery has nothing to recover. It repositions at a third of its own speed now, which keeps it in the fight. The hybrid sheet carries three Constitution-free controls for the same reason: without them it cannot say whether a hybrid's kill count is high or merely present. `audit:progression` asks whether a purchase moves a number and `npm run balance` fights presets that buy **no tiers at all** -- every `pure.*` row has `tierShare: 0` and bins 27 of its 82 points -- so neither has ever measured a Constitution character. Six sheets: the durability curve at every value on the track with and without the tiers that value opens, each mechanic driven through the sim function that owns it, the moving/still split, guard longevity against the roster, a ravager stream, and a gauntlet. The pair it exists for is EHP against KILLS: at CON 60 with all sixteen tiers a body is 778 effective health against a fresh character's 115 and takes 0.6 damage a second where the fresh one takes 2.5 and dies -- and it kills exactly as many ravagers as it did at CON 25, because Constitution buys no offence at all. The gauntlet prints incoming DPS beside each outcome rather than only the outcome, since how many of a ring of eight are in *reach* is `sim/crowd.ts`'s answer rather than the probe's, so survival is not monotone in the count and the DPS column is the thing that says so. `docs/constitution-progression-review.md` is what it was written for |
 | `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 245). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
@@ -196,25 +196,72 @@ docs/            durable direction that outlives one spec.
                  each reaches the sim, whether they compose, and what the whole
                  thing is worth -- measured through
                  `scripts/probe-constitution.ts` rather than read off the
-                 tables. Three things in it are findings rather than
-                 description, and the first is the one to act on.
-                 **`poiseRegenMoving` is granted by nothing**, and `regenPoise`
-                 zeroes the rate on any tick the body moved, so Steady Frame's
-                 three ranks and the CON 20 milestone that deepens them -- the
-                 whole guard-regeneration half of the track -- are worth exactly
-                 zero to a repositioning body, with the branch's own comment
-                 pointing at the Agility+Constitution pair spec 244 deleted and
-                 no tooltip mentioning movement at all. **Second Wind is outside
-                 the healing pipeline**: it bypasses `applyHealing`, so the
-                 track's largest single heal takes neither the `healingScale`
-                 nor the desperation surge that Constitution itself bought,
-                 cannot overflow into Overflow Vitality's shield, and -- firing
-                 at 30% and landing at 61% -- ejects the character from both of
-                 the low-health windows the same tier is built around. And the
-                 **track finishes at level 18**: 55 attribute points to the cap
-                 plus sixteen tiers is 71 of the 242 a level-60 character has,
-                 so Constitution is a chassis rather than a build and nothing on
-                 it answers what the 40th point buys that the 30th did not.
+                 tables. Its three findings are what **spec 273** then fixed, and
+                 the review is kept as the measurement they were found by rather
+                 than rewritten to describe the answer.
+                 Spec 273 is Constitution as the loop it is meant to be: *take
+                 pressure -> recover Guard -> survive the breaking point ->
+                 stabilize low -> convert healing into future durability ->
+                 outlast*. Three things in it are worth knowing before touching
+                 the track.
+                 **Movement scales Guard recovery rather than switching it off.**
+                 `poiseRegenMoving` was a flag nothing granted and `regenPoise`
+                 read 0 as "set the rate to zero", so Steady Frame's three ranks
+                 and the CON 20 milestone were worth exactly nothing to a
+                 repositioning body. It is the *fraction a moving body keeps*
+                 now, seeded from `SCALING.constitution.poiseRegenMovingBase`
+                 (0.3) and clamped at `poiseRegenMovingCap` (0.75) -- strictly
+                 below 1, which is what makes "kiting never recovers Guard as
+                 fast as holding ground" a property rather than a hope. Measured
+                 at CON 60 with every tier: 27.50/s standing, 13.75 casting,
+                 10.31 moving, 10.31 staggered. **`NEUTRAL_TRAITS` keeps 0**, so
+                 `monsterTraits` is untouched -- a monster recovering Guard while
+                 chasing would be a broad enemy rebalance and a nerf to
+                 Strength's stagger pressure.
+                 **Second Wind goes through `applyHealing` and stops inside the
+                 band.** It bypassed the pipeline, so the track's largest single
+                 heal took neither the `healingScale` nor the desperation surge
+                 Constitution itself bought and could not overflow into Overflow
+                 Vitality's shield; and it fired at 30% and landed at 61%, above
+                 the two low-health windows the same threshold armed.
+                 `applyHealing` gained one optional argument -- a health ceiling
+                 for that heal, absent meaning `maxHealth`, so all three existing
+                 callers are byte-identical -- and Second Wind passes
+                 `SCALING.constitution.dangerBelow`. That constant is the one the
+                 four literal `0.3`s collapsed onto (`resoluteBelow`,
+                 `staggerImmuneBelow`, `secondWindBelow` and now this), and being
+                 one number is the whole design: `isResolute` compares with
+                 `<=`, so stabilizing lands the body at the *top* of the band it
+                 is fighting in rather than clear of it, and everything the
+                 ceiling turns away becomes a shield -- durability rather than
+                 health, which cannot eject anybody from anything.
+                 **Three mastery specializations at CON 50**, on the threshold
+                 the Overflow Vitality milestone already sits on, because
+                 `TrackNode` has always allowed a node to carry both. Unbroken
+                 Stride deepens the kept moving fraction, Death's Door is a
+                 capability flag (`resoluteRegenCalm`: while Resolute, Guard
+                 recovers at the calm rate whatever you are doing, so a body that
+                 survives the band climbs out of it still holding a guard rather
+                 than on an empty pool), and Deep Well raises the overheal
+                 shield's ceiling. They are the first rows in the tree to use
+                 `costPerTier`, which had sat on the interface since 244 with
+                 `costOfNextTier` as its only reader -- 2, 4 and 2 points a rank,
+                 because a one-point late purchase is strictly better than the
+                 attribute point beside it. That moved `costOfNextTier` down into
+                 `data/specializations.ts` beside the field it reads, and fixed
+                 `fullSpreadOf`, which charged a flat point a tier and would have
+                 given every preset a tree no real character could afford. The
+                 track costs 87 points now against 71, so it completes around
+                 level 21 rather than 18 -- which is written down as a reduction
+                 rather than a solution, since whether 242 points is too many is
+                 a question about all six tracks.
+                 What spec 273 deliberately did **not** do is in its own Out of
+                 scope: the other five attributes, monster Guard regeneration,
+                 explicit pair synergies, and Sustained Effort -- whose real
+                 value is smaller than it looks, because `applyPoiseDamage`
+                 refills the pool *whole* on a break, so `poiseRegenStaggered`
+                 only ever reaches poise drained by blows landing inside the
+                 stagger window. Measured and recorded rather than redesigned.
                  progression-and-scaling.md (specs 238-242) is the rules
                  progression and combat-scaling work is decided against: what an
                  ability is allowed to scale with and in what order the three
