@@ -16,6 +16,21 @@
  */
 
 import { ALL_ABILITIES } from '../src/server/data/abilities.js';
+import { attackTimingFor, resourceCostFor } from '../src/server/sim/abilities.js';
+import {
+  applyStatus,
+  masteryKey,
+  NO_STATUSES,
+  StatusId,
+  type Statuses,
+} from '../src/server/sim/statuses.js';
+import { startingBaseStats } from '../src/server/player/attributes.js';
+import { computeEffectiveStats } from '../src/server/player/stats.js';
+import {
+  EMPTY_EQUIPMENT,
+  emptyInventory,
+  type EffectiveStats,
+} from '../src/server/state/types.js';
 import {
   abilityProfileOf,
   formatAbilityScaling,
@@ -34,6 +49,35 @@ import {
 } from '../src/server/player/progression-audit.js';
 
 const ALL = process.argv.includes('--all');
+
+/** A Wisdom character at one attribute value holding one specialization. */
+function wisdomStatsAt(
+  wisdom: number,
+  held: readonly { id: string; tier: number }[],
+): EffectiveStats {
+  return computeEffectiveStats({
+    id: 'audit',
+    displayName: 'audit',
+    baseStats: { ...startingBaseStats(), wisdom },
+    specializations: held.map((row) => ({ specializationId: row.id, tier: row.tier })),
+    equipment: EMPTY_EQUIPMENT,
+    inventory: emptyInventory(),
+    position: { x: 0, y: 0, z: 0 },
+    facing: 0,
+    currentZone: 'wilds',
+    level: 1,
+    experience: 0,
+    unspentProgressionPoints: 0,
+    health: 100,
+    resource: 100,
+    coins: 0,
+  });
+}
+
+/** The least entity `attackTimingFor` and `resourceCostFor` will read. */
+function wisdomBody(stats: EffectiveStats): { stats: EffectiveStats; statuses: Statuses } {
+  return { stats, statuses: NO_STATUSES };
+}
 
 function pad(text: string, width: number): string {
   return text.length >= width ? text : text + ' '.repeat(width - text.length);
@@ -106,6 +150,94 @@ for (const span of report.growth) {
   }
 }
 if (spans === 0) console.log('  nothing gets worse as any attribute grows.');
+console.log('');
+
+// --- what a Wisdom purchase does to a *result* (spec 274) --------------------
+//
+// The audit above answers "did a value on `EffectiveStats` or `TraitStats`
+// move", which is a weaker question than it looks. `masteryRelief` counted
+// 0 -> 1 -> 2 -> 3 across its tiers and scored ACTIVE for its whole life while
+// **nothing in the sim read the field** -- the mechanic ran through a parallel
+// reader -- and Adaptation's tiers moved `adaptationPerStack` while every one of
+// them reached the same 0.3 ceiling in the same number of hits.
+//
+// So Wisdom's tiers are also walked here against the numbers a *player*
+// experiences: a resolved cooldown in ticks, a resolved cost in resource, and
+// where Adaptation actually stops. Not a general symbolic-execution pass -- one
+// attribute, the six results its mechanics are about, printed so a tier that
+// changes nothing observable is visible rather than merely absent from a list.
+console.log('--- Wisdom, as derived results (spec 274) ---');
+console.log(`  ${pad('specialization', 22)} ${pad('what it is about', 34)} tiers`);
+{
+  const whirlwind = ALL_ABILITIES.find((ability) => ability.id === 'skill.whirlwind');
+  // One probe per specialization, measuring the result *its own* mechanic is
+  // about. A single shared column is what makes an audit lie in the other
+  // direction: probed only on cooldown, Conservation and Measured Recovery come
+  // back "no observable change" and the tool reports four working tiers as dead.
+  const probes: Record<string, { label: string; of: (stats: EffectiveStats) => string }> = {
+    'wis.conservation': {
+      label: 'cost of a cast at full Attuned',
+      of: (stats) => {
+        if (!whirlwind) return '-';
+        let statuses: Statuses = NO_STATUSES;
+        for (let i = 0; i < Math.max(1, stats.traits.attunedMaxStacks); i += 1) {
+          statuses = applyStatus(statuses, StatusId.Attuned, 0, Math.max(1, stats.traits.attunedTicks), {
+            maxStacks: Math.max(1, stats.traits.attunedMaxStacks),
+          });
+        }
+        return num(resourceCostFor(whirlwind, { stats, statuses }, 0));
+      },
+    },
+    'wis.measuredRecovery': {
+      label: 'healing received',
+      of: (stats) => `${num(stats.traits.healingScale)}x`,
+    },
+    'wis.composure': {
+      label: 'whirlwind cooldown',
+      of: (stats) =>
+        whirlwind ? `${num(attackTimingFor(whirlwind, wisdomBody(stats), 0).intervalTicks / 60)}s` : '-',
+    },
+    'wis.adaptation': {
+      label: 'ceiling, and hits to reach it',
+      of: (stats) => {
+        const per = stats.traits.adaptationPerStack;
+        const hits = per > 0 ? Math.ceil(stats.traits.adaptationCap / per) : 0;
+        return `${num(stats.traits.adaptationCap)} in ${String(hits)}`;
+      },
+    },
+    'wis.mastery': {
+      label: 'whirlwind cooldown, fully mastered',
+      of: (stats) => {
+        if (!whirlwind) return '-';
+        let statuses: Statuses = NO_STATUSES;
+        for (let i = 0; i < Math.max(1, stats.traits.masteryMaxStacks); i += 1) {
+          statuses = applyStatus(statuses, masteryKey(whirlwind.id), 0, Math.max(1, stats.traits.masteryTicks), {
+            maxStacks: Math.max(1, stats.traits.masteryMaxStacks),
+          });
+        }
+        return `${num(attackTimingFor(whirlwind, { stats, statuses }, 0).intervalTicks / 60)}s`;
+      },
+    },
+    'wis.conversion': {
+      label: 'overflow converted, and salvaged',
+      of: (stats) => `${num(stats.traits.conversionCap)} / ${num(stats.traits.restoreSalvagePct)}`,
+    },
+  };
+
+  for (const skill of ALL_SPECIALIZATIONS.filter((row) => row.attribute === 'wisdom')) {
+    const probe = probes[skill.id];
+    if (!probe) continue;
+    const seen: string[] = [];
+    let inert = 0;
+    for (let tier = 0; tier <= skill.maxTier; tier += 1) {
+      const value = probe.of(wisdomStatsAt(skill.requires, tier > 0 ? [{ id: skill.id, tier }] : []));
+      if (tier > 0 && value === seen[seen.length - 1]) inert += 1;
+      seen.push(value);
+    }
+    const note = inert > 0 ? `  <- ${String(inert)} tier(s) change nothing` : '';
+    console.log(`  ${pad(skill.id, 22)} ${pad(probe.label, 34)} ${seen.join(' -> ')}${note}`);
+  }
+}
 console.log('');
 
 console.log('--- ability scaling (spec 238) ---');

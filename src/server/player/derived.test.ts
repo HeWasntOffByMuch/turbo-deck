@@ -266,17 +266,30 @@ describe('the build presets', () => {
     }
   });
 
-  it('keeps the twelve attribute presets free of tiers (spec 244)', () => {
+  it('keeps the attribute presets free of tiers (spec 244)', () => {
     // The comparison between attribute spreads is only a comparison between
-    // spreads while none of them carries a tree. The four `spend.*` presets are
-    // the ones that buy tiers, and they exist so that axis is measured somewhere
-    // rather than measured everywhere.
-    for (const preset of BUILD_PRESETS.filter((p) => !p.id.startsWith('spend.'))) {
+    // spreads while none of them carries a tree. The `spend.*` presets are the
+    // ones that buy tiers, and they exist so that axis is measured somewhere
+    // rather than measured everywhere. Spec 274 added a third group, `wis.*`,
+    // for the same reason one attribute down: those rows differ only in which
+    // of Wisdom's specializations they bought, which is a comparison the twelve
+    // cannot make because `tierShare` picks by threshold rather than by name.
+    const spending = (id: string): boolean => id.startsWith('spend.') || id.startsWith('wis.');
+    for (const preset of BUILD_PRESETS.filter((p) => !spending(p.id))) {
       expect(preset.tierShare, preset.id).toBe(0);
       expect(fullSpreadOf(preset).specializations, preset.id).toEqual([]);
     }
     for (const preset of BUILD_PRESETS.filter((p) => p.id.startsWith('spend.'))) {
       expect(fullSpreadOf(preset).specializations.length, preset.id).toBeGreaterThan(0);
+    }
+    // And a focused build buys its focus and nothing else, which is what makes
+    // the six rows differ at a point budget large enough to buy the whole tree.
+    for (const preset of BUILD_PRESETS.filter((p) => (p.focus?.length ?? 0) > 0)) {
+      const bought = fullSpreadOf(preset).specializations;
+      expect(bought.length, preset.id).toBeGreaterThan(0);
+      for (const allocation of bought) {
+        expect(preset.focus, preset.id).toContain(allocation.specializationId);
+      }
     }
   });
 

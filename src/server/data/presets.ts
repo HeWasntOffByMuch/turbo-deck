@@ -47,6 +47,18 @@ export interface BuildPreset {
    * when nothing is buyable, which is the most **specialized** a build can be.
    */
   readonly tierShare: number;
+  /**
+   * Specialization ids this build buys **first**, in order (spec 274).
+   *
+   * `tierShare` says *how much* of the budget goes into tiers and the table
+   * decides *which* -- lowest threshold first -- which is right for the twelve
+   * attribute rows, where the point is that nobody hand-picked the tree. It
+   * cannot express "the Adaptation build", and the Wisdom pass needs six rows
+   * that differ only in which of one attribute's specializations they bought.
+   *
+   * Empty for every preset that predates this, so the twelve are untouched.
+   */
+  readonly focus?: readonly string[];
 }
 
 /**
@@ -72,20 +84,65 @@ function hybrid(
   return { id, name, premise, into: [a, b], level: PRESET_LEVEL, tierShare: 0 };
 }
 
+/** A Wisdom build that spends half its budget on one named specialization first. */
+function wisdomFocus(
+  id: string,
+  name: string,
+  premise: string,
+  focus: readonly string[],
+): BuildPreset {
+  return {
+    id,
+    name,
+    premise,
+    into: ['wisdom'],
+    level: PRESET_LEVEL,
+    // Half, so the row has both a real attribute value and a real tree. At 0 it
+    // would be `pure.wisdom` six times over; at 1 it would stall at the first
+    // threshold its focus opens and never reach the milestones.
+    tierShare: focus.length === 0 ? 0.05 : 0.5,
+    focus,
+  };
+}
+
 export const BUILD_PRESETS: readonly BuildPreset[] = [
   pure('strength', 'Pure Strength', 'Solves problems by ending them. Staggers, executes, and takes the resource back off the corpse.'),
   pure('agility', 'Pure Agility', 'Solves problems by not being there. Same attack rate as everyone; a quarter of the rooted time.'),
   pure('intelligence', 'Pure Intelligence', 'Solves problems by changing their shape. Reach, radius, and health spent as mana.'),
   pure('constitution', 'Pure Constitution', 'Solves problems by outlasting them. Cannot be staggered when it matters, and turns every heal into a buffer.'),
   pure('perception', 'Pure Perception', 'Solves problems by reading them. Doubles its weak-point chance against anything that has just committed.'),
-  pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out. Casts twice as often as the table intended, and adapts to whatever keeps hitting it.'),
+  pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out of answers. Kills slowly and always has something coming back.'),
 
   hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Below half health every cast is armoured.', 'strength', 'constitution'),
   hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
-  hybrid('pair.intWis', 'INT/WIS', 'The archmage. A prepared cast is free of the shaping premium and refunds its cooldown.', 'intelligence', 'wisdom'),
+  hybrid('pair.intWis', 'INT/WIS', 'The archmage. A large pool and abilities that come back, with nothing bespoke joining them.', 'intelligence', 'wisdom'),
   hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
   hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
-  hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
+  // Added by spec 274, which needs the third Wisdom pair to answer whether
+  // exploit-based sustain works through the systems alone. No pair node exists
+  // for it and none is wanted: what should make it good is that Perception's
+  // weak-point kill heal is healing, and Wisdom owns healing efficiency.
+  hybrid('pair.perWis', 'PER/WIS', 'Exploit-based sustain. Precision that pays, on a body that gets more from being paid.', 'perception', 'wisdom'),
+  hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Durability, and healing that goes further on it.', 'constitution', 'wisdom'),
+
+  // The Wisdom spending rows (spec 274). Six builds at one attribute value that
+  // differ only in which of Wisdom's specializations they bought, which is the
+  // comparison the twelve above cannot make: `tierShare` picks by threshold, so
+  // every Wisdom row before this bought the same tree in the same order.
+  wisdomFocus('wis.raw', 'Raw WIS', 'The attribute and almost nothing else. The control the other five are read against.', []),
+  wisdomFocus('wis.recovery', 'Recovery WIS', 'Everything into healing received. What a restorative is worth to a specialist.', ['wis.measuredRecovery']),
+  wisdomFocus('wis.conservation', 'Conservation WIS', 'Attuned, deeply. Careful casting paying for the next cast.', ['wis.conservation']),
+  wisdomFocus('wis.adaptation', 'Adaptation WIS', 'Deep repeated-threat defence. The ceiling rather than the ramp.', ['wis.adaptation']),
+  wisdomFocus('wis.composure', 'Composure WIS', 'Broad cooldown availability. The whole bar rotating sooner.', ['wis.composure']),
+  wisdomFocus('wis.mastery', 'Mastery WIS', 'One tool, leaned on. Per-ability cooldown earned by repetition.', ['wis.mastery']),
+  {
+    id: 'wis.full',
+    name: 'Full WIS',
+    premise: 'Every Wisdom tier the level can pay for. What the track is worth bought outright.',
+    into: ['wisdom'],
+    level: PRESET_LEVEL,
+    tierShare: 0.5,
+  },
 
   // The spending axis (spec 244). The twelve above are the attribute comparison
   // and every one of them spends nothing on tiers, which is what they always did
@@ -196,6 +253,23 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
         (tiers.get(specialization.id) ?? 0) < specialization.maxTier,
     );
     if (open.length === 0) return null;
+    // A focused build buys its own list and **nothing else**, in the order it
+    // names. Exclusive rather than merely first, and that is what makes the six
+    // Wisdom rows a comparison at all: at the preset level a character has 82
+    // points against 55 to cap an attribute and 16 to buy every tier it has, so
+    // a build that fell through to the table's order simply bought the whole
+    // tree and all six rows came out identical. What is left over goes into the
+    // attribute and then reports as unspent, which is the honest picture of a
+    // point budget that is currently too large -- and the reason this spec does
+    // not try to fix that here.
+    const focus = preset.focus ?? [];
+    if (focus.length > 0) {
+      for (const id of focus) {
+        const wantedTier = open.find((specialization) => specialization.id === id);
+        if (wantedTier) return wantedTier.id;
+      }
+      return null;
+    }
     // Lowest threshold, then id, so the choice is a property of the tables
     // rather than of authoring order.
     open.sort((a, b) => a.requires - b.requires || (a.id < b.id ? -1 : 1));

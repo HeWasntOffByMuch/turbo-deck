@@ -195,7 +195,7 @@ capability that leaks into resolution while holding nothing is worse than one
 that is absent. Bringing it back is a table, a `metSynergies`, and one line in
 hop 2.
 
-**Twenty-two `TraitStats` fields are now granted by nothing**, and that is
+**Twenty-one `TraitStats` fields are now granted by nothing**, and that is
 recorded rather than repaired. Each was reachable only through a pair:
 
 ```
@@ -203,9 +203,32 @@ abilityPoiseFactor   appliesSundered      exploitPoiseFactor   executeBonus
 executeBelow         breakResource        breakCooldownRefund  flowArmorPct
 poiseRegenMoving     spellbladeHandling   handlingCooldowns    flowWeakPoint
 flowCostPct          damageToShield       abilityWeakPoints    preparedMastery
-vsVulnerableReduction  healingSurge       healingSurgeBelow    adaptationCap
+vsVulnerableReduction  healingSurge       healingSurgeBelow
 exposedTeamResource  attunedFromWeakPoints
 ```
+
+`adaptationCap` left that list in spec 274, and how it left is the pattern worth
+copying: it was **not** resurrected by re-creating the pair that used to grant
+it. Wisdom's Adaptation needed a purchasable ceiling -- every tier and the
+milestone converged on `SCALING`'s 0.3, so deep investment bought only
+hits-to-cap -- and the field that expresses "how far can this body adapt"
+already existed. A dormant field earns its way back by a live mechanic needing
+exactly what it says, or it stays dormant.
+
+Two fields that were never on this list were also granted by nothing, and spec
+274 found both in Wisdom:
+
+- `cooldownReduction`, which sat beside the very-much-used `costReduction` and
+  reads as a hook nothing was ever pointed at. Composure grants it now.
+- `masteryRelief`, which was worse than dormant -- it was derived, clamped,
+  given a wire slot and replicated in every `Stats` message while the mechanic
+  it named ran through a *parallel* reader in `player/specializations.ts`. The
+  field is gone and its wire slot carries the new Mastery's three.
+
+The lesson for the audit is recorded with them: `audit:progression` reports a
+purchase as ACTIVE when a value on `EffectiveStats` or `TraitStats` moves, and
+has no notion of whether anything *reads* that value. `masteryRelief` scored
+ACTIVE for its whole life.
 
 They are live in `deriveTraits` and in the sim, and unreachable from content --
 the same shape as `kind: 'channel'`, which has no ability rows and a complete
