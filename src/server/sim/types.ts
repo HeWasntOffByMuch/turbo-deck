@@ -666,6 +666,37 @@ export interface ServerEntity {
    * is the length of the current lull.
    */
   readonly stillSinceTick: number;
+  /**
+   * The last tick this body broke its planted stance (spec 270).
+   *
+   * Deliberately **not** {@link stillSinceTick}, which is shared with
+   * Perception's Steady Aim and is stamped by casting. The artillery stance has
+   * to survive the cast it was taken for -- that is the whole loop -- so it
+   * needs its own clock, and reusing that one would have silently made Steady
+   * Aim hold through a wind-up as well: an Intelligence change reaching into
+   * Perception's tree, which is exactly what a shared field buys you.
+   *
+   * Broken by *intentional* movement rather than by any displacement at all:
+   * `advanceProgression` compares the step against
+   * `SCALING.intelligence.stanceMoveEpsilon`, so collision push-out and (if a
+   * player is ever given `bumps`) a crowd nudge do not cost the stance. Being
+   * hit stamps it, and consuming Prepared re-stamps it so the interval starts
+   * again rather than one preparation accelerating every later cast.
+   */
+  readonly stanceSinceTick: number;
+  /**
+   * The last non-basic ability this body wove (spec 270).
+   *
+   * Arcane Weaving asks whether *this* cast differs from the *previous* one, so
+   * the chain needs exactly one id of memory and nothing more. Not a list: a
+   * rotation of two abilities alternating is a real rotation and should count,
+   * which a "no repeats within the window" rule would refuse.
+   *
+   * Empty for a body that has never cast one, which is why the comparison is
+   * against an id rather than against a nullable -- `'' !== 'skill.arcLash'` is
+   * already the right answer for the first cast of a fight.
+   */
+  readonly lastWovenAbilityId: string;
 
   // --- the health economy (spec 156) --------------------------------------
   /**

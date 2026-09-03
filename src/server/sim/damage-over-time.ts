@@ -52,6 +52,7 @@ import { enterCombat, markAssist } from './restoration.js';
 import {
   applyStatus,
   hasStatus,
+  stacksOf,
   statusOf,
   StatusId,
   type Statuses,
@@ -169,6 +170,26 @@ export function afflictable(entity: ServerEntity): boolean {
  * the same reason. The one production path (`applyEffects`) always has the row
  * in hand and always passes it.
  */
+/**
+ * What Arcane Weaving is worth to an affliction being applied right now
+ * (spec 270).
+ *
+ * Read at the moment it lands and folded into `magnitude`, which is
+ * **snapshotted** -- so a chain built and then let lapse does not retroactively
+ * weaken a poison already burning, exactly as spec 190 states for the applier's
+ * own power. That is what makes Weaving a reason to keep varying what you throw
+ * rather than a buff to hold at three stacks and coast on.
+ *
+ * A multiplier on manipulation rather than on damage: it reaches afflictions and
+ * nothing else, which is what separates this from the flat spell power the
+ * specialization it replaced was selling.
+ */
+function weaveFactor(source: ServerEntity, tick: number): number {
+  const per = source.stats.traits.weaveEffectPct;
+  if (per <= 0) return 1;
+  return 1 + stacksOf(source.statuses, StatusId.Weave, tick) * per;
+}
+
 export function applyDot(
   target: ServerEntity,
   dotId: string,
@@ -183,7 +204,7 @@ export function applyDot(
     statuses: landDot(target.statuses, row, tick, {
       durationTicks: dotDurationTicks(row),
       maxStacks: row.maxStacks,
-      magnitude: Math.max(0, abilityEffectPowerOf(ability?.scaling, source.stats)),
+      magnitude: Math.max(0, abilityEffectPowerOf(ability?.scaling, source.stats) * weaveFactor(source, tick)),
       sourceId: source.id,
     }),
   };

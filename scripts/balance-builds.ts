@@ -54,6 +54,7 @@ import { startingBaseStats } from '../src/server/player/attributes.js';
 import { milestoneProgress, resolveProgression } from '../src/server/player/progression.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
 import { mayCancelBackswing } from '../src/server/sim/abilities.js';
+import { hasStatus, statusOf, StatusId } from '../src/server/sim/statuses.js';
 import {
   EMPTY_METRICS,
   foldMetrics,
@@ -189,7 +190,52 @@ interface Fight {
   readonly metrics: BuildMetrics;
   readonly survived: boolean;
   readonly maxHealth: number;
+  readonly watch: IntWatch;
 }
+
+/**
+ * What the Intelligence track does over a fight (spec 270).
+ *
+ * Sampled here rather than folded into {@link BuildMetrics}, and that is a scope
+ * decision rather than laziness: every one of these is a question about *this*
+ * attribute -- how long a caster held a stance, how much health a spell ate,
+ * how deep a weave got -- and widening the shared metrics record would put six
+ * Intelligence fields in front of every other build's row forever.
+ *
+ * All of it is read off the body each tick. Nothing new crosses the wire and
+ * nothing in the sim was changed to make it measurable, which is the property
+ * that keeps a harness honest: it watches the game rather than a version of the
+ * game instrumented for it.
+ */
+interface IntWatch {
+  /** Ticks holding `Prepared` -- a banked stance, waiting to be spent. */
+  preparedTicks: number;
+  /** Ticks holding `Preparing` -- planted, and visibly so. */
+  preparingTicks: number;
+  /** Times the stance actually paid out. */
+  primes: number;
+  /** Times a cast was paid for with health, and how much it cost. */
+  overdraws: number;
+  overdrawHealth: number;
+  /** Weave stacks summed per tick, and the deepest chain reached. */
+  weaveTickStacks: number;
+  weavePeak: number;
+  /** Resource spent, and how much of it was the shaping premium. */
+  resourceSpent: number;
+  premiumPaid: number;
+}
+
+const emptyWatch = (): IntWatch => ({
+  preparedTicks: 0,
+  preparingTicks: 0,
+  primes: 0,
+  overdraws: 0,
+  overdrawHealth: 0,
+  weaveTickStacks: 0,
+  weavePeak: 0,
+  resourceSpent: 0,
+  premiumPaid: 0,
+});
 
 interface Row extends Fight {
   readonly preset: BuildPreset;
@@ -226,10 +272,16 @@ function run(preset: BuildPreset): Row {
  * fight rather than a second harness written beside this one -- the whole value
  * of comparing rank 0 with rank 3 is that nothing else about the run differs.
  */
-function fight(record: PersistedPlayer, policy: Policy): Fight {
+function fight(
+  record: PersistedPlayer,
+  policy: Policy,
+  foes = 1,
+  against = monsterId,
+  duration = seconds,
+): Fight {
   const stats = computeEffectiveStats(record);
-  const monster = monsterById(monsterId);
-  if (!monster) throw new Error(`no such monster: ${monsterId}`);
+  const monster = monsterById(against);
+  if (!monster) throw new Error(`no such monster: ${against}`);
 
   let state: ServerWorldState = createWorldState(seed);
   const spawned = spawnEntity(state, {
@@ -252,28 +304,43 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
   // measured a rotation nobody plays.
   const basicDamage = stats.attackDamage;
   let metrics = EMPTY_METRICS;
+  const watch = emptyWatch();
   let seq = 0;
-  let foeId = 0;
+  let foeIds: number[] = [];
   let cancels = 0;
 
-  for (let tick = 1; tick <= Math.round(seconds * SERVER_TICK_RATE); tick++) {
+  for (let tick = 1; tick <= Math.round(duration * SERVER_TICK_RATE); tick++) {
     const self = state.entities.get(selfId);
     if (!self || self.health <= 0) break;
 
-    // Keep exactly one live opponent in front of the build.
-    const foe = foeId > 0 ? state.entities.get(foeId) : undefined;
-    if (!foe || foe.health <= 0) {
+    // Keep exactly `foes` live opponents in front of the build.
+    //
+    // More than one is spec 270's addition and it is the scenario Intelligence
+    // was never measured in: a stationary duel is the worst possible test of an
+    // attribute whose identity is reach and radius, and every row above this
+    // one had been fought against a single body since the harness was written.
+    // They are placed on an arc rather than in a line, close enough that one
+    // Arc Lash or one Rime Touch can catch several -- which is the thing being
+    // measured, not a courtesy.
+    foeIds = foeIds.filter((id) => (state.entities.get(id)?.health ?? 0) > 0);
+    while (foeIds.length < foes) {
+      const index = foeIds.length;
+      const angle = foes === 1 ? 0 : (index / foes) * Math.PI - Math.PI / 2;
       const next = spawnEntity(state, {
         kind: EntityKindValue.Monster,
         typeId: monster.id,
-        position: { x: ORIGIN.x + 60, y: ORIGIN.y, z: 0 },
+        position: {
+          x: ORIGIN.x + Math.cos(angle) * 60,
+          y: ORIGIN.y + Math.sin(angle) * 60,
+          z: 0,
+        },
         stats: monster.stats,
         radius: monster.radius,
         zoneId: 'greenmarch',
         targetId: selfId,
       });
       state = next.state;
-      foeId = next.entity.id;
+      foeIds.push(next.entity.id);
       // Each opponent gets its own spawner id (spec 156). Without one they all
       // share a per-type farm key, and this harness -- which is a stream of the
       // same monster at the same spot -- decays to the floor within seconds and
@@ -283,7 +350,7 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
       state = replaceEntity(state, { ...next.entity, spawnerId: `bench-${next.entity.id}` });
     }
 
-    const target = state.entities.get(foeId);
+    const target = state.entities.get(foeIds[0] ?? 0);
     seq += 1;
     // Asking to move is how a body walks out of a follow-through (spec 079),
     // and one tick of it is the whole gesture -- but only from the **cancel
@@ -326,6 +393,50 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
     state = result.state;
     const after = state.entities.get(selfId);
 
+    // --- the Intelligence watch (spec 270) -------------------------------
+    //
+    // Charged on the tick a cast **starts**, not on every tick the policy names
+    // one. The first cut did the latter and reported 989 resource spent from a
+    // 109-point pool over thirty seconds, because `bestReady` names an ability
+    // on nearly every idle tick and most of those are refused for cooldown.
+    if (before?.cast === null && after?.cast) {
+      const row = abilityById(after.cast.abilityId);
+      if (row) {
+        const paid = after.cast.spentResource + after.cast.spentHealth;
+        watch.resourceSpent += after.cast.spentResource;
+        // What shaping charged, as the difference between the price paid and the
+        // price without the premium -- rather than `cost * shapingCostPct`,
+        // which would double-count Wisdom's discount on the way past.
+        const premium = before.stats.traits.shapingCostPct;
+        if (premium > 0 && paid > 0) watch.premiumPaid += paid - paid / (1 + premium);
+      }
+    }
+    if (after) {
+      const now = state.tick;
+      if (hasStatus(after.statuses, StatusId.Prepared, now)) watch.preparedTicks += 1;
+      if (hasStatus(after.statuses, StatusId.Preparing, now)) watch.preparingTicks += 1;
+      // Counted on the *edge*, so holding a banked stance for a hundred ticks is
+      // one prime rather than a hundred.
+      if (
+        before &&
+        !hasStatus(before.statuses, StatusId.Prepared, tick) &&
+        hasStatus(after.statuses, StatusId.Prepared, now)
+      ) {
+        watch.primes += 1;
+      }
+      if (
+        before &&
+        !hasStatus(before.statuses, StatusId.Overdrawn, tick) &&
+        hasStatus(after.statuses, StatusId.Overdrawn, now)
+      ) {
+        watch.overdraws += 1;
+        watch.overdrawHealth += Math.max(0, before.health - after.health);
+      }
+      const stacks = statusOf(after.statuses, StatusId.Weave, now)?.stacks ?? 0;
+      watch.weaveTickStacks += stacks;
+      watch.weavePeak = Math.max(watch.weavePeak, stacks);
+    }
+
     metrics = foldMetrics(metrics, selfId, tick, result.events, REASONS);
     metrics = foldPosture(metrics, (after?.cast ?? null) !== null);
     if (before && after) {
@@ -342,6 +453,7 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
     metrics,
     survived: (survivor?.health ?? 0) > 0,
     maxHealth: stats.maxHealth,
+    watch,
   };
 }
 
@@ -495,7 +607,16 @@ function bestReady(
   for (const ability of carried) {
     if (resolvedDamage(ability, self.stats) < basicDamage * PUNCTUATION_RATIO) continue;
     if (tick < (self.cooldowns[ability.id] ?? 0)) continue;
-    if (self.resource < ability.cost * self.stats.traits.resourceCostScale) continue;
+    // Affordable, **or overdrawable** (spec 270). The affordability line alone
+    // made Arcane Overflow unmeasurable by construction: the capstone exists for
+    // the moment a caster cannot pay, and a policy that refuses to try one it
+    // cannot pay for never reaches it. A build holding the capstone throws the
+    // spell and lets the sim decide whether health covers the gap -- which is
+    // what a player who bought it would do, and what `startCast` is there to
+    // refuse if the bill is too big.
+    const price = ability.cost * self.stats.traits.resourceCostScale;
+    const overdrawable = self.stats.traits.overflowHealthPerResource > 0;
+    if (self.resource < price && !overdrawable) continue;
     return ability.id;
   }
   return null;
@@ -725,6 +846,94 @@ if (base && top) {
 
 // The line the table exists to make checkable. A build that cannot kill the
 // thing in front of it is not a build, whatever its other numbers say.
+// --- the Intelligence track (spec 270) -------------------------------------
+//
+// Its own table, and a *second fight*, because the one above cannot answer the
+// question. Every row up there is a stationary duel against one body, which is
+// the worst possible test of the attribute whose identity is reach and radius --
+// and until this spec every Intelligence preset also spent nothing on its own
+// specializations, so the tree with the most tier-gated capabilities in the game
+// had never been measured with any of them bought.
+const INT_PRESETS = ['pure.intelligence', 'spend.intCaster', 'pair.intWis', 'pair.agiInt'];
+const FOES = 4;
+/**
+ * How long the Intelligence fight runs, against the table's thirty.
+ *
+ * Long enough for the magazine to matter, which is the whole point of spec 270:
+ * a pure-Intelligence pool takes about a minute of sustained casting to empty,
+ * so a thirty-second fight measures a caster who never ran out and reports the
+ * capstone -- which only fires on an empty pool -- as never firing.
+ */
+const INT_SECONDS = 90;
+
+const intRows = INT_PRESETS.map((id) => presetById(id))
+  .filter((preset): preset is BuildPreset => preset !== null)
+  .map((preset) => ({
+    preset,
+    solo: fight(recordFor(preset), 'still', 1, monsterId, INT_SECONDS),
+    group: fight(recordFor(preset), 'still', FOES, monsterId, INT_SECONDS),
+    // The same build against something that does not hit back.
+    //
+    // Not a courtesy row: `blow.ts` stamps the stance clock on every blow that
+    // lands, so a caster stood in melee range of a ravager can never finish a
+    // two-second stance -- which is the counterplay working, and is also why the
+    // contested rows below read `0` primes. This one is the other half of the
+    // claim: given the range an artillery build is supposed to fight at, does
+    // the cadence actually rebuild?
+    quiet: fight(recordFor(preset), 'still', 1, 'dummy', INT_SECONDS),
+  }));
+
+if (intRows.length > 0) {
+  const ticks = Math.round(INT_SECONDS * SERVER_TICK_RATE);
+  console.log(
+    `\n  Intelligence over ${String(INT_SECONDS)}s, alone and against ${String(FOES)} at once:\n`,
+  );
+  console.log(
+    `  ${pad('BUILD', 16)}${pad('KILLS', 6)}${pad('DPS', 7)}${pad('GRP KILLS', 10)}${pad('GRP DPS', 9)}` +
+      `${pad('RES SPENT', 10)}${pad('PREMIUM', 9)}${pad('PRIMES', 8)}${pad('PREPARED%', 10)}` +
+      `${pad('PLANT%', 8)}${pad('WEAVE', 7)}${pad('OVERDRAW', 9)}${pad('GRP ALIVE', 9)}`,
+  );
+  console.log(`  ${'-'.repeat(116)}`);
+  for (const row of intRows) {
+    const solo = summarise(row.solo.metrics, SERVER_TICK_RATE);
+    const group = summarise(row.group.metrics, SERVER_TICK_RATE);
+    const w = row.group.watch;
+    const q = row.quiet.watch;
+    console.log(
+      `  ${pad(row.preset.name, 16)}${pad(String(solo.kills), 6)}${pad(num(solo.dps), 7)}` +
+        `${pad(String(group.kills), 10)}${pad(num(group.dps), 9)}` +
+        `${pad(num(w.resourceSpent), 10)}${pad(num(w.premiumPaid), 9)}` +
+        `${pad(String(q.primes), 8)}${pad(num((q.preparedTicks / ticks) * 100), 10)}` +
+        `${pad(num((w.preparingTicks / ticks) * 100), 8)}` +
+        `${pad(num(w.weaveTickStacks / ticks, 2), 7)}` +
+        `${pad(w.overdraws > 0 ? `${String(w.overdraws)}/${num(w.overdrawHealth)}hp` : '-', 9)}` +
+        `${pad(row.group.survived ? 'yes' : 'NO', 9)}`,
+    );
+  }
+  console.log(
+    `\n  PRIMES and PREPARED% are measured **unhit** -- against a training dummy --` +
+      `\n  because a blow stamps the stance clock, so a caster held in melee range` +
+      `\n  never finishes one. PLANT% is time visibly taking a stance in the group` +
+      `\n  fight, which is the tell an opponent reads. WEAVE is the mean stacks held.` +
+      `\n  OVERDRAW reads '-' here because the magazine outlasts the fight: the spend` +
+      `\n  rate is bounded by cooldowns, not by the pool, so a caster runs out in a` +
+      `\n  long sustained rotation (see intelligence.test.ts) rather than in this one.`,
+  );
+
+  // What the group fight is *for*: the same build, measured against one body and
+  // against four, so the AoE the duel cannot see shows up as a ratio.
+  console.log('\n  What a second target is worth:\n');
+  for (const row of intRows) {
+    const solo = summarise(row.solo.metrics, SERVER_TICK_RATE);
+    const group = summarise(row.group.metrics, SERVER_TICK_RATE);
+    const ratio = solo.dps > 0 ? group.dps / solo.dps : 0;
+    console.log(
+      `  ${pad(row.preset.name, 16)}${num(ratio, 2)}x damage against ${String(FOES)}` +
+        `${row.group.survived ? '' : '  (and died doing it)'}`,
+    );
+  }
+}
+
 const broken = rows.filter((row) => row.metrics.kills === 0);
 console.log('');
 if (broken.length > 0) {

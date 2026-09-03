@@ -115,6 +115,10 @@ export const STATUS_SEMANTICS: readonly StatusSemantics[] = [
   { id: StatusId.Flow, tags: [Beneficial] },
   { id: StatusId.Momentum, tags: [Beneficial] },
   { id: StatusId.Prepared, tags: [Beneficial] },
+  // The stance being built, and the buildup being *visible* is the whole of what
+  // it does -- `MagicLight`'s argument one attribute over (spec 270).
+  { id: StatusId.Preparing, tags: [Beneficial] },
+  { id: StatusId.Weave, tags: [Beneficial] },
   { id: StatusId.Attuned, tags: [Beneficial] },
   // A field is a boon its *carrier* wears; what it does to everyone else is a
   // row in `data/aura-fields.ts`, and what that lays on them is a Burn, which
@@ -124,6 +128,13 @@ export const STATUS_SEMANTICS: readonly StatusSemantics[] = [
   // timers the sim keeps for itself: this one is *only* visible, so being seen
   // is the whole of what it does.
   { id: StatusId.MagicLight, tags: [Beneficial] },
+  // Harmful and **not** an affliction, which is `Overheated`'s distinction two
+  // rows down and drawn for the same reason: something bad did just happen to
+  // this body, so it must not be painted as a boon -- and nothing in the sim
+  // reads it, so it must not become fuel for Catalysis's `hasAffliction`. The
+  // health is already gone; this is the notice that says the spell took it
+  // rather than an attacker nobody can see (spec 270).
+  { id: StatusId.Overdrawn, tags: [Harmful] },
 
   // --- harmful, but not afflictions -------------------------------------
   { id: StatusId.Exposed, tags: [Harmful] },

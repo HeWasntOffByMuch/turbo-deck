@@ -101,7 +101,7 @@ describe('the visible status table (spec 186)', () => {
       expect(visualFor(id), id).not.toBeNull();
     }
     expect(visualFor(ADAPTED_ID)).not.toBeNull();
-    expect(STATUS_VISUALS).toHaveLength(19);
+    expect(STATUS_VISUALS).toHaveLength(22);
   });
 
   it('answers null for an index it has no row for', () => {

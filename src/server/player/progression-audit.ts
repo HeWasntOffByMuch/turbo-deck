@@ -128,6 +128,9 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   preparedMastery: 'up',
   vsAfflictedPct: 'up',
   appliesSundered: 'up',
+  weaveEffectPct: 'up',
+  weaveMaxStacks: 'up',
+  weaveTicks: 'up',
   // Health per point of missing resource. A **price**: lower is better, and the
   // field whose additive representation made the Intelligence 50 milestone
   // double its own cost (spec 239).
@@ -210,6 +213,26 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
 export const ABSENT_AT_ZERO: ReadonlySet<string> = new Set<string>([
   'prepareTicks',
   'overflowHealthPerResource',
+]);
+
+/**
+ * Fields a **named specialization** is allowed to move the wrong way, because
+ * the wrong way is what the player is buying (spec 270).
+ *
+ * One entry, and it needs to be a declaration rather than a tuning fix. Spell
+ * Shaping sells space for resource: every tier widens the geometry *and* raises
+ * `shapingCostPct`, which is a `down` field, so the audit correctly reads a
+ * deliberate price as a regression. The alternatives were both worse than saying
+ * so out loud -- delete the premium, and shaping becomes free upside with no
+ * decision in it; move the premium onto a milestone, and the tiers stop being
+ * the thing that charges for what the tiers give you.
+ *
+ * Keyed by specialization **and** field rather than by field alone, so this
+ * cannot quietly excuse a cost appearing on some future row: the exemption is
+ * that *this* row charges for *this* thing, and nothing else inherits it.
+ */
+export const INTENDED_TRADEOFFS: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ['int.shaping', new Set(['shapingCostPct'])],
 ]);
 
 /** The `EffectiveStats` numbers a tier can move, and which way is better. */
@@ -394,8 +417,15 @@ export function auditSpecializations(skills: readonly SpecializationDefinition[]
       });
       const movesSomewhere = cells.some((cell) => cell.deltas.length > 0);
 
+      // What this row is *allowed* to charge for (spec 270). Filtered out of the
+      // regression set rather than out of the deltas, so the field still shows in
+      // the `ACTIVE` note -- a declared tradeoff should be visible in the report,
+      // just not counted as the tree progressing backwards.
+      const intended = INTENDED_TRADEOFFS.get(skill.id);
       for (const cell of cells) {
-        const backwards = cell.deltas.filter((delta) => delta.backwards);
+        const backwards = cell.deltas.filter(
+          (delta) => delta.backwards && !(intended?.has(delta.field) ?? false),
+        );
         let verdict: Verdict;
         let note: string;
         if (backwards.length > 0) {

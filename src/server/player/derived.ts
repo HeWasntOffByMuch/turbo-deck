@@ -97,6 +97,9 @@ export const NEUTRAL_TRAITS: TraitStats = {
   preparedMastery: 0,
   vsAfflictedPct: 0,
   appliesSundered: 0,
+  weaveEffectPct: 0,
+  weaveMaxStacks: 0,
+  weaveTicks: 0,
   overflowHealthPerResource: 0,
   damageToShield: 0,
   maxPoise: SCALING.combat.minPoise,
@@ -274,9 +277,16 @@ export function deriveTraits(
   const prepared = t.grantsPrepared > 0;
   const reads = t.grantsOpeningRead > 0;
   const adapts = t.grantsAdaptation > 0;
+  const weaves = t.grantsWeave > 0;
   const spellRadiusPct = Math.max(0, linear(INT, S.intelligence.radiusPer) * shaping + t.spellRadiusPct);
   const spellRangePct = Math.max(0, linear(INT, S.intelligence.rangePer) * shaping + t.spellRangePct);
-  const shapingCostRelief = clamp(t.shapingCostRelief, 0, 1);
+  // Capped **below 1** (spec 270). Efficient Construction pays down the shaping
+  // premium and may never delete it: a specialization whose whole function is to
+  // undo another specialization's drawback is an apology for that drawback
+  // rather than progression, and at three tiers this used to leave a shaped cast
+  // costing exactly what an unshaped one does. Three tiers of 0.2 reach this cap
+  // exactly, so every tier is worth its whole step and none of it is swallowed.
+  const shapingCostRelief = clamp(t.shapingCostRelief, 0, S.intelligence.shapingReliefCap);
 
   // --- Perception ---------------------------------------------------------
   const weakPointChance = clamp(
@@ -390,8 +400,13 @@ export function deriveTraits(
     // Deltas onto a shared base also make the two layers additive in the
     // direction they read: every source shortens the stillness and sharpens the
     // opener, and nothing can make either worse.
+    // Floored at a real stance rather than at a quarter second (spec 270): the
+    // duration *is* the cost of the mechanic, so a source that shortened it into
+    // a proc would be selling the payoff without the price. Nothing in the
+    // shipped tree comes near it -- three tiers plus the milestone land at 1.95s
+    // against a 1.5s floor -- which is the state a guard should be in.
     prepareTicks: prepared
-      ? Math.max(rate * 0.25, S.intelligence.prepareTicks + t.prepareTicks)
+      ? Math.max(S.intelligence.prepareFloorTicks, S.intelligence.prepareTicks + t.prepareTicks)
       : 0,
     preparedWindupScale: prepared
       ? clamp(S.intelligence.preparedWindupScale + t.preparedWindupScale, 0.2, 1)
@@ -399,6 +414,14 @@ export function deriveTraits(
     preparedMastery: t.preparedMastery > 0 ? 1 : 0,
     vsAfflictedPct: Math.max(0, t.vsAfflictedPct),
     appliesSundered: t.appliesSundered > 0 ? 1 : 0,
+    // **Arcane Weaving, and what enables it** (spec 270). The same shape spec
+    // 239 gave Prepared, Opening Read and Adaptation, for the same reason: the
+    // capability is a flag and the window and the ceiling come from `SCALING`
+    // behind it, so a tier grants what its tooltip says and cannot switch the
+    // mechanic off by granting a delta of the thing that gates it.
+    weaveEffectPct: weaves ? Math.max(0, t.weaveEffectPct) : 0,
+    weaveMaxStacks: weaves ? S.intelligence.weaveMaxStacks : 0,
+    weaveTicks: weaves ? S.intelligence.weaveTicks : 0,
     // **Arcane Overflow's price, which progression may only ever lower**
     // (spec 239).
     //

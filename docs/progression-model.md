@@ -195,17 +195,26 @@ capability that leaks into resolution while holding nothing is worse than one
 that is absent. Bringing it back is a table, a `metSynergies`, and one line in
 hop 2.
 
-**Twenty-two `TraitStats` fields are now granted by nothing**, and that is
+**Twenty-one `TraitStats` fields are now granted by nothing**, and that is
 recorded rather than repaired. Each was reachable only through a pair:
 
 ```
-abilityPoiseFactor   appliesSundered      exploitPoiseFactor   executeBonus
-executeBelow         breakResource        breakCooldownRefund  flowArmorPct
-poiseRegenMoving     spellbladeHandling   handlingCooldowns    flowWeakPoint
-flowCostPct          damageToShield       abilityWeakPoints    preparedMastery
-vsVulnerableReduction  healingSurge       healingSurgeBelow    adaptationCap
+abilityPoiseFactor   exploitPoiseFactor   executeBonus         executeBelow
+breakResource        breakCooldownRefund  flowArmorPct         poiseRegenMoving
+spellbladeHandling   handlingCooldowns    flowWeakPoint        flowCostPct
+damageToShield       abilityWeakPoints    preparedMastery      adaptationCap
+vsVulnerableReduction  healingSurge       healingSurgeBelow
 exposedTeamResource  attunedFromWeakPoints
 ```
+
+`appliesSundered` was the twenty-second and left the list at spec 270. It is the
+one that was worse than dormant: `int.catalysis` authored it as a **zero in a
+purchasable row**, so a player could spend points on a specialization whose
+tooltip named a mechanic nothing could reach. It is the row's own second half
+now -- a blow sunders a target that is *already afflicted*, which is Catalysis's
+stated trigger -- and it went that way rather than being deleted because it fit
+the tree that was being rebuilt anyway. That is the bar for taking another one
+off this list: a mechanic the design wants, not a field somebody wanted to tidy.
 
 They are live in `deriveTraits` and in the sim, and unreachable from content --
 the same shape as `kind: 'channel'`, which has no ability rows and a complete

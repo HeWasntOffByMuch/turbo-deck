@@ -316,6 +316,34 @@ const STATUS_ICONS: Record<StatusIconId, string> = {
     + '<circle cx="12" cy="17.4" r="3.6"/>'
     + '<circle cx="12" cy="17.4" r="1.5" fill="currentColor" stroke="none"/>'
     + '<path d="M6.8 8.6h2.4M6.8 11.6h2.4"/>',
+
+  // --- the Intelligence stance and its chain (spec 270) -------------------
+  // Preparing is the mark an *opponent* reads to decide whether to charge, so
+  // what it has to say at 14px is "not finished yet". Prepared's diamond, drawn
+  // open and standing on a base line: the same silhouette part-built, which is
+  // the one case in this table where two marks *should* rhyme -- they are the
+  // same mechanic a second apart, and a reader who has learned the diamond gets
+  // this one free.
+  preparing:
+    '<path d="M12 4.2 18.4 11 12 17.8 5.6 11Z"/>'
+    + '<path d="M6.6 20.4h10.8"/>',
+
+  // Weave -- three strands crossing. It has to stay clear of Flow's chevrons
+  // and Attuned's rings, and what separates it is that this is the only mark
+  // here built from *diagonals that cross each other*: a chain of different
+  // things, which is exactly what the mechanic counts.
+  weave:
+    '<path d="M4.6 7.4c3.6 0 3.6 9.2 7.4 9.2s3.8-9.2 7.4-9.2"/>'
+    + '<path d="M4.6 16.6c3.6 0 3.6-9.2 7.4-9.2s3.8 9.2 7.4 9.2"/>',
+
+  // Overdrawn -- a drop leaving a hollow ring. The ring is the empty pool and
+  // the drop is what paid for it, which is the whole sentence the mark exists
+  // to say. Deliberately not a heart or a cross: this is the *economy* taking
+  // health, not an injury, and the marks for being hurt are all warm-filled
+  // where this one is open.
+  overdrawn:
+    '<circle cx="12" cy="9.4" r="4.6"/>'
+    + '<path d="M12 14.6c1.9 2.4 2.9 3.9 2.9 5.1a2.9 2.9 0 0 1-5.8 0c0-1.2 1-2.7 2.9-5.1Z" fill="currentColor" stroke="none"/>',
 };
 
 /** One status mark, as markup ready to drop into the HUD. */
