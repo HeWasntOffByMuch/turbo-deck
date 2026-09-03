@@ -271,9 +271,19 @@ export const RESTORATION = {
     /** Perception: weak-point kills pay more, and motes come from further away. */
     perceptionWeakPointPer: 0.012,
     perceptionAttractPer: 2.4,
-    /** Wisdom: the fraction of a mote's overheal that goes back into the meter. */
+    /**
+     * Wisdom: the fraction of a mote's overheal that goes back into the meter.
+     *
+     * The cap is what the *attribute* alone reaches, and it came down from 0.6
+     * to 0.35 in spec 274 so that the specialization has somewhere to go. At
+     * 0.6 the curve was met at Wisdom 35 and every one of the next 25 points
+     * bought nothing, and Conversion -- the thing a Wisdom character buys last
+     * -- had no salvage content at all. The attribute gives the foundation and
+     * the specialization is the extreme version: Conversion's `salvagePct`
+     * sums on top, so a fully specialized body reaches 0.55.
+     */
     wisdomSalvagePer: 0.02,
-    wisdomSalvageCap: 0.6,
+    wisdomSalvageCap: 0.35,
     /** Wisdom: the most one collection may salvage, as a fraction of a threshold. */
     salvageCapFraction: 0.35,
     /** Constitution: one more charge per this many points above the start. */

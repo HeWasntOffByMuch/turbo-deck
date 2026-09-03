@@ -211,7 +211,32 @@ export interface TraitModifier {
   /** Sums onto {@link SCALING.wisdom.adaptationTicks}, which is the base. */
   readonly adaptationTicks?: number;
   readonly conversionCap?: number;
-  readonly masteryRelief?: number;
+  /** Sums onto the automatic salvage curve, which the attribute caps low (spec 274). */
+  readonly salvagePct?: number;
+  /**
+   * Grants the **Attuned** mechanic at all (spec 274).
+   *
+   * The fourth capability flag, and it exists for the reason the other three
+   * do: `blow.ts` used to infer the mechanic from `attunedCostPct > 0 &&
+   * attunedTicks > 0`, so the duration had to be granted by whichever layer
+   * introduced it -- which is why Conservation could not sit below the
+   * milestone without being inert. With the flag, the window and the stack
+   * count come from `SCALING` and either layer can turn the mechanic on.
+   */
+  readonly grantsAttuned?: number;
+  /**
+   * Grants the **Mastery** mechanic at all (spec 274).
+   *
+   * Adaptation's mirror: an enemy repeats something and you learn to resist it;
+   * you repeat something and you learn to use it more efficiently.
+   */
+  readonly grantsMastery?: number;
+  /** How much one Mastery stack takes off that ability's own cooldown. */
+  readonly masteryCooldownPct?: number;
+  /** Sums onto {@link SCALING.wisdom.masteryMaxStacks}, which is the base. */
+  readonly masteryMaxStacks?: number;
+  /** Sums onto {@link SCALING.wisdom.masteryTicks}, which is the base. */
+  readonly masteryTicks?: number;
 }
 
 export interface StatModifier {
@@ -366,7 +391,12 @@ function zeroTraits(): TraitTotals {
     adaptationCap: 0,
     adaptationTicks: 0,
     conversionCap: 0,
-    masteryRelief: 0,
+    salvagePct: 0,
+    grantsAttuned: 0,
+    grantsMastery: 0,
+    masteryCooldownPct: 0,
+    masteryMaxStacks: 0,
+    masteryTicks: 0,
   };
 }
 

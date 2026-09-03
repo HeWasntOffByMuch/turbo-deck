@@ -127,11 +127,23 @@ export function baseAttackTimeTicksFrom(flatTicks: number): number {
  */
 export const CRIT_PER_PERCEPTION = SCALING.perception.critPer;
 export const MAX_CRIT_CHANCE = 0.5;
-/** The ability resource pool (spec 062): a base, plus intelligence and wisdom. */
+/**
+ * The ability resource pool (spec 062): a base, plus intelligence.
+ *
+ * **Wisdom no longer contributes** (spec 274). INT owns the magazine and WIS
+ * owns making it last -- so the pool is Intelligence's alone, and Wisdom keeps
+ * the recovery and efficiency half of the same economy. There is nothing to
+ * move: `RESOURCE_PER_INTELLIGENCE` is the primitive that already existed.
+ */
 export const BASE_RESOURCE = 20;
 export const RESOURCE_PER_INTELLIGENCE = SCALING.intelligence.resourcePer;
-export const RESOURCE_PER_WISDOM = SCALING.wisdom.resourcePer;
-/** Resource regained per second, before modifiers. Wisdom adds to it. */
+/**
+ * Resource regained per second, before modifiers. Wisdom adds to it.
+ *
+ * Measured through `above()` since spec 274, like every other Wisdom rate: on
+ * the raw attribute a character who had spent nothing still collected 0.6/s
+ * from Wisdom, which is the trap `scaling.ts`'s header names.
+ */
 export const RESOURCE_REGEN_PER_SECOND = 2;
 export const REGEN_PER_WISDOM = SCALING.wisdom.regenPer;
 
@@ -290,14 +302,12 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const maxResource = Math.max(
     0,
-    BASE_RESOURCE +
-      RESOURCE_PER_INTELLIGENCE * intelligence +
-      RESOURCE_PER_WISDOM * wisdom +
-      bonus.maxResource,
+    BASE_RESOURCE + RESOURCE_PER_INTELLIGENCE * intelligence + bonus.maxResource,
   );
   const resourceRegen = Math.max(
     0,
-    (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * wisdom) / SERVER_TICK_RATE + bonus.resourceRegen,
+    (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * above(wisdom)) / SERVER_TICK_RATE +
+      bonus.resourceRegen,
   );
 
   return {

@@ -584,8 +584,8 @@ function noteLines(ability: AbilityDefinition): readonly string[] {
  * **A field with no row here draws no line at all.** That is the same rule the
  * item table has always had, and here it is load-bearing rather than defensive:
  * the trait layer is not uniform the way `modifiers` is. Some of its fields are
- * magnitudes, some are unlock flags, some are thresholds, and three of them
- * (`juggernautBelow`, `masteryRelief`, `overflowHealthPerResource`) cannot be
+ * magnitudes, some are unlock flags, some are thresholds, and two of them
+ * (`juggernautBelow`, `overflowHealthPerResource`) cannot be
  * turned into a signed quantity that reads correctly in English. A missing line
  * leaves the authored sentence to carry the skill; an invented one is a lie
  * about a number, which is what this document was written to stop.
@@ -769,13 +769,30 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'steadyAimPct', where: 'trait', name: 'Damage after standing still', form: 'percent' },
 
   { key: 'costReduction', where: 'trait', name: 'Ability cost reduction', form: 'percent' },
+  { key: 'cooldownReduction', where: 'trait', name: 'Active ability cooldown reduction', form: 'percent' },
   { key: 'healingPct', where: 'trait', name: 'Healing received', form: 'percent' },
+  { key: 'grantsAttuned', where: 'trait', form: 'flag', name: 'An ability that connects grants Attuned, discounting your next cast.' },
   { key: 'attunedCostPct', where: 'trait', name: 'Ability cost reduction per Attuned stack', form: 'percent' },
+  { key: 'attunedMaxStacks', where: 'trait', name: 'Maximum Attuned stacks', form: 'flat' },
   { key: 'attunedTicks', where: 'trait', name: 'Attuned duration', form: 'seconds' },
   { key: 'grantsAdaptation', where: 'trait', form: 'flag', name: 'Being hit by the same ability builds resistance to it.' },
   { key: 'adaptationPerStack', where: 'trait', name: 'Adaptation per stack', form: 'percent' },
+  // The number the mechanic is actually played around, and it had no row at all
+  // until spec 274 -- so the 30% ceiling every tier converged on was stated
+  // nowhere in the interface.
+  { key: 'adaptationCap', where: 'trait', name: 'Maximum Adaptation resistance', form: 'percent' },
   { key: 'adaptationTicks', where: 'trait', name: 'Adaptation duration', form: 'seconds' },
   { key: 'conversionCap', where: 'trait', name: 'Overflow conversion cap', form: 'flat' },
+  { key: 'salvagePct', where: 'trait', name: 'Overheal salvaged into restoration', form: 'percent' },
+  // Mastery (spec 274). Its predecessor was the worst-described node on the
+  // track: `masteryRelief` could not be turned into a signed quantity, so the
+  // sheet drew "Requires Wisdom 25. Always active." and no effect line at all,
+  // and the mechanic survived only in the flavour string. Every part of the new
+  // one is a quantity, so every part of it is stated.
+  { key: 'grantsMastery', where: 'trait', form: 'flag', name: 'Using an active ability makes that ability come back sooner next time.' },
+  { key: 'masteryCooldownPct', where: 'trait', name: "Cooldown reduction per Mastery stack, on that ability", form: 'percent' },
+  { key: 'masteryMaxStacks', where: 'trait', name: 'Maximum Mastery stacks per ability', form: 'flat' },
+  { key: 'masteryTicks', where: 'trait', name: 'Mastery duration', form: 'seconds' },
 ];
 
 /** A trailing full stop removed, so a line can be extended before it is closed. */

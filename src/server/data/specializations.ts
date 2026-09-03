@@ -272,35 +272,59 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Precision pays for itself. Nothing else here heals you.'),
 
   // ======================= WISDOM =========================
-  specialization('wis.discipline', 'wisdom', 'Resource Discipline', T1, 3, 'passive',
-    { traits: { costReduction: 0.06 } },
-    'The same pool, more casts.'),
+  // Spec 274. Conservation sits at T1 so that the milestone above it deepens
+  // the specialization that owns Attuned: the WIS 20 milestone used to grant
+  // the Attuned family while naming `wis.discipline`, which granted
+  // `costReduction` -- the same name over two mechanics with no trait in
+  // common. Resource Discipline itself is gone: three tiers of passive cost
+  // reduction on an economy that closes at WIS 13 was the clearest example of
+  // the branch spending points on a solved problem, and Conservation is where a
+  // player specializes into cost now.
+  specialization('wis.conservation', 'wisdom', 'Conservation', T1, 3, 'an ability that connects',
+    { traits: { grantsAttuned: 1, attunedCostPct: 0.04 } },
+    'A cast that did something makes the next one cheaper. A wasted one does not.'),
   specialization('wis.measuredRecovery', 'wisdom', 'Measured Recovery', T1, 3, 'receiving healing',
     { traits: { healingPct: 0.12 } },
     'Every restorative thing works better on you. It does not make you need one.'),
-  specialization('wis.mastery', 'wisdom', 'Mastery', T2, 3, 'passive',
-    { traits: { masteryRelief: 1 } },
-    'The advanced techniques of every attribute open a point early, per level.'),
-  // 0.04 a tier (spec 239). `attunedCostPct` is capped at 0.2 and the Wisdom 20
-  // milestone already grants 0.08, so at 0.07 tier 2 was half wasted and tier 3
-  // was worth nothing -- a tier you could buy, at the threshold where the specialization first
-  // becomes purchasable, whose effective delta was zero. 0.08 + 3 x 0.04 is the
-  // cap exactly, so every tier moves the number and the ceiling is still reached.
+  // Composure replaces Resource Discipline, and `cooldownReduction` is the hook
+  // it was written for: `deriveTraits` already multiplies the term into
+  // `cooldownScale`, and until now nothing in the game granted it -- so the one
+  // attribute whose own row claims "cooldowns" had no purchasable cooldown
+  // content at all. 0.05 a tier against the attribute's own 0.752 at the cap
+  // takes a fully invested body to 0.639, well clear of both floors.
   //
-  // `attunedTicks` is gone from the grant: it was 0, which is what a field that
-  // wants the base rather than a delta says, and the base is `SCALING`'s.
-  specialization('wis.conservation', 'wisdom', 'Conservation', T2, 3, 'an ability that connects',
-    { traits: { attunedCostPct: 0.04 } },
-    'A cast that did something makes the next one cheaper. A wasted one does not.'),
-  // `grantsAdaptation` (spec 239). This granted a per-stack size and neither a
-  // window nor a cap, and Adaptation needs both to do anything -- `markTarget`
-  // records a stack only with a window and `adaptationAgainst` reads one only
-  // under a cap. Three tiers of nothing from Wisdom 25 to Wisdom 35.
+  // It reaches active abilities and nothing else *structurally* rather than by
+  // a guard: `cooldownScaleFor` is called from `attackTimingFor`'s non-basic
+  // branch alone, and a basic attack's interval is `baseAttackTimeTicks`.
+  specialization('wis.composure', 'wisdom', 'Composure', T2, 3, 'passive',
+    { traits: { cooldownReduction: 0.05 } },
+    'Something useful is always coming back.'),
+  // Both halves are bought now (spec 274). The cap used to be granted by
+  // nothing, so all three tiers and the milestone converged on 0.3 and deep
+  // investment bought only hits-to-cap -- at Wisdom 35 tier 2 did not move even
+  // that. Rate and ceiling together: 0.45 fully specialized, 0.50 with the
+  // milestone.
   specialization('wis.adaptation', 'wisdom', 'Adaptation', T2, 3, 'taking the same ability twice',
-    { traits: { grantsAdaptation: 1, adaptationPerStack: 0.04 } },
-    'Nothing gets to hurt you the same way three times.'),
+    { traits: { grantsAdaptation: 1, adaptationPerStack: 0.03, adaptationCap: 0.05 } },
+    'Nothing gets to hurt you the same way forever.'),
+  // Mastery, rebuilt (spec 274). It used to relieve specialization thresholds,
+  // which is meta-progression rather than combat -- roughly point-neutral, told
+  // to the player only in flavour text, and its trait field replicated to every
+  // client and read by nobody.
+  //
+  // What it is now is Adaptation's mirror, and the symmetry is the identity:
+  // an enemy repeats something and Wisdom learns to resist it; you repeat
+  // something and Wisdom learns to use it more efficiently. Per ability, earned
+  // at the attack point, so a heal or a shield masters exactly as a blow does.
+  specialization('wis.mastery', 'wisdom', 'Mastery', T2, 3, 'using the same ability again',
+    { traits: { grantsMastery: 1, masteryCooldownPct: 0.02 } },
+    'A tool you keep reaching for comes back to your hand sooner.'),
+  // Conversion also deepens salvage since spec 274, which is what gives the T3
+  // node something to do besides a second copy of the milestone's cap: the
+  // attribute's own salvage curve is capped at 0.35 and this is the extreme
+  // version of it.
   specialization('wis.conversion', 'wisdom', 'Conversion', T3, 1, 'healing past full',
-    { traits: { conversionCap: SCALING.wisdom.conversionCap } },
+    { traits: { conversionCap: SCALING.wisdom.conversionCap, salvagePct: 0.2 } },
     'Overflow goes somewhere useful. Capped, so it is a valve and not a loop.'),
 ];
 

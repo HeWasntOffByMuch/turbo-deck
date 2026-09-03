@@ -545,16 +545,19 @@ describe('the passive skill tree (spec 191)', () => {
         if (!labelled.has(`trait:${key}`)) missing.add(`trait:${key}`);
       }
     }
-    // The three that cannot be turned into a signed quantity reading correctly
-    // in English, each left to its row's authored sentence on purpose:
-    // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
-    // *lowers* a requirement, and `overflowHealthPerResource` is a price the
-    // skill charges for a benefit -- and since spec 239 it is a *capability*
-    // rather than a rate, since the rate itself is `SCALING`'s and what a layer
-    // grants is the relief beside it, which does have a label.
+    // The two that cannot be turned into a signed quantity reading correctly in
+    // English, each left to its row's authored sentence on purpose:
+    // `juggernautBelow` is a health threshold, and `overflowHealthPerResource`
+    // is a price the skill charges for a benefit.
+    //
+    // There were three until spec 274. `masteryRelief` was a count that *lowered*
+    // a requirement, and being unlabellable was not a quirk of the field -- it
+    // was the mechanic being meta-progression rather than combat, which is why
+    // the sheet drew "Always active." and no effect line for the one node whose
+    // whole value was that line. The mechanic it was replaced by is a set of
+    // quantities, and every one of them has a row.
     expect([...missing].sort()).toEqual([
       'trait:juggernautBelow',
-      'trait:masteryRelief',
       'trait:overflowHealthPerResource',
     ]);
   });

@@ -541,8 +541,28 @@ function rewardAttacker(
     if (outcome.killed && A.weakPointKillHeal > 0) {
       // Third of the three restorations that never touch `applyHealing`, and so
       // the third that has to consult the suppression itself (spec 190).
+      //
+      // It consults **healing efficiency** too since spec 274, and that is the
+      // fix for a stated inconsistency rather than a new interaction: Measured
+      // Recovery's line is "every restorative thing works better on you", and
+      // this was one of the two paths for which it was false. Wisdom owns
+      // healing efficiency, so a Perception body that has also invested in
+      // Wisdom mends more from a weak-point kill -- through the systems, with
+      // no pair node, which is how PER/WIS is meant to be good.
+      //
+      // What it still does *not* get is the rest of the pipeline: the overheal
+      // cascade into Constitution's shield, Wisdom's conversion and Wisdom's
+      // salvage all live in `applyHealing`, which takes an entity, and this runs
+      // on `resolveBlow`'s local accumulators half way through a blow. So a
+      // weak-point kill that heals past full simply wastes the remainder. That
+      // is a deliberate limit, written down rather than silent, and the shape of
+      // the repair if it is ever wanted is to move the whole block below the
+      // blow rather than to reach into the cascade from here.
       const mend =
-        next.stats.maxHealth * A.weakPointKillHeal * healingScaleOf(next.statuses, tick);
+        next.stats.maxHealth *
+        A.weakPointKillHeal *
+        A.healingScale *
+        healingScaleOf(next.statuses, tick);
       health = Math.min(next.stats.maxHealth, health + mend);
     }
     if (A.attunedFromWeakPoints > 0 && A.attunedTicks > 0) {

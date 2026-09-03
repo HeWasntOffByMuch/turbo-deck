@@ -56,29 +56,14 @@ export function tierOf(
   return held.find((allocation) => allocation.specializationId === specializationId)?.tier ?? 0;
 }
 
-/**
- * How many points below its stated threshold a tier-3 specialization opens.
- *
- * Read off the *held* Mastery tiers rather than off the trait bundle, because
- * the trait bundle is derived from the specializations and asking it here would
- * be the one cycle this design does not have. One tier, one point, capped at the
- * specialization's own max so it can never open a tier-3 one at zero attribute.
- */
-export function masteryRelief(held: readonly SpecializationAllocation[]): number {
-  const tiers = tierOf(held, 'wis.mastery');
-  const definition = specializationById('wis.mastery');
-  const perTier = definition?.perTier.traits?.masteryRelief ?? 0;
-  return Math.max(0, Math.round(tiers * perTier));
-}
-
-/** The attribute value a specialization actually needs, Mastery included. */
-export function effectiveRequirement(
-  specialization: SpecializationDefinition,
-  held: readonly SpecializationAllocation[],
-): number {
-  if (specialization.tier < 3) return specialization.requires;
-  return Math.max(1, specialization.requires - masteryRelief(held));
-}
+// What a specialization needs is `specialization.requires`, and nothing bends it
+// (spec 274). The old Mastery relieved tier-3 thresholds by up to three points,
+// which was meta-progression rather than combat: roughly point-neutral, since
+// the three tiers that bought the relief came out of the same pool as the
+// attribute points it saved, and surfaced to the player only in flavour text.
+// `effectiveRequirement` and the `masteryRelief` reader beside it went with it,
+// along with `TraitStats.masteryRelief` -- a field replicated in every `Stats`
+// message that nothing ever read, because this reader was the real mechanic.
 
 /** What one more tier costs. A field rather than a constant, unused so far. */
 export function costOfNextTier(specialization: SpecializationDefinition): number {
@@ -123,7 +108,7 @@ export function validateSpecializationSpend(
     };
   }
 
-  const needed = effectiveRequirement(specialization, player.specializations);
+  const needed = specialization.requires;
   const have = attributes[specialization.attribute] ?? 0;
   if (have < needed) {
     const name = attributeByKey(specialization.attribute)?.name ?? specialization.attribute;
@@ -205,19 +190,17 @@ export function sanitizeSpecializations(
     if (tier <= 0) continue;
     kept.push({ specializationId: allocation.specializationId, tier });
   }
-  // Two passes, because Mastery's relief is read off the kept list and dropping
-  // a Mastery tier can close a tier-3 specialization that was only open because
-  // of it. One extra pass settles it: nothing here grants Mastery except Mastery.
-  const survives = (
-    allocation: SpecializationAllocation,
-    against: readonly SpecializationAllocation[],
-  ): boolean => {
+  // One pass since spec 274. There were two, because the old Mastery's relief
+  // was read off the kept list, so dropping a Mastery tier could close a tier-3
+  // specialization that was only open because of it. A requirement is
+  // `definition.requires` now and depends on nothing that is held, so a second
+  // pass can never drop anything the first one kept.
+  const survives = (allocation: SpecializationAllocation): boolean => {
     const definition = specializationById(allocation.specializationId);
     if (!definition) return false;
-    return (allocated[definition.attribute] ?? 0) >= effectiveRequirement(definition, against);
+    return (allocated[definition.attribute] ?? 0) >= definition.requires;
   };
-  const firstPass = kept.filter((allocation) => survives(allocation, kept));
-  return firstPass.filter((allocation) => survives(allocation, firstPass));
+  return kept.filter(survives);
 }
 
 /** Points sunk into specializations. What a respec hands back. */
