@@ -61,6 +61,14 @@ export type AuthoredStats = Omit<
   // identically at 14.
   | 'weaponDamageMin'
   | 'weaponDamageMax'
+  // Not authorable either (spec 271). A monster has no weapon row to say how
+  // heavy its blows are, and `attackDamage` is not the answer -- what a blow
+  // weighs and what it hurts for are the two properties that spec exists to
+  // keep apart. `NO_WEAPON` fills in the default, so every monster carries the
+  // Guard pressure it carried before the field existed. A row that should hit a
+  // Guard harder than it hits health wants an authored field of its own, which
+  // is a spec rather than a number added here.
+  | 'weaponGuardImpact'
   // Not authorable either (spec 238). Ability scaling is resolved against a
   // body's own Strength, Agility and Intelligence, and a monster has none --
   // its damage is the number its row states. Filled in as zeros by `NO_WEAPON`,

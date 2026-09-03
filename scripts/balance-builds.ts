@@ -96,6 +96,36 @@ function flag(name: string, fallback: string): string {
 
 const seconds = Number(flag('seconds', '30'));
 const monsterId = flag('monster', 'ravager');
+// How many opponents are kept alive in front of the build at once (specs 270,
+// 271, which arrived at this independently and wanted it for opposite reasons).
+//
+// One is the attribute comparison this table has always been, and it measures
+// two things badly. **Reach and radius**, because a stationary duel is the worst
+// possible test of an attribute whose identity is catching several bodies at
+// once -- spec 270. And **whether a commitment survives**, because hyper-armour
+// is worth nothing until something is trying to knock you out of a swing, and
+// one opponent on an attack cadence lands too few blows to interrupt anybody --
+// spec 271. The columns that read them are the INT table's damage ratio and
+// INTR/HELD respectively.
+const foes = Math.max(1, Math.round(Number(flag('foes', '1'))));
+
+/**
+ * How far around the build those opponents are spread, in degrees.
+ *
+ * **The two scenarios genuinely want different answers**, which is why this is a
+ * number rather than a constant either spec could have kept. Spec 270 needs them
+ * in a lane: `skill.arcLash` is a `line` and `skill.acidSpray` is directional, so
+ * a build that surrounds itself is measuring one target per cast whatever its
+ * radius says. Spec 271 needs the opposite -- a body pressed from every side is
+ * what actually interrupts a swing, and against a frontal arc the attack-slot
+ * ring and the crowd pass queue the attackers up so politely that every build in
+ * the table holds 100% of its commitments and the column says nothing.
+ *
+ * 180 is spec 270's own placement and stays the default, so its table is
+ * untouched. `--arc=360` surrounds, which is what the commitment table wants.
+ */
+const ARC_DEGREES = Math.max(1, Number(flag('arc', '180')));
+const ARC = (ARC_DEGREES * Math.PI) / 180;
 const seed = Number(flag('seed', '1'));
 const only = flag('preset', '');
 
@@ -126,6 +156,7 @@ const REASONS = {
   cancelled: CastEndReason.Cancelled,
   backswingCancelled: CastEndReason.BackswingCancelled,
   backswingPhase: CastPhase.Backswing,
+  interrupted: CastEndReason.Interrupted,
 };
 
 /**
@@ -262,7 +293,13 @@ type Policy = 'still' | 'cancelling';
  * A fresh monster appears the tick after the last one dies.
  */
 function run(preset: BuildPreset): Row {
-  return { preset, ...fight(recordFor(preset), 'still') };
+  // `foes` explicitly, and it is the one line that makes `--foes` mean anything
+  // for this table. Spec 270 made it a *parameter* defaulting to 1 so its own
+  // Intelligence table could ask for four without moving the comparison above
+  // it; spec 271 added the flag. Merged, the flag set a module constant that the
+  // parameter shadowed -- so `--foes=8` printed "8 opponent(s)" over a table
+  // fought one at a time, which is worse than the flag not existing.
+  return { preset, ...fight(recordFor(preset), 'still', foes) };
 }
 
 /**
@@ -325,7 +362,7 @@ function fight(
     foeIds = foeIds.filter((id) => (state.entities.get(id)?.health ?? 0) > 0);
     while (foeIds.length < foes) {
       const index = foeIds.length;
-      const angle = foes === 1 ? 0 : (index / foes) * Math.PI - Math.PI / 2;
+      const angle = foes === 1 ? 0 : (index / foes) * ARC - ARC / 2;
       const next = spawnEntity(state, {
         kind: EntityKindValue.Monster,
         typeId: monster.id,
@@ -658,6 +695,42 @@ for (const row of rows) {
   );
 }
 
+// --- the commitment table (spec 271) --------------------------------------
+// What the table above cannot see. Strength's defensive half is entirely about
+// a swing *surviving*, and against one opponent nothing interrupts anybody, so
+// every hyper-armour tier in the tree reads as a flat row. Run with `--foes 4`
+// and these columns move.
+//
+// BREAKS is Guard breaks caused, TTB the seconds of fight per break, INTR the
+// casts taken away by something other than the player's own decision, and HELD
+// the fraction of committed casts that survived to land. HELD is the one to
+// read: it is what Committed Swing and Unstoppable are bought for.
+console.log('');
+console.log(`  Commitment and Guard pressure -- ${String(foes)} opponent(s):`);
+console.log('');
+console.log(
+  `  ${pad('BUILD', 16)}${pad('BREAKS', 8)}${pad('TTB s', 8)}${pad('COMMIT', 8)}` +
+    `${pad('INTR', 6)}${pad('HELD%', 7)}${pad('STAG TAKEN', 12)}${pad('TAKEN', 8)}${pad('KILLS', 6)}`,
+);
+console.log(`  ${'-'.repeat(80)}`);
+for (const row of rows) {
+  const m = row.metrics;
+  const secondsFought = m.ticks / SERVER_TICK_RATE;
+  const breaks = m.staggersCaused;
+  const committed = m.castsCommitted;
+  // A cast that committed and was not taken away. `castsInterrupted` counts the
+  // ones a break or a death removed; a withdrawal is the player's own choice and
+  // is deliberately not counted against them here.
+  const held = committed > 0 ? (committed - m.castsInterrupted) / committed : 1;
+  console.log(
+    `  ${pad(row.preset.name, 16)}${pad(String(breaks), 8)}` +
+      `${pad(breaks > 0 ? num(secondsFought / breaks, 2) : '-', 8)}` +
+      `${pad(String(committed), 8)}${pad(String(m.castsInterrupted), 6)}` +
+      `${pad(num(held * 100), 7)}${pad(String(m.staggersTaken), 12)}` +
+      `${pad(num(m.damageTaken), 8)}${pad(String(m.kills), 6)}`,
+  );
+}
+
 // --- the health economy (spec 156) ---------------------------------------
 // A second table rather than ten more columns, because it answers a different
 // question. The one above asks whether the six builds *fight* differently; this
@@ -934,11 +1007,22 @@ if (intRows.length > 0) {
   }
 }
 
+//
+// **Only in the one-opponent scenario** (spec 271). `--foes` is a stress test,
+// and a build failing to win against four ravagers at once is a fact about the
+// scenario rather than a broken row -- three of the six pure builds kill nothing
+// at `--foes=4`, which is the scenario doing its job. Failing the run there
+// would make the flag unusable, so the guard states its scope instead.
 const broken = rows.filter((row) => row.metrics.kills === 0);
 console.log('');
-if (broken.length > 0) {
+if (broken.length > 0 && foes === 1) {
   console.log(`  !! ${broken.map((row) => row.preset.name).join(', ')} killed nothing.\n`);
   process.exitCode = 1;
+} else if (broken.length > 0) {
+  console.log(
+    `  ${broken.map((row) => row.preset.name).join(', ')} killed nothing` +
+      ` -- expected against ${String(foes)} at once, not a failure.\n`,
+  );
 } else {
   console.log(`  every build won at least once. Baseline: ${startingBaseStats().strength} in each.\n`);
 }

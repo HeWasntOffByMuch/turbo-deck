@@ -255,7 +255,7 @@ describe('poise', () => {
 
   it('drains, and staggers when it empties', () => {
     let victim = target();
-    const power = poiseDamageOf(attacker().stats, true, 1);
+    const power = poiseDamageOf(attacker().stats, 1, 1);
     expect(power).toBeGreaterThan(0);
 
     let broke = false;

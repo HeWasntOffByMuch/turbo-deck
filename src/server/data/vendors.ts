@@ -139,7 +139,22 @@ const DEFINITIONS: readonly VendorDefinition[] = [
     x: ARMOURER_HOME.x,
     y: ARMOURER_HOME.y,
     radius: ARMOURER_REACH,
-    stock: ['sword.keen', 'maul.iron', 'staff.emberwood', 'focus.quartz', 'helm.plated', 'chest.scale'],
+    // `sigil.guardBreak` since spec 271, and it is a repair rather than an
+    // addition: it was in the starting kit and in no drop table and no shop, so
+    // a player who sold, dropped or traded it had no path in the game to
+    // another. Safe to sell now that the skill is a Guard-pressure ability that
+    // scales with the build rather than a near-universal Guard delete -- and
+    // this is the shop that already stocks the Strength weapons, so it is where
+    // somebody rebuilding that plan is already standing.
+    stock: [
+      'sword.keen',
+      'maul.iron',
+      'staff.emberwood',
+      'focus.quartz',
+      'helm.plated',
+      'chest.scale',
+      'sigil.guardBreak',
+    ],
     buyMarkup: 1.8,
     sellFraction: 0.3,
   },

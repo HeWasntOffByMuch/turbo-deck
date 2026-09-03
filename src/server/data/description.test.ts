@@ -228,20 +228,29 @@ describe('derived numbers match the row they came from', () => {
 });
 
 describe('effects are described in the row order', () => {
-  it('puts Guard Break’s strip before its damage', () => {
+  it('states Guard Break’s pressure as a multiple of the caster’s own', () => {
     const ability = abilityById('skill.guardBreak');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const text = technicalText(describeAbility(ability));
-    // Read off the row rather than spelled here: what this asserts is the
-    // *order* the three lines come in, and a hand-written number turns it into
-    // a test that fails whenever somebody retunes the skill.
-    const strip = text.indexOf('Removes 50 Guard');
-    const guardDamage = text.indexOf('Guard damage');
-    const damage = text.indexOf(`Deals ${ability.damage} damage`);
-    expect(strip).toBeGreaterThanOrEqual(0);
-    expect(guardDamage).toBeGreaterThan(strip);
-    expect(damage).toBeGreaterThan(guardDamage);
+    // Read off the row rather than spelled here, so a retune does not fail this.
+    //
+    // The row used to open with a flat `poise: -50` and this asserted that the
+    // strip came before the damage. Spec 271 took the strip away -- it scaled
+    // with nothing, so the skill named after Strength's own mechanic ignored
+    // every point of it -- and what the line has to say now is that the pressure
+    // is a *multiple*, which is the visible sign that it goes through
+    // `staggerPower` rather than around it.
+    expect(text).toContain(`${String(ability.guardImpact)}x your Guard damage`);
+    expect(text).toContain(`Deals ${String(ability.damage)} damage`);
+    expect(text).not.toContain('Removes');
+  });
+
+  it('says nothing about Guard for a row that carries none', () => {
+    const ability = abilityById('skill.emberToss');
+    expect(ability).not.toBeNull();
+    if (!ability) return;
+    expect(technicalText(describeAbility(ability))).not.toContain('Guard damage');
   });
 
   it('names the status a skill applies, with its duration', () => {
@@ -284,20 +293,26 @@ describe('effects are described in the row order', () => {
 });
 
 describe('nothing is invented', () => {
-  it('adds no effect line beyond damage and scaling for a row that only damages', () => {
+  it('adds no effect line beyond what the row itself states', () => {
     // Whirlwind since spec 237 took `melee.heavy` out of the table, and it is
-    // the better subject anyway: two lines, both derived rather than invented
-    // -- what it does, and what that grows with.
+    // the better subject anyway: every line derived rather than invented -- what
+    // it does, what it does to a Guard, and what those grow with.
+    //
+    // The Guard line arrived with spec 271, and its presence here is the point:
+    // the row gained a `guardImpact`, so the description gained exactly one line
+    // and no other. A row that carries none still says nothing (asserted
+    // separately, on Ember Toss).
     const ability = abilityById('skill.whirlwind');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');
-    expect(effects).toHaveLength(2);
+    expect(effects).toHaveLength(3);
     expect(effects[0]?.text).toBe(`Deals ${ability.damage} damage.`);
+    expect(effects[1]?.text).toBe(`Deals ${String(ability.guardImpact)}x your Guard damage.`);
     // The weapon tooltip's notation, borrowed (spec 242): position is the
     // attribute, so Whirlwind's Strength `A` and Agility `D` sit first and
     // second -- the same string `sword.worn` draws.
-    expect(effects[1]?.text).toBe('A / D / -');
+    expect(effects[2]?.text).toBe('A / D / -');
   });
 
   it('says nothing about scaling for a row that scales with nothing (spec 238)', () => {
@@ -552,15 +567,20 @@ describe('the passive skill tree (spec 191)', () => {
         if (!labelled.has(`trait:${key}`)) missing.add(`trait:${key}`);
       }
     }
-    // The three that cannot be turned into a signed quantity reading correctly
-    // in English, each left to its row's authored sentence on purpose:
-    // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
-    // *lowers* a requirement, and `overflowHealthPerResource` is a price the
-    // skill charges for a benefit -- and since spec 239 it is a *capability*
-    // rather than a rate, since the rate itself is `SCALING`'s and what a layer
-    // grants is the relief beside it, which does have a label.
+    // The two that cannot be turned into a signed quantity reading correctly in
+    // English, each left to its row's authored sentence on purpose:
+    // `masteryRelief` is a count that *lowers* a requirement, and
+    // `overflowHealthPerResource` is a price the skill charges for a benefit --
+    // and since spec 239 it is a *capability* rather than a rate, since the rate
+    // itself is `SCALING`'s and what a layer grants is the relief beside it,
+    // which does have a label.
+    //
+    // `juggernautBelow` was a third until spec 271, and it left this list by
+    // ceasing to be granted rather than by gaining a label: it was a health gate
+    // whose only source set it to 1, so the branch reading it could never run.
+    // Executioner's `executeBelow` is a health threshold too and *is* labelled,
+    // which is the distinction -- that one is a number the player moves.
     expect([...missing].sort()).toEqual([
-      'trait:juggernautBelow',
       'trait:masteryRelief',
       'trait:overflowHealthPerResource',
     ]);

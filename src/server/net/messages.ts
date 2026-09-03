@@ -1588,6 +1588,9 @@ function writeStats(writer: BufferWriter, stats: EffectiveStats): void {
   // every other quantity in this block: both ends carry the attribute term and
   // the percentage, so neither is an integer once anything has been spent.
   writer.f32(stats.weaponDamageMin).f32(stats.weaponDamageMax);
+  // What that swing weighs against a Guard pool (spec 271). Beside the range
+  // because it is the other half of what the main hand contributes to a blow.
+  writer.f32(stats.weaponGuardImpact);
   writer.i16(clampStep(stats.scalingModifiers.strength));
   writer.i16(clampStep(stats.scalingModifiers.agility));
   writer.i16(clampStep(stats.scalingModifiers.intelligence));
@@ -1690,6 +1693,7 @@ function readStats(reader: BufferReader): EffectiveStats {
     weaponScaling: readScaling(reader),
     weaponDamageMin: reader.f32(),
     weaponDamageMax: reader.f32(),
+    weaponGuardImpact: reader.f32(),
     scalingModifiers: {
       strength: reader.i16(),
       agility: reader.i16(),

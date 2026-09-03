@@ -54,7 +54,6 @@ export interface TraitModifier {
   readonly momentumTicks?: number;
   readonly momentumWindupScale?: number;
   /** Sums, applied as `windupTicks * (1 - total)` on heavy abilities. */
-  readonly heavyWindupReduction?: number;
 
   // --- Agility ---
   /** Sums, applied as `attackPointScale * (1 - total)`. */
@@ -307,7 +306,6 @@ function zeroTraits(): TraitTotals {
     overkillResource: 0,
     momentumTicks: 0,
     momentumWindupScale: 0,
-    heavyWindupReduction: 0,
     attackPointReduction: 0,
     handlingReduction: 0,
     backswingCancelReduction: 0,

@@ -398,6 +398,7 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   if (ability.effects && ability.effects.length > 0) {
     const out: string[] = [];
     for (const effect of ability.effects) out.push(...effectLine(effect, ability));
+    out.push(...guardImpactLines(ability));
     return out;
   }
 
@@ -411,9 +412,30 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   // choosing between weapons.
   if (ability.basicAttack === true) out.push('Deals your weapon damage.');
   else if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
+  out.push(...guardImpactLines(ability));
   const healing = healLine(ability.healing ?? 0, ability.healingFraction ?? 0, true);
   if (healing) out.push(healing);
   return out;
+}
+
+/**
+ * What this row's blow does to a **Guard** pool (spec 271).
+ *
+ * A multiple rather than a number, and that is the only honest line available:
+ * the amount is the caster's own `staggerPower` times this, so it depends on who
+ * is holding the sigil, and this table describes a row rather than a character.
+ * The multiple is what the row itself states.
+ *
+ * A basic attack says nothing here on purpose. Its impact is the *weapon's*, so
+ * a line on the ability would be describing something the ability does not own
+ * -- the same reason `Deals your weapon damage` stands in for a damage number
+ * one line up.
+ */
+function guardImpactLines(ability: AbilityDefinition): readonly string[] {
+  if (ability.basicAttack === true) return [];
+  const impact = ability.guardImpact ?? 0;
+  if (impact <= 0) return [];
+  return [`Deals ${amount(impact)}x your ${GUARD_NAME} damage.`];
 }
 
 /** One effect. Returns more than one line where the effect has a stacking rule. */
@@ -694,7 +716,6 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   // says *recovery*.
   { key: 'backswingCancelReduction', where: 'trait', name: 'Backswing you may break off', form: 'percent' },
   { key: 'handlingReduction', where: 'trait', name: 'Wind-up reduction for abilities that launch something', form: 'percent' },
-  { key: 'heavyWindupReduction', where: 'trait', name: 'Wind-up reduction for heavy abilities', form: 'percent' },
 
   { key: 'flowTicks', where: 'trait', name: 'Flow duration', form: 'seconds' },
   { key: 'flowDurationPct', where: 'trait', name: 'Flow duration', form: 'percent' },
@@ -711,6 +732,13 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'momentumWindupScale', where: 'trait', name: 'Wind-up reduction while Momentum is held', form: 'percent' },
   { key: 'perfectExitResource', where: 'trait', name: `${RESOURCE_NAME} on a perfect exit`, form: 'flat' },
   { key: 'perfectExitWindowTicks', where: 'trait', name: 'Perfect exit window', form: 'seconds' },
+  // Executioner's pair (spec 271). Two lines rather than one composed sentence,
+  // because they are two independently-moving numbers -- each tier raises the
+  // payoff and widens the window -- and `GRANT_LABELS` states one field each.
+  // "Staggered" is the controlled term for a broken Guard, so the condition
+  // names it rather than saying "broken".
+  { key: 'executeBonus', where: 'trait', name: 'Damage to Staggered targets under the threshold', form: 'percent' },
+  { key: 'executeBelow', where: 'trait', name: 'Execute health threshold', form: 'percent' },
   { key: 'overkillResource', where: 'trait', name: `${RESOURCE_NAME} on an overkill`, form: 'flat' },
 
   // The two below are **not** reductions and their names must not become one.

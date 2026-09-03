@@ -31,6 +31,7 @@ import { above, SCALING } from '../data/scaling.js';
 import {
   attributeScalingBonus,
   damageOf,
+  guardImpactOfWeapon,
   effectiveScaling,
   gradeModifiersFrom,
   scalingOf,
@@ -253,6 +254,11 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   const weaponDamageMin = resolve(weaponDamage.min);
   const weaponDamageMax = resolve(weaponDamage.max);
 
+  // What a swing weighs (spec 271). Authored on the row and resolved here
+  // beside the range, so the sim multiplies `staggerPower` by one number and
+  // never opens the item table mid-blow.
+  const weaponGuardImpact = guardImpactOfWeapon(weapon?.guardImpact, held);
+
   // The **midpoint**, which is what the character sheet's Damage row shows and
   // what a stagger's power is sized off. One number, because both of those want
   // one; the range is what a blow actually rolls between.
@@ -348,6 +354,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     weaponScaling,
     weaponDamageMin,
     weaponDamageMax,
+    weaponGuardImpact,
     scalingModifiers,
     scalingAttributes,
     // Derived last, because two of its fields are fractions of maxHealth and

@@ -142,6 +142,18 @@ export const SCALING = {
      */
     staggerTicksBase: seconds(0.5),
     staggerTicksPer: 0.2,
+    /**
+     * **Unreachable at the current attribute cap, and kept deliberately** (spec
+     * 271). The duration is `staggerTicksBase + staggerTicksPer * STR` measured
+     * from zero, so it reaches 42 ticks at the hard cap of 60 and would need
+     * Strength 90 to touch 48.
+     *
+     * Retained rather than removed because it bounds an *edit* as much as a
+     * build: `admin:setAttribute` and a hand-edited save are not held to the
+     * cap, and the number this guards is how long a body is rooted and unable
+     * to answer. Written down here so the next reader does not spend an
+     * afternoon working out why it never binds.
+     */
     staggerTicksCap: seconds(0.8),
   },
 
@@ -418,12 +430,14 @@ export const SCALING = {
    * an `E` in Strength, and no letter a designer could write would have fixed
    * it. The differentiation belongs in the grade or it belongs nowhere.
    *
-   * It is `2/3` because `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the
-   * Strength rate this spec inherited, so migrating the existing weapons to `A`
-   * moves a Strength build's damage by nothing at all. Retuning `A` afterwards
-   * is a deliberate rebalance rather than a side effect, which is the whole
-   * reason this rate is its own constant instead of being derived from the
-   * ladder it was chosen against.
+   * It was `2/3` when spec 216 chose it, because `2/3 * 0.9` is exactly `0.6`:
+   * grade `A` reproduced the Strength rate that spec inherited, so migrating the
+   * existing weapons to `A` moved a Strength build's damage by nothing at all.
+   * **Spec 217 retuned it to 0.15** with the rest of the damage economy -- see
+   * the field's own docstring below, which is the one that states the live
+   * value. Kept as history rather than deleted because the *reason* the rate is
+   * its own constant is still this: retuning `A` has to be a deliberate
+   * rebalance rather than a side effect of the ladder it was chosen against.
    */
   weaponScaling: {
     /**

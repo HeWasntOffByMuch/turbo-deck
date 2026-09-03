@@ -798,6 +798,16 @@ export interface EffectiveStats {
   readonly weaponDamageMin: number;
   readonly weaponDamageMax: number;
   /**
+   * What a basic attack with this body's main hand carries into a Guard pool,
+   * as a multiple of `staggerPower` (spec 271).
+   *
+   * Resolved once here for `weaponDamageMin`'s reason -- the sim multiplies and
+   * is done -- and replicated so a tooltip states the impact the sim used
+   * rather than looking the row up again. A monster has no weapon row and gets
+   * `DEFAULT_WEAPON_GUARD_IMPACT` through `NO_WEAPON`.
+   */
+  readonly weaponGuardImpact: number;
+  /**
    * The grade steps this body's equipment, milestones and synergies contribute
    * (spec 216).
    *
