@@ -1,5 +1,14 @@
 # Ability cost & cooldown economy, and Wisdom's reach into it
 
+> **UPDATED BY SPEC 274.** The cooldown pipeline described here is unchanged and
+> still correct, including the finding that spec 250 split `COOLDOWN_BOUNDS`
+> from the attack-interval clamp. What changed: `cooldownReduction` is no longer
+> granted by nothing -- Composure grants 0.05 a tier -- and `cooldownScaleFor`
+> gained a per-ability Mastery term. The resource arithmetic still holds, with
+> regeneration now measured from `above(WIS)` and the pool no longer scaling
+> with Wisdom at all, which moves the crossover from WIS 13 to about WIS 17.
+
+
 Traced 2026-09-03 against current `main`-merged state (branch
 `claude/wisdom-progression-review-wfedgz`, up to date with origin/main).
 Verified numerically via a throwaway `tsx` probe importing the real

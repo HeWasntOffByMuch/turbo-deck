@@ -1,5 +1,17 @@
 # Wisdom progression: authored -> derived -> read (traced, not yet wired-checked for other attributes)
 
+> **SUPERSEDED IN PART BY SPEC 274.** This trace describes the Wisdom track as
+> it was *before* the sustain rebuild, and is kept because the pipeline half
+> (authoring -> `heldModifiers` -> `resolveProgression` -> `deriveTraits` -> the
+> wire) is unchanged and still correct. What moved: `maxResource` no longer
+> scales with Wisdom; `healingPer` and `regenPer` measure from `above()`;
+> `wis.discipline` is gone and Composure grants `cooldownReduction`;
+> `wis.conservation` moved to T1 and Attuned sits behind a `grantsAttuned`
+> flag; Adaptation grants `adaptationCap`; Mastery is per-ability cooldown and
+> `TraitStats.masteryRelief` no longer exists. See `specs/274-wisdom-sustain-track.md`
+> and `src/server/sim/wisdom-sustain.test.ts`.
+
+
 Full key-by-key trace of the WISDOM specialization/milestone/scaling keys, from
 authoring to every runtime read. See git blame / session trace for method.
 Re-derive if `data/specializations.ts`, `data/milestones.ts`, `data/scaling.ts`,
