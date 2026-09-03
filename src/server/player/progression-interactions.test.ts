@@ -284,9 +284,9 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
     );
   });
 
-  it('starts at the cap `SCALING` states, and only Wisdom raises it (spec 274)', () => {
+  it('starts at the cap `SCALING` states, and only Wisdom raises it (spec 275)', () => {
     // The attribute alone is the table's number: `SCALING.wisdom.adaptationCap`
-    // is where Adaptation *starts*, and until spec 274 it was also where every
+    // is where Adaptation *starts*, and until spec 275 it was also where every
     // path ended -- the field was granted by nothing, so all three tiers and the
     // milestone converged on it and bought only hits-to-cap.
     //

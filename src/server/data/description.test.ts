@@ -550,7 +550,7 @@ describe('the passive skill tree (spec 191)', () => {
     // `juggernautBelow` is a health threshold, and `overflowHealthPerResource`
     // is a price the skill charges for a benefit.
     //
-    // There were three until spec 274. `masteryRelief` was a count that *lowered*
+    // There were three until spec 275. `masteryRelief` was a count that *lowered*
     // a requirement, and being unlabellable was not a quirk of the field -- it
     // was the mechanic being meta-progression rather than combat, which is why
     // the sheet drew "Always active." and no effect line for the one node whose

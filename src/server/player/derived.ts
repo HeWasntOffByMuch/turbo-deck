@@ -276,7 +276,7 @@ export function deriveTraits(
   const prepared = t.grantsPrepared > 0;
   const reads = t.grantsOpeningRead > 0;
   const adapts = t.grantsAdaptation > 0;
-  // Two more of the same shape (spec 274). Attuned had been inferred from
+  // Two more of the same shape (spec 275). Attuned had been inferred from
   // `attunedCostPct > 0 && attunedTicks > 0`, which forced whichever layer
   // introduced the mechanic to grant the *window* -- and a window granted per
   // tier multiplies by the tier, which is why spec 239 had to take it back out
@@ -313,7 +313,7 @@ export function deriveTraits(
     0.25,
     1,
   );
-  // Wisdom's term measures from `above()` since spec 274 -- it was on the raw
+  // Wisdom's term measures from `above()` since spec 275 -- it was on the raw
   // attribute, so a character who had spent nothing on Wisdom still received
   // +6% healing from it. Constitution's term beside it is deliberately left on
   // the raw attribute here: it belongs to the Constitution pass, and moving one
@@ -495,7 +495,7 @@ export function deriveTraits(
     healingSurge,
     healingSurgeBelow,
     // Behind the flag, and reading `SCALING` for the window and the stack count
-    // exactly as Adaptation below does (spec 274) -- so Conservation can sit at
+    // exactly as Adaptation below does (spec 275) -- so Conservation can sit at
     // the first threshold and be live on its own tier, and the milestone above
     // it deepens the mechanic it names rather than being the only thing that
     // can introduce one.
@@ -513,7 +513,7 @@ export function deriveTraits(
     // milestone's own cap was the only cap there was.
     //
     // Base window and base cap come from `SCALING` behind the flag, and both
-    // remain summable. Since spec 274 the **cap is what deep investment buys**:
+    // remain summable. Since spec 275 the **cap is what deep investment buys**:
     // it was granted by nothing, so every tier and the milestone converged on
     // 0.3 and bought only hits-to-cap. The 0.6 here is unchanged and is the
     // guard against a modifier rather than a number the tree is priced against
@@ -524,7 +524,7 @@ export function deriveTraits(
       ? Math.max(1, Math.round(S.wisdom.adaptationTicks + t.adaptationTicks))
       : 0,
     conversionCap: Math.max(0, t.conversionCap),
-    // Mastery, on Adaptation's shape and behind its own flag (spec 274). The
+    // Mastery, on Adaptation's shape and behind its own flag (spec 275). The
     // per-stack size is what the tiers buy; the ceiling and the window are
     // `SCALING`'s, so a tier cannot multiply a duration.
     masteryCooldownPct: masters ? clamp(t.masteryCooldownPct, 0, 0.1) : 0,
@@ -539,7 +539,7 @@ export function deriveTraits(
     restoreWeakPointPct: linear(above(PER), R.perceptionWeakPointPer),
     moteAttractRadius: linear(above(PER), R.perceptionAttractPer),
     // The attribute's own curve is capped low and the specialization sums on top
-    // (spec 274): at the old 0.6 ceiling the curve was met at Wisdom 35 and the
+    // (spec 275): at the old 0.6 ceiling the curve was met at Wisdom 35 and the
     // next 25 points bought nothing at all.
     restoreSalvagePct: clamp(
       Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)) + t.salvagePct,

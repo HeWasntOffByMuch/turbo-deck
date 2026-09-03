@@ -286,7 +286,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_2,
     name: 'Adaptation',
-    // Grants Adaptation and deepens it. Since spec 274 it deepens the *ceiling*
+    // Grants Adaptation and deepens it. Since spec 275 it deepens the *ceiling*
     // as well as the rate: the cap used to be `SCALING`'s alone, so this
     // milestone and all three tiers of the specialization converged on 0.3 and
     // bought nothing but hits-to-cap.
@@ -306,7 +306,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_3,
     name: 'Conversion',
-    // Stated as the delta it is (spec 274). It read "up to 15 at a time", which
+    // Stated as the delta it is (spec 275). It read "up to 15 at a time", which
     // is what the *specialization* also grants -- so a player holding both was
     // told 15 twice and had 30.
     effect: 'Healing you cannot use becomes resource instead: 15 more per event.',

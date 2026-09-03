@@ -152,7 +152,7 @@ for (const span of report.growth) {
 if (spans === 0) console.log('  nothing gets worse as any attribute grows.');
 console.log('');
 
-// --- what a Wisdom purchase does to a *result* (spec 274) --------------------
+// --- what a Wisdom purchase does to a *result* (spec 275) --------------------
 //
 // The audit above answers "did a value on `EffectiveStats` or `TraitStats`
 // move", which is a weaker question than it looks. `masteryRelief` counted
@@ -166,7 +166,7 @@ console.log('');
 // where Adaptation actually stops. Not a general symbolic-execution pass -- one
 // attribute, the six results its mechanics are about, printed so a tier that
 // changes nothing observable is visible rather than merely absent from a list.
-console.log('--- Wisdom, as derived results (spec 274) ---');
+console.log('--- Wisdom, as derived results (spec 275) ---');
 console.log(`  ${pad('specialization', 22)} ${pad('what it is about', 34)} tiers`);
 {
   const whirlwind = ALL_ABILITIES.find((ability) => ability.id === 'skill.whirlwind');

@@ -272,7 +272,7 @@ export const SCALING = {
   },
 
   /**
-   * Wisdom: making finite things last (spec 274).
+   * Wisdom: making finite things last (spec 275).
    *
    * **There is no `resourcePer` here, and that is the ownership rule rather
    * than an omission**: INT owns the magazine and WIS owns making it last and
@@ -280,7 +280,7 @@ export const SCALING = {
    * three of them the same lever, and a pool is the one of the three that
    * another attribute already had the primitive for. Removing it costs a pure
    * Wisdom character 55 points of pool and none of their regeneration, which
-   * is the tension spec 274 wants: cooldowns come back faster than a small
+   * is the tension spec 275 wants: cooldowns come back faster than a small
    * magazine can pay for, and the answer is to spend on Intelligence.
    *
    * Every rate below is measured through `above()`. `healingPer` and
@@ -299,7 +299,7 @@ export const SCALING = {
     attunedMaxStacks: 3,
     adaptationTicks: seconds(10),
     /**
-     * Where Adaptation starts, and no longer where it ends (spec 274).
+     * Where Adaptation starts, and no longer where it ends (spec 275).
      *
      * Every tier and the milestone used to converge here, because
      * `adaptationCap` was granted by nothing: deep investment bought
@@ -311,7 +311,7 @@ export const SCALING = {
     adaptationCap: 0.3,
     conversionCap: 15,
     /**
-     * Mastery: repeated use of one's own ability (spec 274).
+     * Mastery: repeated use of one's own ability (spec 275).
      *
      * The mirror of Adaptation, and deliberately the same shape -- an enemy
      * repeats something and Wisdom learns to resist it; you repeat something

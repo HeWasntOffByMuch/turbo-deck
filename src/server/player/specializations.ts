@@ -57,7 +57,7 @@ export function tierOf(
 }
 
 // What a specialization needs is `specialization.requires`, and nothing bends it
-// (spec 274). The old Mastery relieved tier-3 thresholds by up to three points,
+// (spec 275). The old Mastery relieved tier-3 thresholds by up to three points,
 // which was meta-progression rather than combat: roughly point-neutral, since
 // the three tiers that bought the relief came out of the same pool as the
 // attribute points it saved, and surfaced to the player only in flavour text.
@@ -190,7 +190,7 @@ export function sanitizeSpecializations(
     if (tier <= 0) continue;
     kept.push({ specializationId: allocation.specializationId, tier });
   }
-  // One pass since spec 274. There were two, because the old Mastery's relief
+  // One pass since spec 275. There were two, because the old Mastery's relief
   // was read off the kept list, so dropping a Mastery tier could close a tier-3
   // specialization that was only open because of it. A requirement is
   // `definition.requires` now and depends on nothing that is held, so a second

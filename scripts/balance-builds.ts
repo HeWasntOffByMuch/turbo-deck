@@ -238,7 +238,7 @@ function run(preset: BuildPreset): Row {
  * of comparing rank 0 with rank 3 is that nothing else about the run differs.
  */
 /**
- * What a Wisdom build did with its resource, cooldowns and stacks (spec 274).
+ * What a Wisdom build did with its resource, cooldowns and stacks (spec 275).
  *
  * Sampled here rather than counted in `sim/metrics.ts`, and that is the whole
  * decision: every field of `BuildMetrics` is sim-side state, and Wisdom's
@@ -837,7 +837,7 @@ if (base && top) {
 }
 
 // --------------------------------------------------------------------------
-// Wisdom (spec 274)
+// Wisdom (spec 275)
 //
 // A section of its own rather than more columns on the table above, because the
 // questions are different in kind: the twelve-build table compares attributes
@@ -866,7 +866,7 @@ const wisdomRows: WisdomRow[] = WISDOM_PRESETS.map((preset) => {
   return { preset, fight: fought, probe };
 });
 
-console.log('\n  Wisdom (spec 274) -- what each spending row actually did:\n');
+console.log('\n  Wisdom (spec 275) -- what each spending row actually did:\n');
 console.log(
   `  ${pad('BUILD', 18)}${pad('WIS', 5)}${pad('CASTS/M', 9)}${pad('CD SAVED', 10)}` +
     `${pad('RES MIN', 9)}${pad('STARVED%', 10)}${pad('MASTERY', 9)}${pad('AT MAX%', 9)}` +

@@ -48,7 +48,7 @@ export interface BuildPreset {
    */
   readonly tierShare: number;
   /**
-   * Specialization ids this build buys **first**, in order (spec 274).
+   * Specialization ids this build buys **first**, in order (spec 275).
    *
    * `tierShare` says *how much* of the budget goes into tiers and the table
    * decides *which* -- lowest threshold first -- which is right for the twelve
@@ -118,14 +118,14 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
   hybrid('pair.intWis', 'INT/WIS', 'The archmage. A large pool and abilities that come back, with nothing bespoke joining them.', 'intelligence', 'wisdom'),
   hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
   hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
-  // Added by spec 274, which needs the third Wisdom pair to answer whether
+  // Added by spec 275, which needs the third Wisdom pair to answer whether
   // exploit-based sustain works through the systems alone. No pair node exists
   // for it and none is wanted: what should make it good is that Perception's
   // weak-point kill heal is healing, and Wisdom owns healing efficiency.
   hybrid('pair.perWis', 'PER/WIS', 'Exploit-based sustain. Precision that pays, on a body that gets more from being paid.', 'perception', 'wisdom'),
   hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Durability, and healing that goes further on it.', 'constitution', 'wisdom'),
 
-  // The Wisdom spending rows (spec 274). Six builds at one attribute value that
+  // The Wisdom spending rows (spec 275). Six builds at one attribute value that
   // differ only in which of Wisdom's specializations they bought, which is the
   // comparison the twelve above cannot make: `tierShare` picks by threshold, so
   // every Wisdom row before this bought the same tree in the same order.

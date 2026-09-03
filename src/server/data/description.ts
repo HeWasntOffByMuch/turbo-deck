@@ -778,13 +778,13 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'grantsAdaptation', where: 'trait', form: 'flag', name: 'Being hit by the same ability builds resistance to it.' },
   { key: 'adaptationPerStack', where: 'trait', name: 'Adaptation per stack', form: 'percent' },
   // The number the mechanic is actually played around, and it had no row at all
-  // until spec 274 -- so the 30% ceiling every tier converged on was stated
+  // until spec 275 -- so the 30% ceiling every tier converged on was stated
   // nowhere in the interface.
   { key: 'adaptationCap', where: 'trait', name: 'Maximum Adaptation resistance', form: 'percent' },
   { key: 'adaptationTicks', where: 'trait', name: 'Adaptation duration', form: 'seconds' },
   { key: 'conversionCap', where: 'trait', name: 'Overflow conversion cap', form: 'flat' },
   { key: 'salvagePct', where: 'trait', name: 'Overheal salvaged into restoration', form: 'percent' },
-  // Mastery (spec 274). Its predecessor was the worst-described node on the
+  // Mastery (spec 275). Its predecessor was the worst-described node on the
   // track: `masteryRelief` could not be turned into a signed quantity, so the
   // sheet drew "Requires Wisdom 25. Always active." and no effect line at all,
   // and the mechanic survived only in the flavour string. Every part of the new

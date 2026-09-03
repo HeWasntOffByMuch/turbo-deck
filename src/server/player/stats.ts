@@ -130,7 +130,7 @@ export const MAX_CRIT_CHANCE = 0.5;
 /**
  * The ability resource pool (spec 062): a base, plus intelligence.
  *
- * **Wisdom no longer contributes** (spec 274). INT owns the magazine and WIS
+ * **Wisdom no longer contributes** (spec 275). INT owns the magazine and WIS
  * owns making it last -- so the pool is Intelligence's alone, and Wisdom keeps
  * the recovery and efficiency half of the same economy. There is nothing to
  * move: `RESOURCE_PER_INTELLIGENCE` is the primitive that already existed.
@@ -140,7 +140,7 @@ export const RESOURCE_PER_INTELLIGENCE = SCALING.intelligence.resourcePer;
 /**
  * Resource regained per second, before modifiers. Wisdom adds to it.
  *
- * Measured through `above()` since spec 274, like every other Wisdom rate: on
+ * Measured through `above()` since spec 275, like every other Wisdom rate: on
  * the raw attribute a character who had spent nothing still collected 0.6/s
  * from Wisdom, which is the trap `scaling.ts`'s header names.
  */

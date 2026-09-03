@@ -181,7 +181,7 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   adaptationCap: 'up',
   adaptationTicks: 'up',
   conversionCap: 'up',
-  // Mastery (spec 274): a bigger per-stack cut, more stacks, a longer window.
+  // Mastery (spec 275): a bigger per-stack cut, more stacks, a longer window.
   masteryCooldownPct: 'up',
   masteryMaxStacks: 'up',
   masteryTicks: 'up',

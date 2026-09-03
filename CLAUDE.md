@@ -3838,7 +3838,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  Scorched Earth's 24s included -- were really on a five-second
                  cooldown. Spec 250 split the bounds (`COOLDOWN_BOUNDS` is
                  0.2-300s against `ATTACK_INTERVAL_BOUNDS`' 0.2-5s) and the prose
-                 here was not updated with it, which spec 274 found while
+                 here was not updated with it, which spec 275 found while
                  measuring what Wisdom's cooldown reduction is worth: an authored
                  cooldown is its authored length now, and the reduction is real
                  rather than swallowed by a ceiling.
@@ -4498,7 +4498,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  milestones share a name with a specialization the track unlocked
                  earlier and *deepen* it, which `MilestoneDefinition.deepens`
                  records rather than leaving the sheet to print one name twice --
-                 and spec 274 made that a **test** for Wisdom rather than a
+                 and spec 275 made that a **test** for Wisdom rather than a
                  convention, because the Wisdom 20 milestone had been granting
                  the Attuned family while naming a specialization that granted
                  `costReduction`: the same name over two mechanics with no trait
@@ -4507,7 +4507,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  `agi.recovery` fails the same check against `agi.quickRecovery`
                  and is Agility's to fix; the assertion is scoped to Wisdom and
                  says so rather than being loosened until it passes everywhere.
-                 **Wisdom is the sustain track** (spec 274), and it is the one
+                 **Wisdom is the sustain track** (spec 275), and it is the one
                  worth reading the shape of, because its rebuild is what that
                  spec is. Its identity is *making finite things last*: recover,
                  conserve, learn, adapt, reuse, waste nothing. Six nodes --

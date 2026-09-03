@@ -515,7 +515,7 @@ export interface TraitStats {
   readonly conversionCap: number;
   /**
    * `mastery`: what one stack takes off *that ability's* cooldown, how many
-   * stacks it holds, and how long one lives (spec 274).
+   * stacks it holds, and how long one lives (spec 275).
    *
    * The slot `masteryRelief` used to occupy. That field was the old
    * threshold-relief Mastery: derived, clamped, given a wire slot, replicated

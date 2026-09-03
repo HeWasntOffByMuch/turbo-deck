@@ -359,7 +359,7 @@ export function mayCancelBackswing(cast: CastState, tick: number): boolean {
 /**
  * Wisdom's cooldown scale, plus the Ranger pair's reach into projectiles.
  *
- * Three Wisdom terms since spec 274, and they are deliberately different in
+ * Three Wisdom terms since spec 275, and they are deliberately different in
  * kind. `traits.cooldownScale` is the **attribute** curve with Composure's
  * `cooldownReduction` already folded into it by `deriveTraits` -- broad,
  * predictable, every active ability. `mastery` is **per ability and earned**:
@@ -392,7 +392,7 @@ export function cooldownScaleFor(
 }
 
 /**
- * What this body's Mastery of *this* ability takes off its cooldown (spec 274).
+ * What this body's Mastery of *this* ability takes off its cooldown (spec 275).
  *
  * Read rather than stored, exactly as `adaptationAgainst` is on the other side
  * of the mirror: the stacks live in `statuses` under `mastery:<abilityId>` and
@@ -1455,7 +1455,7 @@ export function advanceCast(
     // the difference between an information mechanic and a hidden damage buff.
     statuses = applyStatus(statuses, StatusId.Vulnerable, tick, OPENING_READ_TICKS);
     // Wisdom's Mastery: you used this tool, so you are better at using it
-    // (spec 274). Here rather than at a damage event, and that placement is the
+    // (spec 275). Here rather than at a damage event, and that placement is the
     // whole reason support abilities can be mastered -- this block is
     // ability-kind agnostic, so a heal, a shield, a slow and a blow all reach it
     // identically, and an ability that deals no damage at all still counts.

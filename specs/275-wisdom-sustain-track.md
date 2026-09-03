@@ -1,4 +1,4 @@
-# 274 — Wisdom is sustain
+# 275 — Wisdom is sustain
 
 ## Problem
 

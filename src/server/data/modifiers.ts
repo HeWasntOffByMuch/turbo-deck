@@ -211,10 +211,10 @@ export interface TraitModifier {
   /** Sums onto {@link SCALING.wisdom.adaptationTicks}, which is the base. */
   readonly adaptationTicks?: number;
   readonly conversionCap?: number;
-  /** Sums onto the automatic salvage curve, which the attribute caps low (spec 274). */
+  /** Sums onto the automatic salvage curve, which the attribute caps low (spec 275). */
   readonly salvagePct?: number;
   /**
-   * Grants the **Attuned** mechanic at all (spec 274).
+   * Grants the **Attuned** mechanic at all (spec 275).
    *
    * The fourth capability flag, and it exists for the reason the other three
    * do: `blow.ts` used to infer the mechanic from `attunedCostPct > 0 &&
@@ -225,7 +225,7 @@ export interface TraitModifier {
    */
   readonly grantsAttuned?: number;
   /**
-   * Grants the **Mastery** mechanic at all (spec 274).
+   * Grants the **Mastery** mechanic at all (spec 275).
    *
    * Adaptation's mirror: an enemy repeats something and you learn to resist it;
    * you repeat something and you learn to use it more efficiently.

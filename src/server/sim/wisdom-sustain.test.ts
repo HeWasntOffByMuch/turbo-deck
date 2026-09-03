@@ -1,5 +1,5 @@
 /**
- * Wisdom is sustain (spec 274).
+ * Wisdom is sustain (spec 275).
  *
  * The tests that decide whether the redesigned track did what it said. The
  * review this spec follows found the whole branch *wired* -- every tier
@@ -184,7 +184,7 @@ const CONJURE = 'skill.conjureLight';
 
 // --------------------------------------------------------------------------
 
-describe('what the Wisdom attribute grants on its own (spec 274)', () => {
+describe('what the Wisdom attribute grants on its own (spec 275)', () => {
   it('leaves the resource pool to Intelligence', () => {
     // The ownership rule: INT owns the magazine, WIS owns making it last. Six
     // automatic scales all pointed at the resource problem and this is the one
@@ -239,7 +239,7 @@ describe('what the Wisdom attribute grants on its own (spec 274)', () => {
   });
 });
 
-describe('Composure: broad active-ability cooldown efficiency (spec 274)', () => {
+describe('Composure: broad active-ability cooldown efficiency (spec 275)', () => {
   const composure = specializationById('wis.composure');
   if (!composure) throw new Error('no wis.composure');
   const ability = abilityById(WHIRLWIND);
@@ -299,7 +299,7 @@ describe('Composure: broad active-ability cooldown efficiency (spec 274)', () =>
   });
 });
 
-describe('Mastery: repeated use of your own ability (spec 274)', () => {
+describe('Mastery: repeated use of your own ability (spec 275)', () => {
   const mastery = specializationById('wis.mastery');
   if (!mastery) throw new Error('no wis.mastery');
   const invested = () => statsFor({ wisdom: mastery.requires }, tiers(mastery.id, mastery.maxTier));
@@ -404,7 +404,7 @@ describe('Mastery: repeated use of your own ability (spec 274)', () => {
   });
 });
 
-describe('Adaptation deepens, rather than reaching the same ceiling sooner (spec 274)', () => {
+describe('Adaptation deepens, rather than reaching the same ceiling sooner (spec 275)', () => {
   const adaptation = specializationById('wis.adaptation');
   if (!adaptation) throw new Error('no wis.adaptation');
 
@@ -470,7 +470,7 @@ describe('Adaptation deepens, rather than reaching the same ceiling sooner (spec
   });
 });
 
-describe('Conservation owns Attuned, and the milestone above it says so (spec 274)', () => {
+describe('Conservation owns Attuned, and the milestone above it says so (spec 275)', () => {
   const conservation = specializationById('wis.conservation');
   if (!conservation) throw new Error('no wis.conservation');
 
@@ -523,7 +523,7 @@ describe('Conservation owns Attuned, and the milestone above it says so (spec 27
     //
     // Scoped to Wisdom, and that is a finding rather than caution: run over all
     // eighteen this fails on `agi.recovery`, which deepens `agi.quickRecovery`
-    // and shares no trait with it either. That is Agility's to fix -- spec 274
+    // and shares no trait with it either. That is Agility's to fix -- spec 275
     // is explicitly not a redesign of another track -- so it is reported rather
     // than repaired, and this assertion is held to the attribute this spec owns
     // instead of being loosened until it passes everywhere.
@@ -545,7 +545,7 @@ describe('Conservation owns Attuned, and the milestone above it says so (spec 27
   });
 });
 
-describe('Conversion: waste nothing (spec 274)', () => {
+describe('Conversion: waste nothing (spec 275)', () => {
   const conversion = specializationById('wis.conversion');
   if (!conversion) throw new Error('no wis.conversion');
 
@@ -579,7 +579,7 @@ describe('Conversion: waste nothing (spec 274)', () => {
   });
 });
 
-describe('Measured Recovery amplifies what the healing pipeline delivers (spec 274)', () => {
+describe('Measured Recovery amplifies what the healing pipeline delivers (spec 275)', () => {
   const recovery = specializationById('wis.measuredRecovery');
   if (!recovery) throw new Error('no wis.measuredRecovery');
 

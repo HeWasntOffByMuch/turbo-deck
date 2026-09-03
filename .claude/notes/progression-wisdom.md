@@ -8,7 +8,7 @@
 > `wis.discipline` is gone and Composure grants `cooldownReduction`;
 > `wis.conservation` moved to T1 and Attuned sits behind a `grantsAttuned`
 > flag; Adaptation grants `adaptationCap`; Mastery is per-ability cooldown and
-> `TraitStats.masteryRelief` no longer exists. See `specs/274-wisdom-sustain-track.md`
+> `TraitStats.masteryRelief` no longer exists. See `specs/275-wisdom-sustain-track.md`
 > and `src/server/sim/wisdom-sustain.test.ts`.
 
 

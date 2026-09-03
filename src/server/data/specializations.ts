@@ -299,7 +299,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('wis.composure', 'wisdom', 'Composure', T2, 3, 'passive',
     { traits: { cooldownReduction: 0.05 } },
     'Something useful is always coming back.'),
-  // Both halves are bought now (spec 274). The cap used to be granted by
+  // Both halves are bought now (spec 275). The cap used to be granted by
   // nothing, so all three tiers and the milestone converged on 0.3 and deep
   // investment bought only hits-to-cap -- at Wisdom 35 tier 2 did not move even
   // that. Rate and ceiling together: 0.45 fully specialized, 0.50 with the
@@ -307,7 +307,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('wis.adaptation', 'wisdom', 'Adaptation', T2, 3, 'taking the same ability twice',
     { traits: { grantsAdaptation: 1, adaptationPerStack: 0.03, adaptationCap: 0.05 } },
     'Nothing gets to hurt you the same way forever.'),
-  // Mastery, rebuilt (spec 274). It used to relieve specialization thresholds,
+  // Mastery, rebuilt (spec 275). It used to relieve specialization thresholds,
   // which is meta-progression rather than combat -- roughly point-neutral, told
   // to the player only in flavour text, and its trait field replicated to every
   // client and read by nobody.
@@ -319,7 +319,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('wis.mastery', 'wisdom', 'Mastery', T2, 3, 'using the same ability again',
     { traits: { grantsMastery: 1, masteryCooldownPct: 0.02 } },
     'A tool you keep reaching for comes back to your hand sooner.'),
-  // Conversion also deepens salvage since spec 274, which is what gives the T3
+  // Conversion also deepens salvage since spec 275, which is what gives the T3
   // node something to do besides a second copy of the milestone's cap: the
   // attribute's own salvage curve is capped at 0.35 and this is the extreme
   // version of it.

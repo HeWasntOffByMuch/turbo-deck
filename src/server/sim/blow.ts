@@ -542,7 +542,7 @@ function rewardAttacker(
       // Third of the three restorations that never touch `applyHealing`, and so
       // the third that has to consult the suppression itself (spec 190).
       //
-      // It consults **healing efficiency** too since spec 274, and that is the
+      // It consults **healing efficiency** too since spec 275, and that is the
       // fix for a stated inconsistency rather than a new interaction: Measured
       // Recovery's line is "every restorative thing works better on you", and
       // this was one of the two paths for which it was false. Wisdom owns

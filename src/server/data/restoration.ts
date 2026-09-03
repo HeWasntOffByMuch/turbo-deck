@@ -275,7 +275,7 @@ export const RESTORATION = {
      * Wisdom: the fraction of a mote's overheal that goes back into the meter.
      *
      * The cap is what the *attribute* alone reaches, and it came down from 0.6
-     * to 0.35 in spec 274 so that the specialization has somewhere to go. At
+     * to 0.35 in spec 275 so that the specialization has somewhere to go. At
      * 0.6 the curve was met at Wisdom 35 and every one of the next 25 points
      * bought nothing, and Conversion -- the thing a Wisdom character buys last
      * -- had no salvage content at all. The attribute gives the foundation and

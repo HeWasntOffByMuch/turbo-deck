@@ -207,7 +207,7 @@ vsVulnerableReduction  healingSurge       healingSurgeBelow
 exposedTeamResource  attunedFromWeakPoints
 ```
 
-`adaptationCap` left that list in spec 274, and how it left is the pattern worth
+`adaptationCap` left that list in spec 275, and how it left is the pattern worth
 copying: it was **not** resurrected by re-creating the pair that used to grant
 it. Wisdom's Adaptation needed a purchasable ceiling -- every tier and the
 milestone converged on `SCALING`'s 0.3, so deep investment bought only

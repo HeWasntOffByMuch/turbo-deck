@@ -256,7 +256,7 @@ export function adaptedKey(abilityId: string): string {
 }
 
 /**
- * Mastery is per ability id too: `mastery:skill.poisonDart` (spec 274).
+ * Mastery is per ability id too: `mastery:skill.poisonDart` (spec 275).
  *
  * Deliberately the same shape as Adaptation, because it is the same idea
  * pointed the other way: an enemy repeats an ability and Wisdom learns to
