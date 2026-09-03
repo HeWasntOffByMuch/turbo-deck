@@ -190,7 +190,7 @@ describe('the shutdown handler', () => {
   it('runs the teardown once and exits zero', async () => {
     const h = handler();
     h.run('SIGTERM');
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(h.state.stops).toBe(1);
     expect(h.exits).toEqual([0]);
     expect(h.logs.some((line) => line.includes('graceful shutdown complete'))).toBe(true);
@@ -201,7 +201,7 @@ describe('the shutdown handler', () => {
     h.run('SIGINT');
     h.run('SIGINT');
     h.run('SIGTERM');
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setImmediate(resolve));
 
     // The property: one teardown, one exit, however many signals arrive.
     expect(h.state.stops).toBe(1);
@@ -233,7 +233,7 @@ describe('the shutdown handler', () => {
   it('exits non-zero when the teardown throws', async () => {
     const h = handler({ stop: () => Promise.reject(new Error('database is on fire')) });
     h.run('SIGTERM');
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     expect(h.exits).toEqual([1]);
     expect(h.errors[0]).toContain('database is on fire');
   });
@@ -245,7 +245,7 @@ describe('the shutdown handler', () => {
       },
     });
     h.run('SIGTERM');
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await new Promise<void>((resolve) => setImmediate(resolve));
     // The flush is the part that matters; a failure tidying up must not skip it.
     expect(h.state.stops).toBe(1);
     expect(h.exits).toEqual([0]);

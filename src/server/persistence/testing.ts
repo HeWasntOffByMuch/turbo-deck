@@ -66,6 +66,22 @@ export function openTestStack(
     readonly file?: string;
     /** Carried into every reopen, so a restart test keeps its observer. */
     readonly onPlayerRenamed?: (playerId: string, displayName: string) => void;
+    /**
+     * The stack's clock (spec 274).
+     *
+     * `openPersistence` has taken one since spec 226 and this forwarded it to
+     * nowhere, so every auth test ran on the wall clock -- which is fine for
+     * the assertions about *what* is written and a race for the ones about
+     * *when*. `spec 267`'s touch-forward test compared a re-read `expires_at`
+     * against one captured a few instructions earlier: both are `now + ttl`,
+     * so on a fast machine both land in the same millisecond and a strict
+     * `toBeGreaterThan` fails. Measured at two runs in five.
+     *
+     * Carried into every reopen, like the observer above it: a restart test
+     * whose clock jumped back to the wall on reopen would be worse than one
+     * that never had a clock.
+     */
+    readonly now?: () => number;
   } = {},
 ): TestStack {
   const temp = options.file === undefined ? tempDbFile() : null;
@@ -75,6 +91,7 @@ export function openTestStack(
       file,
       startingZoneId: 'hub',
       ...(options.onPlayerRenamed === undefined ? {} : { onPlayerRenamed: options.onPlayerRenamed }),
+      ...(options.now === undefined ? {} : { now: options.now }),
     });
 
   const stack: TestStack = {

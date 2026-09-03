@@ -9,9 +9,13 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:changed": "vitest run --changed",
+    "test:related": "vitest related --run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
+    "typecheck:fast": "tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/tsc/tsbuildinfo",
     "lint": "eslint .",
+    "lint:fast": "tsx scripts/lint-fast.ts",
     "validate:units": "tsx scripts/validate-units.ts",
     "validate:items": "tsx scripts/validate-items.ts",
     "bake:units": "tsx scripts/bake-units.ts",
@@ -28,7 +32,8 @@
     "spec:next": "tsx scripts/spec-numbers.ts",
     "check:specs": "tsx scripts/spec-numbers.ts --strict",
     "check:tracked": "tsx scripts/check-tracked.ts",
-    "check:bundle": "tsx scripts/check-bundle.ts"
+    "check:bundle": "tsx scripts/check-bundle.ts",
+    "verify": "npm run typecheck:fast && npm run lint:fast && npm run test:changed"
   },
   "dependencies": {
     "@types/ws": "^8.18.1",

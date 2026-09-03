@@ -54,10 +54,15 @@ change a game outcome.
 
 | Command | What it does |
 |---|---|
-| `npm test` | Run the Vitest suite once (server sim, protocol, integration) |
+| `npm test` | Run the Vitest suite once (server sim, protocol, integration) -- 430 files, 8,307 tests, about 2 minutes |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
+| `npm run verify` | **The inner loop** (spec 274): `typecheck:fast && lint:fast && test:changed`, which is the three gates above over warm caches and only the tests a change reaches. About 15s for a typical commit against about 4 minutes for the cold three, because the median commit here touches **one** TypeScript file. It is not the merge gate and does not try to be -- CI still runs all three cold and every test, since a gate that only ran what it thought was affected would be trusting the dependency graph about the one thing nobody is watching |
+| `npm run test:changed` | Only the test files reaching what git says changed. A leaf edit is 6 files and 8s; an edit to the deterministic core is 101 files and 89s, which is the graph being honest rather than the tool failing |
+| `npm run test:related <files>` | The same question asked about named files rather than about the diff |
+| `npm run typecheck:fast` | `typecheck` with `--incremental` over a `.tsbuildinfo` under `node_modules/.cache/`. 22s cold, 4.8s warm, and it re-checks everything by itself when `tsconfig.json` moves |
+| `npm run lint:fast` | `lint` with a cache **keyed on `eslint.config.js` and the lockfile** (`scripts/lint-fast.ts`). 43s cold, 2s warm. The key is the whole point: ESLint's own `--cache` does *not* invalidate when the config changes, so a bare one serves stale answers about the determinism fences -- the `Math.random` ban, the `Date`/DOM ban, the import restrictions -- which is the one thing in this repo a cache must never be wrong about |
 | `npm run spec:next` | The number a new spec takes, read from **every branch** rather than from `specs/` (spec 266). `specs/` holds only what has merged, and 105 of the 319 specs on `main` share a number with another one because every session read it anyway. Also prints who holds what, including branches sitting on a number `main` already uses — nine of them the day it was written |
 | `npm run check:specs` | The same report with an exit code, and what CI gates on: a branch may not **introduce** a duplicate number. The 48 already on `main` are reported and never failed on — renumbering them would break every `spec NNN` reference in the tree |
 | `npm run validate:units` | Validate every authored unit document in `assets/units/` |
