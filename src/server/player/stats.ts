@@ -128,10 +128,16 @@ export function baseAttackTimeTicksFrom(flatTicks: number): number {
  */
 export const CRIT_PER_PERCEPTION = SCALING.perception.critPer;
 export const MAX_CRIT_CHANCE = 0.5;
-/** The ability resource pool (spec 062): a base, plus intelligence and wisdom. */
+/**
+ * The ability resource pool (spec 062): a base, plus intelligence.
+ *
+ * **Wisdom no longer contributes** (spec 275). INT owns the magazine and WIS
+ * owns making it last -- so the pool is Intelligence's alone, and Wisdom keeps
+ * the recovery and efficiency half of the same economy. There is nothing to
+ * move: `RESOURCE_PER_INTELLIGENCE` is the primitive that already existed.
+ */
 export const BASE_RESOURCE = 20;
 export const RESOURCE_PER_INTELLIGENCE = SCALING.intelligence.resourcePer;
-export const RESOURCE_PER_WISDOM = SCALING.wisdom.resourcePer;
 /**
  * Resource regained per second before Wisdom, and **the magazine's whole
  * premise** (spec 270).
@@ -154,6 +160,7 @@ export const RESOURCE_PER_WISDOM = SCALING.wisdom.resourcePer;
  * pressure -- and would make the flask, not Wisdom, the only answer.
  */
 export const RESOURCE_REGEN_PER_SECOND = 0.4;
+
 export const REGEN_PER_WISDOM = SCALING.wisdom.regenPer;
 
 const BASE_MOVE_SPEED = CHARACTERS[0]?.moveSpeed ?? 147.5;
@@ -316,10 +323,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const maxResource = Math.max(
     0,
-    BASE_RESOURCE +
-      RESOURCE_PER_INTELLIGENCE * intelligence +
-      RESOURCE_PER_WISDOM * wisdom +
-      bonus.maxResource,
+    BASE_RESOURCE + RESOURCE_PER_INTELLIGENCE * intelligence + bonus.maxResource,
   );
   const resourceRegen = Math.max(
     0,
@@ -330,6 +334,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     // pure-Intelligence build was living on. Wisdom investment is the reload
     // now, and the starting five buy nothing, so `RESOURCE_REGEN_PER_SECOND` is
     // genuinely what a body with no Wisdom gets.
+
     (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * above(wisdom)) / SERVER_TICK_RATE +
       bonus.resourceRegen,
   );

@@ -444,13 +444,29 @@ export const SCALING = {
     patientReadHoldTicks: seconds(8),
   },
 
+  /**
+   * Wisdom: making finite things last (spec 275).
+   *
+   * **There is no `resourcePer` here, and that is the ownership rule rather
+   * than an omission**: INT owns the magazine and WIS owns making it last and
+   * recovering it. Six automatic scales all pointed at the resource problem,
+   * three of them the same lever, and a pool is the one of the three that
+   * another attribute already had the primitive for. Removing it costs a pure
+   * Wisdom character 55 points of pool and none of their regeneration, which
+   * is the tension spec 275 wants: cooldowns come back faster than a small
+   * magazine can pay for, and the answer is to spend on Intelligence.
+   *
+   * Every rate below is measured through `above()`. `healingPer` and
+   * `regenPer` were on the raw attribute until 274, which is the case this
+   * file's own header warns about -- a character who had spent nothing on
+   * Wisdom carried +6% healing and +0.6/s of regeneration from it.
+   */
   wisdom: {
     costPer: 0.01,
     costFloor: 0.4,
     cooldownPer: 0.006,
     cooldownFloor: 0.5,
     healingPer: 0.012,
-    resourcePer: 1,
     /**
      * Resource per second per point of Wisdom (spec 270).
      *
@@ -460,14 +476,46 @@ export const SCALING = {
      * bought none of it lost the free ride. That direction is the point --
      * lowering the floor alone would have been a nerf to everybody, and this is
      * meant to be a transfer.
+     *
+     * `resourcePer` used to sit above this and is gone (spec 275). Spec 270's
+     * own sentence is *"Intelligence buys the magazine and Wisdom buys the
+     * reload"*, and Wisdom was still quietly buying a point of magazine per
+     * point spent; removing it is that split finished rather than a second
+     * opinion about it. The two specs reached the same rule from opposite ends
+     * -- 270 from the Intelligence economy being decorative, 275 from six
+     * automatic Wisdom scales all pointing at one problem.
      */
     regenPer: 0.2,
     attunedTicks: seconds(6),
     attunedMaxStacks: 3,
     adaptationTicks: seconds(10),
+    /**
+     * Where Adaptation starts, and no longer where it ends (spec 275).
+     *
+     * Every tier and the milestone used to converge here, because
+     * `adaptationCap` was granted by nothing: deep investment bought
+     * hits-to-cap and never the cap. Both layers grant it now, so a fully
+     * specialized body reaches 0.5 -- inside `deriveTraits`' existing 0.6
+     * clamp, which stays as the guard against a modifier rather than as a
+     * number the tree is priced against.
+     */
     adaptationCap: 0.3,
     conversionCap: 15,
-    masteryRelief: 3,
+    /**
+     * Mastery: repeated use of one's own ability (spec 275).
+     *
+     * The mirror of Adaptation, and deliberately the same shape -- an enemy
+     * repeats something and Wisdom learns to resist it; you repeat something
+     * and Wisdom learns to use it more efficiently. Both are keyed per ability
+     * id, both stack to a cap, both expire.
+     *
+     * The window is long against a cooldown rather than against a fight: a
+     * tool you come back to inside twenty seconds is one you are leaning on,
+     * and the longest cooldown in the table is 24s, so the slowest ability in
+     * the game can hold one stack between uses and no more.
+     */
+    masteryTicks: seconds(20),
+    masteryMaxStacks: 5,
   },
 
   /**

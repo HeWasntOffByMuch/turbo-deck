@@ -195,14 +195,14 @@ capability that leaks into resolution while holding nothing is worse than one
 that is absent. Bringing it back is a table, a `metSynergies`, and one line in
 hop 2.
 
-**Nineteen `TraitStats` fields are now granted by nothing**, and that is
+**Eighteen `TraitStats` fields are now granted by nothing**, and that is
 recorded rather than repaired. Each was reachable only through a pair:
 
 ```
 abilityPoiseFactor   exploitPoiseFactor   breakResource        breakCooldownRefund
 flowArmorPct         poiseRegenMoving     spellbladeHandling   handlingCooldowns
 flowWeakPoint        flowCostPct          damageToShield       abilityWeakPoints
-preparedMastery      adaptationCap        vsVulnerableReduction
+preparedMastery      vsVulnerableReduction
 healingSurge         healingSurgeBelow    exposedTeamResource
 attunedFromWeakPoints
 ```
@@ -248,6 +248,47 @@ never run, and the second is Heavy Handling's. Both keep their place in
 `TRAIT_WIRE_ORDER` for the protocol reason below, both are pinned at their
 neutral value in `deriveTraits`, and both are listed as deliberately inert in the
 test that catches unread traits.
+
+`adaptationCap` left the list at spec 275, and it met the same bar the three
+above did. Wisdom's Adaptation needed a purchasable *ceiling* -- every tier and
+the milestone converged on `SCALING`'s 0.3, so deep investment bought only
+hits-to-cap and at Wisdom 35 the second tier moved nothing a player could see --
+and the field that expresses "how far can this body adapt" already existed. It
+was **not** resurrected by re-creating the CON/WIS pair that used to grant it,
+which is the distinction: a dormant field earns its way back by a live mechanic
+needing exactly what it says, never by somebody wanting the list shorter.
+
+Two fields that were never on this list were also granted by nothing, and spec
+275 found both in Wisdom:
+
+- `cooldownReduction`, which sat beside the very-much-used `costReduction` and
+  reads as a hook nothing was ever pointed at -- the one attribute whose own row
+  claims "cooldowns" had no purchasable cooldown content at all. Composure grants
+  it now.
+- `masteryRelief`, which was worse than dormant in a way none of the others were:
+  it was derived, clamped, given a wire slot and replicated in every `Stats`
+  message while the mechanic it named ran through a **parallel reader** in
+  `player/specializations.ts`. It is the one field on any of these lists that was
+  removed outright rather than re-granted, because its replacement needed wire
+  slots anyway -- so the churn is two fields net rather than three beside a dead
+  one.
+
+That second one names a gap **neither** audit pass closes, and it is worth
+stating rather than implying. `masteryRelief` counted 0 -> 1 -> 2 -> 3 across its
+tiers and scored ACTIVE for its entire life. The original check asks whether a
+purchase moves a number the sim reads, and the number moved. Spec 271's
+reachability pass asks whether content can satisfy the *gate* on a trait's
+consumer, and this trait had no gate -- it had no consumer at all. Spec 275's
+derived-results probe asks whether a tier changes a quantity a player
+experiences, which catches it only if somebody thinks to probe the right
+quantity.
+
+The check that would have caught it directly is the cheapest of the three: a
+sweep for `TraitStats` fields that no file under `sim/`, `world/`, `render/` or
+`ui/` ever reads. It is written down here rather than built because it is a
+question about the module graph rather than about a character, and the three
+passes above are all fixture-driven -- but it would have found `masteryRelief`,
+`cooldownReduction` and the dormant set in one run.
 
 They are live in `deriveTraits` and in the sim, and unreachable from content --
 the same shape as `kind: 'channel'`, which has no ability rows and a complete

@@ -574,21 +574,26 @@ describe('the passive skill tree (spec 191)', () => {
         if (!labelled.has(`trait:${key}`)) missing.add(`trait:${key}`);
       }
     }
-    // The two that cannot be turned into a signed quantity reading correctly in
-    // English, each left to its row's authored sentence on purpose:
-    // `masteryRelief` is a count that *lowers* a requirement, and
-    // `overflowHealthPerResource` is a price the skill charges for a benefit --
-    // and since spec 239 it is a *capability* rather than a rate, since the rate
-    // itself is `SCALING`'s and what a layer grants is the relief beside it,
-    // which does have a label.
+    // The **one** field that cannot be turned into a signed quantity reading
+    // correctly in English, left to its row's authored sentence on purpose:
+    // `overflowHealthPerResource` is a price the skill charges for a benefit.
     //
-    // `juggernautBelow` was a third until spec 271, and it left this list by
-    // ceasing to be granted rather than by gaining a label: it was a health gate
-    // whose only source set it to 1, so the branch reading it could never run.
-    // Executioner's `executeBelow` is a health threshold too and *is* labelled,
-    // which is the distinction -- that one is a number the player moves.
+    // There were three, and two track passes each removed one -- neither by
+    // finding a wording that worked, which is the part worth keeping. Spec 271
+    // took `juggernautBelow` off this list by ceasing to *grant* it: it was a
+    // health gate whose only source set it to 1, so the branch reading it could
+    // never run. Executioner's `executeBelow` is a health threshold too and
+    // *is* labelled, which is the distinction -- that one is a number the player
+    // moves. Spec 275 took `masteryRelief` off it by replacing the mechanic:
+    // being unlabellable was not a quirk of the field, it was the mechanic being
+    // meta-progression rather than combat, which is why the sheet drew "Always
+    // active." and no effect line for the one node whose whole value was that
+    // line. What replaced it is a set of quantities and every one has a row.
+    //
+    // Both are the same lesson from opposite ends: a field nobody can describe
+    // is usually a mechanic nobody should have shipped, rather than a gap in
+    // this table.
     expect([...missing].sort()).toEqual([
-      'trait:masteryRelief',
       'trait:overflowHealthPerResource',
     ]);
   });

@@ -3909,18 +3909,18 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  `client/combat.ts` and `data/description.ts` is live and
                  unreachable from content; taking it out means removing a member
                  from the middle of `CastPhaseValue`, which renumbers the two after
-                 it, so it is a protocol change and wants its own spec. And
-                 `attackTimingFor` sends a non-basic ability's `cooldownTicks`
-                 through `resolveAttackTiming` as though it were a Base Attack
-                 Time, which clamps it to `MAX_ATTACK_INTERVAL_SECONDS` -- a
-                 constant whose own comment says "nothing in the content reaches
-                 either bound", true of BAT and false here: **twelve of the
-                 fourteen non-basic rows are over five seconds, so every one of
-                 them is really on a five-second cooldown.** Scorched Earth's
-                 authored 24s is 5s. It was invisible while the ability those
-                 tests drove was `melee.heavy`, whose cooldown was inside the
-                 bound; `abilities.test.ts` asserts the clamped value and names it
-                 now, so it is written down rather than assumed.
+                 it, so it is a protocol change and wants its own spec. The
+                 other one is **fixed** and this paragraph used to say otherwise:
+                 `attackTimingFor` sent a non-basic ability's `cooldownTicks`
+                 through the same clamp as a Base Attack Time, so twelve of the
+                 fourteen non-basic rows -- everything authored over five seconds,
+                 Scorched Earth's 24s included -- were really on a five-second
+                 cooldown. Spec 250 split the bounds (`COOLDOWN_BOUNDS` is
+                 0.2-300s against `ATTACK_INTERVAL_BOUNDS`' 0.2-5s) and the prose
+                 here was not updated with it, which spec 275 found while
+                 measuring what Wisdom's cooldown reduction is worth: an authored
+                 cooldown is its authored length now, and the reduction is real
+                 rather than swallowed by a ceiling.
                  `data/weapon-scaling.ts` is **what a weapon scales with**
                  (spec 216), and it exists because until it did, every weapon in
                  the game scaled the same way and the way was Strength: the two
@@ -4576,7 +4576,49 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  No threshold moved and no mechanic was invented. All eighteen
                  milestones share a name with a specialization the track unlocked
                  earlier and *deepen* it, which `MilestoneDefinition.deepens`
-                 records rather than leaving the sheet to print one name twice.
+                 records rather than leaving the sheet to print one name twice --
+                 and spec 275 made that a **test** for Wisdom rather than a
+                 convention, because the Wisdom 20 milestone had been granting
+                 the Attuned family while naming a specialization that granted
+                 `costReduction`: the same name over two mechanics with no trait
+                 in common. The fix moved Conservation to the first threshold so
+                 the milestone deepens the specialization that owns the mechanic.
+                 `agi.recovery` fails the same check against `agi.quickRecovery`
+                 and is Agility's to fix; the assertion is scoped to Wisdom and
+                 says so rather than being loosened until it passes everywhere.
+                 **Wisdom is the sustain track** (spec 275), and it is the one
+                 worth reading the shape of, because its rebuild is what that
+                 spec is. Its identity is *making finite things last*: recover,
+                 conserve, learn, adapt, reuse, waste nothing. Six nodes --
+                 Conservation and Measured Recovery at 10, the Attuned milestone
+                 at 20, Composure and Adaptation and Mastery at 25, the
+                 Adaptation milestone at 35, Conversion at 40 and its milestone
+                 at 50.
+                 The two decisions to know. **INT owns the magazine and WIS owns
+                 making it last**: `maxResource` no longer scales with Wisdom at
+                 all, which leaves the attribute the recovery and efficiency half
+                 of the same economy and creates the tension the track wants --
+                 cooldowns come back faster than a small pool can pay for, and
+                 the answer is to spend on Intelligence. And **Mastery is
+                 Adaptation pointed the other way**: an enemy repeats an ability
+                 and Wisdom learns to resist it (`adapt:<id>`), you repeat one
+                 and Wisdom learns to use it more efficiently (`mastery:<id>`).
+                 Mastery is earned in `advanceCast`'s commit block, which is the
+                 whole reason a support build can master its own toolkit: that
+                 block is ability-kind agnostic, so a heal, a shield and a slow
+                 accrue exactly as a blow does, and an implementation hung off a
+                 damage event would have scored zero for every one of them. It is
+                 the *attack point* rather than the press, so a withdrawn cast
+                 teaches nothing, and it reaches `cooldownScaleFor` and nothing
+                 else, so no amount of it is attack speed.
+                 What the harness says after: `npm run balance` grew a Wisdom
+                 section, and the six spending rows differ where they should --
+                 the attribute alone saves 8.9s of cooldown over a 30s fight,
+                 Composure 16.3s, Mastery 15.2s at 2.44 average stacks, and the
+                 two together 24.7s. What it also says is that **resource still
+                 never binds**: minimum pool 24.2 and 0.0% of ticks starved on
+                 every row, which is the global economy rather than the track,
+                 and is the later pass rather than this one.
                  What is **gone** is `synergies.ts` and its fifteen authored
                  two-attribute bonuses. They were content nobody asked to be
                  surprised by, present because a test required all fifteen to

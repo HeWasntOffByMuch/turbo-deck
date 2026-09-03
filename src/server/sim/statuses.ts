@@ -297,6 +297,24 @@ export function adaptedKey(abilityId: string): string {
   return `${ADAPTED_PREFIX}${abilityId}`;
 }
 
+/**
+ * Mastery is per ability id too: `mastery:skill.poisonDart` (spec 275).
+ *
+ * Deliberately the same shape as Adaptation, because it is the same idea
+ * pointed the other way: an enemy repeats an ability and Wisdom learns to
+ * resist it, you repeat an ability and Wisdom learns to use it more
+ * efficiently. Keeping the key shapes identical is what lets both be swept,
+ * counted and folded for the wire by one rule apiece rather than two.
+ *
+ * The prefixes must not be prefixes of one another, or `adapt:` would match a
+ * mastery key in any code that filters by `startsWith`.
+ */
+export const MASTERY_PREFIX = 'mastery:';
+
+export function masteryKey(abilityId: string): string {
+  return `${MASTERY_PREFIX}${abilityId}`;
+}
+
 /** The status if it is live on this tick, or null. Never returns a stale entry. */
 export function statusOf(statuses: Statuses, id: string, tick: number): StatusState | null {
   const held = statuses[id];

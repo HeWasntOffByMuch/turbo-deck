@@ -568,8 +568,20 @@ export interface TraitStats {
   readonly adaptationTicks: number;
   /** Overheal becomes resource 1:1, up to this much per event. 0 is off. */
   readonly conversionCap: number;
-  /** Tier-3 stat skills open this many attribute points early. */
-  readonly masteryRelief: number;
+  /**
+   * `mastery`: what one stack takes off *that ability's* cooldown, how many
+   * stacks it holds, and how long one lives (spec 275).
+   *
+   * The slot `masteryRelief` used to occupy. That field was the old
+   * threshold-relief Mastery: derived, clamped, given a wire slot, replicated
+   * in every `Stats` message and read by nothing -- the mechanic ran through a
+   * parallel reader in `player/specializations.ts`. Spec 274 replaced the
+   * mechanic, so the three fields the new one needs take the retired one's
+   * place rather than being appended beside a dead field.
+   */
+  readonly masteryCooldownPct: number;
+  readonly masteryMaxStacks: number;
+  readonly masteryTicks: number;
 
   // --- the health economy: one route per attribute (spec 156) -------------
   /**
@@ -696,7 +708,9 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'adaptationCap',
   'adaptationTicks',
   'conversionCap',
-  'masteryRelief',
+  'masteryCooldownPct',
+  'masteryMaxStacks',
+  'masteryTicks',
   'restoreOverkillPct',
   'restoreEvasivePct',
   'restoreAbilityKillPct',

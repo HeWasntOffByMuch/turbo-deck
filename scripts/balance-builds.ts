@@ -53,8 +53,19 @@ import { monsterById } from '../src/server/data/monsters.js';
 import { startingBaseStats } from '../src/server/player/attributes.js';
 import { milestoneProgress, resolveProgression } from '../src/server/player/progression.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
-import { mayCancelBackswing } from '../src/server/sim/abilities.js';
-import { hasStatus, statusOf, StatusId } from '../src/server/sim/statuses.js';
+import {
+  attackTimingFor,
+  mayCancelBackswing,
+  resourceCostFor,
+} from '../src/server/sim/abilities.js';
+import {
+  ADAPTED_PREFIX,
+  hasStatus,
+  MASTERY_PREFIX,
+  statusOf,
+  StatusId,
+  type StatusState,
+} from '../src/server/sim/statuses.js';
 import {
   EMPTY_METRICS,
   foldMetrics,
@@ -67,6 +78,7 @@ import {
   CastEndReason,
   CastPhase,
   EntityKindValue,
+  type ServerEntity,
   type ServerInput,
   type ServerWorldState,
 } from '../src/server/sim/types.js';
@@ -309,12 +321,106 @@ function run(preset: BuildPreset): Row {
  * fight rather than a second harness written beside this one -- the whole value
  * of comparing rank 0 with rank 3 is that nothing else about the run differs.
  */
+/**
+ * What a Wisdom build did with its resource, cooldowns and stacks (spec 275).
+ *
+ * Sampled here rather than counted in `sim/metrics.ts`, and that is the whole
+ * decision: every field of `BuildMetrics` is sim-side state, and Wisdom's
+ * questions -- how deep did the pool get, how many Mastery stacks were held,
+ * which incoming ability was adapted to -- are answerable by reading the body
+ * each tick from outside. Adding six counters to the deterministic core to say
+ * something a script can observe would be new state to replicate and forget to
+ * clear, for a table nobody ships.
+ */
+interface WisdomProbe {
+  ticks: number;
+  minResource: number;
+  ticksStarved: number;
+  masteryStackTicks: number;
+  ticksAtMaxMastery: number;
+  masteryPeak: Record<string, number>;
+  attunedStackTicks: number;
+  adaptPeak: Record<string, number>;
+  cooldownSecondsSaved: number;
+  casts: number;
+}
+
+function emptyProbe(): WisdomProbe {
+  return {
+    ticks: 0,
+    minResource: Number.POSITIVE_INFINITY,
+    ticksStarved: 0,
+    masteryStackTicks: 0,
+    ticksAtMaxMastery: 0,
+    masteryPeak: {},
+    attunedStackTicks: 0,
+    adaptPeak: {},
+    cooldownSecondsSaved: 0,
+    casts: 0,
+  };
+}
+
+/** The cheapest thing this body could throw, for "was it starved". */
+function cheapestCost(self: ServerEntity, tick: number): number {
+  let cheapest = Number.POSITIVE_INFINITY;
+  for (const id of self.stats.skillAbilityIds) {
+    const ability = abilityById(id);
+    if (!ability) continue;
+    cheapest = Math.min(cheapest, resourceCostFor(ability, self, tick));
+  }
+  return Number.isFinite(cheapest) ? cheapest : 0;
+}
+
+function sampleWisdom(probe: WisdomProbe, self: ServerEntity, tick: number): void {
+  probe.ticks += 1;
+  probe.minResource = Math.min(probe.minResource, self.resource);
+  if (self.resource < cheapestCost(self, tick)) probe.ticksStarved += 1;
+
+  const max = self.stats.traits.masteryMaxStacks;
+  let held = 0;
+  let atMax = false;
+  const entries = Object.entries(self.statuses) as [string, StatusState][];
+  for (const [key, state] of entries) {
+    if (tick >= state.expiresAtTick) continue;
+    if (key.startsWith(MASTERY_PREFIX)) {
+      const abilityId = key.slice(MASTERY_PREFIX.length);
+      held += state.stacks;
+      if (max > 0 && state.stacks >= max) atMax = true;
+      probe.masteryPeak[abilityId] = Math.max(probe.masteryPeak[abilityId] ?? 0, state.stacks);
+    } else if (key.startsWith(ADAPTED_PREFIX)) {
+      const abilityId = key.slice(ADAPTED_PREFIX.length);
+      probe.adaptPeak[abilityId] = Math.max(probe.adaptPeak[abilityId] ?? 0, state.stacks);
+    } else if (key === StatusId.Attuned) {
+      probe.attunedStackTicks += state.stacks;
+    }
+  }
+  probe.masteryStackTicks += held;
+  if (atMax) probe.ticksAtMaxMastery += 1;
+}
+
+/**
+ * Seconds of cooldown this cast did not have to wait, against a Wisdom-less
+ * body holding the same bar.
+ *
+ * The number the whole cooldown half of the track is for, and it has to be
+ * measured per cast rather than derived from the scale: Mastery is per ability
+ * and depends on stacks the body happened to be holding at the moment it cast.
+ */
+function cooldownSavedBy(self: ServerEntity, abilityId: string, tick: number): number {
+  const ability = abilityById(abilityId);
+  if (!ability || ability.basicAttack) return 0;
+  const bare = ability.cooldownTicks;
+  const actual = attackTimingFor(ability, self, tick).intervalTicks;
+  return Math.max(0, bare - actual) / SERVER_TICK_RATE;
+}
+
 function fight(
   record: PersistedPlayer,
   policy: Policy,
   foes = 1,
   against = monsterId,
   duration = seconds,
+  probe?: WisdomProbe,
 ): Fight {
   const stats = computeEffectiveStats(record);
   const monster = monsterById(against);
@@ -476,6 +582,15 @@ function fight(
 
     metrics = foldMetrics(metrics, selfId, tick, result.events, REASONS);
     metrics = foldPosture(metrics, (after?.cast ?? null) !== null);
+    if (probe && after) {
+      sampleWisdom(probe, after, tick);
+      // Counted at the moment the cast is accepted, which is where the timing
+      // was snapshotted -- so the saving reported is the one that cast got.
+      if (before?.cast === null && after.cast !== null) {
+        probe.casts += 1;
+        probe.cooldownSecondsSaved += cooldownSavedBy(after, after.cast.abilityId, tick);
+      }
+    }
     if (before && after) {
       metrics = foldResource(
         metrics,
@@ -915,6 +1030,87 @@ if (base && top) {
     `\n  x3 presses an active ability ${num(factor, 2)}x as often as x0 ` +
       `(${num(from, 2)} -> ${num(to, 2)} per minute).`,
   );
+}
+
+// --------------------------------------------------------------------------
+// Wisdom (spec 275)
+//
+// A section of its own rather than more columns on the table above, because the
+// questions are different in kind: the twelve-build table compares attributes
+// on damage and sustain, and these rows compare *one* attribute's
+// specializations against each other on whether the thing they bought happened.
+//
+// Every number here is measured off a real fight through the real `step`. The
+// resource columns are the ones to read against the crossover: `min` is how
+// deep the pool got and `starved` is how long the body could not afford its
+// cheapest skill, and both being comfortable is what says the global economy is
+// still too loose rather than that Wisdom is working.
+
+const WISDOM_PRESETS = BUILD_PRESETS.filter(
+  (preset) => preset.id.startsWith('wis.') || preset.id === 'pure.wisdom' || preset.id.endsWith('Wis'),
+);
+
+interface WisdomRow {
+  readonly preset: BuildPreset;
+  readonly fight: Fight;
+  readonly probe: WisdomProbe;
+}
+
+const wisdomRows: WisdomRow[] = WISDOM_PRESETS.map((preset) => {
+  const probe = emptyProbe();
+  const fought = fight(recordFor(preset), 'still', 1, monsterId, seconds, probe);
+  return { preset, fight: fought, probe };
+});
+
+console.log('\n  Wisdom (spec 275) -- what each spending row actually did:\n');
+console.log(
+  `  ${pad('BUILD', 18)}${pad('WIS', 5)}${pad('CASTS/M', 9)}${pad('CD SAVED', 10)}` +
+    `${pad('RES MIN', 9)}${pad('STARVED%', 10)}${pad('MASTERY', 9)}${pad('AT MAX%', 9)}` +
+    `${pad('ATTUNED', 9)}${pad('HEALED', 8)}`,
+);
+console.log(`  ${'-'.repeat(96)}`);
+for (const row of wisdomRows) {
+  const spread = fullSpreadOf(row.preset);
+  const ticks = Math.max(1, row.probe.ticks);
+  const perMinute = (row.probe.casts / ticks) * SERVER_TICK_RATE * 60;
+  const minResource = Number.isFinite(row.probe.minResource) ? row.probe.minResource : 0;
+  console.log(
+    `  ${pad(row.preset.name, 18)}${pad(String(spread.attributes.wisdom), 5)}` +
+      `${pad(num(perMinute, 1), 9)}${pad(`${num(row.probe.cooldownSecondsSaved, 1)}s`, 10)}` +
+      `${pad(num(minResource, 1), 9)}${pad(num((row.probe.ticksStarved / ticks) * 100, 1), 10)}` +
+      `${pad(num(row.probe.masteryStackTicks / ticks, 2), 9)}` +
+      `${pad(num((row.probe.ticksAtMaxMastery / ticks) * 100, 1), 9)}` +
+      `${pad(num(row.probe.attunedStackTicks / ticks, 2), 9)}` +
+      `${pad(num(row.fight.metrics.healingReceived, 0), 8)}`,
+  );
+}
+
+// Which incoming ability each build learned to resist, and how far it got. The
+// content-compression finding lives here: six of the seven hostile rows attack
+// through `melee.slash`, so one key is expected to carry every fight.
+console.log('\n  What Adaptation actually learned (peak stacks by incoming ability):\n');
+for (const row of wisdomRows) {
+  const adapted = Object.entries(row.probe.adaptPeak)
+    .sort((a, b) => b[1] - a[1])
+    .map(([abilityId, stacks]) => `${abilityId} x${stacks}`);
+  const stats = computeEffectiveStats(recordFor(row.preset));
+  const cap = stats.traits.adaptationCap;
+  const per = stats.traits.adaptationPerStack;
+  const hits = per > 0 ? Math.ceil(cap / per) : 0;
+  console.log(
+    `  ${pad(row.preset.name, 18)}${pad(`cap ${num(cap * 100, 0)}%`, 10)}` +
+      `${pad(hits > 0 ? `${hits} hits` : '-', 9)}${adapted.join(', ') || '(nothing)'}`,
+  );
+}
+
+// And which of its own tools each build mastered. A support build should show
+// stacks on abilities that never dealt damage.
+console.log('\n  What Mastery actually learned (peak stacks by ability used):\n');
+for (const row of wisdomRows) {
+  const mastered = Object.entries(row.probe.masteryPeak)
+    .sort((a, b) => b[1] - a[1])
+    .map(([abilityId, stacks]) => `${abilityId} x${stacks}`);
+  console.log(`  ${pad(row.preset.name, 18)}${mastered.join(', ') || '(nothing)'}`);
 }
 
 // The line the table exists to make checkable. A build that cannot kill the

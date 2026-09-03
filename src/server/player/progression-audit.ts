@@ -187,8 +187,10 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   adaptationCap: 'up',
   adaptationTicks: 'up',
   conversionCap: 'up',
-  // A count that *lowers* a specialization's attribute requirement.
-  masteryRelief: 'up',
+  // Mastery (spec 275): a bigger per-stack cut, more stacks, a longer window.
+  masteryCooldownPct: 'up',
+  masteryMaxStacks: 'up',
+  masteryTicks: 'up',
 
   // --- the health economy ---
   restoreOverkillPct: 'up',

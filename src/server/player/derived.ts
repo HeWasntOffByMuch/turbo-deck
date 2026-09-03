@@ -142,7 +142,9 @@ export const NEUTRAL_TRAITS: TraitStats = {
   adaptationCap: 0,
   adaptationTicks: 0,
   conversionCap: 0,
-  masteryRelief: 0,
+  masteryCooldownPct: 0,
+  masteryMaxStacks: 0,
+  masteryTicks: 0,
   restoreOverkillPct: 0,
   restoreEvasivePct: 0,
   restoreAbilityKillPct: 0,
@@ -278,6 +280,14 @@ export function deriveTraits(
   const reads = t.grantsOpeningRead > 0;
   const adapts = t.grantsAdaptation > 0;
   const weaves = t.grantsWeave > 0;
+  // Two more of the same shape (spec 275). Attuned had been inferred from
+  // `attunedCostPct > 0 && attunedTicks > 0`, which forced whichever layer
+  // introduced the mechanic to grant the *window* -- and a window granted per
+  // tier multiplies by the tier, which is why spec 239 had to take it back out
+  // of Conservation's grant and leave the specialization unable to introduce
+  // anything. With a flag the window is `SCALING`'s and either layer turns it on.
+  const attunes = t.grantsAttuned > 0;
+  const masters = t.grantsMastery > 0;
   const spellRadiusPct = Math.max(0, linear(INT, S.intelligence.radiusPer) * shaping + t.spellRadiusPct);
   const spellRangePct = Math.max(0, linear(INT, S.intelligence.rangePer) * shaping + t.spellRangePct);
   // Capped **below 1** (spec 270). Efficient Construction pays down the shaping
@@ -315,9 +325,16 @@ export function deriveTraits(
     0.25,
     1,
   );
+  // Wisdom's term measures from `above()` since spec 275 -- it was on the raw
+  // attribute, so a character who had spent nothing on Wisdom still received
+  // +6% healing from it. Constitution's term beside it is deliberately left on
+  // the raw attribute here: it belongs to the Constitution pass, and moving one
+  // attribute's baseline inside another attribute's spec is how a retune
+  // becomes invisible. Reported rather than fixed.
   const healingScale = Math.max(
     0,
-    (1 + linear(WIS, S.wisdom.healingPer) + linear(CON, S.constitution.healingPer)) * growth(t.healingPct),
+    (1 + linear(above(WIS), S.wisdom.healingPer) + linear(CON, S.constitution.healingPer)) *
+      growth(t.healingPct),
   );
 
   // The shield's ceiling. `overhealShieldPct` is the one thing that raises it
@@ -540,9 +557,16 @@ export function deriveTraits(
     healingScale,
     healingSurge,
     healingSurgeBelow,
-    attunedMaxStacks: Math.max(0, Math.round(t.attunedMaxStacks)),
-    attunedTicks: Math.max(0, Math.round(t.attunedTicks)),
-    attunedCostPct: clamp(t.attunedCostPct, 0, 0.2),
+    // Behind the flag, and reading `SCALING` for the window and the stack count
+    // exactly as Adaptation below does (spec 275) -- so Conservation can sit at
+    // the first threshold and be live on its own tier, and the milestone above
+    // it deepens the mechanic it names rather than being the only thing that
+    // can introduce one.
+    attunedMaxStacks: attunes
+      ? Math.max(1, Math.round(S.wisdom.attunedMaxStacks + t.attunedMaxStacks))
+      : 0,
+    attunedTicks: attunes ? Math.max(1, Math.round(S.wisdom.attunedTicks + t.attunedTicks)) : 0,
+    attunedCostPct: attunes ? clamp(t.attunedCostPct, 0, 0.2) : 0,
     attunedFromWeakPoints: t.attunedFromWeakPoints > 0 ? 1 : 0,
     // **Adaptation, and what enables it** (spec 239). The third of the same
     // shape and the one that was inert twice over: `markTarget` needs a window
@@ -552,22 +576,39 @@ export function deriveTraits(
     // milestone's own cap was the only cap there was.
     //
     // Base window and base cap come from `SCALING` behind the flag, and both
-    // remain summable: `pair.enduring` grants `adaptationCap: 0.15` and still
-    // reaches the 45% its effect line promises.
+    // remain summable. Since spec 275 the **cap is what deep investment buys**:
+    // it was granted by nothing, so every tier and the milestone converged on
+    // 0.3 and bought only hits-to-cap. The 0.6 here is unchanged and is the
+    // guard against a modifier rather than a number the tree is priced against
+    // -- a fully specialized body reaches 0.5.
     adaptationPerStack: adapts ? clamp(t.adaptationPerStack, 0, 0.2) : 0,
     adaptationCap: adapts ? clamp(S.wisdom.adaptationCap + t.adaptationCap, 0, 0.6) : 0,
     adaptationTicks: adapts
       ? Math.max(1, Math.round(S.wisdom.adaptationTicks + t.adaptationTicks))
       : 0,
     conversionCap: Math.max(0, t.conversionCap),
-    masteryRelief: Math.max(0, Math.round(t.masteryRelief)),
+    // Mastery, on Adaptation's shape and behind its own flag (spec 275). The
+    // per-stack size is what the tiers buy; the ceiling and the window are
+    // `SCALING`'s, so a tier cannot multiply a duration.
+    masteryCooldownPct: masters ? clamp(t.masteryCooldownPct, 0, 0.1) : 0,
+    masteryMaxStacks: masters
+      ? Math.max(1, Math.round(S.wisdom.masteryMaxStacks + t.masteryMaxStacks))
+      : 0,
+    masteryTicks: masters ? Math.max(1, Math.round(S.wisdom.masteryTicks + t.masteryTicks)) : 0,
 
     restoreOverkillPct: linear(above(STR), R.strengthOverkillPer),
     restoreEvasivePct: linear(above(AGI), R.agilityEvasivePer),
     restoreAbilityKillPct: linear(above(INT), R.intelligenceAbilityPer),
     restoreWeakPointPct: linear(above(PER), R.perceptionWeakPointPer),
     moteAttractRadius: linear(above(PER), R.perceptionAttractPer),
-    restoreSalvagePct: Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)),
+    // The attribute's own curve is capped low and the specialization sums on top
+    // (spec 275): at the old 0.6 ceiling the curve was met at Wisdom 35 and the
+    // next 25 points bought nothing at all.
+    restoreSalvagePct: clamp(
+      Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)) + t.salvagePct,
+      0,
+      0.75,
+    ),
     fallbackCharges: maxFallbackCharges(CON),
   };
 }
