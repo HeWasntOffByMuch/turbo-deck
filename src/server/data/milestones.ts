@@ -237,12 +237,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     // and no factor -- so three purchasable ranks did nothing for twenty-five
     // points. The factor is a **bonus above 1** now, so the skill's share and
     // this one add rather than one of them being a total.
-    effect: 'An enemy that has just committed an attack is Vulnerable for longer, and you are far likelier to find a weak point on it.',
+    effect: 'An enemy that has just committed an attack is Vulnerable for longer, and you close most of the gap to a certain weak point on it.',
     grants: {
       traits: {
         grantsOpeningRead: 1,
         openingReadTicks: Math.round(SCALING.perception.openingReadTicks * 0.5),
-        vulnerableWeakPointFactor: SCALING.perception.vulnerableWeakPointBonus,
+        openingReadFactor: SCALING.perception.openingReadShare,
       },
     },
     deepens: 'per.openingRead',

@@ -104,11 +104,11 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
   pure('agility', 'Pure Agility', 'Solves problems by not being there. Same attack rate as everyone; a quarter of the rooted time.'),
   pure('intelligence', 'Pure Intelligence', 'Solves problems by changing their shape. Reach, radius, and health spent as mana.'),
   pure('constitution', 'Pure Constitution', 'Solves problems by outlasting them. Cannot be staggered when it matters, and turns every heal into a buffer.'),
-  pure('perception', 'Pure Perception', 'Solves problems by reading them. Doubles its weak-point chance against anything that has just committed.'),
+  pure('perception', 'Pure Perception', 'Solves problems by reading them. Closes most of the gap to a certain weak point against anything that has just committed, and turns the ones it lands into sustain.'),
   pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out. Casts twice as often as the table intended, and adapts to whatever keeps hitting it.'),
 
   hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Hard to break, and hard to knock out of the blow that breaks you.', 'strength', 'constitution'),
-  hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
+  hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns, and every follow-through walked out of is another attempt at a seam.', 'agility', 'perception'),
   // **Three of these premises named deleted pair bonuses**, and two specs found
   // it independently: spec 270 for the Intelligence pair (`preparedMastery` for
   // the archmage, `spellbladeHandling` for the spellblade) and spec 271 for
@@ -121,8 +121,16 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
   // A premise naming a mechanic that does not exist is worse in this file than
   // anywhere else: it is the line `npm run balance` prints beside the row
   // somebody reads to decide whether the attribute is balanced.
+  //
+  // Spec 272 makes it four, and two of them were written by the two specs
+  // above. AGI/PER still named `flowWeakPoint`, which no more exists than the
+  // three they caught. And STR/PER named the Guard: `poiseDamageOf` takes
+  // `1 + exploitPoiseFactor` on a weak point, and nothing grants that either --
+  // Exposed multiplies *damage* and never poise, so a weak point has never hit
+  // a Guard harder. What is true of that pair is the plainest systemic reading
+  // there is: Perception multiplies, Strength is the thing being multiplied.
   hybrid('pair.intWis', 'INT/WIS', 'The archmage. A large pool that actually refills: sustained casting where pure Intelligence runs dry.', 'intelligence', 'wisdom'),
-  hybrid('pair.strPer', 'STR/PER', 'The opportunist. Reads the opening, and hits the Guard hardest where it is already weakest.', 'strength', 'perception'),
+  hybrid('pair.strPer', 'STR/PER', 'The opportunist. Perception finds the seam and Strength is the number that goes through it; what it staggers, it finishes.', 'strength', 'perception'),
   hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Spell damage on a body that can leave a follow-through early -- and that gives up the artillery stance to do it.', 'agility', 'intelligence'),
   hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
 

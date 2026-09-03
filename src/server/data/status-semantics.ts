@@ -119,6 +119,10 @@ export const STATUS_SEMANTICS: readonly StatusSemantics[] = [
   // it does -- `MagicLight`'s argument one attribute over (spec 270).
   { id: StatusId.Preparing, tags: [Beneficial] },
   { id: StatusId.Weave, tags: [Beneficial] },
+  // Banked by withholding an attack and spent on the next weak point. A boon on
+  // the body carrying it, like Prepared beside it -- and, like Prepared, not a
+  // fact about anybody else, which is what keeps Patient Read personal.
+  { id: StatusId.PatientRead, tags: [Beneficial] },
   { id: StatusId.Attuned, tags: [Beneficial] },
   // A field is a boon its *carrier* wears; what it does to everyone else is a
   // row in `data/aura-fields.ts`, and what that lays on them is a Burn, which

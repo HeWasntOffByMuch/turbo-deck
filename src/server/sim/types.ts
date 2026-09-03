@@ -669,12 +669,17 @@ export interface ServerEntity {
   /**
    * The last tick this body broke its planted stance (spec 270).
    *
-   * Deliberately **not** {@link stillSinceTick}, which is shared with
-   * Perception's Steady Aim and is stamped by casting. The artillery stance has
-   * to survive the cast it was taken for -- that is the whole loop -- so it
-   * needs its own clock, and reusing that one would have silently made Steady
-   * Aim hold through a wind-up as well: an Intelligence change reaching into
-   * Perception's tree, which is exactly what a shared field buys you.
+   * Deliberately **not** {@link stillSinceTick}, which is stamped by casting.
+   * The artillery stance has to survive the cast it was taken for -- that is
+   * the whole loop -- so it needs its own clock.
+   *
+   * Three clocks now, one per question, and that separation is the point rather
+   * than an accident of three specs landing together: `stillSinceTick` is "how
+   * long since I did anything", this is "how long since I chose to move", and
+   * {@link lastAttackTick} below is "how long since I attacked". Spec 272 wrote
+   * the third rather than widening one of the first two, for the reason this
+   * comment was originally about -- one field read by two attributes is one
+   * edit away from being a change to both.
    *
    * Broken by *intentional* movement rather than by any displacement at all:
    * `advanceProgression` compares the step against
@@ -697,6 +702,22 @@ export interface ServerEntity {
    * already the right answer for the first cast of a fight.
    */
   readonly lastWovenAbilityId: string;
+  /**
+   * The last tick this body **committed** an attack (spec 272).
+   *
+   * Perception's Patient Read asks "how long since I last attacked", which is
+   * the third of the three questions above and has to be its own field for the
+   * reason {@link stanceSinceTick} gives: `stillSinceTick` is "how long since I
+   * did anything" and is stamped by moving, being hit and casting, and
+   * `stanceSinceTick` is "how long since I chose to move". Only an attack
+   * becoming real stamps this one, which is what lets a Perception character
+   * reposition the whole time they are waiting.
+   *
+   * The **commit**, never the wind-up: a swing withdrawn from is a feint rather
+   * than an attack, and costs the time it took and nothing else -- the boundary
+   * spec 144 already draws for the refund.
+   */
+  readonly lastAttackTick: number;
 
   // --- the health economy (spec 156) --------------------------------------
   /**

@@ -146,6 +146,39 @@ export const WAVE_MAX_ENEMIES = 40;
 // Cap on stacked incoming-damage reduction (stance + guard), so nothing is fully immune.
 export const MAX_DAMAGE_REDUCTION = 0.85;
 
+/**
+ * The one weak-point ceiling, and the one story about it (spec 272).
+ *
+ * There were two and they disagreed. `SCALING.perception.weakPointCap` (0.6)
+ * bounds the *base* chance and is the number Weak-Point Study is priced
+ * against; the real ceiling was a bare `0.95` literal in `blow.ts`, which
+ * Opening Read's old multiplicative form slammed into -- discarding 19% of a
+ * maxed build's purchase.
+ *
+ * With Opening Read taking a share of the **remaining** probability, the two
+ * caps stop competing and start composing:
+ *
+ *   base    <= weakPointCap                       = 0.60
+ *   opened  <= base + (1 - base) * contentMax     = 0.892
+ *   final   <= opened * precision                 <= 0.892
+ *
+ * So this is a failsafe on a number arriving from a modifier rather than a
+ * ceiling any legal build reaches -- and `weak-point-chance.test.ts` asserts
+ * that gap over the whole legal progression rather than leaving it as
+ * arithmetic in a comment.
+ */
+export const WEAK_POINT_CHANCE_CAP = 0.95;
+
+/**
+ * The most of the remaining probability Opening Read may ever take.
+ *
+ * Strictly below 1, because `base + (1 - base) * 1` is certainty whatever was
+ * spent on the base -- which is the "one line erases the other's purchase"
+ * failure this composition replaced, arriving from the other side. The content
+ * reaches 0.73 of this.
+ */
+export const OPENING_READ_MAX_SHARE = 0.8;
+
 // --- Arena obstacles ---
 // There are none, and that is the point (spec 221). Spec 037 compiled six
 // hand-authored rects in here -- barricades around a spawn at the centre of a

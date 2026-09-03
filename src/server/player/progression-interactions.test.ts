@@ -257,8 +257,8 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
     const bought = traits({ perception: skill.requires }, [{ specializationId: skill.id, tier: 1 }]);
     expect(bought.openingReadTicks).toBeGreaterThan(0);
     // The window is worth nothing without a payoff to read it -- which is
-    // exactly what the skill used to grant: a longer window at factor 1.
-    expect(bought.vulnerableWeakPointFactor).toBeGreaterThan(1);
+    // exactly what the skill used to grant: a longer window at factor 0.
+    expect(bought.openingReadFactor).toBeGreaterThan(0);
 
     everyRankMoves(
       ladder({ perception: skill.requires }, skill.id, (t) => t.openingReadTicks),

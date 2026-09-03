@@ -353,8 +353,49 @@ export const SCALING = {
      * turns the sum into a factor exactly once. 1.0 is still "double", so what
      * a Perception character with the milestone alone gets has not moved.
      */
-    vulnerableWeakPointBonus: 1,
-    steadyAimTicks: seconds(0.5),
+    /**
+     * Opening Read's share of the **remaining** probability (spec 272).
+     *
+     * It was `vulnerableWeakPointBonus`, a multiplier above 1, and the two
+     * Perception lines therefore multiplied into one clamp: at Perception 60
+     * with Weak-Point Study and Opening Read both maxed the raw chance was
+     * 1.176 against a bare 0.95 ceiling, so 19% of a purchase was discarded
+     * during exactly the window it was bought for.
+     *
+     * As a share of what is left -- `base + (1 - base) * factor` -- the two
+     * compose instead. Two properties follow from the form rather than from
+     * tuning, and both are tested: the derivative with respect to the base is
+     * `1 - factor`, which is positive, so **every Weak-Point Study tier still
+     * raises the final chance at maximum Opening Read**; and the highest legal
+     * value is `weakPointCap + (1 - weakPointCap) * (this + 3 tiers)` = 0.892,
+     * so legal progression provably cannot reach {@link WEAK_POINT_CHANCE_CAP}.
+     *
+     * 0.55 rather than a round number because it is **calibrated against what
+     * this replaced**: the old form doubled the chance, so at Perception 60 with
+     * the milestone alone it gave `0.36 x 2 = 0.72`, and `0.36 + 0.64 x 0.55` is
+     * 0.712. A character who bought nothing but the attribute is therefore left
+     * where they were, and what changes is that the purchases above them stop
+     * being thrown away. Picking 0.3 first cost Pure Perception half its kills
+     * in `npm run balance`, which is what measuring it caught.
+     */
+    openingReadShare: 0.55,
+    /**
+     * How long Perception must go **without committing an attack** for Patient
+     * Read to bank (spec 272).
+     *
+     * Measured against the cadence rather than chosen: a worn sword commits
+     * about every 66 ticks and the longest idle gap inside a continuous fight
+     * is 29, so this is a little under two whole attacks given up. Short enough
+     * to be worth doing, long enough that continuing to swing is a real
+     * alternative rather than an obvious mistake.
+     *
+     * The cost is offensive pressure and **never movement** -- that space is
+     * Intelligence's Prepared, which this must not duplicate.
+     */
+    patientReadTicks: seconds(1.75),
+    /** How long a banked read keeps. Long enough to line a shot up, short
+     *  enough that it cannot be carried between fights. */
+    patientReadHoldTicks: seconds(8),
   },
 
   wisdom: {

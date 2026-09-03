@@ -1486,6 +1486,12 @@ export function advanceCast(
       // the charge leaves the stance exactly as it found it.
       stanceSinceTick: spendsPrepared ? tick : caster.stanceSinceTick,
       lastWovenAbilityId: weaves ? ability.id : caster.lastWovenAbilityId,
+      // Perception's Patient Read is measured from here (spec 272): the attack
+      // became real, so the lull it was banking against is over. Stamped at the
+      // commit rather than at the wind-up, so a withdrawal is a feint and keeps
+      // the read -- and stamped for every body, because how long since somebody
+      // attacked is a fact about them rather than about who is looking.
+      lastAttackTick: tick,
       cast: isChannel
         ? { ...committed, phase: CastPhase.Channel, nextPulseTick: tick }
         : committed,

@@ -43,12 +43,14 @@
  */
 
 import type { Rng } from '../../shared/prng.js';
+import { WEAK_POINT_CHANCE_CAP } from '../../sim/constants.js';
 import { SERVER_TICK_RATE } from '../config.js';
 import { SCALING } from '../data/scaling.js';
-import { elementOfAbility, type AbilityDefinition } from '../data/abilities.js';
+import { elementOfAbility, precisionOf, type AbilityDefinition } from '../data/abilities.js';
 import { abilityAttributeBonus, abilityGradesOf, abilityWeaponFactor } from '../data/ability-scaling.js';
 import { hasAffliction } from '../data/status-semantics.js';
 import { applyArmor } from '../player/stats.js';
+import type { TraitStats } from '../state/types.js';
 import { provoke } from './aggro.js';
 import { healingScaleOf } from './damage-over-time.js';
 import { applyPoiseDamage, guardImpactOf, isResolute, poiseDamageOf, stagger } from './poise.js';
@@ -57,6 +59,7 @@ import {
   adaptationAgainst,
   adaptedKey,
   applyStatus,
+  clearStatus,
   hasStatus,
   stacksOf,
   statusOf,
@@ -123,6 +126,47 @@ function healthFraction(entity: ServerEntity): number {
 }
 
 /**
+ * The chance this blow finds a weak point (spec 272).
+ *
+ * Three terms, and the order they compose in is the whole of why no purchase is
+ * ever discarded:
+ *
+ *   base      what Weak-Point Study and the attribute bought, already capped by
+ *             `weakPointCap` on the way out of `deriveTraits`
+ *   opened    against a Vulnerable body, Opening Read takes a share of the
+ *             probability that is *left* -- `base + (1 - base) * factor`
+ *   precision the ability's own share of it, 1 for a basic attack
+ *
+ * The middle line used to be a **multiplier**, so the two Perception lines
+ * competed for one clamp: at Perception 60 with both maxed the raw value was
+ * 1.176 against a bare 0.95 literal, discarding 19% of the purchase during
+ * exactly the window it was bought for. As a share of the remainder,
+ * `d(opened)/d(base)` is `1 - factor` and therefore positive, so every
+ * Weak-Point Study tier still raises the answer at maximum Opening Read -- a
+ * property of the form rather than of the tuning, and asserted as one.
+ *
+ * {@link WEAK_POINT_CHANCE_CAP} is a failsafe on a number arriving from a
+ * modifier rather than a ceiling the tree reaches: the highest legal value is
+ * 0.792.
+ *
+ * Exported because `weak-point-chance.test.ts` asserts the shape directly, and
+ * because a second copy of this arithmetic in a tooltip is the drift the one
+ * answer exists to prevent.
+ */
+export function weakPointChanceFor(
+  traits: TraitStats,
+  ability: AbilityDefinition,
+  vulnerable: boolean,
+  flowStacks = 0,
+): number {
+  const precision = precisionOf(ability);
+  if (precision <= 0) return 0;
+  const base = traits.weakPointChance + flowStacks * traits.flowWeakPoint;
+  const opened = vulnerable ? base + (1 - base) * traits.openingReadFactor : base;
+  return Math.min(WEAK_POINT_CHANCE_CAP, Math.max(0, opened * precision));
+}
+
+/**
  * The whole of one blow.
  *
  * Returns both bodies because a blow now changes the attacker too -- resource
@@ -177,16 +221,28 @@ export function resolveBlow(
   rng = afterCrit;
   const critical = critRoll / 10000 < attacker.stats.critChance;
 
-  const mayWeakPoint = isBasicAttack || A.abilityWeakPoints > 0;
+  // **Where a weak-point chance comes from** (spec 272). Three terms, and the
+  // order they compose in is the whole of why no purchase is ever discarded:
+  //
+  //   base      what Weak-Point Study and the attribute bought, capped by
+  //             `weakPointCap` on the way out of `deriveTraits`
+  //   opened    against a Vulnerable body, Opening Read takes a share of the
+  //             probability that is *left* -- `base + (1 - base) * factor`
+  //   precision the ability's own share of it, 1 for a basic attack
+  //
+  // The middle line used to be a **multiplier**, so the two Perception lines
+  // competed for one clamp: at Perception 60 with both maxed the raw value was
+  // 1.176 against a bare 0.95 literal, discarding 19% of the purchase during
+  // exactly the window it was bought for. As a share of the remainder,
+  // `d(opened)/d(base)` is `1 - factor` and therefore positive, so every
+  // Weak-Point Study tier still raises the answer at maximum Opening Read --
+  // a property of the form rather than of the tuning.
+  //
+  // `WEAK_POINT_CHANCE_CAP` is a failsafe on a number arriving from a modifier
+  // rather than a ceiling the tree reaches: the highest legal value is 0.792.
   const vulnerable = hasStatus(target.statuses, StatusId.Vulnerable, tick);
   const flowStacks = stacksOf(attacker.statuses, StatusId.Flow, tick);
-  const weakPointChance = mayWeakPoint
-    ? Math.min(
-        0.95,
-        (A.weakPointChance + flowStacks * A.flowWeakPoint) *
-          (vulnerable ? A.vulnerableWeakPointFactor : 1),
-      )
-    : 0;
+  const weakPointChance = weakPointChanceFor(A, ability, vulnerable, flowStacks);
   let weakPoint = false;
   if (weakPointChance > 0) {
     const [roll, afterWeak] = rng.nextInt(0, 9999);
@@ -242,9 +298,18 @@ export function resolveBlow(
     weaponRoll * weaponFactor;
   let damage = base * (critical ? 1.75 : 1);
 
+  // Read *before* the multiplier so the flag is one decision, and consumed in
+  // `rewardAttacker` -- which is the one place that already writes the attacker
+  // back, so a read cannot be spent twice by two paths disagreeing about who
+  // clears it.
+  const patientRead =
+    weakPoint && A.patientReadPayoffPct > 0 && hasStatus(attacker.statuses, StatusId.PatientRead, tick);
   if (weakPoint) {
-    const still = tick - attacker.stillSinceTick >= A.steadyAimTicks ? A.steadyAimPct : 0;
-    damage *= A.weakPointMultiplier * (1 + still);
+    // Patient Read amplifies the **weak point**, never the blow: a hit that did
+    // not find the seam neither receives this nor spends the read, which is
+    // what makes the mechanic "I waited for the moment, now I have to take it"
+    // rather than a flat bonus on the next swing.
+    damage *= A.weakPointMultiplier * (patientRead ? 1 + A.patientReadPayoffPct : 1);
     // Exploit reads the exposure that was there *before* this blow, so the hit
     // that applies the mark can never be the hit that cashes it in. That is the
     // whole reason Perception's payoff is a two-step play rather than a bigger
@@ -430,6 +495,7 @@ export function resolveBlow(
     killed,
     damage,
     overkill,
+    patientRead,
   });
 
   return { attacker, target, events, rng };
@@ -552,6 +618,8 @@ function rewardAttacker(
     readonly killed: boolean;
     readonly damage: number;
     readonly overkill: boolean;
+    /** A banked Patient Read was spent on this blow and owes clearing. */
+    readonly patientRead: boolean;
   },
 ): ServerEntity {
   const A = attacker.stats.traits;
@@ -563,6 +631,11 @@ function rewardAttacker(
   // and a player standing over a corpse in the safe zone has very much been
   // fighting.
   let statuses = enterCombat(next.statuses, tick);
+
+  // Spent here rather than where it was read, because this is the one function
+  // that writes the attacker back -- two paths clearing it would be two answers
+  // about whether a read survived the blow.
+  if (outcome.patientRead) statuses = clearStatus(statuses, StatusId.PatientRead);
 
   if (outcome.weakPoint) {
     resource += A.weakPointResource;

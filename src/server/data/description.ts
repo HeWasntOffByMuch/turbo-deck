@@ -800,12 +800,31 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'grantsOpeningRead', where: 'trait', form: 'flag', name: 'An enemy that commits an attack becomes Vulnerable.' },
   { key: 'openingReadTicks', where: 'trait', name: 'Vulnerable duration', form: 'seconds' },
   {
-    key: 'vulnerableWeakPointFactor',
+    key: 'openingReadFactor',
     where: 'trait',
-    name: 'Weak-point chance against a Vulnerable target',
+    // "Of the chance you are still missing" rather than "chance", because that
+    // is what the number is (spec 272): it takes a share of the probability
+    // left over the base rather than multiplying the base. A line reading
+    // "+30% weak-point chance" would describe the mechanic this replaced.
+    name: 'Weak-point chance closed against a Vulnerable target, of what is left',
     form: 'percent',
   },
-  { key: 'steadyAimPct', where: 'trait', name: 'Damage after standing still', form: 'percent' },
+  {
+    key: 'patientReadPayoffPct',
+    where: 'trait',
+    name: 'Weak-point damage after not attacking',
+    form: 'percent',
+  },
+  // Exposed's line says whose damage it raises, because it raises **everyone's**
+  // and a player who does not know that cannot value the row (spec 272). The
+  // magnitude is the exposer's own and rides on the target, so a teammate
+  // hitting a body you exposed gets it with no party system anywhere.
+  {
+    key: 'exposedDamagePct',
+    where: 'trait',
+    name: 'Damage an Exposed target takes from anyone',
+    form: 'percent',
+  },
 
   { key: 'costReduction', where: 'trait', name: 'Ability cost reduction', form: 'percent' },
   { key: 'healingPct', where: 'trait', name: 'Healing received', form: 'percent' },

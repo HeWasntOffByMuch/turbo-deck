@@ -317,6 +317,33 @@ export interface AbilityDefinition {
    */
   readonly basicAttack?: boolean;
   /**
+   * How much of the caster's weak-point chance this blow carries (spec 272).
+   *
+   * A 0..1 factor, applied to the whole resolved chance:
+   * `chance = (base + opening share) * precision`.
+   *
+   * **Absent means 1 for a {@link basicAttack} and 0 for everything else**, so
+   * a row nobody has classified behaves exactly as it did before this spec --
+   * which is the state the entire table was in, because `abilityWeakPoints` was
+   * a character trait granted by no content and so every sigil in the game
+   * switched Perception's loop off when it was pressed.
+   *
+   * Which abilities can find a seam is a fact about the **ability**, so it is
+   * authored here rather than inferred from damage, targeting or a scaling
+   * grade. Three bands are in use: a precise single-target strike at 1, a
+   * committed heavy single-target strike at 0.6, and everything that can reach
+   * more than one body at 0.
+   *
+   * **Nothing that can hit more than one body is eligible**, and that is the
+   * whole of the AoE safety rather than a cap bolted on afterwards: a weak
+   * point is rolled once per target hit -- `resolveBlow` runs once per body --
+   * so restricting eligibility to single-target rows means one cast produces at
+   * most one weak point, and Exploit, Exposed, Resource Sense and Patient Read
+   * cannot multiply across a blast. `abilities.test.ts` asserts that over the
+   * whole roster rather than over the rows that exist today.
+   */
+  readonly precision?: number;
+  /**
    * How the caster is drawn while this winds up (spec 231). Absent is the swing.
    *
    * See {@link CastLook}. It is on the row for the reason `projectile.look` is:
@@ -617,6 +644,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // of it during the wind-up.
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). Single-target, but a shoulder into a guard rather than a placed cut.
+    precision: 0.6,
     windupTicks: seconds(0.4),
     // Wide enough to throw at something you are roughly facing. This is an
     // opening move rather than a committed one, so making it demand an exact
@@ -670,6 +699,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). Single-target, but thrown at the head rather than at a seam.
+    precision: 0.6,
     // Long enough to be read and stepped out of, which is what a stun has to
     // cost: the wind-up *is* the counterplay.
     windupTicks: seconds(0.9),
@@ -739,6 +770,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). A placed cut at a joint -- the most precise thing in the table.
+    precision: 1,
     // The fastest of the four: this is the one you throw at something already
     // walking away, and a long wind-up would mean it never catches anything.
     windupTicks: seconds(0.3),
@@ -788,6 +821,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // on would make the stack a dexterity test rather than a commitment.
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). A dart at a named body. Aimed, not thrown at a crowd.
+    precision: 1,
     // The shortest wind-up of the seven and by far the shortest cooldown: this
     // is the one skill in the table you are *meant* to throw repeatedly, and
     // the concentration is what it buys. Five casts is eight seconds against a
@@ -840,6 +875,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     kind: 'melee',
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). A cut that opens what it lands on; finding the seam is the point of it.
+    precision: 1,
     windupTicks: seconds(0.45),
     castAngleDeg: 35,
     cooldownTicks: seconds(7),
@@ -1081,6 +1118,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
         magnitude: 0.1,
       },
       { kind: 'applyStatus', statusId: StatusId.Prepared, durationTicks: TEST_STATUS_TICKS },
+      { kind: 'applyStatus', statusId: StatusId.PatientRead, durationTicks: TEST_STATUS_TICKS },
       { kind: 'applyStatus', statusId: StatusId.Attuned, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
       {
         kind: 'applyStatus',
@@ -1251,6 +1289,29 @@ export const ABILITIES: ReadonlyMap<string, AbilityDefinition> = new Map(
 );
 
 export const ALL_ABILITIES: readonly AbilityDefinition[] = DEFINITIONS;
+
+/**
+ * Whether this row can reach more than one body (spec 272).
+ *
+ * Three ways this table expresses a shape and it has to cover all of them: an
+ * `area` block, a burst `radius` on a projectile row, and `arcCosSq` -- the
+ * cone `landCone` reads, which `skill.acidSpray` uses instead of an `area`
+ * precisely because a second description of the same wedge was refused.
+ */
+export function hitsMultipleBodies(a: AbilityDefinition): boolean {
+  return a.area !== undefined || (a.radius ?? 0) > 0 || a.arcCosSq !== undefined;
+}
+
+/**
+ * The share of the caster's weak-point chance this ability carries.
+ *
+ * The one answer, so `blow.ts` and the tooltip cannot disagree about whether a
+ * sigil can find a seam. See {@link AbilityDefinition.precision}.
+ */
+export function precisionOf(a: AbilityDefinition): number {
+  const authored = a.precision ?? (a.basicAttack === true ? 1 : 0);
+  return Math.min(1, Math.max(0, authored));
+}
 
 export function abilityById(id: string): AbilityDefinition | null {
   return ABILITIES.get(id) ?? null;

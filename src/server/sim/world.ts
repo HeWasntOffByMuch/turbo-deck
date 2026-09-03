@@ -210,6 +210,7 @@ export function blankProgression(): Pick<
   | 'stillSinceTick'
   | 'stanceSinceTick'
   | 'lastWovenAbilityId'
+  | 'lastAttackTick'
   | 'restoration'
   | 'fallbackCharges'
   | 'restingTicks'
@@ -223,6 +224,7 @@ export function blankProgression(): Pick<
     stillSinceTick: 0,
     stanceSinceTick: 0,
     lastWovenAbilityId: '',
+    lastAttackTick: 0,
     // The health economy starts empty and the flask starts full (spec 156). A
     // body that enters the world part-way to a mote would make the meter a
     // function of when it spawned; a body that enters with no insurance would
@@ -1640,6 +1642,26 @@ export function advanceProgression(
   const busy = moved || entity.cast !== null;
   const stillSinceTick = busy ? tick : entity.stillSinceTick;
 
+  // **Patient Read**, banked by not attacking (spec 272). The artillery stance
+  // below is the same shape against a different clock, and the contrast is the
+  // whole reason both exist: that one reads `stanceSinceTick` and is broken by
+  // *moving*, this one reads `lastAttackTick` and is broken by *attacking*. So
+  // a Perception character repositions, dodges and tracks the entire time and
+  // pays for the read in the attacks they did not throw, where an Intelligence
+  // character pays by standing still and may keep casting.
+  //
+  // Granted here rather than at the blow because this pass runs in 1c and casts
+  // resolve in 3, so a read banked on this tick is available to a blow landing
+  // on it. Steady Aim asked its question from inside pass 3 about a field pass
+  // 1c had just stamped, which is exactly why it could never be satisfied.
+  if (
+    traits.patientReadTicks > 0 &&
+    tick - entity.lastAttackTick >= traits.patientReadTicks &&
+    !hasStatus(statuses, StatusId.PatientRead, tick)
+  ) {
+    statuses = applyStatus(statuses, StatusId.PatientRead, tick, SCALING.perception.patientReadHoldTicks);
+  }
+
   // --- the artillery stance (spec 270) -----------------------------------
   //
   // Its own clock, and the two differences from `stillSinceTick` above are the
@@ -1650,10 +1672,11 @@ export function advanceProgression(
   // out of a tree by collision resolution does not cost a stance somebody stood
   // two seconds for.
   //
-  // The other reason it is not `stillSinceTick`: that field is read by
-  // Perception's Steady Aim, and dropping the cast term there would have
-  // silently let Steady Aim hold through a wind-up. One field for two
-  // attributes is one edit away from being a change to both.
+  // The other reason it is not `stillSinceTick`: one field read by two
+  // attributes is one edit away from being a change to both. Spec 272 took the
+  // same way out rather than widening either of these -- Patient Read above
+  // carries a third clock, `lastAttackTick` -- and the three now answer three
+  // different questions with nothing shared between them.
   const brokeStance = stepDistance > SCALING.intelligence.stanceMoveEpsilon;
   const stanceSinceTick = brokeStance ? tick : entity.stanceSinceTick;
 

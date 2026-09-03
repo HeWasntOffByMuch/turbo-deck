@@ -161,15 +161,14 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   exposeTicks: 'up',
   exposedDamagePct: 'up',
   openingReadTicks: 'up',
-  vulnerableWeakPointFactor: 'up',
-  steadyAimPct: 'up',
+  openingReadFactor: 'up',
+  patientReadPayoffPct: 'up',
+  patientReadTicks: 'up',
   // How long you must stand still before Steady Aim pays. Lower is better.
-  steadyAimTicks: 'down',
   exploitDamagePct: 'up',
   exploitPoiseFactor: 'up',
   weakPointResource: 'up',
   weakPointKillHeal: 'up',
-  abilityWeakPoints: 'up',
   vsVulnerableReduction: 'up',
   exposedTeamResource: 'up',
 

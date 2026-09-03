@@ -23,7 +23,7 @@
  * Pure. No clock, no randomness, no entity.
  */
 
-import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
+import { MAX_DAMAGE_REDUCTION, OPENING_READ_MAX_SHARE } from '../../sim/constants.js';
 import { above, linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
 import { desperationSurge, maxFallbackCharges, RESTORATION } from '../data/restoration.js';
 import { emptyTraitTotals, type ModifierTotals } from '../data/modifiers.js';
@@ -119,14 +119,13 @@ export const NEUTRAL_TRAITS: TraitStats = {
   exposeTicks: 0,
   exposedDamagePct: 0,
   openingReadTicks: 0,
-  vulnerableWeakPointFactor: 1,
-  steadyAimPct: 0,
-  steadyAimTicks: SCALING.perception.steadyAimTicks,
+  openingReadFactor: 0,
+  patientReadPayoffPct: 0,
+  patientReadTicks: 0,
   exploitDamagePct: 0,
   exploitPoiseFactor: 0,
   weakPointResource: 0,
   weakPointKillHeal: 0,
-  abilityWeakPoints: 0,
   vsVulnerableReduction: 0,
   exposedTeamResource: 0,
   resourceCostScale: 1,
@@ -294,9 +293,11 @@ export function deriveTraits(
     0,
     S.perception.weakPointCap,
   );
+  // No `growth(...)` term any more (spec 272). `weakPointPayoffPct` folded in
+  // here as a passive and was granted by nothing; repurposed as Patient Read's
+  // conditional payoff it belongs on the read rather than on every weak point.
   const weakPointMultiplier =
-    (S.perception.weakPointMultBase + linear(PER, S.perception.weakPointMultPer)) *
-    growth(t.weakPointPayoffPct);
+    S.perception.weakPointMultBase + linear(PER, S.perception.weakPointMultPer);
   const exposeTicks =
     t.exposedDamagePct > 0
       ? Math.max(0, Math.round(S.perception.exposeTicksBase + linear(PER, S.perception.exposeTicksPer) + t.exposeTicks))
@@ -487,14 +488,26 @@ export function deriveTraits(
     openingReadTicks: reads
       ? Math.max(0, Math.round(S.perception.openingReadTicks + t.openingReadTicks))
       : 0,
-    vulnerableWeakPointFactor: reads ? Math.max(1, 1 + t.vulnerableWeakPointFactor) : 1,
-    steadyAimPct: Math.max(0, t.steadyAimPct),
-    steadyAimTicks: Math.max(1, Math.round(S.perception.steadyAimTicks + t.steadyAimTicks)),
+    // Held strictly **below 1** rather than at it: the composition is
+    // `base + (1 - base) * factor`, so a factor of exactly 1 would make every
+    // read against a Vulnerable body a certainty regardless of what was spent
+    // on the base -- which is the failure this replaced, arriving by the other
+    // door. Nothing in the content reaches the bound; it is a guard on a number
+    // arriving from a modifier, not a ceiling the tree is priced against.
+    openingReadFactor: reads ? clamp(t.openingReadFactor, 0, OPENING_READ_MAX_SHARE) : 0,
+    patientReadPayoffPct: Math.max(0, t.patientReadPayoffPct),
+    // 0 is *off*, so the base is added only for somebody who bought a tier --
+    // the rule `exposeTicks` above already follows, and what keeps a character
+    // who has never heard of Patient Read from banking one every two seconds.
+    // The interval is the mechanic's own constant and no tier moves it: what a
+    // tier buys is the payoff. A purchasable "wait less" would make the top of
+    // the tree a shorter decision rather than a bigger one, which is the shape
+    // spec 258 records Agility pulling against itself with.
+    patientReadTicks: t.patientReadPayoffPct > 0 ? S.perception.patientReadTicks : 0,
     exploitDamagePct: Math.max(0, t.exploitDamagePct),
     exploitPoiseFactor: Math.max(0, t.exploitPoiseFactor),
     weakPointResource: Math.max(0, t.weakPointResource),
     weakPointKillHeal: clamp(t.weakPointKillHeal, 0, 0.25),
-    abilityWeakPoints: t.abilityWeakPoints > 0 ? 1 : 0,
     vsVulnerableReduction: clamp(t.vsVulnerableReduction, 0, 0.4),
     exposedTeamResource: Math.max(0, t.exposedTeamResource),
 

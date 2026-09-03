@@ -22,6 +22,7 @@ import {
   isUnscaled,
 } from '../src/server/data/ability-scaling.js';
 import { SCALING } from '../src/server/data/scaling.js';
+import { observeAll } from '../src/server/sim/observed-effects.js';
 import { ALL_SPECIALIZATIONS } from '../src/server/data/specializations.js';
 import { coefficientOf, SCALING_ATTRIBUTES } from '../src/server/data/weapon-scaling.js';
 import {
@@ -148,6 +149,31 @@ for (const row of reach) {
   );
   if (!row.reachable) console.log(`       ${who}`);
 }
+
+// --- and what a real fight was seen to do (spec 272) -----------------------
+//
+// The third question, and the one neither of the two above can answer. That
+// one asks whether any *content* can satisfy a gate; this asks whether the
+// *simulation* ever does. Steady Aim is the case that needs both: its gate was
+// perfectly satisfiable by content -- `steadyAimTicks` was an ordinary number
+// -- and unsatisfiable by the tick order, because the field it read was stamped
+// by a pass running earlier in the same tick. It audited ACTIVE in all twelve
+// of its cells and reachable by every row, and it could not fire.
+//
+// Each probe carries its *own* scenario, chosen to trigger it, so NOT OBSERVED
+// means the fight written to make it fire did not -- never that a short generic
+// fight missed a rare effect, which is the false positive that would make this
+// noise and get it ignored.
+console.log('--- conditional effects, observed in a real fight (spec 272) ---');
+const observations = observeAll();
+for (const seen of observations) {
+  const mark = seen.observed ? 'OBSERVED' : 'NOT OBSERVED';
+  console.log(
+    `  ${pad(mark, 13)} ${pad(seen.id, 26)} ${pad(`x${String(seen.count)}`, 7)} ` +
+      `${pad(`${String(seen.blows)} blows`, 10)} -- ${seen.gate}`,
+  );
+}
+const unobserved = observations.filter((seen) => !seen.observed);
 console.log('');
 
 const bad = findings(report);
@@ -156,7 +182,7 @@ const worse = regressionKeys(report);
 // dormant trait nothing grants is the state a dozen former-synergy fields are
 // deliberately in, and counting those would make this check noise.
 const sold = dead.filter((row) => row.granters.length > 0);
-console.log(`=== ${String(bad.length + worse.length + sold.length)} finding(s) ===`);
+console.log(`=== ${String(bad.length + worse.length + sold.length + unobserved.length)} finding(s) ===`);
 for (const row of bad) console.log(`  ${row.verdict.padEnd(10)} ${findingKey(row)}  -- ${row.note}`);
 for (const key of worse) console.log(`  ${'BACKWARDS'.padEnd(10)} ${key}`);
 for (const row of sold) {
@@ -164,4 +190,7 @@ for (const row of sold) {
     `  ${'UNREACHABLE'.padEnd(10)} ${row.granters.join(', ')} grants ${row.trait}` +
       `, whose consumer needs ${row.gate} -- no content satisfies it`,
   );
+}
+for (const seen of unobserved) {
+  console.log(`  ${'UNREACHED'.padEnd(10)} ${seen.id}  -- ${seen.gate}`);
 }

@@ -141,9 +141,15 @@ describe('the wire indices the marks cross on', () => {
     preparing: 19,
     weave: 20,
     overdrawn: 21,
+    // Appended by spec 272, on the same terms -- at 22 rather than the 19 it was
+    // written against, because spec 270 took 19 through 21 first. Renumbering on
+    // the merge is exactly what append-only is for: the index is what crosses
+    // the wire, so two branches claiming one number is two clients disagreeing
+    // about which mark to draw.
+    patientRead: 22,
   };
 
-  it('carries exactly the twenty-two ids it carried when they were written down', () => {
+  it('carries exactly the twenty-three ids it carried when they were written down', () => {
     const actual = Object.fromEntries(STATUS_VISUALS.map((visual) => [visual.id, visual.wire]));
     expect(actual).toEqual(EXPECTED_WIRE);
   });

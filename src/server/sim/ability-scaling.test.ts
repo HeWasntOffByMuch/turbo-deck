@@ -78,7 +78,7 @@ function stats(baseStats: Partial<BaseStats> = {}, overrides: Partial<PersistedP
     ...derived,
     critChance: 0,
     armor: 0,
-    traits: { ...derived.traits, weakPointChance: 0, abilityWeakPoints: 0 },
+    traits: { ...derived.traits, weakPointChance: 0 },
   };
 }
 

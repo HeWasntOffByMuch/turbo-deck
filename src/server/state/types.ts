@@ -486,19 +486,23 @@ export interface TraitStats {
   readonly exposedDamagePct: number;
   /** Ticks an enemy is `vulnerable` for after committing an attack. 0 is off. */
   readonly openingReadTicks: number;
-  /** Weak-point chance multiplier against a `vulnerable` body. 1 is none. */
-  readonly vulnerableWeakPointFactor: number;
-  /** Extra weak-point payoff after standing still for `steadyAimTicks`. */
-  readonly steadyAimPct: number;
-  readonly steadyAimTicks: number;
+  /**
+   * Opening Read's share of the **remaining** weak-point probability (spec 272).
+   *
+   * `chance = base + (1 - base) * this` against a `vulnerable` body. 0 is none,
+   * and it is held strictly below 1 so a read can never be a certainty.
+   */
+  readonly openingReadFactor: number;
+  /** What a consumed Patient Read adds to a weak point. 0 is none. */
+  readonly patientReadPayoffPct: number;
+  /** Ticks without committing an attack before a Patient Read banks. 0 is off. */
+  readonly patientReadTicks: number;
   /** Extra damage and poise a weak point does to an already-`exposed` body. */
   readonly exploitDamagePct: number;
   readonly exploitPoiseFactor: number;
   /** Resource and health-fraction a weak point returns. */
   readonly weakPointResource: number;
   readonly weakPointKillHeal: number;
-  /** Abilities may score weak points too, when 1. */
-  readonly abilityWeakPoints: number;
   /** Damage reduction taken from a `vulnerable` attacker. */
   readonly vsVulnerableReduction: number;
   /** Anyone hitting a body this one exposed gains this much resource. */
@@ -631,14 +635,13 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'exposeTicks',
   'exposedDamagePct',
   'openingReadTicks',
-  'vulnerableWeakPointFactor',
-  'steadyAimPct',
-  'steadyAimTicks',
+  'openingReadFactor',
+  'patientReadPayoffPct',
+  'patientReadTicks',
   'exploitDamagePct',
   'exploitPoiseFactor',
   'weakPointResource',
   'weakPointKillHeal',
-  'abilityWeakPoints',
   'vsVulnerableReduction',
   'exposedTeamResource',
   'resourceCostScale',
