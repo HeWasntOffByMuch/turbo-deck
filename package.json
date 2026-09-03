@@ -9,6 +9,7 @@
   },
   "scripts": {
     "test": "vitest run",
+    "test:fast": "vitest run --pool=threads --no-isolate",
     "test:changed": "vitest run --changed",
     "test:related": "vitest related --run",
     "test:watch": "vitest",

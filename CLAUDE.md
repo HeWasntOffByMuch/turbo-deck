@@ -55,6 +55,7 @@ change a game outcome.
 | Command | What it does |
 |---|---|
 | `npm test` | Run the Vitest suite once (server sim, protocol, integration) -- 430 files, 8,307 tests, about 2 minutes |
+| `npm run test:fast` | The whole suite in **65s** rather than 2m03s: one worker pool of threads, no per-file isolation. What it buys is the process-spawn and module-reparse cost of 430 files; what it gives up is that module-level state is now shared between the files a worker runs -- and this tree has plenty (`HEIGHT_CACHE` never evicts, `treeParts`/`bushParts`/`fenceParts` memoize, `LoadedMap.chunks` is a memoized getter, `worldClockAt` caches its last answer). All of those are pure caches, which is why it passes 8,307/8,307 on four consecutive runs. It is **not** the default and **not** what CI gates on, for one reason: a leak here does not fail, it fails *in a particular order*, months later, in whichever file happens to run second -- and the merge gate is the wrong place to find that out |
 | `npm run test:watch` | Vitest in watch mode |
 | `npm run typecheck` | `tsc --noEmit` against the strict tsconfig |
 | `npm run lint` | ESLint over the whole repo |
