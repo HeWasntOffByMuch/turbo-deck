@@ -19,13 +19,23 @@ describe('the observation pass', () => {
     }
   });
 
-  it('makes each scenario actually do something', () => {
-    // A probe that never attacked proves nothing about its gate, and would
-    // report OBSERVED or NOT OBSERVED equally meaninglessly. `int.prepared` is
-    // the deliberate exception: what it is gated on is *not* attacking.
+  it('makes each scenario actually be a fight', () => {
+    // A probe where nothing happened proves nothing about its gate, and would
+    // report OBSERVED or NOT OBSERVED equally meaninglessly.
+    //
+    // **Either side counts** (spec 273). This asked for attacks *made*, which is
+    // right for a gate about a blow this body throws and wrong for one about a
+    // blow it takes: Constitution's rows are gated on its Guard being drained,
+    // and its mobile rows cannot swing at all, because asking to move withdraws
+    // from a wind-up (spec 079) -- so a repositioning body completes no attack,
+    // correctly and by design. `int.prepared` stays the one exception, and it is
+    // a real one: it is gated on *not* attacking, and fights a dummy.
     for (const observation of observeAll()) {
       if (observation.id === 'int.prepared') continue;
-      expect(observation.blows, `${observation.id} never attacked`).toBeGreaterThan(0);
+      expect(
+        observation.blows + observation.taken,
+        `${observation.id}: nothing landed in either direction`,
+      ).toBeGreaterThan(0);
     }
   });
 
@@ -97,6 +107,23 @@ describe('the observation pass', () => {
       'per.exploit',
       'per.resourceSense',
       'per.openingRead',
+    ]) {
+      expect(ids.has(required), `${required} is not watched`).toBe(true);
+    }
+  });
+
+  it('covers every Constitution mechanic whose payoff is conditional (spec 273)', () => {
+    // The same claim one track over, and the track this pass would have caught
+    // first if it had existed: Constitution's moving-Guard grant moved a trait
+    // in every cell of the tier audit while `regenPoise` zeroed the rate on any
+    // tick the body moved, which is Steady Aim's signature exactly.
+    const ids = new Set(CONDITIONAL_PROBES.map((p) => p.id));
+    for (const required of [
+      'con.steadyFrame',
+      'con.secondWind',
+      'con.overflowVitality',
+      'con.hardToKill',
+      'con.deathsDoor',
     ]) {
       expect(ids.has(required), `${required} is not watched`).toBe(true);
     }

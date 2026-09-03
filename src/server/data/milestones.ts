@@ -190,7 +190,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'constitution',
     threshold: TIER_1,
     name: 'Steady Frame',
-    effect: 'Your poise recovers twice as fast whenever you are not committed to a cast.',
+    // It said "whenever you are not committed to a cast", and left out the
+    // condition that decided everything (spec 273): `regenPoise` reaches the calm
+    // branch only for a body that is *also* not moving, and until this spec a
+    // moving body recovered nothing at all. Holding ground is what this buys, and
+    // now the sentence says so.
+    effect: 'While you hold ground -- not moving and not committed to a cast -- your Guard recovers twice as fast.',
     grants: { traits: { poiseRegenCalm: 1 } },
     deepens: 'con.steadyFrame',
   },
@@ -204,7 +209,18 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     // three ranks of a damage reduction -- silently handed out the qualitative
     // half of this milestone as well.
     effect: 'Below 30% health you cannot be staggered and take 20% less damage.',
-    grants: { traits: { resoluteBelow: 0.3, resoluteReduction: 0.2, staggerImmuneBelow: 0.3 } },
+    // The two thresholds are `SCALING.constitution.dangerBelow` rather than a
+    // literal (spec 273), because Second Wind's recovery ceiling is now a reader
+    // of the same number: stabilizing lands the body at the top of this band
+    // instead of above it, and that only stays true if retuning the band moves
+    // the ceiling with it.
+    grants: {
+      traits: {
+        resoluteBelow: SCALING.constitution.dangerBelow,
+        resoluteReduction: 0.2,
+        staggerImmuneBelow: SCALING.constitution.dangerBelow,
+      },
+    },
     deepens: 'con.hardToKill',
   },
   {
@@ -212,7 +228,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'constitution',
     threshold: TIER_3,
     name: 'Overflow Vitality',
-    effect: 'Healing past full becomes a shield, up to a quarter of your health, for 8s.',
+    // A **delta**, and it reads as one now (spec 273). It said "for 8s", which is
+    // what this row grants on its own and is wrong the moment the CON 40
+    // specialization -- which grants the same 480 ticks -- is also held, because
+    // the two sum to sixteen seconds. `deepens` is what says the two are one
+    // mechanic; the sentence has to say which part of it this is.
+    effect: 'Your overheal shield lasts 8 seconds longer.',
     grants: { traits: { overhealShieldTicks: SCALING.constitution.shieldTicks } },
     deepens: 'con.overflowVitality',
   },

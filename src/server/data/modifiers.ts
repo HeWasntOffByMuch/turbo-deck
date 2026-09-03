@@ -136,7 +136,14 @@ export interface TraitModifier {
   readonly poiseRegenPct?: number;
   readonly poiseRegenCalm?: number;
   readonly poiseRegenStaggered?: number;
+  /**
+   * Added to `SCALING.constitution.poiseRegenMovingBase` (spec 273): how much
+   * *more* of its Guard regeneration a moving body keeps. Clamped once, at the
+   * cap, so no grant is silently swallowed by another having got there first.
+   */
   readonly poiseRegenMoving?: number;
+  /** Grants the Resolute calm-rate rule. A capability: any positive value. */
+  readonly resoluteRegenCalm?: number;
   readonly secondWindBelow?: number;
   readonly secondWindHeal?: number;
   readonly resoluteBelow?: number;
@@ -156,6 +163,8 @@ export interface TraitModifier {
    */
   readonly staggerImmuneBelow?: number;
   readonly overhealShieldTicks?: number;
+  /** Raises the overheal shield's ceiling fraction (spec 273). */
+  readonly overhealShieldPct?: number;
 
   // --- Perception ---
   readonly weakPointChance?: number;
@@ -351,12 +360,14 @@ function zeroTraits(): TraitTotals {
     poiseRegenCalm: 0,
     poiseRegenStaggered: 0,
     poiseRegenMoving: 0,
+    resoluteRegenCalm: 0,
     secondWindBelow: 0,
     secondWindHeal: 0,
     resoluteBelow: 0,
     resoluteReduction: 0,
     staggerImmuneBelow: 0,
     overhealShieldTicks: 0,
+    overhealShieldPct: 0,
     weakPointChance: 0,
     exposeTicks: 0,
     exposedDamagePct: 0,

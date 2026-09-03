@@ -107,6 +107,7 @@ export const NEUTRAL_TRAITS: TraitStats = {
   poiseRegenCalm: 0,
   poiseRegenStaggered: 0,
   poiseRegenMoving: 0,
+  resoluteRegenCalm: 0,
   secondWindBelow: 0,
   secondWindHeal: 0,
   resoluteBelow: 0,
@@ -319,9 +320,16 @@ export function deriveTraits(
     (1 + linear(WIS, S.wisdom.healingPer) + linear(CON, S.constitution.healingPer)) * growth(t.healingPct),
   );
 
+  // The shield's ceiling. `overhealShieldPct` is the one thing that raises it
+  // (spec 273) -- Deep Reserves already makes the *pool* bigger and this cap is a
+  // fraction of that pool, so a mastery that filled it faster would buy nothing
+  // a bigger health bar does not already buy.
   const maxShield =
     t.overhealShieldTicks > 0 || t.damageToShield > 0
-      ? Math.max(0, context.maxHealth * S.constitution.shieldFraction)
+      ? Math.max(
+          0,
+          context.maxHealth * (S.constitution.shieldFraction + Math.max(0, t.overhealShieldPct)),
+        )
       : 0;
 
   // --- the health economy (spec 156) --------------------------------------
@@ -450,13 +458,29 @@ export function deriveTraits(
     poiseRegen: Math.max(0, poiseRegen),
     poiseRegenCalm: Math.max(0, t.poiseRegenCalm),
     poiseRegenStaggered: clamp(t.poiseRegenStaggered, 0, 1),
-    poiseRegenMoving: t.poiseRegenMoving > 0 ? 1 : 0,
+    // **A fraction, not a switch** (spec 273). This read
+    // `t.poiseRegenMoving > 0 ? 1 : 0` and nothing in the game ever granted the
+    // modifier, so it was 0 for every body -- and `regenPoise` reads 0 as "set
+    // the rate to zero", which is what made Steady Frame and the CON 20
+    // milestone worth nothing to a repositioning player.
+    //
+    // Seeded from `SCALING` rather than from a grant, because "movement reduces
+    // recovery" is a rule about the movement system rather than something
+    // Constitution buys; what Constitution buys is how much of it comes back.
+    // Clamped **once**, at the end, so two grants of "a little more while
+    // moving" are the sum rather than whichever reached the cap first.
+    poiseRegenMoving: clamp(
+      S.constitution.poiseRegenMovingBase + Math.max(0, t.poiseRegenMoving),
+      0,
+      S.constitution.poiseRegenMovingCap,
+    ),
+    resoluteRegenCalm: t.resoluteRegenCalm > 0 ? 1 : 0,
     // The threshold is authored by the milestone; a stat skill contributes the
     // *size* of the effect and deliberately not the threshold, so ranking one up
     // can never move when it fires.
-    secondWindBelow: t.secondWindHeal > 0 ? Math.max(0.3, t.secondWindBelow) : 0,
+    secondWindBelow: t.secondWindHeal > 0 ? Math.max(S.constitution.dangerBelow, t.secondWindBelow) : 0,
     secondWindHeal: clamp(t.secondWindHeal, 0, 0.5),
-    resoluteBelow: t.resoluteReduction > 0 ? Math.max(0.3, t.resoluteBelow) : 0,
+    resoluteBelow: t.resoluteReduction > 0 ? Math.max(S.constitution.dangerBelow, t.resoluteBelow) : 0,
     resoluteReduction: clamp(t.resoluteReduction, 0, 0.4),
     // **Granted, never inferred** (spec 239). This used to be `resoluteBelow`'s
     // twin -- `isResolute` answered both questions -- so the Constitution 25

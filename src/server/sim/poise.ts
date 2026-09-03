@@ -336,15 +336,29 @@ export function poiseDamageOf(
 /**
  * Poise regained this tick.
  *
- * Three states with three answers, and which one applies is the Constitution
+ * Four states with four answers, and which one applies is the Constitution
  * player's business to arrange:
  *
  *  - **staggered**: `poiseRegenStaggered` of the rate, normally none. Sustained
  *    Effort buys some, which is a body getting up while it is still going down.
- *  - **committed or moving**: the base rate, and nothing while moving unless
- *    the Agility+Constitution pair says otherwise.
+ *  - **moving**: `poiseRegenMoving` of the rate (spec 273). Repositioning costs
+ *    recovery; it no longer cancels it.
+ *  - **committed**: the base rate. Holding a cast is not resting.
  *  - **calm**: the base rate times `poiseRegenCalm`, doubled by the Constitution
- *    20 milestone. Not casting is a decision, and this is what it buys.
+ *    20 milestone. Holding ground is a decision, and this is what it buys.
+ *
+ * The moving branch used to be `rate = 0` unless a trait nothing granted said
+ * otherwise, so Steady Frame's ranks and the milestone that deepens them were
+ * worth exactly zero to a repositioning body. It is a fraction now, seeded from
+ * `SCALING` and deepened by Constitution, and the cap on it is strictly below 1
+ * -- so standing still is always the strongest posture and kiting can never
+ * recover Guard as fast as holding ground.
+ *
+ * `resoluteRegenCalm` is checked **first among the living states** and not
+ * inside them: what the CON 50 mastery grants is that the danger band *replaces*
+ * the state rule, so a body fighting for its life recovers at the calm rate
+ * whatever it is doing. It deliberately does not override the staggered branch,
+ * because being broken is the one state Sustained Effort owns.
  */
 export function regenPoise(
   entity: ServerEntity,
@@ -358,8 +372,10 @@ export function regenPoise(
   let rate = traits.poiseRegen;
   if (staggered) {
     rate *= traits.poiseRegenStaggered;
-  } else if (moving && traits.poiseRegenMoving <= 0) {
-    rate = 0;
+  } else if (traits.resoluteRegenCalm > 0 && isResolute(entity)) {
+    rate *= 1 + traits.poiseRegenCalm;
+  } else if (moving) {
+    rate *= traits.poiseRegenMoving;
   } else if (entity.cast === null) {
     rate *= 1 + traits.poiseRegenCalm;
   }

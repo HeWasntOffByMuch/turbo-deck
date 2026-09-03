@@ -95,9 +95,29 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     name: 'Constitution',
     abbrev: 'CON',
     verb: 'Endure',
-    owns: ['max health', 'poise pool', 'poise regen', 'shields', 'low-health behaviour', 'armour'],
+    owns: [
+      'max health',
+      'poise pool',
+      'poise regen',
+      'shields',
+      'low-health behaviour',
+      'armour',
+      // The desperation surge is Constitution's outright (spec 156), and saying
+      // so here is what lets `notOwned` below stop being false about healing.
+      'desperation healing',
+    ],
     sustain: 'Absorbs. The only route that is literally taking the hit.',
-    notOwned: ['healing efficiency (Wisdom)', 'weapon damage (the weapon decides)', 'stagger power (Strength)'],
+    // The healing row was `healing efficiency (Wisdom)` and was not true (spec
+    // 273): `deriveTraits` adds `linear(CON, constitution.healingPer)` straight
+    // into `healingScale`, and both that function and the character sheet's own
+    // stat hint already said "and a little Constitution". Wisdom is the primary
+    // owner and the coefficient says so -- 0.006 a point against Wisdom's -- so
+    // what this row should refuse is the *ownership*, not the contribution.
+    notOwned: [
+      'the bulk of healing efficiency (Wisdom owns it; Constitution adds a smaller share)',
+      'weapon damage (the weapon decides)',
+      'stagger power (Strength)',
+    ],
   },
   {
     key: 'perception',

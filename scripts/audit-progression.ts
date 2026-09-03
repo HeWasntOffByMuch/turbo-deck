@@ -170,7 +170,11 @@ for (const seen of observations) {
   const mark = seen.observed ? 'OBSERVED' : 'NOT OBSERVED';
   console.log(
     `  ${pad(mark, 13)} ${pad(seen.id, 26)} ${pad(`x${String(seen.count)}`, 7)} ` +
-      `${pad(`${String(seen.blows)} blows`, 10)} -- ${seen.gate}`,
+      // Both directions (spec 273): a Constitution gate is satisfied by blows
+      // *taken*, and a mobile scenario throws none of its own -- asking to move
+      // withdraws from a wind-up, so the column would read zero on a scenario
+      // that worked.
+      `${pad(`${String(seen.blows)}/${String(seen.taken)} hit`, 12)} -- ${seen.gate}`,
   );
 }
 const unobserved = observations.filter((seen) => !seen.observed);

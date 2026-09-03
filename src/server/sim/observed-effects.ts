@@ -32,6 +32,7 @@
 import { DEFAULT_WORLD } from '../../sim/collision.js';
 import { DEFAULT_LIVE_CONFIG } from '../config.js';
 import { monsterById } from '../data/monsters.js';
+import { SCALING } from '../data/scaling.js';
 import { computeEffectiveStats } from '../player/stats.js';
 import {
   EMPTY_EQUIPMENT,
@@ -44,6 +45,7 @@ import {
 import { chunkKeyOf } from '../world/chunks.js';
 import { FLAT_TERRAIN } from '../world/terrain.js';
 import { ZoneManager } from '../world/zone-manager.js';
+import { isResolute } from './poise.js';
 import { hasStatus, statusOf, StatusId } from './statuses.js';
 import {
   EntityKindValue,
@@ -55,12 +57,25 @@ import {
 import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const CHUNK = 100;
+/** How fast a repositioning body moves, and how tight a circle it walks. */
+const MOVE_PACE = 0.3;
+const MOVE_PERIOD = 40;
 const AT = { x: 600, y: 450 };
 
 /** One tick of a scenario, as the observer sees it. */
 export interface Frame {
   readonly tick: number;
   readonly self: ServerEntity;
+  /**
+   * The same body **before** this tick was stepped (spec 273).
+   *
+   * Some gates are a *change* rather than a state: Guard coming back, a shield
+   * being made, health being restored. Read off `self` alone those are
+   * indistinguishable from a body that already had them, which is the false
+   * positive this whole pass exists to avoid -- so the delta is handed over
+   * rather than left to a row to remember between calls.
+   */
+  readonly previous: ServerEntity;
   readonly target: ServerEntity | undefined;
   readonly events: readonly ServerSimEvent[];
 }
@@ -73,8 +88,26 @@ export interface Plan {
   readonly attackWith: string;
   /** Ticks to hold off attacking after each committed attack. 0 attacks freely. */
   readonly waitTicks?: number;
-  /** Whether the body walks. */
+  /**
+   * Whether the body walks -- and it **circles at a fraction of its speed**
+   * rather than running in a straight line (spec 273).
+   *
+   * A constant heading at full pace simply outruns the opponent: the first
+   * version of the Constitution rows below reported 0 blows and 0 observations
+   * because the body had walked out of the fight, which is a measurement of the
+   * leash rather than of the mechanic. Repositioning is what a mobile scenario
+   * is for, and a body that is not being hit drains no Guard and so recovers
+   * none either.
+   */
   readonly moving?: boolean;
+  /**
+   * Fraction of maximum health the body starts on (spec 273).
+   *
+   * Constitution's identity is gated on being *nearly dead*, and a fight written
+   * to grind a body down to 30% is a fight whose result depends on how hard the
+   * opponent happens to hit. Starting there states the condition instead.
+   */
+  readonly startHealth?: number;
 }
 
 export interface ConditionalProbe {
@@ -107,6 +140,18 @@ export interface Observation {
   readonly observed: boolean;
   /** How many frames the gate was open on, for a sense of how rare it is. */
   readonly count: number;
+  /**
+   * Blows the *opponent* landed on the body (spec 273).
+   *
+   * Beside `blows` because a scenario is a fight, and which side of it a gate
+   * reads is the gate's business: Perception's rows are about blows this body
+   * throws, and Constitution's are about blows it takes -- a Guard that is never
+   * drained recovers nothing, so an unhit body reports NOT OBSERVED for a reason
+   * that has nothing to do with the mechanic. And a mobile scenario cannot swing
+   * at all: asking to move withdraws from a wind-up (spec 079), so a body that
+   * repositions every tick completes no attack, correctly and by design.
+   */
+  readonly taken: number;
   /** Attacks the scenario actually made, so "never fired" can be told from
    *  "never attacked" -- a scenario that did nothing proves nothing. */
   readonly blows: number;
@@ -202,6 +247,12 @@ export function observeProbe(probe: ConditionalProbe, seed = 1): Observation {
   });
   state = player.state;
   const selfId = player.entity.id;
+  if (probe.plan.startHealth !== undefined) {
+    state = replaceEntity(state, {
+      ...player.entity,
+      health: stats.maxHealth * probe.plan.startHealth,
+    });
+  }
 
   const typeId = probe.monster ?? 'dummy';
   const definition = monsterById(typeId);
@@ -213,6 +264,11 @@ export function observeProbe(probe: ConditionalProbe, seed = 1): Observation {
     stats: { ...definition.stats, maxHealth: 1_000_000_000 },
     radius: definition.radius,
     zoneId: 'greenmarch',
+    // Already engaged (spec 273). Acquisition is not what any row here is
+    // about, and a gate that depends on the *opponent* landing a blow -- which
+    // every Constitution row does, since a Guard that is never drained recovers
+    // nothing -- otherwise waits out a notice range before the scenario starts.
+    targetId: selfId,
   });
   state = monster.state;
   const foeId = monster.entity.id;
@@ -223,6 +279,7 @@ export function observeProbe(probe: ConditionalProbe, seed = 1): Observation {
   const wait = probe.plan.waitTicks ?? 0;
   let count = 0;
   let blows = 0;
+  let taken = 0;
   let lastCommit = -wait;
 
   for (let i = 0; i < probe.plan.ticks; i++) {
@@ -236,7 +293,8 @@ export function observeProbe(probe: ConditionalProbe, seed = 1): Observation {
       state,
       [
         input(selfId, i + 1, {
-          moveX: probe.plan.moving === true ? 1 : 0,
+          moveX: probe.plan.moving === true ? Math.cos(i / MOVE_PERIOD) * MOVE_PACE : 0,
+          moveY: probe.plan.moving === true ? Math.sin(i / MOVE_PERIOD) * MOVE_PACE : 0,
           castAbilityId: pressing ? probe.plan.attackWith : '',
           castTargetX: target?.position.x ?? AT.x + 40,
           castTargetY: target?.position.y ?? AT.y,
@@ -255,13 +313,15 @@ export function observeProbe(probe: ConditionalProbe, seed = 1): Observation {
     const frame: Frame = {
       tick: state.tick,
       self: after,
+      previous: self,
       target: state.entities.get(foeId),
       events: result.events,
     };
+    if (frame.events.some((e) => e.kind === 'hit' && e.targetId === selfId)) taken += 1;
     if (probe.observe(frame, selfId)) count += 1;
   }
 
-  return { id: probe.id, gate: probe.gate, observed: count > 0, count, blows };
+  return { id: probe.id, gate: probe.gate, observed: count > 0, count, blows, taken };
 }
 
 // ---------------------------------------------------------------------------
@@ -282,6 +342,39 @@ const READER: Pick<ConditionalProbe, 'attributes' | 'specializations' | 'equipme
     { specializationId: 'per.resourceSense', tier: 1 },
   ],
   equipment: { skill1: 'sigil.rendingCut', mainHand: 'sword.worn' },
+};
+
+/** Whether the body actually changed position on this tick. */
+const walked = (frame: Frame): boolean =>
+  frame.self.position.x !== frame.previous.position.x ||
+  frame.self.position.y !== frame.previous.position.y;
+
+/**
+ * Constitution at the top of its tree (spec 273).
+ *
+ * Every row below is a mechanic gated on a *state the simulation has to reach*
+ * rather than on a number, which is the class this pass exists for -- and the
+ * class Constitution turned out to be full of. Its moving-Guard grant is the
+ * case that makes the point: the tier audit reported it moving a trait in every
+ * cell while `regenPoise` set the rate to zero on any tick the body moved, so
+ * the purchase was live, satisfiable by content, and unreachable in a fight.
+ * That is Steady Aim's signature exactly, found a spec later by a bespoke probe
+ * because these rows did not exist yet. They do now.
+ */
+const ENDURER: Pick<ConditionalProbe, 'attributes' | 'specializations' | 'equipment'> = {
+  attributes: { constitution: 60 },
+  specializations: [
+    { specializationId: 'con.deepReserves', tier: 3 },
+    { specializationId: 'con.steadyFrame', tier: 3 },
+    { specializationId: 'con.secondWind', tier: 3 },
+    { specializationId: 'con.hardToKill', tier: 3 },
+    { specializationId: 'con.sustainedEffort', tier: 3 },
+    { specializationId: 'con.overflowVitality', tier: 1 },
+    { specializationId: 'con.unbroken', tier: 3 },
+    { specializationId: 'con.deathsDoor', tier: 1 },
+    { specializationId: 'con.deepWell', tier: 3 },
+  ],
+  equipment: { mainHand: 'sword.worn' },
 };
 
 export const CONDITIONAL_PROBES: readonly ConditionalProbe[] = [
@@ -350,6 +443,84 @@ export const CONDITIONAL_PROBES: readonly ConditionalProbe[] = [
     plan: { ticks: 400, attackWith: '' },
     observe: (frame) => hasStatus(frame.self.statuses, StatusId.Prepared, frame.tick),
   },
+  // --- Constitution (spec 273) -------------------------------------------
+  //
+  // A ravager rather than a dummy for all of these: the pool has to be *drained*
+  // before recovery can be observed at all. Against a dummy the Guard sits at
+  // maximum and `min(maxPoise, poise + rate)` returns what it was handed, so
+  // every one of these rows would read NOT OBSERVED for a reason that has
+  // nothing to do with the mechanic -- which is the trap the track's own probe
+  // fell into twice before it was written this way.
+  {
+    ...ENDURER,
+    id: 'con.steadyFrame',
+    gate: 'Guard comes back on a tick the body was moving',
+    monster: 'ravager',
+    plan: { ticks: 1200, attackWith: 'melee.slash', moving: true },
+    observe: (frame) => walked(frame) && frame.self.poise > frame.previous.poise,
+  },
+  {
+    ...ENDURER,
+    id: 'con.secondWind',
+    gate: 'the comeback fires and leaves the body inside the danger band',
+    monster: 'ravager',
+    // Started inside the band: the gate is the comeback, not the grind down to
+    // it, and a fight that has to arrive there measures the ravager's damage.
+    plan: { ticks: 600, attackWith: 'melee.slash', startHealth: 0.28 },
+    observe: (frame) =>
+      !hasStatus(frame.previous.statuses, StatusId.SecondWindSpent, frame.tick) &&
+      hasStatus(frame.self.statuses, StatusId.SecondWindSpent, frame.tick) &&
+      frame.self.health / frame.self.stats.maxHealth <= SCALING.constitution.dangerBelow + 1e-9,
+  },
+  {
+    ...ENDURER,
+    id: 'con.overflowVitality',
+    gate: 'healing that will not fit becomes a shield',
+    monster: 'ravager',
+    plan: { ticks: 600, attackWith: 'melee.slash', startHealth: 0.28 },
+    observe: (frame) => frame.self.shield > frame.previous.shield,
+  },
+  // **Without Second Wind and without Overflow Vitality**, which is not a
+  // narrower build for its own sake: held, the comeback lifts the body to
+  // exactly the top of the band on tick one and its overflow becomes a shield
+  // that then absorbs everything a ravager throws, so health never falls back
+  // in. Measured: Resolute for exactly one frame out of nine hundred, with six
+  // blows landing on the shield. That is the track composing correctly and it
+  // makes this particular gate unreachable, so the scenario states the
+  // condition instead of fighting the rest of the tree for it.
+  {
+    ...ENDURER,
+    specializations: [
+      { specializationId: 'con.deepReserves', tier: 3 },
+      { specializationId: 'con.hardToKill', tier: 3 },
+    ],
+    id: 'con.hardToKill',
+    gate: 'a blow lands on a body that is Resolute',
+    monster: 'ravager',
+    plan: { ticks: 900, attackWith: 'melee.slash', startHealth: 0.2 },
+    observe: (frame, selfId) =>
+      isResolute(frame.self) &&
+      frame.events.some((e) => e.kind === 'hit' && e.targetId === selfId),
+  },
+  // Same omission and the same reason, plus the two rows that make the gate mean
+  // something: without `deathsDoor` a moving body keeps only its fraction, and
+  // this asserts it keeps the *calm* rate instead.
+  {
+    ...ENDURER,
+    specializations: [
+      { specializationId: 'con.deepReserves', tier: 3 },
+      { specializationId: 'con.steadyFrame', tier: 3 },
+      { specializationId: 'con.hardToKill', tier: 3 },
+      { specializationId: 'con.deathsDoor', tier: 1 },
+    ],
+    id: 'con.deathsDoor',
+    gate: 'Guard comes back while Resolute *and* moving',
+    monster: 'ravager',
+    plan: { ticks: 1200, attackWith: 'melee.slash', moving: true, startHealth: 0.2 },
+    observe: (frame) =>
+      isResolute(frame.self) && walked(frame) && frame.self.poise > frame.previous.poise,
+  },
+
 ];
 
 export function observeAll(seed = 1): readonly Observation[] {

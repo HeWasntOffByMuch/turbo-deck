@@ -454,8 +454,39 @@ export interface TraitStats {
   readonly poiseRegenCalm: number;
   /** Fraction of poise regen that still applies while staggered. */
   readonly poiseRegenStaggered: number;
-  /** Poise regenerates while moving, when 1. */
+  /**
+   * Fraction of Guard regeneration a **moving** body keeps (spec 273).
+   *
+   * It was a flag -- 1 meant "regenerates while moving" and 0 meant the rate was
+   * set to zero outright -- and nothing in the game ever granted it, so it was 0
+   * for every body that has ever existed. That made Constitution's whole
+   * guard-recovery half worth nothing to a repositioning player.
+   *
+   * A fraction says the thing the design actually wants: movement *reduces*
+   * recovery rather than switching it off, standing still stays the strongest
+   * posture, and Constitution buys back some of what movement costs.
+   * `deriveTraits` seeds it from `SCALING.constitution.poiseRegenMovingBase` and
+   * clamps at `poiseRegenMovingCap`, which is strictly below 1 -- so kiting can
+   * never recover Guard as fast as holding ground.
+   *
+   * Monsters keep 0, from `NEUTRAL_TRAITS`.
+   */
   readonly poiseRegenMoving: number;
+  /**
+   * While {@link resoluteBelow} applies, Guard recovers at the calm rate
+   * whatever the body is doing (spec 273). A capability, so 1 or 0.
+   *
+   * A flag rather than a number, which is the pattern spec 239 settled on after
+   * three purchasable skills switched off the mechanic they were meant to
+   * improve: what this grants is a *rule about which branch applies*, not a
+   * quantity a layer could reduce.
+   *
+   * It is not redundant with the stagger immunity that shares its threshold.
+   * `applyPoiseDamage` drains the pool even while a body cannot be broken, so
+   * without this a character who survives the danger band climbs out of it on an
+   * empty guard; with it they come out still holding one.
+   */
+  readonly resoluteRegenCalm: number;
   /** Health fraction that triggers Second Wind, and what it restores. */
   readonly secondWindBelow: number;
   readonly secondWindHeal: number;
@@ -475,6 +506,13 @@ export interface TraitStats {
   readonly staggerImmuneBelow: number;
   /** Overheal becomes shield, up to `maxShield`, for this many ticks. 0 is off. */
   readonly overhealShieldTicks: number;
+  /**
+   * The overheal shield's ceiling. `SCALING.constitution.shieldFraction` of max
+   * health, raised by whatever `overhealShieldPct` was granted (spec 273) --
+   * that one is a `TraitModifier` field and deliberately *not* a `TraitStats`
+   * one, because this is the resolved answer and a second field carrying the
+   * input would be a number nothing reads.
+   */
   readonly maxShield: number;
 
   // --- Perception: information and precision ------------------------------
@@ -623,6 +661,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'poiseRegenCalm',
   'poiseRegenStaggered',
   'poiseRegenMoving',
+  'resoluteRegenCalm',
   'secondWindBelow',
   'secondWindHeal',
   'resoluteBelow',

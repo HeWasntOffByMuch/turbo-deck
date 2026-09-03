@@ -276,7 +276,17 @@ describe('the character view', () => {
     for (const track of view.tracks) {
       expect('locked' in track, track.key).toBe(false);
       const specializations = track.nodes.flatMap((node) => node.specializations);
-      expect(specializations, track.key).toHaveLength(6);
+      // Six on every track, plus Constitution's three mastery rows (spec 273),
+      // which sit on the last milestone threshold rather than on one of the
+      // three the six share. Counted off the tables rather than typed, so the
+      // day another track gains depth this keeps asserting the real shape
+      // instead of a number somebody has to remember to bump.
+      const authored = ATTRIBUTES.find((a) => a.key === track.key);
+      expect(authored, track.key).toBeDefined();
+      expect(specializations, track.key).toHaveLength(
+        authored ? specializationsFor(authored.key).length : 0,
+      );
+      expect(specializations.length, track.key).toBeGreaterThanOrEqual(6);
     }
   });
 

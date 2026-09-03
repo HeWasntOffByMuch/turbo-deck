@@ -35,7 +35,7 @@
 
 import type { AttributeKey } from './attributes.js';
 import type { StatModifier } from './modifiers.js';
-import { SCALING, SPECIALIZATION_THRESHOLDS } from './scaling.js';
+import { MILESTONE_THRESHOLDS, SCALING, SPECIALIZATION_THRESHOLDS } from './scaling.js';
 
 export interface SpecializationDefinition {
   readonly id: string;
@@ -62,7 +62,27 @@ export interface SpecializationDefinition {
   readonly description: string;
 }
 
+/**
+ * What one more tier costs.
+ *
+ * Beside the field it reads rather than in `player/specializations.ts`, since
+ * spec 273 gave `data/presets.ts` a second reason to ask -- and a content module
+ * reaching up into `player/` to find out what its own row costs is the wrong way
+ * round. Re-exported from there, so no caller moved.
+ */
+export function costOfNextTier(specialization: SpecializationDefinition): number {
+  return Math.max(1, Math.floor(specialization.costPerTier ?? 1));
+}
+
 const [T1, T2, T3] = SPECIALIZATION_THRESHOLDS as [number, number, number];
+
+/**
+ * Where Constitution's mastery rows sit (spec 273).
+ *
+ * The last milestone threshold rather than a fourth number of its own, so the
+ * track gains depth without gaining a shape the other five do not have.
+ */
+const MASTERY = MILESTONE_THRESHOLDS[2] as number;
 
 function thresholdTierOf(requires: number): number {
   if (requires >= T3) return 3;
@@ -79,8 +99,10 @@ function specialization(
   trigger: string,
   perTier: StatModifier,
   description: string,
+  costPerTier?: number,
 ): SpecializationDefinition {
-  return { id, attribute, name, requires, tier: thresholdTierOf(requires), maxTier, trigger, perTier, description };
+  const row = { id, attribute, name, requires, tier: thresholdTierOf(requires), maxTier, trigger, perTier, description };
+  return costPerTier === undefined ? row : { ...row, costPerTier };
 }
 
 const DEFINITIONS: readonly SpecializationDefinition[] = [
@@ -265,9 +287,18 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('con.deepReserves', 'constitution', 'Deep Reserves', T1, 3, 'passive',
     { maxHealth: 25, traits: { maxPoise: 8 } },
     'More to lose before any of it matters.'),
-  specialization('con.steadyFrame', 'constitution', 'Steady Frame', T1, 3, 'while not casting',
-    { traits: { poiseRegenPct: 0.4 } },
-    'A moment not swinging is a moment getting your feet back.'),
+  // The trigger says what the grant does (spec 273). It read `while not casting`,
+  // and `poiseRegenPct` multiplies the *base* rate -- so it reaches the moving,
+  // committed and staggered branches too, and the not-casting condition belongs
+  // to the CON 20 milestone's `poiseRegenCalm` rather than to this.
+  //
+  // The moving grant is the other half of the same fix. `regenPoise` used to zero
+  // the rate outright on any tick the body moved, so a rank of this was worth
+  // nothing at all to a repositioning player; movement is a fraction now, and
+  // this is the specialization that buys some of it back.
+  specialization('con.steadyFrame', 'constitution', 'Steady Frame', T1, 3, 'always -- most while holding ground',
+    { traits: { poiseRegenPct: 0.4, poiseRegenMoving: 0.05 } },
+    'A moment not swinging is a moment getting your feet back -- and you never fully stop getting them back.'),
   // The lifecycle is on the `secondWindHeal` label in `data/description.ts`,
   // where it is derived (spec 243). It used to be the second sentence here --
   // "it will not fire again until you have climbed back out" -- which was the
@@ -295,6 +326,48 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('con.overflowVitality', 'constitution', 'Overflow Vitality', T3, 1, 'healing past full',
     { traits: { overhealShieldTicks: SCALING.constitution.shieldTicks } },
     'What a heal cannot fit becomes a buffer instead of nothing.'),
+
+  // --- Constitution mastery (spec 273) ------------------------------------
+  //
+  // The track was complete at level 18 of 60 -- 55 attribute points to the cap
+  // plus sixteen tiers is 71 of the 242 a level-60 character has -- and there was
+  // no Constitution purchase at level 40 that a level-18 character had not
+  // already made. These three are what a player who wants to keep investing buys
+  // instead, and each one deepens a mechanic the track already has rather than
+  // adding a mechanic beside it.
+  //
+  // Three decisions about their shape.
+  //
+  // They sit at `MASTERY`, which is the CON 50 threshold the Overflow Vitality
+  // milestone is already on. `TrackNode` has always allowed a node to carry both
+  // an automatic milestone and purchasable rows -- "which kinds of thing hang off
+  // it is the tables' business" -- so the capstone threshold becomes the place
+  // deep investment continues rather than the place it stops.
+  //
+  // They are **priced above 1**, through the `costPerTier` field that has been on
+  // this interface since spec 244 with no row using it and `costOfNextTier` as
+  // its only reader. A late purchase competing with two or four attribute points
+  // is the decision the one-pool economy exists to present; a 1-point mastery
+  // would be strictly better than the attribute point beside it.
+  //
+  // And none of them is a bigger number. Two grant a capability or a ceiling and
+  // one deepens a fraction that changes which posture a fight is played in --
+  // which is the bar spec 273 set against filler, and the reason there are three
+  // of these rather than one per mechanic. Sustained Effort has no mastery here
+  // on purpose: `applyPoiseDamage` refills the pool whole on a break, so
+  // `poiseRegenStaggered` only ever reaches poise drained by blows landing
+  // *inside* the stagger window, and a mastery built on that would be a mastery
+  // of a mechanic whose base is thinner than it looks. Measured and written down
+  // rather than built on.
+  specialization('con.unbroken', 'constitution', 'Unbroken Stride', MASTERY, 3, 'while moving',
+    { traits: { poiseRegenMoving: 0.1 } },
+    'Ground given up is not recovery given up.', 2),
+  specialization('con.deathsDoor', 'constitution', "Death's Door", MASTERY, 1, 'below 30% health',
+    { traits: { resoluteRegenCalm: 1 } },
+    'Down there, nothing you do costs you your guard.', 4),
+  specialization('con.deepWell', 'constitution', 'Deep Well', MASTERY, 3, 'healing past full',
+    { traits: { overhealShieldPct: 0.08 } },
+    'More of what you cannot use now keeps for later.', 2),
 
   // ===================== PERCEPTION =======================
   specialization('per.weakPointStudy', 'perception', 'Weak-Point Study', T1, 3, 'every blow',

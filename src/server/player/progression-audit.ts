@@ -146,6 +146,7 @@ export const TRAIT_DIRECTION: Readonly<Record<keyof TraitStats, Direction>> = {
   poiseRegenCalm: 'up',
   poiseRegenStaggered: 'up',
   poiseRegenMoving: 'up',
+  resoluteRegenCalm: 'up',
   // A threshold: firing earlier is better, so a *higher* fraction is better.
   secondWindBelow: 'up',
   secondWindHeal: 'up',

@@ -704,6 +704,13 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'poiseDamagePct', where: 'trait', name: 'Guard damage', form: 'percent' },
   { key: 'poiseRegenPct', where: 'trait', name: 'Guard regeneration', form: 'percent' },
   { key: 'poiseRegenStaggered', where: 'trait', name: 'Guard regeneration while Staggered', form: 'percent' },
+  // Spec 273. Without a label here the line is *dropped* -- the standard's own
+  // rule that a field with no label draws nothing -- so a specialization that
+  // bought Guard recovery while moving would have described only the half of its
+  // grant that had a name.
+  { key: 'poiseRegenMoving', where: 'trait', name: 'Guard regeneration kept while moving', form: 'percent' },
+  { key: 'resoluteRegenCalm', where: 'trait', form: 'flag', name: 'Guard recovers at its full rate while badly hurt, whatever you are doing.' },
+  { key: 'overhealShieldPct', where: 'trait', name: 'Overheal shield ceiling', form: 'percent' },
   { key: 'windupPoiseArmor', where: 'trait', name: 'Guard protection while winding up', form: 'percent' },
   { key: 'poiseArmorAllCasts', where: 'trait', form: 'flag', name: 'Guard protection covers every cast, not only attacks.' },
 
