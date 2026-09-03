@@ -261,7 +261,14 @@ describe('accounts and sessions', () => {
     // measured a session's *age* rather than the player's absence: a guest who
     // played every day was signed out for good on day thirty, and having no
     // account to sign back in with, lost the character with it.
-    const stack = openTestStack();
+    // A clock this test drives (spec 274). Both `expires_at` values here are
+    // `now + ttl`, so on the wall clock the whole test can run inside one
+    // millisecond and the final `toBeGreaterThan` compares a number with
+    // itself -- which failed about two runs in five on an idle machine, and
+    // more often once the suite got faster. What the assertion is *about* is
+    // that a touch slides the expiry, so the clock is the thing to control.
+    let clock = 1_700_000_000_000;
+    const stack = openTestStack({ now: () => clock });
     try {
       const { auth, db } = stack.current;
       const issued = await auth.createGuest();
@@ -269,17 +276,17 @@ describe('accounts and sessions', () => {
         db.get<{ expires_at: number }>('SELECT expires_at FROM sessions WHERE id = ?', issued.sessionId)
           ?.expires_at ?? 0;
       const atIssue = expiryOf();
-      expect(atIssue).toBeGreaterThan(Date.now());
+      expect(atIssue).toBeGreaterThan(clock);
 
       // A resolve inside the touch interval writes nothing: the throttle is
       // what keeps this off every single connection.
       expect(auth.resolve(issued.token)?.playerId).toBe(issued.playerId);
       expect(expiryOf()).toBe(atIssue);
 
-      // Now stale enough to be touched. Backdating `last_seen_at` rather than
-      // waiting a minute, and rather than plumbing a clock through the whole
-      // persistence stack for one assertion.
-      db.run('UPDATE sessions SET last_seen_at = ? WHERE id = ?', Date.now() - 120_000, issued.sessionId);
+      // Now stale enough to be touched -- by moving the clock past the touch
+      // interval rather than by backdating the row, so what is exercised is
+      // the staleness rule the service actually reads.
+      clock += 120_000;
       expect(auth.resolve(issued.token)?.playerId).toBe(issued.playerId);
 
       expect(expiryOf()).toBeGreaterThan(atIssue);

@@ -4,8 +4,27 @@ on:
   push:
   pull_request:
 
+# Three jobs rather than one (spec 274). They were nine steps in a row, so CI's
+# wall time was their *sum* -- and one of them, `npm test`, is two thirds of it.
+# Split, the wall time is the slowest job instead: the suite runs while
+# typecheck, lint and the asset gates run beside it, and a lint error is
+# reported at 1m rather than at 4m.
+#
+# The split is by *what the step needs*, not by how long it takes, so it stays
+# obvious where a new check belongs: `suite` runs the tests, `static` reads the
+# source without running it, `assets` builds things and compares them to what is
+# committed. Each pays its own `npm ci`, which on a public repository costs
+# nothing but a runner.
+#
+# What deliberately did **not** change is the *set* of gates, or the fact that
+# `suite` runs every test. Selective testing (`npm run test:changed`) is for the
+# developer's inner loop, where the alternative is not running them at all; a
+# merge gate that only ran what it thought was affected would be trusting a
+# dependency graph to be right about the one thing nobody is watching.
+
 jobs:
-  verify:
+  suite:
+    name: tests
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -24,9 +43,36 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm test
+
+  static:
+    name: typecheck + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      # The cacheless forms on purpose. `typecheck:fast` and `lint:fast` exist
+      # for a working tree that is warm from the last run; a fresh checkout has
+      # nothing to warm, so the cache would be pure bookkeeping -- and a merge
+      # gate is the one place where "checked everything, from nothing" is worth
+      # more than the seconds.
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm test
+
+  assets:
+    name: assets + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
       - run: npm run validate:units
       # The manifest is committed so it reviews as a diff, which means it can go
       # stale: change an asset, forget the bake, and the file still claims the

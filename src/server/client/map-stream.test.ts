@@ -26,7 +26,27 @@ import { loadMapFile } from '../../server/world/map-file.js';
 const shipped = loadMapFile();
 const doc = shipped.doc;
 
-const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
+/**
+ * Yield the event loop, so anything the loopback queued is delivered.
+ *
+ * `setImmediate` rather than `setTimeout(resolve, 0)` (spec 274). Node clamps a
+ * zero timeout to one millisecond, so a settle awaited twice per simulated tick
+ * cost 1.12ms of doing nothing against this call's 0.004ms -- 147 of the suite's
+ * 330 CPU-seconds, and 39.6s of `rate-match.test.ts` alone. It is also the
+ * stronger barrier: the check phase runs after the poll phase, where a timer
+ * fires at the top of the next loop iteration.
+ */
+/**
+ * Yield the event loop, so anything the loopback queued is delivered.
+ *
+ * `setImmediate` rather than `setTimeout(resolve, 0)` (spec 274). Node clamps a
+ * zero timeout to one millisecond, so a settle awaited twice per simulated tick
+ * cost 1.12ms of doing nothing against this call's 0.004ms -- 147 of the suite's
+ * 330 CPU-seconds, and 39.6s of `rate-match.test.ts` alone. It is also the
+ * stronger barrier: the check phase runs after the poll phase, where a timer
+ * fires at the top of the next loop iteration.
+ */
+const settle = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
 interface Harness {
   readonly server: GameServer;

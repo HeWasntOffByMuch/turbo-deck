@@ -539,7 +539,7 @@ describe('a level-up reaches the authoritative body', () => {
     // The grant is awaited off the tick -- it is a store write and a
     // recalculation deep enough that draining the microtask queue is not
     // enough, so this yields the loop the way the next real tick would.
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await new Promise((resolve) => setImmediate(resolve));
 
     const session = game.playerManager.get('alice');
     expect(session?.record.level).toBe(2);
