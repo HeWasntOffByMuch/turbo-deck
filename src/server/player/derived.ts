@@ -23,7 +23,7 @@
  * Pure. No clock, no randomness, no entity.
  */
 
-import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
+import { MAX_DAMAGE_REDUCTION, OPENING_READ_MAX_SHARE } from '../../sim/constants.js';
 import { above, linear, reciprocal, SCALING, softCap } from '../data/scaling.js';
 import { desperationSurge, maxFallbackCharges, RESTORATION } from '../data/restoration.js';
 import { emptyTraitTotals, type ModifierTotals } from '../data/modifiers.js';
@@ -97,6 +97,9 @@ export const NEUTRAL_TRAITS: TraitStats = {
   preparedMastery: 0,
   vsAfflictedPct: 0,
   appliesSundered: 0,
+  weaveEffectPct: 0,
+  weaveMaxStacks: 0,
+  weaveTicks: 0,
   overflowHealthPerResource: 0,
   damageToShield: 0,
   maxPoise: SCALING.combat.minPoise,
@@ -104,6 +107,7 @@ export const NEUTRAL_TRAITS: TraitStats = {
   poiseRegenCalm: 0,
   poiseRegenStaggered: 0,
   poiseRegenMoving: 0,
+  resoluteRegenCalm: 0,
   secondWindBelow: 0,
   secondWindHeal: 0,
   resoluteBelow: 0,
@@ -116,14 +120,13 @@ export const NEUTRAL_TRAITS: TraitStats = {
   exposeTicks: 0,
   exposedDamagePct: 0,
   openingReadTicks: 0,
-  vulnerableWeakPointFactor: 1,
-  steadyAimPct: 0,
-  steadyAimTicks: SCALING.perception.steadyAimTicks,
+  openingReadFactor: 0,
+  patientReadPayoffPct: 0,
+  patientReadTicks: 0,
   exploitDamagePct: 0,
   exploitPoiseFactor: 0,
   weakPointResource: 0,
   weakPointKillHeal: 0,
-  abilityWeakPoints: 0,
   vsVulnerableReduction: 0,
   exposedTeamResource: 0,
   resourceCostScale: 1,
@@ -139,7 +142,9 @@ export const NEUTRAL_TRAITS: TraitStats = {
   adaptationCap: 0,
   adaptationTicks: 0,
   conversionCap: 0,
-  masteryRelief: 0,
+  masteryCooldownPct: 0,
+  masteryMaxStacks: 0,
+  masteryTicks: 0,
   restoreOverkillPct: 0,
   restoreEvasivePct: 0,
   restoreAbilityKillPct: 0,
@@ -274,9 +279,24 @@ export function deriveTraits(
   const prepared = t.grantsPrepared > 0;
   const reads = t.grantsOpeningRead > 0;
   const adapts = t.grantsAdaptation > 0;
+  const weaves = t.grantsWeave > 0;
+  // Two more of the same shape (spec 275). Attuned had been inferred from
+  // `attunedCostPct > 0 && attunedTicks > 0`, which forced whichever layer
+  // introduced the mechanic to grant the *window* -- and a window granted per
+  // tier multiplies by the tier, which is why spec 239 had to take it back out
+  // of Conservation's grant and leave the specialization unable to introduce
+  // anything. With a flag the window is `SCALING`'s and either layer turns it on.
+  const attunes = t.grantsAttuned > 0;
+  const masters = t.grantsMastery > 0;
   const spellRadiusPct = Math.max(0, linear(INT, S.intelligence.radiusPer) * shaping + t.spellRadiusPct);
   const spellRangePct = Math.max(0, linear(INT, S.intelligence.rangePer) * shaping + t.spellRangePct);
-  const shapingCostRelief = clamp(t.shapingCostRelief, 0, 1);
+  // Capped **below 1** (spec 270). Efficient Construction pays down the shaping
+  // premium and may never delete it: a specialization whose whole function is to
+  // undo another specialization's drawback is an apology for that drawback
+  // rather than progression, and at three tiers this used to leave a shaped cast
+  // costing exactly what an unshaped one does. Three tiers of 0.2 reach this cap
+  // exactly, so every tier is worth its whole step and none of it is swallowed.
+  const shapingCostRelief = clamp(t.shapingCostRelief, 0, S.intelligence.shapingReliefCap);
 
   // --- Perception ---------------------------------------------------------
   const weakPointChance = clamp(
@@ -284,9 +304,11 @@ export function deriveTraits(
     0,
     S.perception.weakPointCap,
   );
+  // No `growth(...)` term any more (spec 272). `weakPointPayoffPct` folded in
+  // here as a passive and was granted by nothing; repurposed as Patient Read's
+  // conditional payoff it belongs on the read rather than on every weak point.
   const weakPointMultiplier =
-    (S.perception.weakPointMultBase + linear(PER, S.perception.weakPointMultPer)) *
-    growth(t.weakPointPayoffPct);
+    S.perception.weakPointMultBase + linear(PER, S.perception.weakPointMultPer);
   const exposeTicks =
     t.exposedDamagePct > 0
       ? Math.max(0, Math.round(S.perception.exposeTicksBase + linear(PER, S.perception.exposeTicksPer) + t.exposeTicks))
@@ -303,14 +325,28 @@ export function deriveTraits(
     0.25,
     1,
   );
+  // Wisdom's term measures from `above()` since spec 275 -- it was on the raw
+  // attribute, so a character who had spent nothing on Wisdom still received
+  // +6% healing from it. Constitution's term beside it is deliberately left on
+  // the raw attribute here: it belongs to the Constitution pass, and moving one
+  // attribute's baseline inside another attribute's spec is how a retune
+  // becomes invisible. Reported rather than fixed.
   const healingScale = Math.max(
     0,
-    (1 + linear(WIS, S.wisdom.healingPer) + linear(CON, S.constitution.healingPer)) * growth(t.healingPct),
+    (1 + linear(above(WIS), S.wisdom.healingPer) + linear(CON, S.constitution.healingPer)) *
+      growth(t.healingPct),
   );
 
+  // The shield's ceiling. `overhealShieldPct` is the one thing that raises it
+  // (spec 273) -- Deep Reserves already makes the *pool* bigger and this cap is a
+  // fraction of that pool, so a mastery that filled it faster would buy nothing
+  // a bigger health bar does not already buy.
   const maxShield =
     t.overhealShieldTicks > 0 || t.damageToShield > 0
-      ? Math.max(0, context.maxHealth * S.constitution.shieldFraction)
+      ? Math.max(
+          0,
+          context.maxHealth * (S.constitution.shieldFraction + Math.max(0, t.overhealShieldPct)),
+        )
       : 0;
 
   // --- the health economy (spec 156) --------------------------------------
@@ -348,7 +384,10 @@ export function deriveTraits(
     overkillResource: Math.max(0, t.overkillResource),
     momentumTicks: Math.max(0, Math.round(t.momentumTicks)),
     momentumWindupScale: clamp(t.momentumWindupScale, 0, 0.9),
-    heavyWindupScale: reduction(t.heavyWindupReduction),
+    // Dormant since spec 271, pinned at its neutral value. Heavy Handling was
+    // the only grant and its consumer's gate was unreachable; the field stays
+    // because `TRAIT_WIRE_ORDER` is protocol.
+    heavyWindupScale: 1,
 
     attackPointScale,
     backswingCancelPct,
@@ -390,8 +429,13 @@ export function deriveTraits(
     // Deltas onto a shared base also make the two layers additive in the
     // direction they read: every source shortens the stillness and sharpens the
     // opener, and nothing can make either worse.
+    // Floored at a real stance rather than at a quarter second (spec 270): the
+    // duration *is* the cost of the mechanic, so a source that shortened it into
+    // a proc would be selling the payoff without the price. Nothing in the
+    // shipped tree comes near it -- three tiers plus the milestone land at 1.95s
+    // against a 1.5s floor -- which is the state a guard should be in.
     prepareTicks: prepared
-      ? Math.max(rate * 0.25, S.intelligence.prepareTicks + t.prepareTicks)
+      ? Math.max(S.intelligence.prepareFloorTicks, S.intelligence.prepareTicks + t.prepareTicks)
       : 0,
     preparedWindupScale: prepared
       ? clamp(S.intelligence.preparedWindupScale + t.preparedWindupScale, 0.2, 1)
@@ -399,6 +443,14 @@ export function deriveTraits(
     preparedMastery: t.preparedMastery > 0 ? 1 : 0,
     vsAfflictedPct: Math.max(0, t.vsAfflictedPct),
     appliesSundered: t.appliesSundered > 0 ? 1 : 0,
+    // **Arcane Weaving, and what enables it** (spec 270). The same shape spec
+    // 239 gave Prepared, Opening Read and Adaptation, for the same reason: the
+    // capability is a flag and the window and the ceiling come from `SCALING`
+    // behind it, so a tier grants what its tooltip says and cannot switch the
+    // mechanic off by granting a delta of the thing that gates it.
+    weaveEffectPct: weaves ? Math.max(0, t.weaveEffectPct) : 0,
+    weaveMaxStacks: weaves ? S.intelligence.weaveMaxStacks : 0,
+    weaveTicks: weaves ? S.intelligence.weaveTicks : 0,
     // **Arcane Overflow's price, which progression may only ever lower**
     // (spec 239).
     //
@@ -423,13 +475,29 @@ export function deriveTraits(
     poiseRegen: Math.max(0, poiseRegen),
     poiseRegenCalm: Math.max(0, t.poiseRegenCalm),
     poiseRegenStaggered: clamp(t.poiseRegenStaggered, 0, 1),
-    poiseRegenMoving: t.poiseRegenMoving > 0 ? 1 : 0,
+    // **A fraction, not a switch** (spec 273). This read
+    // `t.poiseRegenMoving > 0 ? 1 : 0` and nothing in the game ever granted the
+    // modifier, so it was 0 for every body -- and `regenPoise` reads 0 as "set
+    // the rate to zero", which is what made Steady Frame and the CON 20
+    // milestone worth nothing to a repositioning player.
+    //
+    // Seeded from `SCALING` rather than from a grant, because "movement reduces
+    // recovery" is a rule about the movement system rather than something
+    // Constitution buys; what Constitution buys is how much of it comes back.
+    // Clamped **once**, at the end, so two grants of "a little more while
+    // moving" are the sum rather than whichever reached the cap first.
+    poiseRegenMoving: clamp(
+      S.constitution.poiseRegenMovingBase + Math.max(0, t.poiseRegenMoving),
+      0,
+      S.constitution.poiseRegenMovingCap,
+    ),
+    resoluteRegenCalm: t.resoluteRegenCalm > 0 ? 1 : 0,
     // The threshold is authored by the milestone; a stat skill contributes the
     // *size* of the effect and deliberately not the threshold, so ranking one up
     // can never move when it fires.
-    secondWindBelow: t.secondWindHeal > 0 ? Math.max(0.3, t.secondWindBelow) : 0,
+    secondWindBelow: t.secondWindHeal > 0 ? Math.max(S.constitution.dangerBelow, t.secondWindBelow) : 0,
     secondWindHeal: clamp(t.secondWindHeal, 0, 0.5),
-    resoluteBelow: t.resoluteReduction > 0 ? Math.max(0.3, t.resoluteBelow) : 0,
+    resoluteBelow: t.resoluteReduction > 0 ? Math.max(S.constitution.dangerBelow, t.resoluteBelow) : 0,
     resoluteReduction: clamp(t.resoluteReduction, 0, 0.4),
     // **Granted, never inferred** (spec 239). This used to be `resoluteBelow`'s
     // twin -- `isResolute` answered both questions -- so the Constitution 25
@@ -461,14 +529,26 @@ export function deriveTraits(
     openingReadTicks: reads
       ? Math.max(0, Math.round(S.perception.openingReadTicks + t.openingReadTicks))
       : 0,
-    vulnerableWeakPointFactor: reads ? Math.max(1, 1 + t.vulnerableWeakPointFactor) : 1,
-    steadyAimPct: Math.max(0, t.steadyAimPct),
-    steadyAimTicks: Math.max(1, Math.round(S.perception.steadyAimTicks + t.steadyAimTicks)),
+    // Held strictly **below 1** rather than at it: the composition is
+    // `base + (1 - base) * factor`, so a factor of exactly 1 would make every
+    // read against a Vulnerable body a certainty regardless of what was spent
+    // on the base -- which is the failure this replaced, arriving by the other
+    // door. Nothing in the content reaches the bound; it is a guard on a number
+    // arriving from a modifier, not a ceiling the tree is priced against.
+    openingReadFactor: reads ? clamp(t.openingReadFactor, 0, OPENING_READ_MAX_SHARE) : 0,
+    patientReadPayoffPct: Math.max(0, t.patientReadPayoffPct),
+    // 0 is *off*, so the base is added only for somebody who bought a tier --
+    // the rule `exposeTicks` above already follows, and what keeps a character
+    // who has never heard of Patient Read from banking one every two seconds.
+    // The interval is the mechanic's own constant and no tier moves it: what a
+    // tier buys is the payoff. A purchasable "wait less" would make the top of
+    // the tree a shorter decision rather than a bigger one, which is the shape
+    // spec 258 records Agility pulling against itself with.
+    patientReadTicks: t.patientReadPayoffPct > 0 ? S.perception.patientReadTicks : 0,
     exploitDamagePct: Math.max(0, t.exploitDamagePct),
     exploitPoiseFactor: Math.max(0, t.exploitPoiseFactor),
     weakPointResource: Math.max(0, t.weakPointResource),
     weakPointKillHeal: clamp(t.weakPointKillHeal, 0, 0.25),
-    abilityWeakPoints: t.abilityWeakPoints > 0 ? 1 : 0,
     vsVulnerableReduction: clamp(t.vsVulnerableReduction, 0, 0.4),
     exposedTeamResource: Math.max(0, t.exposedTeamResource),
 
@@ -477,9 +557,16 @@ export function deriveTraits(
     healingScale,
     healingSurge,
     healingSurgeBelow,
-    attunedMaxStacks: Math.max(0, Math.round(t.attunedMaxStacks)),
-    attunedTicks: Math.max(0, Math.round(t.attunedTicks)),
-    attunedCostPct: clamp(t.attunedCostPct, 0, 0.2),
+    // Behind the flag, and reading `SCALING` for the window and the stack count
+    // exactly as Adaptation below does (spec 275) -- so Conservation can sit at
+    // the first threshold and be live on its own tier, and the milestone above
+    // it deepens the mechanic it names rather than being the only thing that
+    // can introduce one.
+    attunedMaxStacks: attunes
+      ? Math.max(1, Math.round(S.wisdom.attunedMaxStacks + t.attunedMaxStacks))
+      : 0,
+    attunedTicks: attunes ? Math.max(1, Math.round(S.wisdom.attunedTicks + t.attunedTicks)) : 0,
+    attunedCostPct: attunes ? clamp(t.attunedCostPct, 0, S.wisdom.attunedCostCap) : 0,
     attunedFromWeakPoints: t.attunedFromWeakPoints > 0 ? 1 : 0,
     // **Adaptation, and what enables it** (spec 239). The third of the same
     // shape and the one that was inert twice over: `markTarget` needs a window
@@ -489,22 +576,39 @@ export function deriveTraits(
     // milestone's own cap was the only cap there was.
     //
     // Base window and base cap come from `SCALING` behind the flag, and both
-    // remain summable: `pair.enduring` grants `adaptationCap: 0.15` and still
-    // reaches the 45% its effect line promises.
+    // remain summable. Since spec 275 the **cap is what deep investment buys**:
+    // it was granted by nothing, so every tier and the milestone converged on
+    // 0.3 and bought only hits-to-cap. The 0.6 here is unchanged and is the
+    // guard against a modifier rather than a number the tree is priced against
+    // -- a fully specialized body reaches 0.5.
     adaptationPerStack: adapts ? clamp(t.adaptationPerStack, 0, 0.2) : 0,
     adaptationCap: adapts ? clamp(S.wisdom.adaptationCap + t.adaptationCap, 0, 0.6) : 0,
     adaptationTicks: adapts
       ? Math.max(1, Math.round(S.wisdom.adaptationTicks + t.adaptationTicks))
       : 0,
     conversionCap: Math.max(0, t.conversionCap),
-    masteryRelief: Math.max(0, Math.round(t.masteryRelief)),
+    // Mastery, on Adaptation's shape and behind its own flag (spec 275). The
+    // per-stack size is what the tiers buy; the ceiling and the window are
+    // `SCALING`'s, so a tier cannot multiply a duration.
+    masteryCooldownPct: masters ? clamp(t.masteryCooldownPct, 0, 0.1) : 0,
+    masteryMaxStacks: masters
+      ? Math.max(1, Math.round(S.wisdom.masteryMaxStacks + t.masteryMaxStacks))
+      : 0,
+    masteryTicks: masters ? Math.max(1, Math.round(S.wisdom.masteryTicks + t.masteryTicks)) : 0,
 
     restoreOverkillPct: linear(above(STR), R.strengthOverkillPer),
     restoreEvasivePct: linear(above(AGI), R.agilityEvasivePer),
     restoreAbilityKillPct: linear(above(INT), R.intelligenceAbilityPer),
     restoreWeakPointPct: linear(above(PER), R.perceptionWeakPointPer),
     moteAttractRadius: linear(above(PER), R.perceptionAttractPer),
-    restoreSalvagePct: Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)),
+    // The attribute's own curve is capped low and the specialization sums on top
+    // (spec 275): at the old 0.6 ceiling the curve was met at Wisdom 35 and the
+    // next 25 points bought nothing at all.
+    restoreSalvagePct: clamp(
+      Math.min(R.wisdomSalvageCap, linear(above(WIS), R.wisdomSalvagePer)) + t.salvagePct,
+      0,
+      0.75,
+    ),
     fallbackCharges: maxFallbackCharges(CON),
   };
 }

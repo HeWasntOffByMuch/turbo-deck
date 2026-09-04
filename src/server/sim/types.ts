@@ -666,6 +666,58 @@ export interface ServerEntity {
    * is the length of the current lull.
    */
   readonly stillSinceTick: number;
+  /**
+   * The last tick this body broke its planted stance (spec 270).
+   *
+   * Deliberately **not** {@link stillSinceTick}, which is stamped by casting.
+   * The artillery stance has to survive the cast it was taken for -- that is
+   * the whole loop -- so it needs its own clock.
+   *
+   * Three clocks now, one per question, and that separation is the point rather
+   * than an accident of three specs landing together: `stillSinceTick` is "how
+   * long since I did anything", this is "how long since I chose to move", and
+   * {@link lastAttackTick} below is "how long since I attacked". Spec 272 wrote
+   * the third rather than widening one of the first two, for the reason this
+   * comment was originally about -- one field read by two attributes is one
+   * edit away from being a change to both.
+   *
+   * Broken by *intentional* movement rather than by any displacement at all:
+   * `advanceProgression` compares the step against
+   * `SCALING.intelligence.stanceMoveEpsilon`, so collision push-out and (if a
+   * player is ever given `bumps`) a crowd nudge do not cost the stance. Being
+   * hit stamps it, and consuming Prepared re-stamps it so the interval starts
+   * again rather than one preparation accelerating every later cast.
+   */
+  readonly stanceSinceTick: number;
+  /**
+   * The last non-basic ability this body wove (spec 270).
+   *
+   * Arcane Weaving asks whether *this* cast differs from the *previous* one, so
+   * the chain needs exactly one id of memory and nothing more. Not a list: a
+   * rotation of two abilities alternating is a real rotation and should count,
+   * which a "no repeats within the window" rule would refuse.
+   *
+   * Empty for a body that has never cast one, which is why the comparison is
+   * against an id rather than against a nullable -- `'' !== 'skill.arcLash'` is
+   * already the right answer for the first cast of a fight.
+   */
+  readonly lastWovenAbilityId: string;
+  /**
+   * The last tick this body **committed** an attack (spec 272).
+   *
+   * Perception's Patient Read asks "how long since I last attacked", which is
+   * the third of the three questions above and has to be its own field for the
+   * reason {@link stanceSinceTick} gives: `stillSinceTick` is "how long since I
+   * did anything" and is stamped by moving, being hit and casting, and
+   * `stanceSinceTick` is "how long since I chose to move". Only an attack
+   * becoming real stamps this one, which is what lets a Perception character
+   * reposition the whole time they are waiting.
+   *
+   * The **commit**, never the wind-up: a swing withdrawn from is a feint rather
+   * than an attack, and costs the time it took and nothing else -- the boundary
+   * spec 144 already draws for the refund.
+   */
+  readonly lastAttackTick: number;
 
   // --- the health economy (spec 156) --------------------------------------
   /**

@@ -398,6 +398,7 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   if (ability.effects && ability.effects.length > 0) {
     const out: string[] = [];
     for (const effect of ability.effects) out.push(...effectLine(effect, ability));
+    out.push(...guardImpactLines(ability));
     return out;
   }
 
@@ -411,9 +412,30 @@ function effectLines(ability: AbilityDefinition): readonly string[] {
   // choosing between weapons.
   if (ability.basicAttack === true) out.push('Deals your weapon damage.');
   else if (ability.damage > 0) out.push(`Deals ${amount(ability.damage)} damage.`);
+  out.push(...guardImpactLines(ability));
   const healing = healLine(ability.healing ?? 0, ability.healingFraction ?? 0, true);
   if (healing) out.push(healing);
   return out;
+}
+
+/**
+ * What this row's blow does to a **Guard** pool (spec 271).
+ *
+ * A multiple rather than a number, and that is the only honest line available:
+ * the amount is the caster's own `staggerPower` times this, so it depends on who
+ * is holding the sigil, and this table describes a row rather than a character.
+ * The multiple is what the row itself states.
+ *
+ * A basic attack says nothing here on purpose. Its impact is the *weapon's*, so
+ * a line on the ability would be describing something the ability does not own
+ * -- the same reason `Deals your weapon damage` stands in for a damage number
+ * one line up.
+ */
+function guardImpactLines(ability: AbilityDefinition): readonly string[] {
+  if (ability.basicAttack === true) return [];
+  const impact = ability.guardImpact ?? 0;
+  if (impact <= 0) return [];
+  return [`Deals ${amount(impact)}x your ${GUARD_NAME} damage.`];
 }
 
 /** One effect. Returns more than one line where the effect has a stacking rule. */
@@ -584,8 +606,8 @@ function noteLines(ability: AbilityDefinition): readonly string[] {
  * **A field with no row here draws no line at all.** That is the same rule the
  * item table has always had, and here it is load-bearing rather than defensive:
  * the trait layer is not uniform the way `modifiers` is. Some of its fields are
- * magnitudes, some are unlock flags, some are thresholds, and three of them
- * (`juggernautBelow`, `masteryRelief`, `overflowHealthPerResource`) cannot be
+ * magnitudes, some are unlock flags, some are thresholds, and two of them
+ * (`juggernautBelow`, `overflowHealthPerResource`) cannot be
  * turned into a signed quantity that reads correctly in English. A missing line
  * leaves the authored sentence to carry the skill; an invented one is a lie
  * about a number, which is what this document was written to stop.
@@ -682,6 +704,13 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'poiseDamagePct', where: 'trait', name: 'Guard damage', form: 'percent' },
   { key: 'poiseRegenPct', where: 'trait', name: 'Guard regeneration', form: 'percent' },
   { key: 'poiseRegenStaggered', where: 'trait', name: 'Guard regeneration while Staggered', form: 'percent' },
+  // Spec 273. Without a label here the line is *dropped* -- the standard's own
+  // rule that a field with no label draws nothing -- so a specialization that
+  // bought Guard recovery while moving would have described only the half of its
+  // grant that had a name.
+  { key: 'poiseRegenMoving', where: 'trait', name: 'Guard regeneration kept while moving', form: 'percent' },
+  { key: 'resoluteRegenCalm', where: 'trait', form: 'flag', name: 'Guard recovers at its full rate while badly hurt, whatever you are doing.' },
+  { key: 'overhealShieldPct', where: 'trait', name: 'Overheal shield ceiling', form: 'percent' },
   { key: 'windupPoiseArmor', where: 'trait', name: 'Guard protection while winding up', form: 'percent' },
   { key: 'poiseArmorAllCasts', where: 'trait', form: 'flag', name: 'Guard protection covers every cast, not only attacks.' },
 
@@ -694,7 +723,6 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   // says *recovery*.
   { key: 'backswingCancelReduction', where: 'trait', name: 'Backswing you may break off', form: 'percent' },
   { key: 'handlingReduction', where: 'trait', name: 'Wind-up reduction for abilities that launch something', form: 'percent' },
-  { key: 'heavyWindupReduction', where: 'trait', name: 'Wind-up reduction for heavy abilities', form: 'percent' },
 
   { key: 'flowTicks', where: 'trait', name: 'Flow duration', form: 'seconds' },
   { key: 'flowDurationPct', where: 'trait', name: 'Flow duration', form: 'percent' },
@@ -711,6 +739,13 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'momentumWindupScale', where: 'trait', name: 'Wind-up reduction while Momentum is held', form: 'percent' },
   { key: 'perfectExitResource', where: 'trait', name: `${RESOURCE_NAME} on a perfect exit`, form: 'flat' },
   { key: 'perfectExitWindowTicks', where: 'trait', name: 'Perfect exit window', form: 'seconds' },
+  // Executioner's pair (spec 271). Two lines rather than one composed sentence,
+  // because they are two independently-moving numbers -- each tier raises the
+  // payoff and widens the window -- and `GRANT_LABELS` states one field each.
+  // "Staggered" is the controlled term for a broken Guard, so the condition
+  // names it rather than saying "broken".
+  { key: 'executeBonus', where: 'trait', name: 'Damage to Staggered targets under the threshold', form: 'percent' },
+  { key: 'executeBelow', where: 'trait', name: 'Execute health threshold', form: 'percent' },
   { key: 'overkillResource', where: 'trait', name: `${RESOURCE_NAME} on an overkill`, form: 'flat' },
 
   // The two below are **not** reductions and their names must not become one.
@@ -729,6 +764,17 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   // and each is worth a line, because before that spec a player could buy the
   // skill granting it and get nothing at all.
   { key: 'grantsPrepared', where: 'trait', form: 'flag', name: 'Standing still primes your next ability.' },
+  // Arcane Weaving (spec 270). The flag says what the mechanic *is* and the
+  // percentage says what a tier is worth, which is the split every capability in
+  // this table already uses -- a player reading a tier-2 tooltip needs the
+  // sentence once and the number scaled.
+  { key: 'grantsWeave', where: 'trait', form: 'flag', name: 'Casting a different ability than the last builds Weave.' },
+  { key: 'weaveEffectPct', where: 'trait', name: 'Affliction strength per Weave stack', form: 'percent' },
+  // `appliesSundered` carried no label while it was authored as a zero and
+  // therefore never drawn (spec 270 gave it a real value). A flag, because what
+  // it grants is a capability rather than a quantity: how much armour Sundered
+  // takes is `SUNDER_ARMOR`'s, shared with every other source of it.
+  { key: 'appliesSundered', where: 'trait', form: 'flag', name: 'Your blows sunder a target that is already afflicted.' },
   { key: 'overflowCostReduction', where: 'trait', name: 'Relief on Arcane Overflow’s health cost', form: 'percent' },
 
   {
@@ -761,21 +807,57 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'grantsOpeningRead', where: 'trait', form: 'flag', name: 'An enemy that commits an attack becomes Vulnerable.' },
   { key: 'openingReadTicks', where: 'trait', name: 'Vulnerable duration', form: 'seconds' },
   {
-    key: 'vulnerableWeakPointFactor',
+    key: 'openingReadFactor',
     where: 'trait',
-    name: 'Weak-point chance against a Vulnerable target',
+    // "Of the chance you are still missing" rather than "chance", because that
+    // is what the number is (spec 272): it takes a share of the probability
+    // left over the base rather than multiplying the base. A line reading
+    // "+30% weak-point chance" would describe the mechanic this replaced.
+    name: 'Weak-point chance closed against a Vulnerable target, of what is left',
     form: 'percent',
   },
-  { key: 'steadyAimPct', where: 'trait', name: 'Damage after standing still', form: 'percent' },
+  {
+    key: 'patientReadPayoffPct',
+    where: 'trait',
+    name: 'Weak-point damage after not attacking',
+    form: 'percent',
+  },
+  // Exposed's line says whose damage it raises, because it raises **everyone's**
+  // and a player who does not know that cannot value the row (spec 272). The
+  // magnitude is the exposer's own and rides on the target, so a teammate
+  // hitting a body you exposed gets it with no party system anywhere.
+  {
+    key: 'exposedDamagePct',
+    where: 'trait',
+    name: 'Damage an Exposed target takes from anyone',
+    form: 'percent',
+  },
 
   { key: 'costReduction', where: 'trait', name: 'Ability cost reduction', form: 'percent' },
+  { key: 'cooldownReduction', where: 'trait', name: 'Active ability cooldown reduction', form: 'percent' },
   { key: 'healingPct', where: 'trait', name: 'Healing received', form: 'percent' },
+  { key: 'grantsAttuned', where: 'trait', form: 'flag', name: 'An ability that connects grants Attuned, discounting your next cast.' },
   { key: 'attunedCostPct', where: 'trait', name: 'Ability cost reduction per Attuned stack', form: 'percent' },
+  { key: 'attunedMaxStacks', where: 'trait', name: 'Maximum Attuned stacks', form: 'flat' },
   { key: 'attunedTicks', where: 'trait', name: 'Attuned duration', form: 'seconds' },
   { key: 'grantsAdaptation', where: 'trait', form: 'flag', name: 'Being hit by the same ability builds resistance to it.' },
   { key: 'adaptationPerStack', where: 'trait', name: 'Adaptation per stack', form: 'percent' },
+  // The number the mechanic is actually played around, and it had no row at all
+  // until spec 275 -- so the 30% ceiling every tier converged on was stated
+  // nowhere in the interface.
+  { key: 'adaptationCap', where: 'trait', name: 'Maximum Adaptation resistance', form: 'percent' },
   { key: 'adaptationTicks', where: 'trait', name: 'Adaptation duration', form: 'seconds' },
   { key: 'conversionCap', where: 'trait', name: 'Overflow conversion cap', form: 'flat' },
+  { key: 'salvagePct', where: 'trait', name: 'Overheal salvaged into restoration', form: 'percent' },
+  // Mastery (spec 275). Its predecessor was the worst-described node on the
+  // track: `masteryRelief` could not be turned into a signed quantity, so the
+  // sheet drew "Requires Wisdom 25. Always active." and no effect line at all,
+  // and the mechanic survived only in the flavour string. Every part of the new
+  // one is a quantity, so every part of it is stated.
+  { key: 'grantsMastery', where: 'trait', form: 'flag', name: 'Using an active ability makes that ability come back sooner next time.' },
+  { key: 'masteryCooldownPct', where: 'trait', name: "Cooldown reduction per Mastery stack, on that ability", form: 'percent' },
+  { key: 'masteryMaxStacks', where: 'trait', name: 'Maximum Mastery stacks per ability', form: 'flat' },
+  { key: 'masteryTicks', where: 'trait', name: 'Mastery duration', form: 'seconds' },
 ];
 
 /** A trailing full stop removed, so a line can be extended before it is closed. */

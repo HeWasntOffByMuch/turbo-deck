@@ -94,10 +94,52 @@ export const StatusId = {
   Momentum: 'momentum',
   /** Intelligence: primed by stillness, spent on the next ability. */
   Prepared: 'prepared',
+  /**
+   * Intelligence: this body is planting itself, and comes up when this expires
+   * (spec 270).
+   *
+   * The one status here whose **expiry is the tell**. A stance nobody can see
+   * is a stance nobody can punish, and the counterplay the whole mechanic is
+   * priced against is *make the caster move* -- so the buildup has to be
+   * legible to the person deciding whether to charge. `expiresAtTick` is the
+   * tick `Prepared` lands, so a client reads the countdown off machinery that
+   * already replicates rather than off a progress bar with a wire field behind
+   * it. Cleared the moment the stance breaks, and again when it pays out.
+   */
+  Preparing: 'preparing',
+  /**
+   * Intelligence: a spell just ate this body's health (spec 270).
+   *
+   * Carries nothing the sim reads. It exists because an overdraw cast writes
+   * health directly -- bypassing `resolveBlow`, so no `hit` event fires and no
+   * damage number floats -- and the health bar's white chunk and kick are the
+   * same ones a blow leaves. Without this, the capstone's whole feedback is
+   * indistinguishable from being attacked by something off screen.
+   */
+  Overdrawn: 'overdrawn',
+  /**
+   * Intelligence: consecutive *different* abilities (spec 270).
+   *
+   * Stacks while the caster keeps varying what they throw and lapses when they
+   * repeat themselves or stop. What it is worth is `weaveEffectPct` on the
+   * magnitude of afflictions this body applies -- manipulation rather than a
+   * second damage multiplier, which is the distinction that stops this being
+   * `int.potency` with extra steps.
+   */
+  Weave: 'weave',
   /** Perception: left on a target by a weak point. Everyone benefits. */
   Exposed: 'exposed',
   /** Perception: an enemy that has just committed an attack. */
   Vulnerable: 'vulnerable',
+  /**
+   * Perception: banked by **not attacking**, spent on the next weak point.
+   *
+   * Prepared's counterpart and deliberately not its twin (spec 272): that one
+   * is banked by holding still and Intelligence owns it, this one is banked by
+   * withholding the attack, so a Perception character pays in tempo rather than
+   * in position and may move the whole time.
+   */
+  PatientRead: 'patientRead',
   /** Strength+Intelligence: armour reduced. */
   Sundered: 'sundered',
   /** Wisdom: efficiency built by landing things. */
@@ -253,6 +295,24 @@ export const ADAPTED_PREFIX = 'adapt:';
 
 export function adaptedKey(abilityId: string): string {
   return `${ADAPTED_PREFIX}${abilityId}`;
+}
+
+/**
+ * Mastery is per ability id too: `mastery:skill.poisonDart` (spec 275).
+ *
+ * Deliberately the same shape as Adaptation, because it is the same idea
+ * pointed the other way: an enemy repeats an ability and Wisdom learns to
+ * resist it, you repeat an ability and Wisdom learns to use it more
+ * efficiently. Keeping the key shapes identical is what lets both be swept,
+ * counted and folded for the wire by one rule apiece rather than two.
+ *
+ * The prefixes must not be prefixes of one another, or `adapt:` would match a
+ * mastery key in any code that filters by `startsWith`.
+ */
+export const MASTERY_PREFIX = 'mastery:';
+
+export function masteryKey(abilityId: string): string {
+  return `${MASTERY_PREFIX}${abilityId}`;
 }
 
 /** The status if it is live on this tick, or null. Never returns a stale entry. */

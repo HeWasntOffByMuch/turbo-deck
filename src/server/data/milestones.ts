@@ -158,7 +158,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     grants: {
       traits: {
         grantsPrepared: 1,
-        prepareTicks: -Math.round(SCALING.intelligence.prepareTicks * 0.25),
+        prepareTicks: -SCALING.intelligence.prepareMilestoneRelief,
         preparedWindupScale: -0.1,
       },
     },
@@ -190,7 +190,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'constitution',
     threshold: TIER_1,
     name: 'Steady Frame',
-    effect: 'Your poise recovers twice as fast whenever you are not committed to a cast.',
+    // It said "whenever you are not committed to a cast", and left out the
+    // condition that decided everything (spec 273): `regenPoise` reaches the calm
+    // branch only for a body that is *also* not moving, and until this spec a
+    // moving body recovered nothing at all. Holding ground is what this buys, and
+    // now the sentence says so.
+    effect: 'While you hold ground -- not moving and not committed to a cast -- your Guard recovers twice as fast.',
     grants: { traits: { poiseRegenCalm: 1 } },
     deepens: 'con.steadyFrame',
   },
@@ -204,7 +209,18 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     // three ranks of a damage reduction -- silently handed out the qualitative
     // half of this milestone as well.
     effect: 'Below 30% health you cannot be staggered and take 20% less damage.',
-    grants: { traits: { resoluteBelow: 0.3, resoluteReduction: 0.2, staggerImmuneBelow: 0.3 } },
+    // The two thresholds are `SCALING.constitution.dangerBelow` rather than a
+    // literal (spec 273), because Second Wind's recovery ceiling is now a reader
+    // of the same number: stabilizing lands the body at the top of this band
+    // instead of above it, and that only stays true if retuning the band moves
+    // the ceiling with it.
+    grants: {
+      traits: {
+        resoluteBelow: SCALING.constitution.dangerBelow,
+        resoluteReduction: 0.2,
+        staggerImmuneBelow: SCALING.constitution.dangerBelow,
+      },
+    },
     deepens: 'con.hardToKill',
   },
   {
@@ -212,7 +228,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'constitution',
     threshold: TIER_3,
     name: 'Overflow Vitality',
-    effect: 'Healing past full becomes a shield, up to a quarter of your health, for 8s.',
+    // A **delta**, and it reads as one now (spec 273). It said "for 8s", which is
+    // what this row grants on its own and is wrong the moment the CON 40
+    // specialization -- which grants the same 480 ticks -- is also held, because
+    // the two sum to sixteen seconds. `deepens` is what says the two are one
+    // mechanic; the sentence has to say which part of it this is.
+    effect: 'Your overheal shield lasts 8 seconds longer.',
     grants: { traits: { overhealShieldTicks: SCALING.constitution.shieldTicks } },
     deepens: 'con.overflowVitality',
   },
@@ -237,12 +258,12 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     // and no factor -- so three purchasable ranks did nothing for twenty-five
     // points. The factor is a **bonus above 1** now, so the skill's share and
     // this one add rather than one of them being a total.
-    effect: 'An enemy that has just committed an attack is Vulnerable for longer, and you are far likelier to find a weak point on it.',
+    effect: 'An enemy that has just committed an attack is Vulnerable for longer, and you close most of the gap to a certain weak point on it.',
     grants: {
       traits: {
         grantsOpeningRead: 1,
         openingReadTicks: Math.round(SCALING.perception.openingReadTicks * 0.5),
-        vulnerableWeakPointFactor: SCALING.perception.vulnerableWeakPointBonus,
+        openingReadFactor: SCALING.perception.openingReadShare,
       },
     },
     deepens: 'per.openingRead',
@@ -259,42 +280,47 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
 
   // --- Wisdom -------------------------------------------------------------
   {
-    id: 'wis.discipline',
+    // Spec 274. This was `wis.discipline` and it named a specialization it had
+    // no trait in common with: it grants the Attuned family and Resource
+    // Discipline granted `costReduction`. The mechanic it introduces is
+    // Conservation's, so it says so -- and Conservation moved to the first
+    // threshold, which is what lets a milestone deepen a specialization the
+    // track has already unlocked, the way the other seventeen do.
+    id: 'wis.conservation',
     attribute: 'wisdom',
     threshold: TIER_1,
-    name: 'Resource Discipline',
-    // `attunedCostPct` is capped at 0.2 and the Wisdom 25 skill adds to the same
-    // number (spec 239): at its old 0.07 a rank, rank 2 was half wasted and rank
-    // 3 did nothing. 0.08 here plus three ranks of 0.04 is the cap exactly.
-    effect: 'An ability that connects grants Attuned: 8% off your next cast, up to three stacks.',
+    name: 'Conservation',
+    // `attunedCostPct` is capped at `SCALING.wisdom.attunedCostCap` and the
+    // Wisdom 10 specialization adds to the same number: 0.04 here plus three
+    // tiers of 0.02 is the cap exactly, so every tier moves it and the ceiling
+    // is still reached. All three halved together by spec 276 -- see the cap's
+    // own docstring for why a standing discount that size was the whole of what
+    // made Conservation solve the economy on its own.
+    effect: 'An ability that connects grants Attuned: 4% off your next cast, up to three stacks.',
     grants: {
       traits: {
-        attunedTicks: SCALING.wisdom.attunedTicks,
-        attunedMaxStacks: SCALING.wisdom.attunedMaxStacks,
-        attunedCostPct: 0.08,
+        grantsAttuned: 1,
+        attunedCostPct: 0.04,
       },
     },
-    deepens: 'wis.discipline',
+    deepens: 'wis.conservation',
   },
   {
     id: 'wis.adaptation',
     attribute: 'wisdom',
     threshold: TIER_2,
     name: 'Adaptation',
-    // Grants Adaptation and deepens it (spec 239). The cap and the window are
-    // `SCALING`'s base now rather than this milestone's, which is what lets the
-    // Wisdom 25 skill introduce the mechanic instead of granting a per-stack
-    // size that nothing could read.
-    //
-    // It adds **no cap of its own**, deliberately: `pair.enduring` promises "45%
-    // instead of 30%" in a line a player reads, and the base plus that pair's
-    // 0.15 is exactly those two numbers. A milestone raising it as well would
-    // make the pair's own sentence false. What this layer deepens is the rate.
-    effect: 'Being hit by the same ability twice builds resistance to it half again as fast.',
+    // Grants Adaptation and deepens it. Since spec 275 it deepens the *ceiling*
+    // as well as the rate: the cap used to be `SCALING`'s alone, so this
+    // milestone and all three tiers of the specialization converged on 0.3 and
+    // bought nothing but hits-to-cap.
+    effect:
+      'Being hit by the same ability builds resistance to it half again as fast, and 5% further.',
     grants: {
       traits: {
         grantsAdaptation: 1,
         adaptationPerStack: 0.06,
+        adaptationCap: 0.05,
       },
     },
     deepens: 'wis.adaptation',
@@ -304,7 +330,10 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_3,
     name: 'Conversion',
-    effect: 'Healing you cannot use becomes resource instead, up to 15 at a time.',
+    // Stated as the delta it is (spec 275). It read "up to 15 at a time", which
+    // is what the *specialization* also grants -- so a player holding both was
+    // told 15 twice and had 30.
+    effect: 'Healing you cannot use becomes resource instead: 15 more per event.',
     grants: { traits: { conversionCap: SCALING.wisdom.conversionCap } },
     deepens: 'wis.conversion',
   },

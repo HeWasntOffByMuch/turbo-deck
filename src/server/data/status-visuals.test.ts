@@ -63,11 +63,15 @@ describe('the visible status table (spec 186)', () => {
     }
   });
 
-  it('shows the eighteen conditions a player can act on', () => {
+  it('shows the nineteen conditions a player can act on', () => {
     for (const id of [
       StatusId.Flow,
       StatusId.Momentum,
       StatusId.Prepared,
+      // Perception's counterpart to Prepared (spec 272): banked by not
+      // attacking, and pointable-at for the same reason -- a player who
+      // paid for it in attacks not thrown has to be able to see it.
+      StatusId.PatientRead,
       StatusId.Attuned,
       StatusId.Exposed,
       StatusId.Vulnerable,
@@ -101,7 +105,7 @@ describe('the visible status table (spec 186)', () => {
       expect(visualFor(id), id).not.toBeNull();
     }
     expect(visualFor(ADAPTED_ID)).not.toBeNull();
-    expect(STATUS_VISUALS).toHaveLength(19);
+    expect(STATUS_VISUALS).toHaveLength(23);
   });
 
   it('answers null for an index it has no row for', () => {

@@ -317,6 +317,33 @@ export interface AbilityDefinition {
    */
   readonly basicAttack?: boolean;
   /**
+   * How much of the caster's weak-point chance this blow carries (spec 272).
+   *
+   * A 0..1 factor, applied to the whole resolved chance:
+   * `chance = (base + opening share) * precision`.
+   *
+   * **Absent means 1 for a {@link basicAttack} and 0 for everything else**, so
+   * a row nobody has classified behaves exactly as it did before this spec --
+   * which is the state the entire table was in, because `abilityWeakPoints` was
+   * a character trait granted by no content and so every sigil in the game
+   * switched Perception's loop off when it was pressed.
+   *
+   * Which abilities can find a seam is a fact about the **ability**, so it is
+   * authored here rather than inferred from damage, targeting or a scaling
+   * grade. Three bands are in use: a precise single-target strike at 1, a
+   * committed heavy single-target strike at 0.6, and everything that can reach
+   * more than one body at 0.
+   *
+   * **Nothing that can hit more than one body is eligible**, and that is the
+   * whole of the AoE safety rather than a cap bolted on afterwards: a weak
+   * point is rolled once per target hit -- `resolveBlow` runs once per body --
+   * so restricting eligibility to single-target rows means one cast produces at
+   * most one weak point, and Exploit, Exposed, Resource Sense and Patient Read
+   * cannot multiply across a blast. `abilities.test.ts` asserts that over the
+   * whole roster rather than over the rows that exist today.
+   */
+  readonly precision?: number;
+  /**
    * How the caster is drawn while this winds up (spec 231). Absent is the swing.
    *
    * See {@link CastLook}. It is on the row for the reason `projectile.look` is:
@@ -326,6 +353,29 @@ export interface AbilityDefinition {
    * edited.
    */
   readonly castLook?: CastLook;
+  /**
+   * How hard this ability lands on a **Guard** pool, as a multiple of the
+   * caster's `staggerPower` (spec 271).
+   *
+   * **Absent carries no Guard pressure**, and that is the load-bearing default:
+   * before this spec every non-basic blow multiplied `staggerPower` by
+   * `abilityPoiseFactor`, which nothing granted, so the whole table read zero.
+   * Keeping zero as the default means this spec turns Guard pressure on for the
+   * rows that ask for it and moves nothing for the rows that do not -- an
+   * Ember Toss did not pressure a Guard yesterday and does not today.
+   *
+   * A basic attack never reads this. It takes the **weapon's** impact, because
+   * what a swing weighs is a fact about what is being swung; see
+   * `ItemDefinition.guardImpact`.
+   *
+   * The scale is calibrated against a basic attack at 1: below it is a quick
+   * jab, around it is a committed blow, and above it is a row whose whole
+   * identity is the Guard bar. **A multi-hit or area row is authored against
+   * the number of bodies it can reach**, not against its own weight -- Guard
+   * pressure resolves per target, so a factor that reads fairly on one enemy is
+   * that factor again on every enemy in the circle.
+   */
+  readonly guardImpact?: number;
   /**
    * This ability is an **active skill** and may only be cast out of a skill slot
    * (spec 188).
@@ -458,8 +508,9 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 70,
     // Nothing, since spec 217: a basic attack's damage is the weapon's own
     // range, rolled in `resolveBlow`. Left as a field rather than removed
-    // because `attackTimingFor` still reads it against `HEAVY_ABILITY_DAMAGE`,
-    // and a swing is not heavy at any weapon's numbers.
+    // because the type requires one and `resolveBlow` adds it -- the reason it
+    // used to give (a `HEAVY_ABILITY_DAMAGE` comparison in `attackTimingFor`)
+    // went with that constant in spec 271.
     damage: 0,
     // The weapon's, whole. `basicAttack` takes the range directly in
     // `resolveBlow`, so this is documentation of a branch rather than the
@@ -593,6 +644,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // of it during the wind-up.
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). Single-target, but a shoulder into a guard rather than a placed cut.
+    precision: 0.6,
     windupTicks: seconds(0.4),
     // Wide enough to throw at something you are roughly facing. This is an
     // opening move rather than a committed one, so making it demand an exact
@@ -610,25 +663,44 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     range: 85,
     damage: 2,
     // Getting inside a guard is force and footwork. Its damage is small on
-    // purpose -- the flat `poiseDamage` is the skill -- so what these letters
-    // move is the smaller half of it.
+    // purpose -- the Guard pressure is the skill -- so what these letters move
+    // is the smaller half of it.
     scaling: { strength: G.B, agility: G.D },
-    // Order is the skill. The guard comes off first, so the poise damage that
-    // follows lands on a pool that is already down -- which is what makes this
-    // a *setup* for somebody else's stagger rather than a stagger of its own.
-    effects: [
-      { kind: 'poise', amount: -50 },
-      { kind: 'poiseDamage', amount: 6 },
-      { kind: 'damage' },
-    ],
+    // **The heaviest thing in the table, and the reason this row was redesigned**
+    // (spec 271). It used to open with `{ kind: 'poise', amount: -50 }`: a flat
+    // write straight into the pool, scaling with nothing, against a ravager's 49
+    // Guard. One press emptied an ordinary enemy at Strength 5 exactly as at
+    // Strength 60, and the `poiseDamage: 6` behind it then broke a pool that was
+    // already at zero -- so the one skill named after Strength's own mechanic was
+    // the one thing in the game that ignored every point of it.
+    //
+    // It is a multiplier now. At 3.4 it is a little over three swings of Guard
+    // pressure in one press, which is worth a six-second cooldown and four of
+    // your own Guard, and it is the *build* that decides whether that breaks
+    // anything: 10.6 at Strength 5, 80.6 at Strength 60 with Crushing Blows.
+    guardImpact: 3.4,
+    // One blow, carrying both. `resolveBlow` spends Guard out of `guardImpact`
+    // above exactly as it does for a basic attack's weapon, so hyper-armour
+    // reduces it, the immunity window refuses the break, and a break it causes
+    // pays Momentum like any other. Listing a `poiseDamage` effect *as well*
+    // would land the pressure twice for one press, which is the trap a row with
+    // both fields falls into -- see `SkillEffect`'s `poiseDamage`.
+    effects: [{ kind: 'damage' }],
     description: 'You do not get inside a guard politely.',
   },
   {
     id: 'skill.stunningBlow',
     name: 'Stunning Blow',
+    // Above a swing (spec 271): a blow thrown to put somebody down carries more
+    // into the Guard bar than the swing it interrupts. Under Guard Break's,
+    // because this row already buys the stagger outright and a skill that was
+    // also the best Guard pressure in the game would leave that one nothing.
+    guardImpact: 1.2,
     kind: 'melee',
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). Single-target, but thrown at the head rather than at a seam.
+    precision: 0.6,
     // Long enough to be read and stepped out of, which is what a stun has to
     // cost: the wind-up *is* the counterplay.
     windupTicks: seconds(0.9),
@@ -640,11 +712,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // Wound up from the shoulder. Pure Strength.
     scaling: { strength: G.A },
     effects: [
+      // The blow carries `guardImpact` above, so this row takes a real bite out
+      // of the pool as well as landing the stun -- worth throwing at a body
+      // whose immunity window is still up, since the Guard it spends is real
+      // even when the stun is refused. It was a flat `poiseDamage: 8` until spec
+      // 271, which a Strength character's own swing had overtaken by the time
+      // they could buy the sigil that grants this.
       { kind: 'damage' },
-      // Guard damage as well as the stun, so it is worth throwing at a body
-      // whose immunity window is still up: the pool it takes is real even when
-      // the stun is refused.
-      { kind: 'poiseDamage', amount: 8 },
       { kind: 'stun', ticks: seconds(1.4) },
     ],
     description: 'Wound up from the shoulder, and telegraphed the whole way.',
@@ -652,6 +726,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'skill.whirlwind',
     name: 'Whirlwind',
+    // **Low because it is an area** (spec 271). Guard pressure resolves per
+    // target, so this number is paid once for every body in the circle -- at a
+    // committed blow's 0.7 a Whirlwind into four enemies would be 2.8 swings of
+    // Guard pressure for one press. Authored against the reach rather than
+    // against how heavy the blow feels, which is the rule on
+    // `AbilityDefinition.guardImpact`.
+    guardImpact: 0.45,
     // The kind that reads {@link AbilityDefinition.area}: no body is named and
     // the shape decides who is caught.
     kind: 'area',
@@ -679,11 +760,18 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'skill.cripplingStrike',
     name: 'Crippling Strike',
+    // A quick one (spec 271). It is Agility's row and it is still a physical
+    // blow, so it carries something -- Guard pressure is a property of the blow
+    // rather than of the attribute that pays for it, and what makes it
+    // Strength's mechanic is that `staggerPower` is what this multiplies.
+    guardImpact: 0.4,
     // One character over what a 92px slot holds in a 5x7 face at scale 1.
     shortName: 'Cripple',
     kind: 'melee',
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). A placed cut at a joint -- the most precise thing in the table.
+    precision: 1,
     // The fastest of the four: this is the one you throw at something already
     // walking away, and a long wind-up would mean it never catches anything.
     windupTicks: seconds(0.3),
@@ -733,6 +821,8 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
     // on would make the stack a dexterity test rather than a commitment.
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). A dart at a named body. Aimed, not thrown at a crowd.
+    precision: 1,
     // The shortest wind-up of the seven and by far the shortest cooldown: this
     // is the one skill in the table you are *meant* to throw repeatedly, and
     // the concentration is what it buys. Five casts is eight seconds against a
@@ -779,9 +869,14 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
   {
     id: 'skill.rendingCut',
     name: 'Rending Cut',
+    // The reference committed blow (spec 271): a little under a full swing,
+    // because what this row is for is the bleed behind it.
+    guardImpact: 0.7,
     kind: 'melee',
     targeting: 'unit',
     skill: true,
+    // Weak-point eligibility (spec 272). A cut that opens what it lands on; finding the seam is the point of it.
+    precision: 1,
     windupTicks: seconds(0.45),
     castAngleDeg: 35,
     cooldownTicks: seconds(7),
@@ -1023,6 +1118,7 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
         magnitude: 0.1,
       },
       { kind: 'applyStatus', statusId: StatusId.Prepared, durationTicks: TEST_STATUS_TICKS },
+      { kind: 'applyStatus', statusId: StatusId.PatientRead, durationTicks: TEST_STATUS_TICKS },
       { kind: 'applyStatus', statusId: StatusId.Attuned, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
       {
         kind: 'applyStatus',
@@ -1110,6 +1206,13 @@ const DEFINITIONS: readonly AbilityDefinition[] = [
       // `sim/warden.ts` and asked only of a body with a laser cycle, so on a
       // training dummy this is the mark and nothing else.
       { kind: 'applyStatus', statusId: StatusId.Overheated, durationTicks: TEST_STATUS_TICKS },
+      // Two of spec 270's three. `Preparing` is deliberately absent and is the
+      // one mark in the table this row **cannot** apply: `advanceProgression`
+      // owns it, and clears it on any body that cannot prime at all -- which a
+      // monster cannot. A row that applied it would be writing a claim the very
+      // next tick of the sim correctly erases.
+      { kind: 'applyStatus', statusId: StatusId.Weave, durationTicks: TEST_STATUS_TICKS, maxStacks: 3 },
+      { kind: 'applyStatus', statusId: StatusId.Overdrawn, durationTicks: TEST_STATUS_TICKS },
       // **`secondWind.spent` and `perfectExit.spent` are absent on purpose.**
       // They are inverted -- carrying one means the mechanic has fired and has
       // not re-armed -- so applying them would silently switch two mechanics off
@@ -1186,6 +1289,29 @@ export const ABILITIES: ReadonlyMap<string, AbilityDefinition> = new Map(
 );
 
 export const ALL_ABILITIES: readonly AbilityDefinition[] = DEFINITIONS;
+
+/**
+ * Whether this row can reach more than one body (spec 272).
+ *
+ * Three ways this table expresses a shape and it has to cover all of them: an
+ * `area` block, a burst `radius` on a projectile row, and `arcCosSq` -- the
+ * cone `landCone` reads, which `skill.acidSpray` uses instead of an `area`
+ * precisely because a second description of the same wedge was refused.
+ */
+export function hitsMultipleBodies(a: AbilityDefinition): boolean {
+  return a.area !== undefined || (a.radius ?? 0) > 0 || a.arcCosSq !== undefined;
+}
+
+/**
+ * The share of the caster's weak-point chance this ability carries.
+ *
+ * The one answer, so `blow.ts` and the tooltip cannot disagree about whether a
+ * sigil can find a seam. See {@link AbilityDefinition.precision}.
+ */
+export function precisionOf(a: AbilityDefinition): number {
+  const authored = a.precision ?? (a.basicAttack === true ? 1 : 0);
+  return Math.min(1, Math.max(0, authored));
+}
 
 export function abilityById(id: string): AbilityDefinition | null {
   return ABILITIES.get(id) ?? null;

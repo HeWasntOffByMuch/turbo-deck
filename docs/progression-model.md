@@ -107,14 +107,14 @@ STRENGTH   5 ──── 10 ──── 20 ──── 25 ──── 35 ─
                    ├ Crushing Blows ●●●            │
                    ├ Committed Swing ●●●───────────┘
                    │                 ├ Brutal Follow-Through ●●●
-                   │                 ├ Heavy Handling ●●●
-                   │                 └ Overkill ●●●
+                   │                 ├ Executioner ●●●
+                   │                 └ Brutal Reserve ●●●
                    └ Unstoppable ● ───────────────────────────┘
 ```
 
 | Track | 10 (buy) | 20 (auto) | 25 (buy) | 35 (auto) | 40 (buy) | 50 (auto) |
 |---|---|---|---|---|---|---|
-| **STR** Overpower | Crushing Blows ×3, Committed Swing ×3 | Crushing Blows | Brutal Follow-Through ×3, Heavy Handling ×3, Overkill ×3 | Committed Swing | Unstoppable ×1 | Unstoppable |
+| **STR** Overpower | Crushing Blows ×3, Committed Swing ×3 | Crushing Blows | Brutal Follow-Through ×3, Executioner ×3, Brutal Reserve ×3 | Committed Swing | Unstoppable ×1 | Unstoppable |
 | **AGI** Outmaneuver | Quick Recovery ×3, Mobile Offense ×3 | Quick Recovery | Lightfoot ×3, Rapid Handling ×3, Flow ×3 | Mobile Offense | Perfect Exit ×1 | Perfect Exit |
 | **INT** Manipulate | Arcane Potency ×3, Spell Shaping ×3 | Spell Shaping | Prepared Casting ×3, Catalysis ×3, Efficient Construction ×3 | Prepared Casting | Arcane Overflow ×1 | Arcane Overflow |
 | **CON** Endure | Deep Reserves ×3, Steady Frame ×3 | Steady Frame | Second Wind ×3, Hard to Kill ×3, Sustained Effort ×3 | Hard to Kill | Overflow Vitality ×1 | Overflow Vitality |
@@ -195,17 +195,100 @@ capability that leaks into resolution while holding nothing is worse than one
 that is absent. Bringing it back is a table, a `metSynergies`, and one line in
 hop 2.
 
-**Twenty-two `TraitStats` fields are now granted by nothing**, and that is
+**Eighteen `TraitStats` fields are now granted by nothing**, and that is
 recorded rather than repaired. Each was reachable only through a pair:
 
 ```
-abilityPoiseFactor   appliesSundered      exploitPoiseFactor   executeBonus
-executeBelow         breakResource        breakCooldownRefund  flowArmorPct
-poiseRegenMoving     spellbladeHandling   handlingCooldowns    flowWeakPoint
-flowCostPct          damageToShield       abilityWeakPoints    preparedMastery
-vsVulnerableReduction  healingSurge       healingSurgeBelow    adaptationCap
-exposedTeamResource  attunedFromWeakPoints
+abilityPoiseFactor   exploitPoiseFactor   breakResource        breakCooldownRefund
+flowArmorPct         poiseRegenMoving     spellbladeHandling   handlingCooldowns
+flowWeakPoint        flowCostPct          damageToShield       abilityWeakPoints
+preparedMastery      vsVulnerableReduction
+healingSurge         healingSurgeBelow    exposedTeamResource
+attunedFromWeakPoints
 ```
+
+`appliesSundered` was the twenty-second and left the list at spec 270. It is the
+one that was worse than dormant: `int.catalysis` authored it as a **zero in a
+purchasable row**, so a player could spend points on a specialization whose
+tooltip named a mechanic nothing could reach. It is the row's own second half
+now -- a blow sunders a target that is *already afflicted*, which is Catalysis's
+stated trigger -- and it went that way rather than being deleted because it fit
+the tree that was being rebuilt anyway. That is the bar for taking another one
+off this list: a mechanic the design wants, not a field somebody wanted to tidy.
+
+`executeBonus` and `executeBelow` left it together at spec 271, and they met the
+same bar. Strength's loop could pressure a Guard, break it and take the tempo,
+and then had nothing that cared whether the body in front of it was already
+beaten -- so **Executioner** is the punish step, and the pair it grants is the
+condition `blow.ts` had already been reading since spec 147: staggered *and*
+under a health threshold. Not low health alone, which any attribute could carry;
+what makes it Strength's is that the target is only staggered because Strength
+put it there.
+
+It replaced **Heavy Handling**, which was worse than dormant in the way
+`appliesSundered` was: three purchasable points whose consumer's gate --
+`ability.damage >= HEAVY_ABILITY_DAMAGE` -- had been unreachable since spec 237
+deleted the one ability that cleared it. That is also what `audit:progression`'s
+reachability pass now exists to catch, because every check the audit had reported
+it ACTIVE: the trait moved, and nothing asked whether content could reach the
+line reading it.
+
+`abilityPoiseFactor` stays on the list and is a deliberate case worth knowing:
+spec 271 made it *live* -- `guardImpactOf` reads it as the fallback for an
+ability authoring no Guard impact of its own -- while leaving it granted by
+nothing, because zero is the correct default there. A row that says nothing
+about Guard carries none.
+
+Two fields joined the dormant set from the **other** direction at the same spec,
+and they are listed here rather than above because the list above is specifically
+what a deleted *pair* orphaned. `juggernautBelow` and `heavyWindupScale` were
+granted by specializations, and spec 271 removed the grants: the first was a
+health gate whose only source set it to exactly 1, so the branch reading it could
+never run, and the second is Heavy Handling's. Both keep their place in
+`TRAIT_WIRE_ORDER` for the protocol reason below, both are pinned at their
+neutral value in `deriveTraits`, and both are listed as deliberately inert in the
+test that catches unread traits.
+
+`adaptationCap` left the list at spec 275, and it met the same bar the three
+above did. Wisdom's Adaptation needed a purchasable *ceiling* -- every tier and
+the milestone converged on `SCALING`'s 0.3, so deep investment bought only
+hits-to-cap and at Wisdom 35 the second tier moved nothing a player could see --
+and the field that expresses "how far can this body adapt" already existed. It
+was **not** resurrected by re-creating the CON/WIS pair that used to grant it,
+which is the distinction: a dormant field earns its way back by a live mechanic
+needing exactly what it says, never by somebody wanting the list shorter.
+
+Two fields that were never on this list were also granted by nothing, and spec
+275 found both in Wisdom:
+
+- `cooldownReduction`, which sat beside the very-much-used `costReduction` and
+  reads as a hook nothing was ever pointed at -- the one attribute whose own row
+  claims "cooldowns" had no purchasable cooldown content at all. Composure grants
+  it now.
+- `masteryRelief`, which was worse than dormant in a way none of the others were:
+  it was derived, clamped, given a wire slot and replicated in every `Stats`
+  message while the mechanic it named ran through a **parallel reader** in
+  `player/specializations.ts`. It is the one field on any of these lists that was
+  removed outright rather than re-granted, because its replacement needed wire
+  slots anyway -- so the churn is two fields net rather than three beside a dead
+  one.
+
+That second one names a gap **neither** audit pass closes, and it is worth
+stating rather than implying. `masteryRelief` counted 0 -> 1 -> 2 -> 3 across its
+tiers and scored ACTIVE for its entire life. The original check asks whether a
+purchase moves a number the sim reads, and the number moved. Spec 271's
+reachability pass asks whether content can satisfy the *gate* on a trait's
+consumer, and this trait had no gate -- it had no consumer at all. Spec 275's
+derived-results probe asks whether a tier changes a quantity a player
+experiences, which catches it only if somebody thinks to probe the right
+quantity.
+
+The check that would have caught it directly is the cheapest of the three: a
+sweep for `TraitStats` fields that no file under `sim/`, `world/`, `render/` or
+`ui/` ever reads. It is written down here rather than built because it is a
+question about the module graph rather than about a character, and the three
+passes above are all fixture-driven -- but it would have found `masteryRelief`,
+`cooldownReduction` and the dormant set in one run.
 
 They are live in `deriveTraits` and in the sim, and unreachable from content --
 the same shape as `kind: 'channel'`, which has no ability rows and a complete

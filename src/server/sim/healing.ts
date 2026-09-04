@@ -37,7 +37,9 @@ export interface HealResult {
  *  1. Wisdom (and a little Constitution) scale the amount.
  *  2. The Constitution+Wisdom pair doubles it below its threshold, because an
  *     attrition build should get *more* out of a heal exactly when it is losing.
- *  3. What fits goes into health.
+ *  3. What fits goes into health -- up to `ceiling` if one is given, which is
+ *     how Second Wind stabilizes a body without lifting it out of the danger
+ *     band (spec 273).
  *  4. What does not fit goes to a shield (Constitution 50), or to resource
  *     (Wisdom 50), or nowhere. Both are capped -- the shield by `maxShield`, the
  *     conversion by `conversionCap` per event -- so neither is a loop.
@@ -45,7 +47,12 @@ export interface HealResult {
  * A body with no traits at all gets `min(max, health + amount)`, which is
  * exactly what `landSelf` did before this existed.
  */
-export function applyHealing(entity: ServerEntity, amount: number, tick: number): HealResult {
+export function applyHealing(
+  entity: ServerEntity,
+  amount: number,
+  tick: number,
+  ceiling?: number,
+): HealResult {
   if (!(amount > 0)) return { entity, healed: 0, overheal: 0, salvaged: 0, wasted: 0 };
   const traits = entity.stats.traits;
 
@@ -63,7 +70,21 @@ export function applyHealing(entity: ServerEntity, amount: number, tick: number)
   // overheal it never got.
   const total = amount * traits.healingScale * surge * healingScaleOf(entity.statuses, tick);
 
-  const room = Math.max(0, entity.stats.maxHealth - entity.health);
+  // **The ceiling on what this particular heal may raise health to** (spec 273).
+  //
+  // Absent it is `maxHealth`, so every caller that does not pass one is
+  // byte-identical to what it was. Second Wind passes the danger threshold,
+  // because a comeback that lifted the body clear of the band would switch off
+  // Hard to Kill, the stagger immunity and the desperation surge -- the three
+  // things the same threshold armed.
+  //
+  // It bounds the *health*, not the heal: everything above it is `overheal` and
+  // falls through the cascade below exactly as an ordinary overheal does. So a
+  // capped Second Wind on a Constitution character with Overflow Vitality
+  // becomes health up to the band and a shield after it, which is durability
+  // rather than health and therefore cannot eject anybody from anything.
+  const top = ceiling === undefined ? entity.stats.maxHealth : Math.min(entity.stats.maxHealth, ceiling);
+  const room = Math.max(0, top - entity.health);
   const healed = Math.min(room, total);
   const overheal = total - healed;
 

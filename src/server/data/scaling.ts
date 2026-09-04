@@ -142,6 +142,18 @@ export const SCALING = {
      */
     staggerTicksBase: seconds(0.5),
     staggerTicksPer: 0.2,
+    /**
+     * **Unreachable at the current attribute cap, and kept deliberately** (spec
+     * 271). The duration is `staggerTicksBase + staggerTicksPer * STR` measured
+     * from zero, so it reaches 42 ticks at the hard cap of 60 and would need
+     * Strength 90 to touch 48.
+     *
+     * Retained rather than removed because it bounds an *edit* as much as a
+     * build: `admin:setAttribute` and a hand-edited save are not held to the
+     * cap, and the number this guards is how long a body is rooted and unable
+     * to answer. Written down here so the next reader does not spend an
+     * afternoon working out why it never binds.
+     */
     staggerTicksCap: seconds(0.8),
   },
 
@@ -216,19 +228,93 @@ export const SCALING = {
   },
 
   intelligence: {
-    spellPowerPer: 0.04,
-    resourcePer: 2,
+    /**
+     * Resource pool per point (spec 270).
+     *
+     * 2 until this spec, which at the hard cap was a 145-point pool against
+     * abilities costing 5 to 7 -- a magazine of roughly thirty casts, which is
+     * not a magazine, it is an assumption that you will never reload. 1.4 keeps
+     * Intelligence far and away the largest pool in the game (109 at the cap
+     * against Wisdom's 65) while making the number of casts in it something a
+     * player can count.
+     */
+    resourcePer: 1.4,
     /** Geometry. Gated behind the INT 20 milestone; zero until then. */
     radiusPer: 0.006,
     rangePer: 0.004,
     /** Extra damage against anything carrying a status. */
     vsAfflictedPer: 0.006,
-    /** Health paid per point of missing resource by an overflow cast. */
+    /** Health paid per point of missing resource by an overdraw cast. */
     overflowHealthPerResource: 2,
-    /** Fraction of *current* health an overflow cast may spend. */
+    /** Fraction of *current* health one overdraw cast may spend. */
     overflowHealthFraction: 0.4,
-    prepareTicks: seconds(2),
+    /**
+     * The artillery stance (spec 270): how long a body must stay planted before
+     * `Prepared` is banked, and what counts as leaving.
+     *
+     * **The duration is the cost of the mechanic**, so it is authored where a
+     * cost belongs rather than being whatever fell out of three reductions. At
+     * 2s base a fully-invested caster lands at 1.95s -- the tiers buy a stance
+     * that is *sharper*, not one that is nearly free. Before this spec the same
+     * table bottomed out at 0.6s, which is not a decision anybody makes; it is
+     * a proc that happens to them.
+     */
+    prepareTicks: seconds(2.75),
+    /**
+     * However much is stacked on it, a stance is never shorter than this.
+     *
+     * A real floor rather than the old `rate * 0.25` (0.25s), which existed to
+     * stop a divide-by-nothing and would have let a future source turn the
+     * stance back into a proc. Nothing in the shipped tree reaches it: three
+     * tiers plus the milestone come to 1.95s against this 1.5s, which is the
+     * state a guard should be in.
+     */
+    prepareFloorTicks: seconds(1.5),
+    /**
+     * What one Prepared Casting tier and the Intelligence 35 milestone each take
+     * off the stance.
+     *
+     * **Absolute rather than a fraction of the base** (spec 270). They were
+     * authored as `prepareTicks * 0.15` and `* 0.25`, so raising the base to
+     * make the stance a real commitment would have raised the reductions with
+     * it and landed in the same place -- the tuning knob quietly cancelling
+     * itself. Stated in seconds, the base and what buys it down are two
+     * decisions instead of one.
+     *
+     * 2.75s less 0.35s less three tiers of 0.15s is 1.95s: a caster who has
+     * bought the whole row plants for two seconds rather than for a fifth of
+     * one, and what the tiers bought is a sharper opener rather than an absent
+     * cost.
+     */
+    prepareTierRelief: seconds(0.15),
+    prepareMilestoneRelief: seconds(0.35),
     preparedWindupScale: 0.5,
+    /**
+     * How far a body may be displaced in one tick and still be standing still.
+     *
+     * The stance asks whether the *player chose to move*, and exact float
+     * equality on position answers a different question: a body pressed against
+     * a prop is pushed out of it by `resolveMovement` with a zero intent, and a
+     * player given `bumps` would take crowd nudges as well. A walk is 2.58
+     * units a tick at `MOVE_SPEED`, so this is about a seventh of one step --
+     * far above any resolution jitter and far below anything a person would
+     * call walking.
+     */
+    stanceMoveEpsilon: 0.35,
+    /**
+     * The most of the shaping premium Efficient Construction may ever pay off.
+     *
+     * Under 1 on purpose (spec 270). A specialization whose whole job is to
+     * delete another specialization's drawback is not progression, it is an
+     * apology for it -- so shaping stays more expensive than not shaping at
+     * every level of investment, and what the tiers buy is how much more.
+     * Three tiers of `shapingCostRelief: 0.2` reach exactly this, so every tier
+     * is worth its whole step and none of it disappears into the clamp.
+     */
+    shapingReliefCap: 0.6,
+    /** Arcane Weaving: how long a stack lives, and how many may be held. */
+    weaveTicks: seconds(6),
+    weaveMaxStacks: 3,
   },
 
   constitution: {
@@ -238,8 +324,54 @@ export const SCALING = {
     /** Poise per second, before the calm multiplier. */
     poiseRegenBase: 1,
     poiseRegenPer: 0.0875,
+    /**
+     * What a *moving* body keeps of its Guard regeneration (spec 273).
+     *
+     * It was not a fraction at all: `regenPoise` set the rate to **zero** on any
+     * tick the body moved unless `poiseRegenMoving` was granted, and nothing in
+     * the game granted it -- the branch's comment pointed at the
+     * Agility+Constitution pair spec 244 deleted. So Steady Frame's three ranks
+     * and the CON 20 milestone that deepens them were worth exactly zero to a
+     * repositioning body, in a game whose thesis is committing to a blow and
+     * withdrawing from it.
+     *
+     * A fraction rather than a switch, and 0.3 rather than a token: standing
+     * still has to remain clearly the strongest recovery posture, and
+     * repositioning has to remain a viable endurance tactic. Measured against
+     * the real loop in `scripts/probe-constitution.ts`.
+     *
+     * This is the **player** baseline: `NEUTRAL_TRAITS` keeps 0 and
+     * `monsterTraits` spreads it, so no monster gains Guard while chasing. A
+     * monster that did would be a broad enemy rebalance and a nerf to
+     * Strength's stagger pressure, which spec 273 explicitly is not.
+     */
+    poiseRegenMovingBase: 0.3,
+    /**
+     * And never more than this, however much is granted.
+     *
+     * Strictly below 1 so that moving can never match standing -- which is what
+     * stops continuous kiting from refilling Guard as efficiently as
+     * deliberately holding ground. Asserted rather than assumed.
+     */
+    poiseRegenMovingCap: 0.75,
     armorPer: 0.008,
     healingPer: 0.006,
+    /**
+     * The low-health band, named once (spec 273).
+     *
+     * Four literals sat at 0.3: `resoluteBelow`'s floor, `secondWindBelow`'s
+     * floor, and the Hard to Kill milestone's `resoluteBelow` and
+     * `staggerImmuneBelow`. They are the same number because they are the same
+     * *band* -- the health at which Constitution's low-health identity turns on
+     * -- and Second Wind's recovery ceiling is now a fifth reader of it.
+     *
+     * That last one is the reason this is a constant rather than four numbers
+     * that happen to agree: Second Wind stabilizes the body at exactly the top
+     * of the band, and `isResolute` compares with `<=`, so the mechanics the
+     * threshold armed are all still on afterwards. Retuning the band moves the
+     * ceiling with it, which is the only way that claim stays true.
+     */
+    dangerBelow: 0.3,
     /** Shield ceiling, as a fraction of max health. */
     shieldFraction: 0.25,
     shieldTicks: seconds(8),
@@ -267,24 +399,187 @@ export const SCALING = {
      * turns the sum into a factor exactly once. 1.0 is still "double", so what
      * a Perception character with the milestone alone gets has not moved.
      */
-    vulnerableWeakPointBonus: 1,
-    steadyAimTicks: seconds(0.5),
+    /**
+     * Opening Read's share of the **remaining** probability (spec 272).
+     *
+     * It was `vulnerableWeakPointBonus`, a multiplier above 1, and the two
+     * Perception lines therefore multiplied into one clamp: at Perception 60
+     * with Weak-Point Study and Opening Read both maxed the raw chance was
+     * 1.176 against a bare 0.95 ceiling, so 19% of a purchase was discarded
+     * during exactly the window it was bought for.
+     *
+     * As a share of what is left -- `base + (1 - base) * factor` -- the two
+     * compose instead. Two properties follow from the form rather than from
+     * tuning, and both are tested: the derivative with respect to the base is
+     * `1 - factor`, which is positive, so **every Weak-Point Study tier still
+     * raises the final chance at maximum Opening Read**; and the highest legal
+     * value is `weakPointCap + (1 - weakPointCap) * (this + 3 tiers)` = 0.892,
+     * so legal progression provably cannot reach {@link WEAK_POINT_CHANCE_CAP}.
+     *
+     * 0.55 rather than a round number because it is **calibrated against what
+     * this replaced**: the old form doubled the chance, so at Perception 60 with
+     * the milestone alone it gave `0.36 x 2 = 0.72`, and `0.36 + 0.64 x 0.55` is
+     * 0.712. A character who bought nothing but the attribute is therefore left
+     * where they were, and what changes is that the purchases above them stop
+     * being thrown away. Picking 0.3 first cost Pure Perception half its kills
+     * in `npm run balance`, which is what measuring it caught.
+     */
+    openingReadShare: 0.55,
+    /**
+     * How long Perception must go **without committing an attack** for Patient
+     * Read to bank (spec 272).
+     *
+     * Measured against the cadence rather than chosen: a worn sword commits
+     * about every 66 ticks and the longest idle gap inside a continuous fight
+     * is 29, so this is a little under two whole attacks given up. Short enough
+     * to be worth doing, long enough that continuing to swing is a real
+     * alternative rather than an obvious mistake.
+     *
+     * The cost is offensive pressure and **never movement** -- that space is
+     * Intelligence's Prepared, which this must not duplicate.
+     */
+    patientReadTicks: seconds(1.75),
+    /** How long a banked read keeps. Long enough to line a shot up, short
+     *  enough that it cannot be carried between fights. */
+    patientReadHoldTicks: seconds(8),
   },
 
+  /**
+   * Wisdom: making finite things last (spec 275).
+   *
+   * **There is no `resourcePer` here, and that is the ownership rule rather
+   * than an omission**: INT owns the magazine and WIS owns making it last and
+   * recovering it. Six automatic scales all pointed at the resource problem,
+   * three of them the same lever, and a pool is the one of the three that
+   * another attribute already had the primitive for. Removing it costs a pure
+   * Wisdom character 55 points of pool and none of their regeneration, which
+   * is the tension spec 275 wants: cooldowns come back faster than a small
+   * magazine can pay for, and the answer is to spend on Intelligence.
+   *
+   * Every rate below is measured through `above()`. `healingPer` and
+   * `regenPer` were on the raw attribute until 274, which is the case this
+   * file's own header warns about -- a character who had spent nothing on
+   * Wisdom carried +6% healing and +0.6/s of regeneration from it.
+   */
   wisdom: {
     costPer: 0.01,
     costFloor: 0.4,
     cooldownPer: 0.006,
     cooldownFloor: 0.5,
     healingPer: 0.012,
-    resourcePer: 1,
-    regenPer: 0.12,
+    /**
+     * Resource per second per point of Wisdom, **soft-capped** (spec 276).
+     *
+     * `resourcePer` used to sit above this and is gone (spec 275). Spec 270's
+     * own sentence is *"Intelligence buys the magazine and Wisdom buys the
+     * reload"*, and Wisdom was still quietly buying a point of magazine per
+     * point spent; removing it is that split finished rather than a second
+     * opinion about it. The two specs reached the same rule from opposite ends
+     * -- 270 from the Intelligence economy being decorative, 275 from six
+     * automatic Wisdom scales all pointing at one problem.
+     *
+     * What neither of them fixed is that this rate was **linear and unbounded**
+     * against a demand with a hard ceiling. The greediest four-skill bar a
+     * player can equip drains 3.38 resource/second -- it is the four highest
+     * cost-per-cycle rows in the content table, and a body is rooted through its
+     * own casts, so nothing can spend faster. At 0.2 a point the supply passed
+     * that at about Wisdom 21 and reached **11.4/s at the hard cap, 3.4x the
+     * most the game can spend**. Measured through
+     * `scripts/probe-resource.ts`, the waste was visible from the other side
+     * too: at Wisdom 40, 7.40/s was available and 2.15/s actually landed,
+     * because the pool was at its ceiling. Every point past the crossover
+     * bought nothing at all, and every other resource mechanic in the design --
+     * capacity, efficiency, Conservation, Overdraw, combat-earned restoration
+     * -- was measuring against a pool that was already full.
+     *
+     * {@link softCap} for the reason `staggerPer` and `weakPointPer` use it: an
+     * unbounded specialist would stop the game being a game, and a hard cap
+     * would make the last twenty points worthless. Measured against the same
+     * bar, with both columns moving because Wisdom makes the bar cheaper too:
+     *
+     * ```
+     *   WIS   regen/s   greedy drain/s   supply/demand
+     *     5      1.00             3.38             30%
+     *    15      1.25             3.24             39%
+     *    25      1.50             2.37             63%
+     *    40      1.71             2.25             76%
+     *    60      2.00             2.13             94%
+     * ```
+     *
+     * The property that makes it a design rather than a number: **the ratio
+     * rises the whole way and never reaches 1.** Every point is worth
+     * something, and no amount of the attribute alone makes the greediest bar
+     * free -- what closes the last six percent is a *purchase*, which is where
+     * Conservation belongs. Asserted in `resource-economy.test.ts` against the
+     * content table rather than against a number typed into a test, so a
+     * cheaper ability moves the claim.
+     */
+    regenPer: 0.025,
+    /**
+     * Where the reload's rate halves, and by how much.
+     *
+     * The knee sits at `above(WIS) = 20` -- Wisdom 25, the second
+     * specialization threshold -- so the attribute is at its most generous
+     * exactly over the range a character is climbing to reach Composure,
+     * Adaptation and Mastery, and pays a diminishing rate for the deep
+     * investment past it. `regenFalloff` is a shade over half rather than the
+     * customary 0.5 so that the last twenty points still read as progress on
+     * the sheet: 0.0138/s a point against 0.025.
+     */
+    regenKnee: 20,
+    regenFalloff: 0.55,
     attunedTicks: seconds(6),
     attunedMaxStacks: 3,
+    /**
+     * The most one Attuned stack may be worth (spec 276).
+     *
+     * Here rather than as the literal `0.2` it was in `derived.ts`, for this
+     * file's own stated reason: a rate whose cap is three files away is a rate
+     * nobody can evaluate, and this one is a balance decision rather than a
+     * guard. The three Conservation tiers and the Wisdom 20 milestone sum to it
+     * *exactly*, so every tier moves the number and none of it disappears into
+     * the clamp -- a property the milestone's own comment states and which only
+     * holds while the grants and this move together.
+     *
+     * **Halved from 0.2** by the resource-economy pass. `Attuned` is a standing
+     * six-second buff refreshed by every non-basic ability that connects rather
+     * than a charge consumed by a cast, so any sustained rotation holds three
+     * stacks permanently -- which made Conservation a flat 60% discount, nearly
+     * twice the whole attribute curve's 35%, and took `WIS 40 + Conservation` to
+     * a pool that was full 100% of a 150-second fight. At 0.1 three stacks are
+     * 30% off: about what the attribute beside it is worth, which is what a
+     * specialization should be, and enough to close the last six percent the
+     * regeneration curve deliberately leaves open.
+     */
+    attunedCostCap: 0.1,
     adaptationTicks: seconds(10),
+    /**
+     * Where Adaptation starts, and no longer where it ends (spec 275).
+     *
+     * Every tier and the milestone used to converge here, because
+     * `adaptationCap` was granted by nothing: deep investment bought
+     * hits-to-cap and never the cap. Both layers grant it now, so a fully
+     * specialized body reaches 0.5 -- inside `deriveTraits`' existing 0.6
+     * clamp, which stays as the guard against a modifier rather than as a
+     * number the tree is priced against.
+     */
     adaptationCap: 0.3,
     conversionCap: 15,
-    masteryRelief: 3,
+    /**
+     * Mastery: repeated use of one's own ability (spec 275).
+     *
+     * The mirror of Adaptation, and deliberately the same shape -- an enemy
+     * repeats something and Wisdom learns to resist it; you repeat something
+     * and Wisdom learns to use it more efficiently. Both are keyed per ability
+     * id, both stack to a cap, both expire.
+     *
+     * The window is long against a cooldown rather than against a fight: a
+     * tool you come back to inside twenty seconds is one you are leaning on,
+     * and the longest cooldown in the table is 24s, so the slowest ability in
+     * the game can hold one stack between uses and no more.
+     */
+    masteryTicks: seconds(20),
+    masteryMaxStacks: 5,
   },
 
   /**
@@ -334,12 +629,14 @@ export const SCALING = {
    * an `E` in Strength, and no letter a designer could write would have fixed
    * it. The differentiation belongs in the grade or it belongs nowhere.
    *
-   * It is `2/3` because `2/3 * 0.9` is exactly `0.6`: grade `A` reproduces the
-   * Strength rate this spec inherited, so migrating the existing weapons to `A`
-   * moves a Strength build's damage by nothing at all. Retuning `A` afterwards
-   * is a deliberate rebalance rather than a side effect, which is the whole
-   * reason this rate is its own constant instead of being derived from the
-   * ladder it was chosen against.
+   * It was `2/3` when spec 216 chose it, because `2/3 * 0.9` is exactly `0.6`:
+   * grade `A` reproduced the Strength rate that spec inherited, so migrating the
+   * existing weapons to `A` moved a Strength build's damage by nothing at all.
+   * **Spec 217 retuned it to 0.15** with the rest of the damage economy -- see
+   * the field's own docstring below, which is the one that states the live
+   * value. Kept as history rather than deleted because the *reason* the rate is
+   * its own constant is still this: retuning `A` has to be a deliberate
+   * rebalance rather than a side effect of the ladder it was chosen against.
    */
   weaponScaling: {
     /**

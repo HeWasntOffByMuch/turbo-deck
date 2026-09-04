@@ -34,6 +34,7 @@ export type StatusIconId =
   | 'flow'
   | 'momentum'
   | 'prepared'
+  | 'patientRead'
   | 'attuned'
   | 'exposed'
   | 'vulnerable'
@@ -49,7 +50,10 @@ export type StatusIconId =
   | 'decay'
   | 'scorched'
   | 'light'
-  | 'overheated';
+  | 'overheated'
+  | 'preparing'
+  | 'weave'
+  | 'overdrawn';
 
 /**
  * Which way a status cuts.
@@ -149,6 +153,20 @@ const DEFINITIONS: readonly StatusVisual[] = [
     effect: 'Shortens the wind-up of your next cast. Spent when you cast.',
   },
   {
+    // Perception's counterpart to Prepared, and it rides for the same reason:
+    // the player has paid for it in attacks not thrown and cannot spend it
+    // deliberately unless they can see they are holding it (spec 272).
+    id: StatusId.PatientRead,
+    // 22 rather than the 19 this was written against: spec 270 appended three
+    // rows first, and the index is what crosses the wire.
+    wire: 22,
+    name: 'Patient Read',
+    kind: 'boon',
+    icon: 'patientRead',
+    maxStacks: 1,
+    effect: 'Your next weak point hits far harder. Spent when one lands.',
+  },
+  {
     id: StatusId.Prepared,
     wire: 2,
     name: 'Prepared',
@@ -158,6 +176,42 @@ const DEFINITIONS: readonly StatusVisual[] = [
     indefinite: true,
     effect:
       'Shortens the wind-up of your next ability. Does not apply to basic attacks.',
+  },
+  // The stance being taken, and the only row here whose **countdown is the
+  // point** (spec 270). `expiresAtTick` is the tick the caster comes up, so an
+  // opponent reading this mark is reading exactly how long they have to close
+  // the distance -- which is the counterplay the whole mechanic is priced
+  // against. Replicated like every other status, so it costs no wire field.
+  {
+    id: StatusId.Preparing,
+    wire: 19,
+    name: 'Preparing',
+    kind: 'boon',
+    icon: 'preparing',
+    maxStacks: 1,
+    effect: 'Planting a firing position. Becomes Prepared if this body is not moved or hit.',
+  },
+  {
+    id: StatusId.Weave,
+    wire: 20,
+    name: 'Weave',
+    kind: 'boon',
+    icon: 'weave',
+    maxStacks: 3,
+    effect: 'Each stack strengthens the afflictions you apply. Built by casting a different ability than the last.',
+  },
+  // A notice, not a boon, and drawn as one: nothing in the sim reads it and it
+  // is here so a player can tell their own spell from an attacker they cannot
+  // see. `kind` is `affliction` because that is what decides the colour, and
+  // "something bad just happened to you" is the true half of what it says.
+  {
+    id: StatusId.Overdrawn,
+    wire: 21,
+    name: 'Overdrawn',
+    kind: 'affliction',
+    icon: 'overdrawn',
+    maxStacks: 1,
+    effect: 'That cast was paid for with health, because the resource was not there.',
   },
   {
     id: StatusId.Attuned,

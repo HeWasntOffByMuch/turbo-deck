@@ -20,6 +20,7 @@ import { ATTRIBUTE_KEYS, type AttributeKey } from '../data/attributes.js';
 import { ALL_MILESTONES } from '../data/milestones.js';
 import { BUILD_PRESETS, fullSpreadOf, spreadOf } from '../data/presets.js';
 import { above, reciprocal, SCALING, softCap } from '../data/scaling.js';
+import { costOfNextTier, specializationById } from '../data/specializations.js';
 import { MAX_DAMAGE_REDUCTION } from '../../sim/constants.js';
 import { EMPTY_EQUIPMENT, emptyInventory, type BaseStats, type PersistedPlayer } from '../state/types.js';
 import { startingBaseStats } from './attributes.js';
@@ -242,7 +243,14 @@ describe('the build presets', () => {
       // Tiers come out of the same pool since spec 244, so conservation is over
       // both kinds of spend. Twelve of the presets buy none and are the
       // attribute comparison unchanged; the four `spend.*` rows are the axis.
-      const onTiers = specializations.reduce((sum, held) => sum + held.tier, 0);
+      // **Points, not ranks** (spec 273). A rank costs `costPerTier`, which is 1
+      // for every core row and more for Constitution's mastery rows -- so
+      // counting ranks would have this assert conservation over the wrong
+      // currency the moment a preset buys one.
+      const onTiers = specializations.reduce((sum, held) => {
+        const definition = specializationById(held.specializationId);
+        return sum + held.tier * (definition ? costOfNextTier(definition) : 1);
+      }, 0);
       const budget = SCALING.startingPoints + SCALING.pointsPerLevel * (preset.level - 1);
       // Conservation rather than "spends it all": a pure build at this level has
       // more points than one attribute can hold, which is exactly what the hard
@@ -266,17 +274,32 @@ describe('the build presets', () => {
     }
   });
 
-  it('keeps the twelve attribute presets free of tiers (spec 244)', () => {
+  it('keeps the attribute presets free of tiers (spec 244)', () => {
     // The comparison between attribute spreads is only a comparison between
-    // spreads while none of them carries a tree. The four `spend.*` presets are
-    // the ones that buy tiers, and they exist so that axis is measured somewhere
-    // rather than measured everywhere.
-    for (const preset of BUILD_PRESETS.filter((p) => !p.id.startsWith('spend.'))) {
+    // spreads while none of them carries a tree. The `spend.*` presets are the
+    // ones that buy tiers, and they exist so that axis is measured somewhere
+    // rather than measured everywhere. Spec 274 added a third group, `wis.*`,
+    // for the same reason one attribute down: those rows differ only in which
+    // of Wisdom's specializations they bought, which is a comparison the twelve
+    // cannot make because `tierShare` picks by threshold rather than by name.
+    const spending = (id: string): boolean => id.startsWith('spend.') || id.startsWith('wis.');
+    for (const preset of BUILD_PRESETS.filter((p) => !spending(p.id))) {
       expect(preset.tierShare, preset.id).toBe(0);
       expect(fullSpreadOf(preset).specializations, preset.id).toEqual([]);
     }
     for (const preset of BUILD_PRESETS.filter((p) => p.id.startsWith('spend.'))) {
       expect(fullSpreadOf(preset).specializations.length, preset.id).toBeGreaterThan(0);
+    }
+    // And a `preferOnly` build buys its preference and nothing else, which is
+    // what makes those rows differ at a point budget large enough to buy the
+    // whole tree -- the wall spec 271 met and worked around by collapsing three
+    // Strength rows into one.
+    for (const preset of BUILD_PRESETS.filter((p) => p.preferOnly === true)) {
+      const bought = fullSpreadOf(preset).specializations;
+      expect(bought.length, preset.id).toBeGreaterThan(0);
+      for (const allocation of bought) {
+        expect(preset.prefer, preset.id).toContain(allocation.specializationId);
+      }
     }
   });
 

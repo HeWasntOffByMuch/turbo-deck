@@ -73,7 +73,10 @@ change a game outcome.
 | `npm run audio:report` | Which sound hooks exist, which are silent, and which baked clips nothing references (spec 229). `--strict` for an exit code |
 | `npm run build && npx tsx scripts/probe-audio.ts` | Whether any of the audio framework is wired to anything (spec 229). Walks, swings and casts in the shipped page and reads what the engine says **started a voice** -- not what a call site asked for. It found the bug that made every once-only sound silent: the catalog lands before the first click, so the whole warm ran against a context that did not exist yet. Runs twice, `probe-map-editor.ts`'s shape: once over `dist/`, where Save must *say* there is no dev server, and once against a real `npx vite`, where a file chosen in the tab has to reach `assets/audio/raw/`, be encoded, be offered by the picker, be assigned, and land in the catalog on disk |
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
-| `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too |
+| `npm run balance:perception` | The Perception **loop**, rather than its damage (spec 272). `balance` measures whether an attribute is viable; this measures whether the sequence it is made of happened -- weak points and what threw them, reads banked and spent and what waiting cost, Exposed uptime, Exploits inside it, and what precision paid back. Five scenarios, because three of the readings are invisible in a stationary duel: `mobile` is the one that separates Patient Read from Intelligence's Prepared (a read survives repositioning, and the wait is **free** when you were going to move anyway -- the patient policy is 9% behind on duel DPS and level with continuous pressure while moving), `pack` is where an AoE reward explosion would show, `team` puts a second attacker with no Perception at all on a body somebody else exposed, and `stream` is the only one that can measure Resource Sense's *heal*, which is gated on a weak-point **kill** that a durable target never provides |
+| `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too. It runs **three** passes since the progression reviews landed, and each answers a question the others cannot. The tier audit is the original: does a purchase move a number. Spec 271 added a **content-reachability pass** -- can any row in the content tables satisfy the gate the consumer reads -- which is what would have caught Heavy Handling, whose gate no ability had cleared since spec 237 deleted the only one that did. Spec 272 added a **conditional-effect observation pass**: the tier audit proves a purchase *moves a trait*, which Steady Aim did in all twelve of its cells while being incapable of firing, so each gated mechanic carries its own scenario and is driven through a real fight. `NOT OBSERVED` means the fight written to trigger it did not -- never that a short generic fight missed a rare effect, which is the false positive that would make the pass noise. Steady Aim is the case that needs all three: it moved a trait, its gate was satisfiable by content, and the tick order meant the simulation never satisfied it -- so it audited clean on the first two and only running the thing could see it. Spec 273 put Constitution's five gated mechanics in that third pass and widened it twice to fit them, both times because a Constitution gate is read off the **defender**: a `Frame` carries the body as it was *before* the tick, since Guard coming back and a shield being made are changes rather than states and are indistinguishable from a body that already had them; and a scenario counts blows landed *on* it beside blows it threw, because a repositioning body throws none at all -- asking to move withdraws from a wind-up (spec 079) -- and an unhit body drains no Guard, so three of the five first reported NOT OBSERVED for reasons that had nothing to do with the mechanic. `moving` is a slow circle rather than a sprint for that reason, and the opponent is engaged from tick one |
+| `npx tsx scripts/probe-resource.ts` | What the active-resource economy actually is (spec 276), and the only instrument here whose subject is **slower than a fight**: a build with a 104-point magazine and a 1.0/s reload looks identical to one with an infinite pool for twenty seconds, and the design question is what happens at ninety. Sixteen builds x six bars driven through the real `step()` for 150s each -- pool, regeneration, theoretical and measured drain, restoration **split by source** (Resource Sense, Brutal Reserve, motes), minimum pool, mean pool, time at the ceiling, time starved, time *ready-but-unaffordable*, skill casts against basic-attack fallbacks, and overdraws -- classifying each row `FULL` / `STABLE` / `OSCILLATES` / `DRAINS` / `EMPTY`, where **both extremes are failures**. Two things make it believable. The ceiling is computed over **wind-up plus cooldown**, because `advanceCast` stamps `nextReadyTick` at the *release*: read off `intervalTicks` alone it overstates every row by its own wind-up, 12% on the greediest bar, which is exactly the headroom a tuning pass then spends. And the greediest bar is **derived from `data/abilities.ts`** rather than chosen, so no tuning is fitted to one hand-picked worst case. `--sheet=paced` is the control the design's own question needs -- *a conservative player should be capable of pacing expenditure* -- and it is what shows that over a long fight greed buys nothing: every build is `STABLE` at 0% starved holding half its pool back, because throughput converges on regeneration either way. The magazine is burst depth, and it only pays once. `--sheet=sensitivity` prints the candidate reload curves against the *measured* demand, which is how the shipped one was chosen over the three others that also clear both hard failures |
+| `npx tsx scripts/probe-constitution.ts` | What one whole track is *worth*, as opposed to whether its rows are wired up (specs 273, and the review it was written for). `audit:progression` asks whether a purchase moves a number and `npm run balance` stands still, so neither can see a mechanic gated on a *posture*. Six sheets: the durability curve at every value on the track with and without the tiers it opens; each mechanic driven through the sim function that owns it; the moving/still/casting/staggered split; guard longevity against the roster; **the loop** under four kinds of pressure -- stationary, mobile, a crowd of four, and starting inside the danger band -- with Guard recovered split by the posture it was recovered in; and the hybrids. Two things in it were each learned by getting them wrong. The fight sheet stood perfectly still and reported the moving column as zero for a reason that had nothing to do with the rule; rewritten to kite at *full* speed it outran the ravager, took 5.5 damage in ninety seconds and reported zero again, because a pool that is never drained recovers nothing. It repositions at a third of its own speed now, which keeps it in the fight. And the hybrid sheet carries four Constitution-free controls, without which it cannot say whether a hybrid's kill count is high or merely present -- the pair it exists for being EHP against KILLS: at CON 60 with every tier a body is 778 effective health against a fresh character's 115, and kills exactly as many ravagers as it did at CON 25, because Constitution buys no offence at all |
 | `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 245). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
@@ -196,6 +199,97 @@ docs/            durable direction that outlives one spec.
                  now holds. Read it before touching progression; it is the
                  companion to the next one, which is about what a *number* may do
                  rather than about what a *point* buys.
+                 resource-economy-review.md is the pass that made resource a
+                 constraint (spec 276), kept in the register the Constitution
+                 review set: the measurement rather than a description of the
+                 answer. What it is *for* is the number the whole thing turned
+                 on -- **the greediest four-skill bar a player can equip drains
+                 3.38 resource/second**, which is a ceiling rather than a worst
+                 case, because it is the four highest cost-per-cycle rows in
+                 `data/abilities.ts` cast on cooldown by a body rooted through
+                 its own casts. Everything else in the review is a comparison
+                 against that: the old supply crossed it at Wisdom 21 and
+                 reached 3.4x it at the cap, and the shipped curve rises the
+                 whole way and provably never reaches it.
+                 Read it before touching a resource coefficient, and read its
+                 last section first -- three things it deliberately did not fix
+                 are recorded there with their measurements, and the largest is
+                 that a Focus mote restores `0.2 x maxResource`, so in a
+                 kill-rich fight it pays an Intelligence build 3.24/s against a
+                 baseline's 1.08/s. That is the one place *"INT owns the
+                 magazine, WIS owns the reload"* does not hold, and it belongs to
+                 the drop economy rather than to this pass.
+                 constitution-progression-review.md is the first review of a
+                 single track end to end -- what its nine nodes grant, whether
+                 each reaches the sim, whether they compose, and what the whole
+                 thing is worth -- measured through
+                 `scripts/probe-constitution.ts` rather than read off the
+                 tables. Its three findings are what **spec 273** then fixed, and
+                 the review is kept as the measurement they were found by rather
+                 than rewritten to describe the answer.
+                 Spec 273 is Constitution as the loop it is meant to be: *take
+                 pressure -> recover Guard -> survive the breaking point ->
+                 stabilize low -> convert healing into future durability ->
+                 outlast*. Three things in it are worth knowing before touching
+                 the track.
+                 **Movement scales Guard recovery rather than switching it off.**
+                 `poiseRegenMoving` was a flag nothing granted and `regenPoise`
+                 read 0 as "set the rate to zero", so Steady Frame's three ranks
+                 and the CON 20 milestone were worth exactly nothing to a
+                 repositioning body. It is the *fraction a moving body keeps*
+                 now, seeded from `SCALING.constitution.poiseRegenMovingBase`
+                 (0.3) and clamped at `poiseRegenMovingCap` (0.75) -- strictly
+                 below 1, which is what makes "kiting never recovers Guard as
+                 fast as holding ground" a property rather than a hope. Measured
+                 at CON 60 with every tier: 27.50/s standing, 13.75 casting,
+                 10.31 moving, 10.31 staggered. **`NEUTRAL_TRAITS` keeps 0**, so
+                 `monsterTraits` is untouched -- a monster recovering Guard while
+                 chasing would be a broad enemy rebalance and a nerf to
+                 Strength's stagger pressure.
+                 **Second Wind goes through `applyHealing` and stops inside the
+                 band.** It bypassed the pipeline, so the track's largest single
+                 heal took neither the `healingScale` nor the desperation surge
+                 Constitution itself bought and could not overflow into Overflow
+                 Vitality's shield; and it fired at 30% and landed at 61%, above
+                 the two low-health windows the same threshold armed.
+                 `applyHealing` gained one optional argument -- a health ceiling
+                 for that heal, absent meaning `maxHealth`, so all three existing
+                 callers are byte-identical -- and Second Wind passes
+                 `SCALING.constitution.dangerBelow`. That constant is the one the
+                 four literal `0.3`s collapsed onto (`resoluteBelow`,
+                 `staggerImmuneBelow`, `secondWindBelow` and now this), and being
+                 one number is the whole design: `isResolute` compares with
+                 `<=`, so stabilizing lands the body at the *top* of the band it
+                 is fighting in rather than clear of it, and everything the
+                 ceiling turns away becomes a shield -- durability rather than
+                 health, which cannot eject anybody from anything.
+                 **Three mastery specializations at CON 50**, on the threshold
+                 the Overflow Vitality milestone already sits on, because
+                 `TrackNode` has always allowed a node to carry both. Unbroken
+                 Stride deepens the kept moving fraction, Death's Door is a
+                 capability flag (`resoluteRegenCalm`: while Resolute, Guard
+                 recovers at the calm rate whatever you are doing, so a body that
+                 survives the band climbs out of it still holding a guard rather
+                 than on an empty pool), and Deep Well raises the overheal
+                 shield's ceiling. They are the first rows in the tree to use
+                 `costPerTier`, which had sat on the interface since 244 with
+                 `costOfNextTier` as its only reader -- 2, 4 and 2 points a rank,
+                 because a one-point late purchase is strictly better than the
+                 attribute point beside it. That moved `costOfNextTier` down into
+                 `data/specializations.ts` beside the field it reads, and fixed
+                 `fullSpreadOf`, which charged a flat point a tier and would have
+                 given every preset a tree no real character could afford. The
+                 track costs 87 points now against 71, so it completes around
+                 level 21 rather than 18 -- which is written down as a reduction
+                 rather than a solution, since whether 242 points is too many is
+                 a question about all six tracks.
+                 What spec 273 deliberately did **not** do is in its own Out of
+                 scope: the other five attributes, monster Guard regeneration,
+                 explicit pair synergies, and Sustained Effort -- whose real
+                 value is smaller than it looks, because `applyPoiseDamage`
+                 refills the pool *whole* on a break, so `poiseRegenStaggered`
+                 only ever reaches poise drained by blows landing inside the
+                 stagger window. Measured and recorded rather than redesigned.
                  progression-and-scaling.md (specs 238-242) is the rules
                  progression and combat-scaling work is decided against: what an
                  ability is allowed to scale with and in what order the three
@@ -3836,18 +3930,18 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  `client/combat.ts` and `data/description.ts` is live and
                  unreachable from content; taking it out means removing a member
                  from the middle of `CastPhaseValue`, which renumbers the two after
-                 it, so it is a protocol change and wants its own spec. And
-                 `attackTimingFor` sends a non-basic ability's `cooldownTicks`
-                 through `resolveAttackTiming` as though it were a Base Attack
-                 Time, which clamps it to `MAX_ATTACK_INTERVAL_SECONDS` -- a
-                 constant whose own comment says "nothing in the content reaches
-                 either bound", true of BAT and false here: **twelve of the
-                 fourteen non-basic rows are over five seconds, so every one of
-                 them is really on a five-second cooldown.** Scorched Earth's
-                 authored 24s is 5s. It was invisible while the ability those
-                 tests drove was `melee.heavy`, whose cooldown was inside the
-                 bound; `abilities.test.ts` asserts the clamped value and names it
-                 now, so it is written down rather than assumed.
+                 it, so it is a protocol change and wants its own spec. The
+                 other one is **fixed** and this paragraph used to say otherwise:
+                 `attackTimingFor` sent a non-basic ability's `cooldownTicks`
+                 through the same clamp as a Base Attack Time, so twelve of the
+                 fourteen non-basic rows -- everything authored over five seconds,
+                 Scorched Earth's 24s included -- were really on a five-second
+                 cooldown. Spec 250 split the bounds (`COOLDOWN_BOUNDS` is
+                 0.2-300s against `ATTACK_INTERVAL_BOUNDS`' 0.2-5s) and the prose
+                 here was not updated with it, which spec 275 found while
+                 measuring what Wisdom's cooldown reduction is worth: an authored
+                 cooldown is its authored length now, and the reduction is real
+                 rather than swallowed by a ceiling.
                  `data/weapon-scaling.ts` is **what a weapon scales with**
                  (spec 216), and it exists because until it did, every weapon in
                  the game scaled the same way and the way was Strength: the two
@@ -4503,7 +4597,88 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  No threshold moved and no mechanic was invented. All eighteen
                  milestones share a name with a specialization the track unlocked
                  earlier and *deepen* it, which `MilestoneDefinition.deepens`
-                 records rather than leaving the sheet to print one name twice.
+                 records rather than leaving the sheet to print one name twice --
+                 and spec 275 made that a **test** for Wisdom rather than a
+                 convention, because the Wisdom 20 milestone had been granting
+                 the Attuned family while naming a specialization that granted
+                 `costReduction`: the same name over two mechanics with no trait
+                 in common. The fix moved Conservation to the first threshold so
+                 the milestone deepens the specialization that owns the mechanic.
+                 `agi.recovery` fails the same check against `agi.quickRecovery`
+                 and is Agility's to fix; the assertion is scoped to Wisdom and
+                 says so rather than being loosened until it passes everywhere.
+                 **Wisdom is the sustain track** (spec 275), and it is the one
+                 worth reading the shape of, because its rebuild is what that
+                 spec is. Its identity is *making finite things last*: recover,
+                 conserve, learn, adapt, reuse, waste nothing. Six nodes --
+                 Conservation and Measured Recovery at 10, the Attuned milestone
+                 at 20, Composure and Adaptation and Mastery at 25, the
+                 Adaptation milestone at 35, Conversion at 40 and its milestone
+                 at 50.
+                 The two decisions to know. **INT owns the magazine and WIS owns
+                 making it last**: `maxResource` no longer scales with Wisdom at
+                 all, which leaves the attribute the recovery and efficiency half
+                 of the same economy and creates the tension the track wants --
+                 cooldowns come back faster than a small pool can pay for, and
+                 the answer is to spend on Intelligence. And **Mastery is
+                 Adaptation pointed the other way**: an enemy repeats an ability
+                 and Wisdom learns to resist it (`adapt:<id>`), you repeat one
+                 and Wisdom learns to use it more efficiently (`mastery:<id>`).
+                 Mastery is earned in `advanceCast`'s commit block, which is the
+                 whole reason a support build can master its own toolkit: that
+                 block is ability-kind agnostic, so a heal, a shield and a slow
+                 accrue exactly as a blow does, and an implementation hung off a
+                 damage event would have scored zero for every one of them. It is
+                 the *attack point* rather than the press, so a withdrawn cast
+                 teaches nothing, and it reaches `cooldownScaleFor` and nothing
+                 else, so no amount of it is attack speed.
+                 What the harness says after: `npm run balance` grew a Wisdom
+                 section, and the six spending rows differ where they should --
+                 the attribute alone saves 8.9s of cooldown over a 30s fight,
+                 Composure 16.3s, Mastery 15.2s at 2.44 average stacks, and the
+                 two together 24.7s. What it also said is that **resource still
+                 never binds** -- minimum pool 24.2 and 0.0% of ticks starved on
+                 every row -- which 275 recorded as the global economy rather
+                 than the track, and left to the later pass.
+                 **Spec 276 is that pass**, and its one finding is that the
+                 supply had no ceiling to be measured against. The greediest
+                 four-skill bar a player can equip drains 3.38 resource/second --
+                 the four highest cost-per-cycle rows in `data/abilities.ts`, on
+                 cooldown, with a body rooted through its own casts, so nothing
+                 can spend faster -- and regeneration was `0.4 + 0.2 x
+                 above(WIS)`, linear, crossing that at about **Wisdom 21** and
+                 reaching 11.4/s at the cap. The waste was visible from the other
+                 side too: at Wisdom 40, 7.40/s was available and 2.15/s actually
+                 landed, because the pool was at its own ceiling. Past the
+                 crossover every other resource mechanic in the design --
+                 capacity, efficiency, Conservation, Overdraw, combat-earned
+                 restoration -- was measuring against a pool that was already
+                 full, and measured over 150-second fights the economy was
+                 **bimodal**: a character who had spent nothing was starved for
+                 98% of the fight at 10 skill casts a minute, and anything past
+                 Wisdom 25 sat at a full pool for the whole of it.
+                 Four constants, no new mechanic. `RESOURCE_REGEN_PER_SECOND`
+                 0.4 -> 1.0, so the floor is a floor rather than a wall;
+                 `regenPer` 0.2 linear -> `softCap(0.025, knee 20, falloff
+                 0.55)`, so supply rises the whole way and **never reaches the
+                 most the game can spend** -- 30% of the greediest bar at the
+                 start, 80% at the cap, and the last stretch closed by a
+                 *purchase* rather than accrued. And `attunedCostCap` 0.2 ->
+                 0.1 with Conservation's tiers and its milestone halved to match,
+                 because Attuned is a standing six-second buff refreshed by every
+                 cast rather than a charge spent by one: three stacks were a
+                 permanent 60% discount, nearly twice the whole attribute curve,
+                 and what took `WIS 40 + Conservation` to a pool that was full
+                 100% of a fight.
+                 `respawn` also names `resource` now. It rewrote eleven fields
+                 and every currency except that one, so a player who died empty
+                 got up empty -- against a `player-manager.ts` that hands over a
+                 full pool on every login unconditionally.
+                 `npx tsx scripts/probe-resource.ts` is the instrument all of it
+                 was decided by, and `resource-economy.test.ts` is the fence: its
+                 assertions **re-derive the demand from the content table** rather
+                 than naming a number, so a cheaper ability moves what the tests
+                 require, which is exactly when somebody should look.
                  What is **gone** is `synergies.ts` and its fifteen authored
                  two-attribute bonuses. They were content nobody asked to be
                  surprised by, present because a test required all fifteen to

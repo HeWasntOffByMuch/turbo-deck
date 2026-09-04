@@ -54,7 +54,6 @@ export interface TraitModifier {
   readonly momentumTicks?: number;
   readonly momentumWindupScale?: number;
   /** Sums, applied as `windupTicks * (1 - total)` on heavy abilities. */
-  readonly heavyWindupReduction?: number;
 
   // --- Agility ---
   /** Sums, applied as `attackPointScale * (1 - total)`. */
@@ -116,6 +115,16 @@ export interface TraitModifier {
   readonly preparedMastery?: number;
   readonly vsAfflictedPct?: number;
   readonly appliesSundered?: number;
+  /**
+   * Arcane Weaving's capability flag (spec 270).
+   *
+   * A flag rather than a number the mechanic is inferred from, which is spec
+   * 239's lesson applied before it could be learned again here: `weaveEffectPct`
+   * is what a *tier* is worth, and inferring "do you have Weaving" from it would
+   * mean a future source granting a reduction switched the chain off.
+   */
+  readonly grantsWeave?: number;
+  readonly weaveEffectPct?: number;
   readonly overflowHealthPerResource?: number;
   /** Sums, applied as `overflowHealthPerResource * (1 - total)`. */
   readonly overflowCostReduction?: number;
@@ -127,7 +136,14 @@ export interface TraitModifier {
   readonly poiseRegenPct?: number;
   readonly poiseRegenCalm?: number;
   readonly poiseRegenStaggered?: number;
+  /**
+   * Added to `SCALING.constitution.poiseRegenMovingBase` (spec 273): how much
+   * *more* of its Guard regeneration a moving body keeps. Clamped once, at the
+   * cap, so no grant is silently swallowed by another having got there first.
+   */
   readonly poiseRegenMoving?: number;
+  /** Grants the Resolute calm-rate rule. A capability: any positive value. */
+  readonly resoluteRegenCalm?: number;
   readonly secondWindBelow?: number;
   readonly secondWindHeal?: number;
   readonly resoluteBelow?: number;
@@ -147,11 +163,11 @@ export interface TraitModifier {
    */
   readonly staggerImmuneBelow?: number;
   readonly overhealShieldTicks?: number;
+  /** Raises the overheal shield's ceiling fraction (spec 273). */
+  readonly overhealShieldPct?: number;
 
   // --- Perception ---
   readonly weakPointChance?: number;
-  /** Sums, applied as `weakPointMultiplier * (1 + total)`. */
-  readonly weakPointPayoffPct?: number;
   readonly exposeTicks?: number;
   readonly exposedDamagePct?: number;
   /**
@@ -159,7 +175,7 @@ export interface TraitModifier {
    *
    * The capability flag {@link grantsPrepared} is, for the same reason and with
    * the same history: `deriveTraits` inferred it from
-   * `vulnerableWeakPointFactor > 0`, so the Perception 10 skill -- which grants
+   * `openingReadFactor > 0`, so the Perception 10 skill -- which grants
    * a longer Vulnerable *window* -- did nothing whatsoever until the Perception
    * 35 milestone. Twenty-five points of a purchasable, ranked skill doing
    * exactly nothing.
@@ -171,15 +187,28 @@ export interface TraitModifier {
    */
   readonly grantsOpeningRead?: number;
   readonly openingReadTicks?: number;
-  /** Sums as a **bonus above 1**: 1.0 here is "double weak-point chance". */
-  readonly vulnerableWeakPointFactor?: number;
-  readonly steadyAimPct?: number;
-  readonly steadyAimTicks?: number;
+  /**
+   * Opening Read's share of the **remaining** weak-point probability (spec 272).
+   *
+   * Sums, and is clamped into `[0, 1)` once. It was a multiplier above 1, which
+   * made Weak-Point Study and Opening Read compete for one clamp; as a share of
+   * what is left they compose, and neither can erase the other's purchase.
+   */
+  readonly openingReadFactor?: number;
+  /**
+   * What a consumed Patient Read adds to a weak point (spec 272).
+   *
+   * This is `weakPointPayoffPct` repurposed. That field was dormant and folded
+   * into `weakPointMultiplier` as a **passive**, which is the flat "+X% on
+   * every weak point" this mechanic exists not to be: the payoff has to be the
+   * thing the waiting bought, so it is conditional on the read and consumed
+   * with it.
+   */
+  readonly patientReadPayoffPct?: number;
   readonly exploitDamagePct?: number;
   readonly exploitPoiseFactor?: number;
   readonly weakPointResource?: number;
   readonly weakPointKillHeal?: number;
-  readonly abilityWeakPoints?: number;
   readonly vsVulnerableReduction?: number;
   readonly exposedTeamResource?: number;
 
@@ -211,7 +240,32 @@ export interface TraitModifier {
   /** Sums onto {@link SCALING.wisdom.adaptationTicks}, which is the base. */
   readonly adaptationTicks?: number;
   readonly conversionCap?: number;
-  readonly masteryRelief?: number;
+  /** Sums onto the automatic salvage curve, which the attribute caps low (spec 275). */
+  readonly salvagePct?: number;
+  /**
+   * Grants the **Attuned** mechanic at all (spec 275).
+   *
+   * The fourth capability flag, and it exists for the reason the other three
+   * do: `blow.ts` used to infer the mechanic from `attunedCostPct > 0 &&
+   * attunedTicks > 0`, so the duration had to be granted by whichever layer
+   * introduced it -- which is why Conservation could not sit below the
+   * milestone without being inert. With the flag, the window and the stack
+   * count come from `SCALING` and either layer can turn the mechanic on.
+   */
+  readonly grantsAttuned?: number;
+  /**
+   * Grants the **Mastery** mechanic at all (spec 275).
+   *
+   * Adaptation's mirror: an enemy repeats something and you learn to resist it;
+   * you repeat something and you learn to use it more efficiently.
+   */
+  readonly grantsMastery?: number;
+  /** How much one Mastery stack takes off that ability's own cooldown. */
+  readonly masteryCooldownPct?: number;
+  /** Sums onto {@link SCALING.wisdom.masteryMaxStacks}, which is the base. */
+  readonly masteryMaxStacks?: number;
+  /** Sums onto {@link SCALING.wisdom.masteryTicks}, which is the base. */
+  readonly masteryTicks?: number;
 }
 
 export interface StatModifier {
@@ -297,7 +351,6 @@ function zeroTraits(): TraitTotals {
     overkillResource: 0,
     momentumTicks: 0,
     momentumWindupScale: 0,
-    heavyWindupReduction: 0,
     attackPointReduction: 0,
     handlingReduction: 0,
     backswingCancelReduction: 0,
@@ -322,6 +375,8 @@ function zeroTraits(): TraitTotals {
     preparedMastery: 0,
     vsAfflictedPct: 0,
     appliesSundered: 0,
+    grantsWeave: 0,
+    weaveEffectPct: 0,
     overflowHealthPerResource: 0,
     overflowCostReduction: 0,
     damageToShield: 0,
@@ -330,26 +385,25 @@ function zeroTraits(): TraitTotals {
     poiseRegenCalm: 0,
     poiseRegenStaggered: 0,
     poiseRegenMoving: 0,
+    resoluteRegenCalm: 0,
     secondWindBelow: 0,
     secondWindHeal: 0,
     resoluteBelow: 0,
     resoluteReduction: 0,
     staggerImmuneBelow: 0,
     overhealShieldTicks: 0,
+    overhealShieldPct: 0,
     weakPointChance: 0,
-    weakPointPayoffPct: 0,
     exposeTicks: 0,
     exposedDamagePct: 0,
     grantsOpeningRead: 0,
     openingReadTicks: 0,
-    vulnerableWeakPointFactor: 0,
-    steadyAimPct: 0,
-    steadyAimTicks: 0,
+    openingReadFactor: 0,
+    patientReadPayoffPct: 0,
     exploitDamagePct: 0,
     exploitPoiseFactor: 0,
     weakPointResource: 0,
     weakPointKillHeal: 0,
-    abilityWeakPoints: 0,
     vsVulnerableReduction: 0,
     exposedTeamResource: 0,
     costReduction: 0,
@@ -366,7 +420,12 @@ function zeroTraits(): TraitTotals {
     adaptationCap: 0,
     adaptationTicks: 0,
     conversionCap: 0,
-    masteryRelief: 0,
+    salvagePct: 0,
+    grantsAttuned: 0,
+    grantsMastery: 0,
+    masteryCooldownPct: 0,
+    masteryMaxStacks: 0,
+    masteryTicks: 0,
   };
 }
 

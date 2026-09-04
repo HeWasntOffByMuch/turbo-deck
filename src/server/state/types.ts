@@ -428,6 +428,19 @@ export interface TraitStats {
   readonly vsAfflictedPct: number;
   /** This body's blows apply `sundered` (armour down) when 1. */
   readonly appliesSundered: number;
+  /**
+   * What one Weave stack adds to the magnitude of afflictions this body applies
+   * (spec 270).
+   *
+   * The capability flag that gates it (`grantsWeave`) is a **modifier field
+   * only**, like `grantsPrepared` and `grantsAdaptation` beside it: a flag whose
+   * one reader is `deriveTraits` has no business on the wire, and
+   * `weaveMaxStacks > 0` is already the answer to "does this body weave" for
+   * everything downstream.
+   */
+  readonly weaveEffectPct: number;
+  readonly weaveMaxStacks: number;
+  readonly weaveTicks: number;
   /** Health per point of missing resource an overflow cast may pay. 0 refuses. */
   readonly overflowHealthPerResource: number;
   /** Fraction of ability damage dealt that becomes shield. */
@@ -441,8 +454,39 @@ export interface TraitStats {
   readonly poiseRegenCalm: number;
   /** Fraction of poise regen that still applies while staggered. */
   readonly poiseRegenStaggered: number;
-  /** Poise regenerates while moving, when 1. */
+  /**
+   * Fraction of Guard regeneration a **moving** body keeps (spec 273).
+   *
+   * It was a flag -- 1 meant "regenerates while moving" and 0 meant the rate was
+   * set to zero outright -- and nothing in the game ever granted it, so it was 0
+   * for every body that has ever existed. That made Constitution's whole
+   * guard-recovery half worth nothing to a repositioning player.
+   *
+   * A fraction says the thing the design actually wants: movement *reduces*
+   * recovery rather than switching it off, standing still stays the strongest
+   * posture, and Constitution buys back some of what movement costs.
+   * `deriveTraits` seeds it from `SCALING.constitution.poiseRegenMovingBase` and
+   * clamps at `poiseRegenMovingCap`, which is strictly below 1 -- so kiting can
+   * never recover Guard as fast as holding ground.
+   *
+   * Monsters keep 0, from `NEUTRAL_TRAITS`.
+   */
   readonly poiseRegenMoving: number;
+  /**
+   * While {@link resoluteBelow} applies, Guard recovers at the calm rate
+   * whatever the body is doing (spec 273). A capability, so 1 or 0.
+   *
+   * A flag rather than a number, which is the pattern spec 239 settled on after
+   * three purchasable skills switched off the mechanic they were meant to
+   * improve: what this grants is a *rule about which branch applies*, not a
+   * quantity a layer could reduce.
+   *
+   * It is not redundant with the stagger immunity that shares its threshold.
+   * `applyPoiseDamage` drains the pool even while a body cannot be broken, so
+   * without this a character who survives the danger band climbs out of it on an
+   * empty guard; with it they come out still holding one.
+   */
+  readonly resoluteRegenCalm: number;
   /** Health fraction that triggers Second Wind, and what it restores. */
   readonly secondWindBelow: number;
   readonly secondWindHeal: number;
@@ -462,6 +506,13 @@ export interface TraitStats {
   readonly staggerImmuneBelow: number;
   /** Overheal becomes shield, up to `maxShield`, for this many ticks. 0 is off. */
   readonly overhealShieldTicks: number;
+  /**
+   * The overheal shield's ceiling. `SCALING.constitution.shieldFraction` of max
+   * health, raised by whatever `overhealShieldPct` was granted (spec 273) --
+   * that one is a `TraitModifier` field and deliberately *not* a `TraitStats`
+   * one, because this is the resolved answer and a second field carrying the
+   * input would be a number nothing reads.
+   */
   readonly maxShield: number;
 
   // --- Perception: information and precision ------------------------------
@@ -473,19 +524,23 @@ export interface TraitStats {
   readonly exposedDamagePct: number;
   /** Ticks an enemy is `vulnerable` for after committing an attack. 0 is off. */
   readonly openingReadTicks: number;
-  /** Weak-point chance multiplier against a `vulnerable` body. 1 is none. */
-  readonly vulnerableWeakPointFactor: number;
-  /** Extra weak-point payoff after standing still for `steadyAimTicks`. */
-  readonly steadyAimPct: number;
-  readonly steadyAimTicks: number;
+  /**
+   * Opening Read's share of the **remaining** weak-point probability (spec 272).
+   *
+   * `chance = base + (1 - base) * this` against a `vulnerable` body. 0 is none,
+   * and it is held strictly below 1 so a read can never be a certainty.
+   */
+  readonly openingReadFactor: number;
+  /** What a consumed Patient Read adds to a weak point. 0 is none. */
+  readonly patientReadPayoffPct: number;
+  /** Ticks without committing an attack before a Patient Read banks. 0 is off. */
+  readonly patientReadTicks: number;
   /** Extra damage and poise a weak point does to an already-`exposed` body. */
   readonly exploitDamagePct: number;
   readonly exploitPoiseFactor: number;
   /** Resource and health-fraction a weak point returns. */
   readonly weakPointResource: number;
   readonly weakPointKillHeal: number;
-  /** Abilities may score weak points too, when 1. */
-  readonly abilityWeakPoints: number;
   /** Damage reduction taken from a `vulnerable` attacker. */
   readonly vsVulnerableReduction: number;
   /** Anyone hitting a body this one exposed gains this much resource. */
@@ -513,8 +568,20 @@ export interface TraitStats {
   readonly adaptationTicks: number;
   /** Overheal becomes resource 1:1, up to this much per event. 0 is off. */
   readonly conversionCap: number;
-  /** Tier-3 stat skills open this many attribute points early. */
-  readonly masteryRelief: number;
+  /**
+   * `mastery`: what one stack takes off *that ability's* cooldown, how many
+   * stacks it holds, and how long one lives (spec 275).
+   *
+   * The slot `masteryRelief` used to occupy. That field was the old
+   * threshold-relief Mastery: derived, clamped, given a wire slot, replicated
+   * in every `Stats` message and read by nothing -- the mechanic ran through a
+   * parallel reader in `player/specializations.ts`. Spec 274 replaced the
+   * mechanic, so the three fields the new one needs take the retired one's
+   * place rather than being appended beside a dead field.
+   */
+  readonly masteryCooldownPct: number;
+  readonly masteryMaxStacks: number;
+  readonly masteryTicks: number;
 
   // --- the health economy: one route per attribute (spec 156) -------------
   /**
@@ -596,6 +663,9 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'preparedMastery',
   'vsAfflictedPct',
   'appliesSundered',
+  'weaveEffectPct',
+  'weaveMaxStacks',
+  'weaveTicks',
   'overflowHealthPerResource',
   'damageToShield',
   'maxPoise',
@@ -603,6 +673,7 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'poiseRegenCalm',
   'poiseRegenStaggered',
   'poiseRegenMoving',
+  'resoluteRegenCalm',
   'secondWindBelow',
   'secondWindHeal',
   'resoluteBelow',
@@ -615,14 +686,13 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'exposeTicks',
   'exposedDamagePct',
   'openingReadTicks',
-  'vulnerableWeakPointFactor',
-  'steadyAimPct',
-  'steadyAimTicks',
+  'openingReadFactor',
+  'patientReadPayoffPct',
+  'patientReadTicks',
   'exploitDamagePct',
   'exploitPoiseFactor',
   'weakPointResource',
   'weakPointKillHeal',
-  'abilityWeakPoints',
   'vsVulnerableReduction',
   'exposedTeamResource',
   'resourceCostScale',
@@ -638,7 +708,9 @@ export const TRAIT_WIRE_ORDER: readonly (keyof TraitStats)[] = [
   'adaptationCap',
   'adaptationTicks',
   'conversionCap',
-  'masteryRelief',
+  'masteryCooldownPct',
+  'masteryMaxStacks',
+  'masteryTicks',
   'restoreOverkillPct',
   'restoreEvasivePct',
   'restoreAbilityKillPct',
@@ -781,6 +853,16 @@ export interface EffectiveStats {
    */
   readonly weaponDamageMin: number;
   readonly weaponDamageMax: number;
+  /**
+   * What a basic attack with this body's main hand carries into a Guard pool,
+   * as a multiple of `staggerPower` (spec 271).
+   *
+   * Resolved once here for `weaponDamageMin`'s reason -- the sim multiplies and
+   * is done -- and replicated so a tooltip states the impact the sim used
+   * rather than looking the row up again. A monster has no weapon row and gets
+   * `DEFAULT_WEAPON_GUARD_IMPACT` through `NO_WEAPON`.
+   */
+  readonly weaponGuardImpact: number;
   /**
    * The grade steps this body's equipment, milestones and synergies contribute
    * (spec 216).

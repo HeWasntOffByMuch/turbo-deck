@@ -89,6 +89,29 @@ export interface ItemDefinition {
    */
   readonly damage?: WeaponDamage;
   /**
+   * How hard a swing with this weapon lands on a **Guard** pool (spec 271).
+   *
+   * Multiplies the wielder's `staggerPower` for a basic attack, exactly as an
+   * ability's own `guardImpact` does for a skill. Absent is
+   * {@link DEFAULT_WEAPON_GUARD_IMPACT}, so every weapon authored before this
+   * spec keeps the pressure it had and an empty hand is unchanged.
+   *
+   * **Authored, and deliberately derived from nothing.** Not from `damage`,
+   * because a fast weapon with a small range can still be a hammer, and not
+   * from the Strength grade, because that says who the weapon *pays* rather
+   * than what it weighs -- the Weighted Stars scale with Agility and are
+   * genuinely light, while a maul would be heavy in the hands of somebody who
+   * gets nothing from it. Two properties, two fields.
+   *
+   * The number is per **hit**, so cadence is the other half of the trade and
+   * the two are meant to stay close: the maul's 1.6 against the keen sword's
+   * 0.9 is a 1.78x edge per blow against a 1.44x deficit in swings, which
+   * leaves the maul about 23% ahead on sustained Guard pressure. Ahead rather
+   * than dominant is the target -- a heavy weapon should be the one you reach
+   * for to break a Guard, and a fast one should not be excluded from the plan.
+   */
+  readonly guardImpact?: number;
+  /**
    * The auto-attack this weapon swings with (spec 079), or absent for one that
    * changes numbers but not the motion.
    *
@@ -146,6 +169,11 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   // --- weapons ---
   {
     id: 'sword.worn',
+    // **The reference at 1.0** (spec 271). Every impact in this table is read
+    // against this one, and it is authored rather than left absent so the six
+    // rows read as a set -- a blank here would be the same number and would
+    // look like an oversight beside five that state theirs.
+    guardImpact: 1,
     value: 12,
     name: 'Worn Sword',
     slot: 'mainHand',
@@ -162,6 +190,12 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'sword.keen',
+    // **Under the worn sword, and that is the point of the row** (spec 271). It
+    // is keen: it cuts, where Guard pressure is what a blow does by being
+    // heavy. What it gets back is cadence -- +15% swing rate against the maul's
+    // -20% -- so over time it closes most of the per-hit gap without ever being
+    // the weapon you pick to break a Guard.
+    guardImpact: 0.9,
     rarity: 'rare',
     value: 90,
     name: 'Keen Longsword',
@@ -182,6 +216,12 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'maul.iron',
+    // **The hammer** (spec 271). The one row in the table whose whole argument
+    // is impact, at nearly twice the reference and 1.8x the keen sword's --
+    // which against its -20% swing rate leaves it about 23% ahead on sustained
+    // Guard pressure. Ahead rather than dominant, deliberately: the sword's
+    // cadence is meant to be a real answer.
+    guardImpact: 1.6,
     rarity: 'rare',
     value: 110,
     name: 'Iron Maul',
@@ -199,6 +239,11 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'staff.emberwood',
+    // **Above the bow and the stars, and it is the Intelligence weapon** (spec
+    // 271). The clearest evidence in this table that impact and scaling grade
+    // are different properties: this row is `E` in Strength and `A` in
+    // Intelligence, and it is still a length of wood swung at somebody.
+    guardImpact: 0.7,
     rarity: 'rare',
     value: 95,
     name: 'Emberwood Staff',
@@ -238,6 +283,11 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'bow.hunting',
+    // An arrow does not stagger anybody (spec 271). `D` in Strength and the
+    // second-lowest impact in the table -- the grade says who the weapon pays,
+    // this says what the blow weighs, and a bow is a clean case of the two
+    // pointing different ways.
+    guardImpact: 0.4,
     value: 30,
     name: 'Hunting Bow',
     slot: 'mainHand',
@@ -255,6 +305,10 @@ const DEFINITIONS: readonly ItemDefinition[] = [
   },
   {
     id: 'stars.weighted',
+    // The lightest thing here, and an `S` (spec 271) -- in *Agility*. Weighted
+    // is a name rather than a claim about mass: they are thrown, they are fast,
+    // and what they are for is the cadence.
+    guardImpact: 0.35,
     value: 26,
     name: 'Weighted Stars',
     slot: 'mainHand',

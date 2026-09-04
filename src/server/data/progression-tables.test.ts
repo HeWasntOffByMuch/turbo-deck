@@ -222,13 +222,20 @@ describe('the six tracks (spec 244)', () => {
   });
 });
 
-describe('the thirty-six specializations', () => {
-  it('is six per attribute, at the three thresholds', () => {
-    expect(ALL_SPECIALIZATIONS).toHaveLength(36);
+describe('the specializations', () => {
+  it('gives every attribute the same six core rows, at the three thresholds', () => {
+    // The **core** six, which is every row on `SPECIALIZATION_THRESHOLDS`. Spec
+    // 273 added Constitution mastery rows on top, and they sit on the last
+    // *milestone* threshold rather than on one of these -- so this stays the
+    // assertion it always was about the shape every track shares, and the
+    // asymmetry is asserted separately below rather than smuggled in by
+    // loosening this.
     for (const key of ATTRIBUTE_KEYS) {
-      const mine = specializationsFor(key);
-      expect(mine, key).toHaveLength(6);
-      expect(mine.map((s) => s.requires)).toEqual([
+      const core = specializationsFor(key).filter((s) =>
+        (SPECIALIZATION_THRESHOLDS as readonly number[]).includes(s.requires),
+      );
+      expect(core, key).toHaveLength(6);
+      expect(core.map((s) => s.requires)).toEqual([
         SPECIALIZATION_THRESHOLDS[0],
         SPECIALIZATION_THRESHOLDS[0],
         SPECIALIZATION_THRESHOLDS[1],
@@ -236,6 +243,25 @@ describe('the thirty-six specializations', () => {
         SPECIALIZATION_THRESHOLDS[1],
         SPECIALIZATION_THRESHOLDS[2],
       ]);
+    }
+  });
+
+  it('puts late mastery rows on Constitution alone, priced above a point', () => {
+    // Spec 273. The track completed at level 18 of 60 and had nothing to sell
+    // after it; these are what deep investment buys instead. Constitution-only
+    // on purpose -- the other five tracks are out of that spec's scope -- and
+    // this asserts that boundary rather than trusting it, so extending another
+    // track later is a deliberate edit here.
+    const mastery = ALL_SPECIALIZATIONS.filter(
+      (s) => !(SPECIALIZATION_THRESHOLDS as readonly number[]).includes(s.requires),
+    );
+    expect(mastery.length).toBeGreaterThan(0);
+    for (const row of mastery) {
+      expect(row.attribute, row.id).toBe('constitution');
+      // On a threshold the track already has, so the shape gains depth without
+      // gaining a number the tables do not already state.
+      expect(MILESTONE_THRESHOLDS as readonly number[], row.id).toContain(row.requires);
+      expect(row.costPerTier ?? 1, row.id).toBeGreaterThan(1);
     }
   });
 
@@ -325,6 +351,22 @@ describe('every trait actually reaches the sim', () => {
       // rather than off the bundle, because the bundle is derived from them and
       // asking it here would be the one cycle this design does not have.
       'masteryRelief',
+      // **Deliberately dormant since spec 271.** A health gate on Unstoppable's
+      // all-cast hyper-armour, from the Strength+Constitution pair spec 244
+      // deleted. Its only surviving grant set it to exactly 1 -- "always" -- so
+      // `if (gate < 1)` could never run and the sim carried a threshold no
+      // content could set. The grant and the branch are both gone; the field
+      // stays because `TRAIT_WIRE_ORDER` is protocol and removing an entry
+      // renumbers every trait after it. It is listed here rather than given a
+      // fractional grant, because inventing a low-health Strength mechanic to
+      // keep a field alive is how this list got long in the first place.
+      'juggernautBelow',
+      // Dormant since spec 271 too, and for the same protocol reason. Heavy
+      // Handling was its only grant, and the branch that read it -- an
+      // `ability.damage >= HEAVY_ABILITY_DAMAGE` gate -- had been unreachable
+      // since spec 237 deleted the one ability that cleared the bar. `derived.ts`
+      // pins it at 1.
+      'heavyWindupScale',
     ]);
 
     // `derived.ts` is excluded, and excluding it is the whole point: it is the

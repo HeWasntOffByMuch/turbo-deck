@@ -257,8 +257,8 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
     const bought = traits({ perception: skill.requires }, [{ specializationId: skill.id, tier: 1 }]);
     expect(bought.openingReadTicks).toBeGreaterThan(0);
     // The window is worth nothing without a payoff to read it -- which is
-    // exactly what the skill used to grant: a longer window at factor 1.
-    expect(bought.vulnerableWeakPointFactor).toBeGreaterThan(1);
+    // exactly what the skill used to grant: a longer window at factor 0.
+    expect(bought.openingReadFactor).toBeGreaterThan(0);
 
     everyRankMoves(
       ladder({ perception: skill.requires }, skill.id, (t) => t.openingReadTicks),
@@ -284,16 +284,39 @@ describe('a purchasable rank works the moment it can be bought (spec 239)', () =
     );
   });
 
-  it('reaches the cap `SCALING` states, and nothing raises it any further', () => {
-    // The CON/WIS Enduring pair used to add 0.15 on top, and spec 244 removed
-    // it; `adaptationCap` is one of the twenty-two trait fields left with no
-    // source, so the cap is now exactly the table's. Asserted at the top of both
-    // attributes, which is where a second source would show up if one returned.
-    expect(traits({ wisdom: 50 }).adaptationCap).toBeCloseTo(SCALING.wisdom.adaptationCap, 6);
+  it('starts at the cap `SCALING` states, and only Wisdom raises it (spec 275)', () => {
+    // The attribute alone is the table's number: `SCALING.wisdom.adaptationCap`
+    // is where Adaptation *starts*, and until spec 275 it was also where every
+    // path ended -- the field was granted by nothing, so all three tiers and the
+    // milestone converged on it and bought only hits-to-cap.
+    //
+    // Constitution is asserted beside it because the CON/WIS Enduring pair used
+    // to add 0.15 here and spec 244 removed it. Investing in Constitution must
+    // still do nothing to this number: what raises it is Wisdom's own tiers, not
+    // a second attribute, and that is the difference between deepening a
+    // mechanic and restoring a pair bonus.
+    const milestoneOnly = traits({ wisdom: 50 });
+    expect(milestoneOnly.adaptationCap).toBeCloseTo(SCALING.wisdom.adaptationCap + 0.05, 6);
     expect(traits({ constitution: 50, wisdom: 50 }).adaptationCap).toBeCloseTo(
-      SCALING.wisdom.adaptationCap,
+      milestoneOnly.adaptationCap,
       6,
     );
+
+    const skill = specializationById('wis.adaptation');
+    if (!skill) throw new Error('no wis.adaptation');
+    // Every tier moves the ceiling, which is the property the spec exists for:
+    // deep investment must buy how far you can adapt and not only how fast.
+    everyRankMoves(
+      ladder({ wisdom: 50 }, skill.id, (t) => t.adaptationCap),
+      'up',
+      'adaptationCap',
+    );
+
+    // And it stays inside `deriveTraits`' guard, which is a clamp against a
+    // broken modifier rather than a number the tree is priced against.
+    const fully = traits({ wisdom: 50 }, [{ specializationId: skill.id, tier: skill.maxTier }]);
+    expect(fully.adaptationCap).toBeCloseTo(0.5, 6);
+    expect(fully.adaptationCap).toBeLessThanOrEqual(0.6);
   });
 });
 

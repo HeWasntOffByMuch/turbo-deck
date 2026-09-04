@@ -34,6 +34,7 @@ import { rarityOf } from '../data/items.js';
 import { rollLoot } from '../data/loot.js';
 import { monsterById } from '../data/monsters.js';
 import { RESTORATION } from '../data/restoration.js';
+import { SCALING } from '../data/scaling.js';
 import { NO_WEAPON } from '../data/weapon-scaling.js';
 import { NEUTRAL_TRAITS } from '../player/derived.js';
 import { bolt, goHome, isFriendly, isReturning, notice, playersOf, rally, settle } from './aggro.js';
@@ -50,7 +51,7 @@ import {
   type CrowdBody,
   type CrowdPush,
 } from './crowd.js';
-import { healingScaleOf, pulseDots } from './damage-over-time.js';
+import { pulseDots } from './damage-over-time.js';
 import { pulseAuraFields } from './aura-field.js';
 import { makeDrop, revealsOn, scatterLanding, type DropState } from './loot.js';
 import { regenPoise, staggered } from './poise.js';
@@ -207,6 +208,9 @@ export function blankProgression(): Pick<
   | 'shieldUntilTick'
   | 'statuses'
   | 'stillSinceTick'
+  | 'stanceSinceTick'
+  | 'lastWovenAbilityId'
+  | 'lastAttackTick'
   | 'restoration'
   | 'fallbackCharges'
   | 'restingTicks'
@@ -218,6 +222,9 @@ export function blankProgression(): Pick<
     shieldUntilTick: 0,
     statuses: NO_STATUSES,
     stillSinceTick: 0,
+    stanceSinceTick: 0,
+    lastWovenAbilityId: '',
+    lastAttackTick: 0,
     // The health economy starts empty and the flask starts full (spec 156). A
     // body that enters the world part-way to a mote would make the meter a
     // function of when it spawned; a body that enters with no insurance would
@@ -1048,8 +1055,14 @@ export function step(
     if (intent && steered.kind !== EntityKindValue.Player) monsterIntentCache.set(steered.id, intent);
 
     const outcome = resolveMovement(steered, intent, movement);
-    const moved =
-      outcome.position.x !== steered.position.x || outcome.position.y !== steered.position.y;
+    const stepX = outcome.position.x - steered.position.x;
+    const stepY = outcome.position.y - steered.position.y;
+    const moved = stepX !== 0 || stepY !== 0;
+    // How far it actually went, for the one rule that cares about the size of
+    // the step rather than whether there was one (spec 270). `moved` keeps its
+    // exact meaning -- Activity, poise regen and Steady Aim all still read a
+    // boolean -- and the artillery stance reads this.
+    const stepDistance = Math.hypot(stepX, stepY);
 
     let next: ServerEntity = {
       ...steered,
@@ -1059,10 +1072,7 @@ export function step(
       // (spec 187). Measured from the step it ended up taking rather than from
       // the one it asked for, so a body pressed into a tree tells its
       // neighbours it is going nowhere.
-      velocity: {
-        x: (outcome.position.x - steered.position.x) * SERVER_TICK_RATE,
-        y: (outcome.position.y - steered.position.y) * SERVER_TICK_RATE,
-      },
+      velocity: { x: stepX * SERVER_TICK_RATE, y: stepY * SERVER_TICK_RATE },
       zoneId: context.zones.zoneIdAt(outcome.position.x, outcome.position.y),
       // Remember what this client claimed, so the next input's speed is measured
       // against its own previous claim rather than against our position.
@@ -1105,7 +1115,7 @@ export function step(
     // One pass, here, because all four read the same three facts this pass has
     // just settled -- did the body move, is it committed, is it staggered -- and
     // a second loop would have to re-derive them or take them on trust.
-    next = advanceProgression(next, tick, moved);
+    next = advanceProgression(next, tick, moved, stepDistance);
     working.set(next.id, next);
 
     if (outcome.correctionReason !== null && input) {
@@ -1608,8 +1618,12 @@ export function step(
  *     it is all gone.
  *  2. **Stillness.** Anything the body did this tick -- moving, or being
  *     committed to a cast -- stamps `stillSinceTick` forward. Being hit stamps
- *     it too, from `blow.ts`.
- *  3. **Prime.** Enough stillness grants `Prepared`, Intelligence's opener.
+ *     it too, from `blow.ts`. That clock is Perception's Steady Aim's.
+ *  3. **The stance.** `stanceSinceTick` is Intelligence's own clock and is
+ *     stamped only by movement past `stanceMoveEpsilon`, by a hit, and by
+ *     spending the charge -- never by casting (spec 270). Enough of it grants
+ *     `Prepared`, with `Preparing` published while it builds so an opponent can
+ *     see the caster planting itself.
  *  4. **Regenerate poise**, at whichever of its three rates applies.
  *
  * Returns the same object when nothing changed, so an idle world with no
@@ -1619,6 +1633,7 @@ export function advanceProgression(
   entity: ServerEntity,
   tick: number,
   moved: boolean,
+  stepDistance = 0,
 ): ServerEntity {
   const traits = entity.stats.traits;
   const staggered = entity.activity === ActivityValue.Stunned;
@@ -1627,20 +1642,78 @@ export function advanceProgression(
   const busy = moved || entity.cast !== null;
   const stillSinceTick = busy ? tick : entity.stillSinceTick;
 
+  // **Patient Read**, banked by not attacking (spec 272). The artillery stance
+  // below is the same shape against a different clock, and the contrast is the
+  // whole reason both exist: that one reads `stanceSinceTick` and is broken by
+  // *moving*, this one reads `lastAttackTick` and is broken by *attacking*. So
+  // a Perception character repositions, dodges and tracks the entire time and
+  // pays for the read in the attacks they did not throw, where an Intelligence
+  // character pays by standing still and may keep casting.
+  //
+  // Granted here rather than at the blow because this pass runs in 1c and casts
+  // resolve in 3, so a read banked on this tick is available to a blow landing
+  // on it. Steady Aim asked its question from inside pass 3 about a field pass
+  // 1c had just stamped, which is exactly why it could never be satisfied.
   if (
-    !busy &&
-    traits.prepareTicks > 0 &&
-    tick - stillSinceTick >= traits.prepareTicks &&
-    !hasStatus(statuses, StatusId.Prepared, tick)
+    traits.patientReadTicks > 0 &&
+    tick - entity.lastAttackTick >= traits.patientReadTicks &&
+    !hasStatus(statuses, StatusId.PatientRead, tick)
   ) {
-    // Held until it is spent rather than for a duration: the whole point is that
-    // it is banked before the fight, and a charge that decayed while you walked
-    // into range would be a charge nobody could ever use.
-    statuses = applyStatus(statuses, StatusId.Prepared, tick, Number.MAX_SAFE_INTEGER - tick);
+    statuses = applyStatus(statuses, StatusId.PatientRead, tick, SCALING.perception.patientReadHoldTicks);
+  }
+
+  // --- the artillery stance (spec 270) -----------------------------------
+  //
+  // Its own clock, and the two differences from `stillSinceTick` above are the
+  // whole mechanic. **Casting does not break it**, so the loop the spec
+  // describes -- plant, prime, fire, stay planted, prime again -- is a loop
+  // rather than a thing that happens once before a fight; and what breaks it is
+  // *intentional* movement rather than any displacement at all, so being shoved
+  // out of a tree by collision resolution does not cost a stance somebody stood
+  // two seconds for.
+  //
+  // The other reason it is not `stillSinceTick`: one field read by two
+  // attributes is one edit away from being a change to both. Spec 272 took the
+  // same way out rather than widening either of these -- Patient Read above
+  // carries a third clock, `lastAttackTick` -- and the three now answer three
+  // different questions with nothing shared between them.
+  const brokeStance = stepDistance > SCALING.intelligence.stanceMoveEpsilon;
+  const stanceSinceTick = brokeStance ? tick : entity.stanceSinceTick;
+
+  const primes = traits.prepareTicks > 0;
+  const planted = primes && !brokeStance && !staggered;
+  const readyAt = stanceSinceTick + traits.prepareTicks;
+
+  if (!planted) {
+    statuses = clearStatus(statuses, StatusId.Preparing);
+  }
+
+  if (planted && !hasStatus(statuses, StatusId.Prepared, tick)) {
+    if (tick >= readyAt) {
+      // Held until it is spent rather than for a duration: the whole point is
+      // that it is banked before the fight, and a charge that decayed while you
+      // walked into range would be a charge nobody could ever use.
+      statuses = clearStatus(statuses, StatusId.Preparing);
+      statuses = applyStatus(statuses, StatusId.Prepared, tick, Number.MAX_SAFE_INTEGER - tick);
+    } else if (!hasStatus(statuses, StatusId.Preparing, tick)) {
+      // The tell (spec 270). A stance nobody can see is a stance nobody can
+      // punish, and the cheapest honest way to publish one is a status: it is
+      // already replicated to every client, already drawn over the head, and
+      // its `expiresAtTick` **is** the tick the caster comes up -- so an
+      // opponent reads the countdown off machinery that exists rather than off
+      // a progress bar with a wire field behind it.
+      //
+      // Applied once at the start of the stance rather than refreshed per tick,
+      // so a planted body costs no allocation while it waits.
+      statuses = applyStatus(statuses, StatusId.Preparing, tick, Math.max(1, readyAt - tick));
+    }
   }
 
   const shieldLive = tick < entity.shieldUntilTick;
-  const shield = shieldLive ? entity.shield : 0;
+  let shield = shieldLive ? entity.shield : 0;
+  let shieldUntilTick = entity.shieldUntilTick;
+  let resource = entity.resource;
+  let restoration = entity.restoration;
   const poise = regenPoise(entity, tick, moved, staggered);
 
   // Second Wind (spec 147, fixed in 232). Constitution's one comeback, and the
@@ -1665,13 +1738,33 @@ export function advanceProgression(
   const armed = traits.secondWindHeal > 0 && entity.stats.maxHealth > 0 && health > 0;
   const hurt = armed && health / entity.stats.maxHealth <= traits.secondWindBelow;
   if (hurt && !hasStatus(statuses, StatusId.SecondWindSpent, tick)) {
-    // Suppressed like every other restoration (spec 190). Second Wind bypasses
-    // `applyHealing` entirely, so a Decay that only reached that function would
-    // stop working at exactly the moment a Constitution build needs it -- which
-    // is the one moment somebody would notice and file it as a bug.
-    const comeback =
-      entity.stats.maxHealth * traits.secondWindHeal * healingScaleOf(statuses, tick);
-    health = Math.min(entity.stats.maxHealth, health + comeback);
+    // **Through the pipeline, and capped at the band** (spec 273).
+    //
+    // It used to be a bare `min(maxHealth, health + maxHealth * heal)` with only
+    // Decay's suppression on it, which made the track's largest single heal the
+    // one heal that took none of what the track itself sells: not
+    // `healingScale`, not the desperation surge Constitution owns outright, and
+    // with its remainder discarded rather than becoming Overflow Vitality's
+    // shield. `applyHealing` is where all of that lives, so this goes through it.
+    //
+    // The ceiling is the danger threshold, and that is the whole design. At 36%
+    // of maximum this heal used to fire at 30% and land at 61%, which is above
+    // Hard to Kill's window, above the stagger immunity's, and above the
+    // surge's -- one purchase at CON 25 switching off the other two. Capped at
+    // `dangerBelow` the body stabilizes at the *top* of the band it is fighting
+    // in (`isResolute` compares with `<=`), and everything the ceiling turns
+    // away overflows into the shield, which is durability rather than health.
+    const restored = applyHealing(
+      { ...entity, statuses },
+      entity.stats.maxHealth * traits.secondWindHeal,
+      tick,
+      entity.stats.maxHealth * SCALING.constitution.dangerBelow,
+    );
+    health = restored.entity.health;
+    shield = restored.entity.shield;
+    shieldUntilTick = restored.entity.shieldUntilTick;
+    resource = restored.entity.resource;
+    restoration = restored.entity.restoration;
     // Held rather than timed, exactly as `Prepared` above is and for the mirror
     // of its reason: that one is banked until it is spent, this one is spent
     // until it is banked, and neither has a clock that should end it.
@@ -1686,13 +1779,28 @@ export function advanceProgression(
   if (
     statuses === entity.statuses &&
     stillSinceTick === entity.stillSinceTick &&
+    stanceSinceTick === entity.stanceSinceTick &&
     shield === entity.shield &&
+    shieldUntilTick === entity.shieldUntilTick &&
+    resource === entity.resource &&
+    restoration === entity.restoration &&
     poise === entity.poise &&
     health === entity.health
   ) {
     return entity;
   }
-  return { ...entity, statuses, stillSinceTick, shield, poise, health };
+  return {
+    ...entity,
+    statuses,
+    stillSinceTick,
+    stanceSinceTick,
+    shield,
+    shieldUntilTick,
+    resource,
+    restoration,
+    poise,
+    health,
+  };
 }
 
 // --- the health economy (spec 156) --------------------------------------

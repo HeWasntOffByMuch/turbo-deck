@@ -1485,10 +1485,17 @@ describe('a skill that marks everything', () => {
         .map((id) => visualFor(id)?.id)
         .filter((id): id is string => id !== undefined),
     );
-    for (const visual of STATUS_VISUALS) {
+    // One exclusion, and it is a property of the sim rather than a gap in the
+    // row (spec 270). `Preparing` is the only mark `advanceProgression` *owns*:
+    // it is applied while a body builds its stance and cleared on any body that
+    // cannot prime at all, which a monster cannot. A row that applied it would
+    // be writing a claim the next tick correctly erases, so the honest coverage
+    // statement is "every mark except the one nothing may hand out".
+    const applied = STATUS_VISUALS.filter((visual) => visual.id !== StatusId.Preparing);
+    for (const visual of applied) {
       expect(drawn.has(visual.id), `${visual.id} is not on the target`).toBe(true);
     }
-    expect(drawn.size).toBe(STATUS_VISUALS.length);
+    expect(drawn.size).toBe(applied.length);
   });
 
   /**

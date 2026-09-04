@@ -33,6 +33,7 @@
  * Pure. The tick is an argument.
  */
 
+import type { AbilityDefinition } from '../data/abilities.js';
 import { SCALING } from '../data/scaling.js';
 import type { EffectiveStats } from '../state/types.js';
 import { clearStatus, StatusId } from './statuses.js';
@@ -57,9 +58,16 @@ export const STAGGER_IMMUNE_TICKS = SCALING.combat.staggerImmuneTicks;
  *     Unstoppable says so. The follow-through is the part you have already been
  *     paid for, so protecting it is a milestone rather than the default.
  *  3. **The cast must be eligible.** A basic attack always; everything else only
- *     when `poiseArmorAllCasts` is set -- and when the Juggernaut pair set it,
- *     only below `juggernautBelow` of max health, because that pair's whole
- *     point is that the dangerous half of the fight becomes your half.
+ *     when `poiseArmorAllCasts` is set, which Unstoppable grants.
+ *
+ * There was a fourth until spec 271: a `juggernautBelow` health gate, from the
+ * Strength+Constitution pair that spec 244 deleted. Its only remaining source
+ * set it to exactly 1 -- "always" -- so `if (gate < 1)` could not run, and the
+ * sim carried a threshold no content could set. Removed rather than given a
+ * fractional grant, because a capstone that only protects you once you are
+ * nearly dead is a different mechanic from the one Unstoppable's own line
+ * promises, and inventing one to keep a field alive is how the last round of
+ * orphans got here.
  *
  * Returns 0..0.9. It is capped below 1 in `derived.ts` on purpose: a wind-up
  * nothing can answer would make the readable commitment this game is built on
@@ -78,16 +86,7 @@ export function poiseArmorOf(
   const covered = inWindup || (inBackswing && traits.poiseArmorInBackswing > 0);
   if (!covered) return 0;
 
-  if (!isBasicAttack) {
-    if (traits.poiseArmorAllCasts <= 0) return 0;
-    // A `juggernautBelow` under 1 is a health gate; the Strength 40 skill sets
-    // it to 1, which is "always", and the pair sets it to 0.5.
-    const gate = traits.juggernautBelow;
-    if (gate < 1) {
-      const fraction = entity.stats.maxHealth > 0 ? entity.health / entity.stats.maxHealth : 1;
-      if (fraction > gate) return 0;
-    }
-  }
+  if (!isBasicAttack && traits.poiseArmorAllCasts <= 0) return 0;
 
   return traits.windupPoiseArmor;
 }
@@ -283,39 +282,83 @@ export function stagger(
 }
 
 /**
- * Poise a blow carries.
+ * How hard this blow lands on a Guard pool, before the attacker's force
+ * (spec 271).
  *
- * A basic attack carries the attacker's full `staggerPower`. An ability carries
- * `abilityPoiseFactor` of it, which is zero for everyone except the
- * Strength+Intelligence pair -- giving a spell weight is exactly the sort of
- * thing a pair should unlock and no single attribute should.
+ * **Two sources, and which one applies is a property of the blow rather than of
+ * the body throwing it.** A basic attack takes the *weapon's* impact, because
+ * what a swing weighs is a fact about what is being swung. An ability takes its
+ * own authored `guardImpact`, because a Guard Break and a poison dart are the
+ * same caster arriving with very different intent.
+ *
+ * This replaced an `isBasicAttack` branch whose ability half read
+ * `staggerPower * abilityPoiseFactor` -- a single per-character number that
+ * spec 244 left granted by nothing, so it was 0 and *every* non-basic blow in
+ * the game carried no Guard pressure at all. That is why the fallback here is
+ * still that trait: an ability that authors no impact keeps exactly the zero it
+ * has always had, so turning this on moved only the rows that asked for it, and
+ * the trait keeps a live reader without becoming the one global factor a table
+ * of differently-weighted abilities cannot be expressed through.
+ */
+export function guardImpactOf(
+  ability: Pick<AbilityDefinition, 'basicAttack' | 'guardImpact'>,
+  attackerStats: EffectiveStats,
+): number {
+  if (ability.basicAttack) return Math.max(0, attackerStats.weaponGuardImpact);
+  const authored = ability.guardImpact;
+  if (authored === undefined || !Number.isFinite(authored)) {
+    return Math.max(0, attackerStats.traits.abilityPoiseFactor);
+  }
+  return Math.max(0, authored);
+}
+
+/**
+ * Poise a blow carries: the attacker's force times what the blow weighs.
+ *
+ * `staggerPower` is Strength's -- the base, the soft-capped rate and everything
+ * Crushing Blows adds -- so folding the impact in here rather than at either
+ * call site is what makes that specialization reach a basic attack and an
+ * ability through one multiplication instead of two code paths that have to
+ * agree.
  *
  * The multipliers stack on the way in: a weak point against an exposed target
- * with Executioner is `staggerPower * 2`, which is the payoff that pair exists
- * for.
+ * is `staggerPower * impact * (1 + exploitPoiseFactor)`.
  */
 export function poiseDamageOf(
   attackerStats: EffectiveStats,
-  isBasicAttack: boolean,
+  impact: number,
   multiplier: number,
 ): number {
-  const traits = attackerStats.traits;
-  const base = isBasicAttack ? traits.staggerPower : traits.staggerPower * traits.abilityPoiseFactor;
+  const base = attackerStats.traits.staggerPower * Math.max(0, impact);
   return Math.max(0, base * Math.max(0, multiplier));
 }
 
 /**
  * Poise regained this tick.
  *
- * Three states with three answers, and which one applies is the Constitution
+ * Four states with four answers, and which one applies is the Constitution
  * player's business to arrange:
  *
  *  - **staggered**: `poiseRegenStaggered` of the rate, normally none. Sustained
  *    Effort buys some, which is a body getting up while it is still going down.
- *  - **committed or moving**: the base rate, and nothing while moving unless
- *    the Agility+Constitution pair says otherwise.
+ *  - **moving**: `poiseRegenMoving` of the rate (spec 273). Repositioning costs
+ *    recovery; it no longer cancels it.
+ *  - **committed**: the base rate. Holding a cast is not resting.
  *  - **calm**: the base rate times `poiseRegenCalm`, doubled by the Constitution
- *    20 milestone. Not casting is a decision, and this is what it buys.
+ *    20 milestone. Holding ground is a decision, and this is what it buys.
+ *
+ * The moving branch used to be `rate = 0` unless a trait nothing granted said
+ * otherwise, so Steady Frame's ranks and the milestone that deepens them were
+ * worth exactly zero to a repositioning body. It is a fraction now, seeded from
+ * `SCALING` and deepened by Constitution, and the cap on it is strictly below 1
+ * -- so standing still is always the strongest posture and kiting can never
+ * recover Guard as fast as holding ground.
+ *
+ * `resoluteRegenCalm` is checked **first among the living states** and not
+ * inside them: what the CON 50 mastery grants is that the danger band *replaces*
+ * the state rule, so a body fighting for its life recovers at the calm rate
+ * whatever it is doing. It deliberately does not override the staggered branch,
+ * because being broken is the one state Sustained Effort owns.
  */
 export function regenPoise(
   entity: ServerEntity,
@@ -329,8 +372,10 @@ export function regenPoise(
   let rate = traits.poiseRegen;
   if (staggered) {
     rate *= traits.poiseRegenStaggered;
-  } else if (moving && traits.poiseRegenMoving <= 0) {
-    rate = 0;
+  } else if (traits.resoluteRegenCalm > 0 && isResolute(entity)) {
+    rate *= 1 + traits.poiseRegenCalm;
+  } else if (moving) {
+    rate *= traits.poiseRegenMoving;
   } else if (entity.cast === null) {
     rate *= 1 + traits.poiseRegenCalm;
   }

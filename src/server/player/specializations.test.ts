@@ -221,10 +221,36 @@ describe('what the server refuses', () => {
   });
 });
 
+/** Constitution's mastery rows (spec 273), named once. */
+const MASTERY_IDS = new Set(['con.unbroken', 'con.deathsDoor', 'con.deepWell']);
+
 describe('what a tier costs', () => {
-  it('is one point for every row that ships', () => {
+  it('is one point for every core row, and more for a mastery row', () => {
+    // Every row on the three shared thresholds costs a point, so a tier and an
+    // attribute point are the same decision (spec 244). Constitution's mastery
+    // rows are the exception spec 273 introduced and are priced above it
+    // deliberately: a late purchase has to compete with two or four attribute
+    // points, or it is strictly better than the point beside it.
     for (const specialization of ALL_SPECIALIZATIONS) {
-      expect(costOfNextTier(specialization), specialization.id).toBe(1);
+      const cost = costOfNextTier(specialization);
+      if (MASTERY_IDS.has(specialization.id)) {
+        expect(cost, specialization.id).toBeGreaterThan(1);
+      } else {
+        expect(cost, specialization.id).toBe(1);
+      }
+    }
+  });
+
+  it('prices every mastery row against the attribute points it displaces', () => {
+    for (const id of MASTERY_IDS) {
+      const specialization = specializationById(id);
+      expect(specialization, id).toBeDefined();
+      if (!specialization) continue;
+      expect(specialization.attribute, id).toBe('constitution');
+      // On the last milestone threshold, which is where the track continues
+      // rather than a fourth number of its own.
+      expect(specialization.requires, id).toBe(50);
+      expect(costOfNextTier(specialization) * specialization.maxTier, id).toBeGreaterThanOrEqual(4);
     }
   });
 

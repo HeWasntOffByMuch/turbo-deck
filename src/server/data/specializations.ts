@@ -35,7 +35,7 @@
 
 import type { AttributeKey } from './attributes.js';
 import type { StatModifier } from './modifiers.js';
-import { SCALING, SPECIALIZATION_THRESHOLDS } from './scaling.js';
+import { MILESTONE_THRESHOLDS, SCALING, SPECIALIZATION_THRESHOLDS } from './scaling.js';
 
 export interface SpecializationDefinition {
   readonly id: string;
@@ -62,7 +62,27 @@ export interface SpecializationDefinition {
   readonly description: string;
 }
 
+/**
+ * What one more tier costs.
+ *
+ * Beside the field it reads rather than in `player/specializations.ts`, since
+ * spec 273 gave `data/presets.ts` a second reason to ask -- and a content module
+ * reaching up into `player/` to find out what its own row costs is the wrong way
+ * round. Re-exported from there, so no caller moved.
+ */
+export function costOfNextTier(specialization: SpecializationDefinition): number {
+  return Math.max(1, Math.floor(specialization.costPerTier ?? 1));
+}
+
 const [T1, T2, T3] = SPECIALIZATION_THRESHOLDS as [number, number, number];
+
+/**
+ * Where Constitution's mastery rows sit (spec 273).
+ *
+ * The last milestone threshold rather than a fourth number of its own, so the
+ * track gains depth without gaining a shape the other five do not have.
+ */
+const MASTERY = MILESTONE_THRESHOLDS[2] as number;
 
 function thresholdTierOf(requires: number): number {
   if (requires >= T3) return 3;
@@ -79,8 +99,10 @@ function specialization(
   trigger: string,
   perTier: StatModifier,
   description: string,
+  costPerTier?: number,
 ): SpecializationDefinition {
-  return { id, attribute, name, requires, tier: thresholdTierOf(requires), maxTier, trigger, perTier, description };
+  const row = { id, attribute, name, requires, tier: thresholdTierOf(requires), maxTier, trigger, perTier, description };
+  return costPerTier === undefined ? row : { ...row, costPerTier };
 }
 
 const DEFINITIONS: readonly SpecializationDefinition[] = [
@@ -101,14 +123,54 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('str.followThrough', 'strength', 'Brutal Follow-Through', T2, 3, "on breaking an enemy's guard",
     { traits: { momentumTicks: Math.round(SCALING.agility.flowTicks * 0.5), momentumWindupScale: 0.12 } },
     'A break opens a window: your next blow starts faster.'),
-  specialization('str.heavyHandling', 'strength', 'Heavy Handling', T2, 3, 'casting a heavy ability',
-    { traits: { heavyWindupReduction: 0.15 } },
-    'Oversized weapons stop punishing you for their weight.'),
-  specialization('str.overkill', 'strength', 'Overkill', T2, 3, 'on a kill that overkilled by a quarter',
+  // **Heavy Handling was here, and it did nothing** (spec 271). Its consumer was
+  // `ability.damage >= HEAVY_ABILITY_DAMAGE`, a threshold spec 217 set to 6 so
+  // that `melee.heavy` (damage exactly 6) would keep clearing it -- and spec 237
+  // then deleted `melee.heavy` as one of seven rows nothing granted. It was the
+  // only row that ever cleared the bar, so from that commit three purchasable
+  // points bought a number nothing multiplied. Every test stayed green, and
+  // `audit:progression` reported it ACTIVE, because the derived value does move:
+  // what nothing checked was whether any content could reach the branch reading
+  // it.
+  //
+  // Executioner is the replacement rather than a lowered threshold, because
+  // moving the bar until one current ability happens to qualify is a number
+  // chosen to make a row true rather than a mechanic anybody asked for. What the
+  // tree was actually missing is the step between the break and the kill: it
+  // could pressure a Guard, break it, and take the tempo, and then had nothing
+  // that cared whether the body in front of it was already beaten.
+  //
+  // The condition is the loop's own: `blow.ts` has read
+  // `executeBonus > 0 && staggered && healthFraction <= executeBelow` since spec
+  // 147 and nothing has granted it since spec 244 deleted the pair that did.
+  // Staggered *and* low, never low alone -- a flat bonus against hurt enemies is
+  // a damage passive that any attribute could carry, and what makes this
+  // Strength's is that the target is only staggered because Strength put it
+  // there.
+  //
+  // Both numbers move per tier and that is the whole progression: more payoff,
+  // and a wider window to collect it in. Three tiers reach +36% inside 30% of a
+  // health bar.
+  specialization('str.executioner', 'strength', 'Executioner', T2, 3, 'against a staggered target below the threshold',
+    { traits: { executeBonus: 0.12, executeBelow: 0.1 } },
+    'I broke you. Now I finish you.'),
+  // **Renamed from "Overkill" (spec 271), id unchanged because it is persisted.**
+  // `data/restoration.ts` has a separate `bonus.overkill` -- a *health* reward,
+  // scaled by the Strength attribute rather than by this row -- and it is the
+  // largest sustain source a Strength build has. Two mechanics called the same
+  // word, paying different currencies off the same excess, is a tooltip a player
+  // cannot reason about.
+  specialization('str.overkill', 'strength', 'Brutal Reserve', T2, 3, 'on a kill that overkilled by a quarter',
     { traits: { overkillResource: 4 } },
     'Force spent past what was needed comes back to you.'),
+  // `juggernautBelow` went with spec 271. It was a health gate on the all-cast
+  // armour below, from the Strength+Constitution pair spec 244 deleted, and its
+  // only surviving grant set it to exactly 1 -- "always" -- so the branch
+  // reading it could never run. Granting it was the capstone shipping a third
+  // effect that could not evaluate; the two that remain are what the row has
+  // always actually done.
   specialization('str.unstoppable', 'strength', 'Unstoppable', T3, 1, 'while committed to any cast',
-    { traits: { windupPoiseArmor: 0.12, poiseArmorAllCasts: 1, juggernautBelow: 1 } },
+    { traits: { windupPoiseArmor: 0.12, poiseArmorAllCasts: 1 } },
     'Nothing takes you off a blow you have committed to. Only while you are committed.'),
 
   // ======================= AGILITY ========================
@@ -160,12 +222,17 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Reading a blow and stepping out of your own turns the exchange around.'),
 
   // ===================== INTELLIGENCE =====================
-  specialization('int.potency', 'intelligence', 'Arcane Potency', T1, 3, 'passive',
-    { spellPower: 0.05 },
-    'The straightforward one. Everything you throw hits harder.'),
+  // `int.potency` stood here until spec 270 and was +5% spell power a tier: the
+  // one row in the Intelligence tree whose trigger was `passive` and whose grant
+  // was a percentage, which is the shape this file's own header calls a row that
+  // failed. Advancing Intelligence is already how you get more spell power, so
+  // the slot was buying a second, slower copy of the attribute.
+  specialization('int.weaving', 'intelligence', 'Arcane Weaving', T1, 3, 'casting a different ability than the last',
+    { traits: { grantsWeave: 1, weaveEffectPct: 0.09 } },
+    'Vary what you throw and every affliction you land bites harder.'),
   specialization('int.shaping', 'intelligence', 'Spell Shaping', T1, 3, 'ground and projectile abilities',
     { traits: { spellRadiusPct: 0.08, spellRangePct: 0.05, shapingCostPct: 0.1 } },
-    'Wider and further, at a premium only Efficient Construction pays off.'),
+    'Wider and further, and you pay for the space you take.'),
   // `grantsPrepared` (spec 239). Both of its numbers are *reductions*, so
   // before this the specialization's only effect on `deriveTraits`' old gate
   // (`preparedWindupScale > 0`) was to fail it -- Prepared did not exist for a
@@ -175,7 +242,7 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     {
       traits: {
         grantsPrepared: 1,
-        prepareTicks: -Math.round(SCALING.intelligence.prepareTicks * 0.15),
+        prepareTicks: -SCALING.intelligence.prepareTierRelief,
         // -0.06 rather than -0.08: the scale is floored at 0.2, and with the
         // milestone's -0.1 on top of a 0.5 base, -0.08 a tier put tier 3
         // through the floor and made half of it disappear. Three tiers and the
@@ -184,12 +251,24 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
       },
     },
     'Less stillness to prime, and a sharper opener when you do.'),
+  // `appliesSundered: 1` rather than `: 0` (spec 270). The zero was a *socket* --
+  // a documented "this row is about that trait" whose magnitude was to come from
+  // a pair -- and spec 244 deleted the pairs, so it sat in a purchasable row
+  // describing a mechanic nobody could reach. It is the row's own second half
+  // now: `blow.ts` sunders a target that is **already afflicted**, which is this
+  // specialization's stated trigger rather than a basic-attack rule bolted to it.
   specialization('int.catalysis', 'intelligence', 'Catalysis', T2, 3, 'hitting anything already afflicted',
-    { traits: { vsAfflictedPct: 0.08, appliesSundered: 0 } },
-    'Statuses are fuel. Anything already suffering suffers more.'),
+    { traits: { vsAfflictedPct: 0.08, appliesSundered: 1 } },
+    'Statuses are fuel. What is already suffering suffers more, and its armour gives.'),
+  // 0.2 a tier rather than 0.4 (spec 270). Three tiers reach
+  // `shapingReliefCap` exactly, so every tier delivers its whole step -- at 0.4
+  // the sum was 1.2 into a clamp of 1, which wasted half of tier 3 and, worse,
+  // left the premium at exactly zero: a shaped cast cost what an unshaped one
+  // cost, and the drawback the signature specialization is built around stopped
+  // existing for anybody who finished the track.
   specialization('int.efficientConstruction', 'intelligence', 'Efficient Construction', T2, 3, 'passive',
-    { traits: { shapingCostRelief: 0.4 } },
-    'Pays off the shaping premium. It can never make an unshaped cast cheaper.'),
+    { traits: { shapingCostRelief: 0.2 } },
+    'Pays down the shaping premium. Space is always dearer than no space.'),
   // Enables Overflow **and relieves it** (spec 239). Both this and the
   // Intelligence 50 milestone granted the rate and the two summed, so arriving
   // at the milestone doubled the health an overflow cast costs. The rate is now
@@ -208,9 +287,18 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   specialization('con.deepReserves', 'constitution', 'Deep Reserves', T1, 3, 'passive',
     { maxHealth: 25, traits: { maxPoise: 8 } },
     'More to lose before any of it matters.'),
-  specialization('con.steadyFrame', 'constitution', 'Steady Frame', T1, 3, 'while not casting',
-    { traits: { poiseRegenPct: 0.4 } },
-    'A moment not swinging is a moment getting your feet back.'),
+  // The trigger says what the grant does (spec 273). It read `while not casting`,
+  // and `poiseRegenPct` multiplies the *base* rate -- so it reaches the moving,
+  // committed and staggered branches too, and the not-casting condition belongs
+  // to the CON 20 milestone's `poiseRegenCalm` rather than to this.
+  //
+  // The moving grant is the other half of the same fix. `regenPoise` used to zero
+  // the rate outright on any tick the body moved, so a rank of this was worth
+  // nothing at all to a repositioning player; movement is a fraction now, and
+  // this is the specialization that buys some of it back.
+  specialization('con.steadyFrame', 'constitution', 'Steady Frame', T1, 3, 'always -- most while holding ground',
+    { traits: { poiseRegenPct: 0.4, poiseRegenMoving: 0.05 } },
+    'A moment not swinging is a moment getting your feet back -- and you never fully stop getting them back.'),
   // The lifecycle is on the `secondWindHeal` label in `data/description.ts`,
   // where it is derived (spec 243). It used to be the second sentence here --
   // "it will not fire again until you have climbed back out" -- which was the
@@ -239,6 +327,48 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     { traits: { overhealShieldTicks: SCALING.constitution.shieldTicks } },
     'What a heal cannot fit becomes a buffer instead of nothing.'),
 
+  // --- Constitution mastery (spec 273) ------------------------------------
+  //
+  // The track was complete at level 18 of 60 -- 55 attribute points to the cap
+  // plus sixteen tiers is 71 of the 242 a level-60 character has -- and there was
+  // no Constitution purchase at level 40 that a level-18 character had not
+  // already made. These three are what a player who wants to keep investing buys
+  // instead, and each one deepens a mechanic the track already has rather than
+  // adding a mechanic beside it.
+  //
+  // Three decisions about their shape.
+  //
+  // They sit at `MASTERY`, which is the CON 50 threshold the Overflow Vitality
+  // milestone is already on. `TrackNode` has always allowed a node to carry both
+  // an automatic milestone and purchasable rows -- "which kinds of thing hang off
+  // it is the tables' business" -- so the capstone threshold becomes the place
+  // deep investment continues rather than the place it stops.
+  //
+  // They are **priced above 1**, through the `costPerTier` field that has been on
+  // this interface since spec 244 with no row using it and `costOfNextTier` as
+  // its only reader. A late purchase competing with two or four attribute points
+  // is the decision the one-pool economy exists to present; a 1-point mastery
+  // would be strictly better than the attribute point beside it.
+  //
+  // And none of them is a bigger number. Two grant a capability or a ceiling and
+  // one deepens a fraction that changes which posture a fight is played in --
+  // which is the bar spec 273 set against filler, and the reason there are three
+  // of these rather than one per mechanic. Sustained Effort has no mastery here
+  // on purpose: `applyPoiseDamage` refills the pool whole on a break, so
+  // `poiseRegenStaggered` only ever reaches poise drained by blows landing
+  // *inside* the stagger window, and a mastery built on that would be a mastery
+  // of a mechanic whose base is thinner than it looks. Measured and written down
+  // rather than built on.
+  specialization('con.unbroken', 'constitution', 'Unbroken Stride', MASTERY, 3, 'while moving',
+    { traits: { poiseRegenMoving: 0.1 } },
+    'Ground given up is not recovery given up.', 2),
+  specialization('con.deathsDoor', 'constitution', "Death's Door", MASTERY, 1, 'below 30% health',
+    { traits: { resoluteRegenCalm: 1 } },
+    'Down there, nothing you do costs you your guard.', 4),
+  specialization('con.deepWell', 'constitution', 'Deep Well', MASTERY, 3, 'healing past full',
+    { traits: { overhealShieldPct: 0.08 } },
+    'More of what you cannot use now keeps for later.', 2),
+
   // ===================== PERCEPTION =======================
   specialization('per.weakPointStudy', 'perception', 'Weak-Point Study', T1, 3, 'every blow',
     { traits: { weakPointChance: 0.04 } },
@@ -254,13 +384,28 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
       traits: {
         grantsOpeningRead: 1,
         openingReadTicks: Math.round(SCALING.perception.openingReadTicks * 0.25),
-        vulnerableWeakPointFactor: 0.15,
+        // A share of the remaining probability rather than a multiplier
+        // (spec 272), so this and Weak-Point Study compose instead of competing
+        // for one clamp. The milestone still owns most of it.
+        openingReadFactor: 0.06,
       },
     },
     'A committed enemy has told you something. The window stays open longer, and you use it better.'),
-  specialization('per.steadyAim', 'perception', 'Steady Aim', T2, 3, 'after half a second without moving',
-    { traits: { steadyAimPct: 0.12, steadyAimTicks: 0 } },
-    'Standing still is a cost. This is what it buys.'),
+  // **Patient Read replaces Steady Aim** (spec 272). That one read
+  // `tick - stillSinceTick` at the instant of impact, and `startCast` stamps
+  // that field while `advanceProgression` re-stamps it every tick a cast is
+  // live -- in pass 1c, where casts resolve in pass 3 of the same tick. The
+  // gate needed 30 and was handed 0 in all 153 sampled blows: not rare,
+  // unsatisfiable. Three purchasable tiers worth nothing.
+  //
+  // Replaced rather than repaired, because the repaired version would have been
+  // Intelligence's. Prepared already owns "stand still, gain casting tempo"
+  // (spec 270); the cost here is **offensive pressure** instead, so a Perception
+  // character may move, reposition, dodge and track the whole time and pays in
+  // the attacks they did not throw.
+  specialization('per.patientRead', 'perception', 'Patient Read', T2, 3, 'a weak point after not attacking',
+    { traits: { patientReadPayoffPct: 0.35 } },
+    'Wait, and watch. The next seam you find is worth far more than the ones you swing through.'),
   specialization('per.huntersEye', 'perception', "Hunter's Eye", T2, 3, 'passive',
     { traits: { exposeTicks: 30 } },
     'What you have marked stays marked, for everyone.'),
@@ -272,35 +417,65 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
     'Precision pays for itself. Nothing else here heals you.'),
 
   // ======================= WISDOM =========================
-  specialization('wis.discipline', 'wisdom', 'Resource Discipline', T1, 3, 'passive',
-    { traits: { costReduction: 0.06 } },
-    'The same pool, more casts.'),
+  // Spec 274. Conservation sits at T1 so that the milestone above it deepens
+  // the specialization that owns Attuned: the WIS 20 milestone used to grant
+  // the Attuned family while naming `wis.discipline`, which granted
+  // `costReduction` -- the same name over two mechanics with no trait in
+  // common. Resource Discipline itself is gone: three tiers of passive cost
+  // reduction on an economy that closes at WIS 13 was the clearest example of
+  // the branch spending points on a solved problem, and Conservation is where a
+  // player specializes into cost now.
+  // 0.02 a tier since spec 276, against the milestone's 0.04: the two still sum
+  // to `SCALING.wisdom.attunedCostCap` exactly, so every tier moves the resolved
+  // cost and the ceiling is still reached. What moved is the size of the whole
+  // discount -- three stacks are 30% off rather than 60% -- because Attuned is a
+  // standing buff refreshed by every cast rather than a charge spent by one, so
+  // the old number was a permanent discount nearly twice the attribute curve's.
+  specialization('wis.conservation', 'wisdom', 'Conservation', T1, 3, 'an ability that connects',
+    { traits: { grantsAttuned: 1, attunedCostPct: 0.02 } },
+    'A cast that did something makes the next one cheaper. A wasted one does not.'),
   specialization('wis.measuredRecovery', 'wisdom', 'Measured Recovery', T1, 3, 'receiving healing',
     { traits: { healingPct: 0.12 } },
     'Every restorative thing works better on you. It does not make you need one.'),
-  specialization('wis.mastery', 'wisdom', 'Mastery', T2, 3, 'passive',
-    { traits: { masteryRelief: 1 } },
-    'The advanced techniques of every attribute open a point early, per level.'),
-  // 0.04 a tier (spec 239). `attunedCostPct` is capped at 0.2 and the Wisdom 20
-  // milestone already grants 0.08, so at 0.07 tier 2 was half wasted and tier 3
-  // was worth nothing -- a tier you could buy, at the threshold where the specialization first
-  // becomes purchasable, whose effective delta was zero. 0.08 + 3 x 0.04 is the
-  // cap exactly, so every tier moves the number and the ceiling is still reached.
+  // Composure replaces Resource Discipline, and `cooldownReduction` is the hook
+  // it was written for: `deriveTraits` already multiplies the term into
+  // `cooldownScale`, and until now nothing in the game granted it -- so the one
+  // attribute whose own row claims "cooldowns" had no purchasable cooldown
+  // content at all. 0.05 a tier against the attribute's own 0.752 at the cap
+  // takes a fully invested body to 0.639, well clear of both floors.
   //
-  // `attunedTicks` is gone from the grant: it was 0, which is what a field that
-  // wants the base rather than a delta says, and the base is `SCALING`'s.
-  specialization('wis.conservation', 'wisdom', 'Conservation', T2, 3, 'an ability that connects',
-    { traits: { attunedCostPct: 0.04 } },
-    'A cast that did something makes the next one cheaper. A wasted one does not.'),
-  // `grantsAdaptation` (spec 239). This granted a per-stack size and neither a
-  // window nor a cap, and Adaptation needs both to do anything -- `markTarget`
-  // records a stack only with a window and `adaptationAgainst` reads one only
-  // under a cap. Three tiers of nothing from Wisdom 25 to Wisdom 35.
+  // It reaches active abilities and nothing else *structurally* rather than by
+  // a guard: `cooldownScaleFor` is called from `attackTimingFor`'s non-basic
+  // branch alone, and a basic attack's interval is `baseAttackTimeTicks`.
+  specialization('wis.composure', 'wisdom', 'Composure', T2, 3, 'passive',
+    { traits: { cooldownReduction: 0.05 } },
+    'Something useful is always coming back.'),
+  // Both halves are bought now (spec 275). The cap used to be granted by
+  // nothing, so all three tiers and the milestone converged on 0.3 and deep
+  // investment bought only hits-to-cap -- at Wisdom 35 tier 2 did not move even
+  // that. Rate and ceiling together: 0.45 fully specialized, 0.50 with the
+  // milestone.
   specialization('wis.adaptation', 'wisdom', 'Adaptation', T2, 3, 'taking the same ability twice',
-    { traits: { grantsAdaptation: 1, adaptationPerStack: 0.04 } },
-    'Nothing gets to hurt you the same way three times.'),
+    { traits: { grantsAdaptation: 1, adaptationPerStack: 0.03, adaptationCap: 0.05 } },
+    'Nothing gets to hurt you the same way forever.'),
+  // Mastery, rebuilt (spec 275). It used to relieve specialization thresholds,
+  // which is meta-progression rather than combat -- roughly point-neutral, told
+  // to the player only in flavour text, and its trait field replicated to every
+  // client and read by nobody.
+  //
+  // What it is now is Adaptation's mirror, and the symmetry is the identity:
+  // an enemy repeats something and Wisdom learns to resist it; you repeat
+  // something and Wisdom learns to use it more efficiently. Per ability, earned
+  // at the attack point, so a heal or a shield masters exactly as a blow does.
+  specialization('wis.mastery', 'wisdom', 'Mastery', T2, 3, 'using the same ability again',
+    { traits: { grantsMastery: 1, masteryCooldownPct: 0.02 } },
+    'A tool you keep reaching for comes back to your hand sooner.'),
+  // Conversion also deepens salvage since spec 275, which is what gives the T3
+  // node something to do besides a second copy of the milestone's cap: the
+  // attribute's own salvage curve is capped at 0.35 and this is the extreme
+  // version of it.
   specialization('wis.conversion', 'wisdom', 'Conversion', T3, 1, 'healing past full',
-    { traits: { conversionCap: SCALING.wisdom.conversionCap } },
+    { traits: { conversionCap: SCALING.wisdom.conversionCap, salvagePct: 0.2 } },
     'Overflow goes somewhere useful. Capped, so it is a valve and not a loop.'),
 ];
 

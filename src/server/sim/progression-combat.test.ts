@@ -45,12 +45,14 @@ import { applyEffects } from './skill-effects.js';
 import { applyPoiseDamage, isResolute, poiseArmorOf, poiseDamageOf, regenPoise, STAGGER_IMMUNE_TICKS } from './poise.js';
 import {
   applyStatus,
+  clearStatus,
   hasStatus,
   NO_STATUSES,
   statusOf,
   StatusId,
   type Statuses,
 } from './statuses.js';
+import { SERVER_TICK_RATE } from '../config.js';
 import { ActivityValue, AggroValue, CastPhase, EntityKindValue, type CastState, type ServerEntity } from './types.js';
 import { advanceProgression, advanceRest, blankProgression } from './world.js';
 
@@ -253,7 +255,7 @@ describe('poise', () => {
 
   it('drains, and staggers when it empties', () => {
     let victim = target();
-    const power = poiseDamageOf(attacker().stats, true, 1);
+    const power = poiseDamageOf(attacker().stats, 1, 1);
     expect(power).toBeGreaterThan(0);
 
     let broke = false;
@@ -600,12 +602,48 @@ describe('the resource economy', () => {
     expect(unshaped).toBe(SPELL.cost);
     expect(shaped).toBeGreaterThan(unshaped);
     expect(paidOff).toBeLessThan(shaped);
-    // The relief can only ever cancel the premium -- it can never make an
-    // unshaped cast cheaper, which is Wisdom's job and not Intelligence's. So
-    // full relief lands *on* the list price, and never under it, while keeping
-    // the geometry the premium was paying for.
-    expect(paidOff).toBeCloseTo(SPELL.cost, 9);
+    // **The premium survives full relief** (spec 270). It used to land exactly
+    // on the list price, which made Efficient Construction a specialization
+    // whose only function was to delete another one's drawback -- so a finished
+    // build shaped for free and the signature tradeoff stopped existing. The
+    // relief is capped below 1, so space is always dearer than no space.
+    expect(paidOff).toBeGreaterThan(SPELL.cost);
+    expect(paidOff).toBeLessThan(shaped);
+    // And it can still never make an *unshaped* cast cheaper: that is Wisdom's
+    // job, and the relief only ever divides the premium it is paying down.
+    expect(resourceCostFor(SLASH, { stats: efficient }, 0)).toBe(
+      resourceCostFor(SLASH, { stats: plain }, 0),
+    );
     expect(efficient.traits.spellRadiusPct).toBeGreaterThan(0);
+  });
+
+  it('gives every Efficient Construction tier its whole step', () => {
+    // The tiers used to be 0.4 into a clamp of 1: two of them delivered 0.4 and
+    // the third delivered 0.2, which is the "bought into a filled cap" fault
+    // spec 239 fixed four times in other trees and left standing in this one.
+    // Three tiers of 0.2 reach `shapingReliefCap` exactly.
+    const costs = [0, 1, 2, 3].map((tier) =>
+      resourceCostFor(
+        SPELL,
+        {
+          stats: statsFor(
+            { intelligence: 25 },
+            {
+              specializations: [
+                { specializationId: 'int.shaping', tier: 3 },
+                ...(tier > 0 ? [{ specializationId: 'int.efficientConstruction', tier }] : []),
+              ],
+            },
+          ),
+        },
+        0,
+      ),
+    );
+    const steps = costs.slice(1).map((cost, index) => (costs[index] ?? 0) - cost);
+    for (const step of steps) expect(step).toBeGreaterThan(0);
+    // Every step the same size, to floating-point noise: no tier is worth less
+    // than the one before it.
+    for (const step of steps) expect(step).toBeCloseTo(steps[0] ?? 0, 9);
   });
 
   it('lets Attuned and Flow stack a discount, bounded', () => {
@@ -789,22 +827,103 @@ describe('Second Wind', () => {
 });
 
 describe('prepared casting', () => {
-  it('is primed by stillness and by nothing else', () => {
+  /** Plant a body for `ticks` ticks, moving `step` world units each one. */
+  function plant(stats: EffectiveStats, ticks: number, step = 0): ServerEntity {
+    let self = body(stats, { stillSinceTick: 0, stanceSinceTick: 0 });
+    for (let tick = 1; tick <= ticks; tick++) {
+      self = advanceProgression(self, tick, step > 0, step);
+    }
+    return self;
+  }
+
+  it('is primed by holding a stance, and takes a real one', () => {
     const stats = statsFor({ intelligence: 35 });
-    expect(stats.traits.prepareTicks).toBeGreaterThan(0);
+    // The stance is the *cost* of the mechanic, so it has to be long enough to
+    // be a decision. Spec 270 raised the base and made the reductions absolute
+    // for exactly this: at the old fractions a fully-invested caster planted for
+    // 0.6s, which is not something a player chooses -- it is something that
+    // happens to them.
+    expect(stats.traits.prepareTicks).toBeGreaterThanOrEqual(SERVER_TICK_RATE * 1.5);
 
-    let self = body(stats, { stillSinceTick: 0 });
-    // Moving keeps stamping the clock forward, so it never primes.
-    for (let tick = 1; tick <= stats.traits.prepareTicks + 10; tick++) {
-      self = advanceProgression(self, tick, true);
-    }
-    expect(hasStatus(self.statuses, StatusId.Prepared, 999)).toBe(false);
+    expect(
+      hasStatus(plant(stats, stats.traits.prepareTicks - 2).statuses, StatusId.Prepared, 999),
+    ).toBe(false);
+    expect(
+      hasStatus(plant(stats, stats.traits.prepareTicks + 1).statuses, StatusId.Prepared, 999),
+    ).toBe(true);
+  });
 
-    let still = body(stats, { stillSinceTick: 0 });
-    for (let tick = 1; tick <= stats.traits.prepareTicks + 1; tick++) {
-      still = advanceProgression(still, tick, false);
+  it('publishes the buildup so somebody can see the caster planting itself', () => {
+    // The counterplay this whole mechanic is priced against is *make them move*,
+    // and a stance nobody can see is a stance nobody can punish. `Preparing` is
+    // replicated like any other status and its expiry **is** the tick the caster
+    // comes up, so an opponent reads the countdown off machinery that exists.
+    const stats = statsFor({ intelligence: 35 });
+    const midway = Math.floor(stats.traits.prepareTicks / 2);
+    const half = plant(stats, midway);
+    // Asked at the tick it was reached, not at some later one: `Preparing`
+    // expires exactly when the caster comes up, which is the whole reason it can
+    // carry the countdown -- so a stale read is correctly no mark at all.
+    expect(hasStatus(half.statuses, StatusId.Preparing, midway)).toBe(true);
+    expect(statusOf(half.statuses, StatusId.Preparing, midway)?.expiresAtTick).toBe(
+      stats.traits.prepareTicks,
+    );
+    expect(hasStatus(half.statuses, StatusId.Prepared, midway)).toBe(false);
+
+    const done = plant(stats, stats.traits.prepareTicks + 1);
+    expect(hasStatus(done.statuses, StatusId.Prepared, 999)).toBe(true);
+    // And it is taken away when it pays out, so the mark means "still building".
+    expect(hasStatus(done.statuses, StatusId.Preparing, 999)).toBe(false);
+  });
+
+  it('is broken by walking and not by being nudged', () => {
+    const stats = statsFor({ intelligence: 35 });
+    const ticks = stats.traits.prepareTicks + 10;
+    const walk = (stats.moveSpeed / SERVER_TICK_RATE) * 0.5;
+    expect(walk).toBeGreaterThan(SCALING.intelligence.stanceMoveEpsilon);
+
+    // Walking never primes, however long it goes on.
+    expect(hasStatus(plant(stats, ticks, walk).statuses, StatusId.Prepared, 999)).toBe(false);
+
+    // A displacement under the epsilon is not the player choosing to move: a
+    // body pressed against a prop is pushed out of it by `resolveMovement` with
+    // a zero intent, and exact float equality on position called that walking.
+    const nudge = SCALING.intelligence.stanceMoveEpsilon * 0.5;
+    expect(hasStatus(plant(stats, ticks, nudge).statuses, StatusId.Prepared, 999)).toBe(true);
+  });
+
+  it('survives the cast it was taken for, and rebuilds after paying out', () => {
+    // `busy` used to include `entity.cast !== null` and `startCast` stamped the
+    // clock, so committing to a spell destroyed the stance that spell was
+    // prepared for -- which made the loop the design describes impossible to
+    // play. Casting leaves the stance alone now; only spending the charge
+    // restarts the interval, which is what stops one preparation accelerating
+    // every later cast.
+    const stats = statsFor({ intelligence: 35 });
+    const primed = plant(stats, stats.traits.prepareTicks + 1);
+    expect(hasStatus(primed.statuses, StatusId.Prepared, 999)).toBe(true);
+
+    let casting = { ...primed, cast: { abilityId: SPELL.id } as ServerEntity['cast'] };
+    for (let tick = 1; tick <= 30; tick++) {
+      casting = advanceProgression(casting, primed.stanceSinceTick + tick, false, 0);
     }
-    expect(hasStatus(still.statuses, StatusId.Prepared, 999)).toBe(true);
+    expect(hasStatus(casting.statuses, StatusId.Prepared, 999)).toBe(true);
+
+    // Spending it re-stamps the stance, so the next one has to be earned.
+    let rebuilding: ServerEntity = {
+      ...primed,
+      statuses: clearStatus(primed.statuses, StatusId.Prepared),
+      stanceSinceTick: 500,
+      cast: null,
+    };
+    for (let tick = 501; tick <= 500 + stats.traits.prepareTicks - 2; tick++) {
+      rebuilding = advanceProgression(rebuilding, tick, false, 0);
+    }
+    expect(hasStatus(rebuilding.statuses, StatusId.Prepared, 999)).toBe(false);
+    for (let tick = 500 + stats.traits.prepareTicks - 1; tick <= 500 + stats.traits.prepareTicks + 1; tick++) {
+      rebuilding = advanceProgression(rebuilding, tick, false, 0);
+    }
+    expect(hasStatus(rebuilding.statuses, StatusId.Prepared, 999)).toBe(true);
   });
 
   it('halves the next non-basic wind-up, and leaves the weapon alone', () => {

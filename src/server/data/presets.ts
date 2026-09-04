@@ -20,7 +20,11 @@
 
 import { ATTRIBUTE_KEYS, type AttributeKey } from './attributes.js';
 import { SCALING } from './scaling.js';
-import { ALL_SPECIALIZATIONS } from './specializations.js';
+import {
+  ALL_SPECIALIZATIONS,
+  costOfNextTier,
+  type SpecializationDefinition,
+} from './specializations.js';
 import type { SpecializationAllocation } from '../state/types.js';
 
 export interface BuildPreset {
@@ -47,6 +51,44 @@ export interface BuildPreset {
    * when nothing is buyable, which is the most **specialized** a build can be.
    */
   readonly tierShare: number;
+  /**
+   * Specialization ids this build buys **first**, in order (spec 271).
+   *
+   * Absent is the default and the default is the honest one: cheapest threshold
+   * first, then by id, so which tiers a spending preset takes is a property of
+   * the tables rather than of whoever wrote the row. That is what keeps the four
+   * `spend.*` presets a comparison between *policies*.
+   *
+   * What it cannot answer is a comparison between two builds on the same track,
+   * which is what the Strength rows need: "Guard pressure" and "execution" are
+   * both Strength at the same attribute value with the same points, differing
+   * only in where they went. Those are hand-picked by definition, so the field
+   * exists to say so out loud rather than to have the difference smuggled in as
+   * a tierShare that happens to stop in the right place.
+   *
+   * Preferences are still gated on their milestone: naming a tier does not buy
+   * it before the track can hold it. Anything not listed is bought by the
+   * default rule once the listed ones are full.
+   */
+  readonly prefer?: readonly string[];
+  /**
+   * Buy **only** what {@link prefer} names, and stop (spec 275).
+   *
+   * Spec 271 met the wall this exists for and wrote it down above
+   * `spend.strLoop`: at this level a Strength build that caps its attribute has
+   * 27 points spare against a sixteen-tier track, so a preference that falls
+   * through to the default rule buys *everything* and three differently-planned
+   * rows come out identical -- which is why there is one Strength row there and
+   * not three. The Wisdom pass needs six rows that differ only in which
+   * specialization they bought, so the exclusivity is said out loud rather than
+   * smuggled into a `tierShare` that happens to stop in the right place.
+   *
+   * What is left over goes into the attribute and then reports as unspent,
+   * which is the honest picture of a point budget that is currently too large.
+   * The Strength rows are not changed to use it here: collapsing them was spec
+   * 271's decision and re-splitting them is that track's call, not a merge's.
+   */
+  readonly preferOnly?: boolean;
 }
 
 /**
@@ -72,20 +114,89 @@ function hybrid(
   return { id, name, premise, into: [a, b], level: PRESET_LEVEL, tierShare: 0 };
 }
 
+/** A Wisdom build that buys one named specialization and nothing else (spec 275). */
+function wisdomFocus(
+  id: string,
+  name: string,
+  premise: string,
+  prefer: readonly string[],
+): BuildPreset {
+  return {
+    id,
+    name,
+    premise,
+    into: ['wisdom'],
+    level: PRESET_LEVEL,
+    // Half, so the row has both a real attribute value and a real tree -- and
+    // `preferOnly` is what stops that half buying the whole track, which is the
+    // wall spec 271 met and worked around by having one Strength row instead of
+    // three. At 0 this would be `pure.wisdom` six times over.
+    tierShare: prefer.length === 0 ? 0.05 : 0.5,
+    prefer,
+    preferOnly: prefer.length > 0,
+  };
+}
+
 export const BUILD_PRESETS: readonly BuildPreset[] = [
-  pure('strength', 'Pure Strength', 'Solves problems by ending them. Staggers, executes, and takes the resource back off the corpse.'),
+  // Premises rewritten by spec 271. All three of these described the pair
+  // synergies spec 244 deleted -- Pure Strength's "executes" and STR/PER's
+  // "60% more" were `executeBonus`, which nothing had granted for twenty-seven
+  // specs, and STR/CON's armour-below-half was `juggernautBelow`, whose branch
+  // could not run. A premise naming a mechanic that does not exist is worse in
+  // this file than anywhere else: it is the line printed beside the row in the
+  // table somebody reads to decide whether the attribute is balanced.
+  pure('strength', 'Pure Strength', 'Solves problems by ending them. Breaks a guard, takes the tempo, and finishes what is already down.'),
   pure('agility', 'Pure Agility', 'Solves problems by not being there. Same attack rate as everyone; a quarter of the rooted time.'),
   pure('intelligence', 'Pure Intelligence', 'Solves problems by changing their shape. Reach, radius, and health spent as mana.'),
   pure('constitution', 'Pure Constitution', 'Solves problems by outlasting them. Cannot be staggered when it matters, and turns every heal into a buffer.'),
-  pure('perception', 'Pure Perception', 'Solves problems by reading them. Doubles its weak-point chance against anything that has just committed.'),
-  pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out. Casts twice as often as the table intended, and adapts to whatever keeps hitting it.'),
+  pure('perception', 'Pure Perception', 'Solves problems by reading them. Closes most of the gap to a certain weak point against anything that has just committed, and turns the ones it lands into sustain.'),
+  pure('wisdom', 'Pure Wisdom', 'Solves problems by never running out of answers. Kills slowly and always has something coming back.'),
 
-  hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Below half health every cast is armoured.', 'strength', 'constitution'),
-  hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns; Flow buys weak-point chance.', 'agility', 'perception'),
-  hybrid('pair.intWis', 'INT/WIS', 'The archmage. A prepared cast is free of the shaping premium and refunds its cooldown.', 'intelligence', 'wisdom'),
-  hybrid('pair.strPer', 'STR/PER', 'The executioner. Weak points double poise damage; a staggered target under a quarter health takes 60% more.', 'strength', 'perception'),
-  hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Walking out of a follow-through makes the next spell wind up at weapon speed.', 'agility', 'intelligence'),
-  hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Healing doubles below half health, and adaptation caps half again as high.', 'constitution', 'wisdom'),
+  hybrid('pair.strCon', 'STR/CON', 'The juggernaut. Hard to break, and hard to knock out of the blow that breaks you.', 'strength', 'constitution'),
+  hybrid('pair.agiPer', 'AGI/PER', 'The ranger. Handling shortens projectile cooldowns, and every follow-through walked out of is another attempt at a seam.', 'agility', 'perception'),
+  // **Three of these premises named deleted pair bonuses**, and two specs found
+  // it independently: spec 270 for the Intelligence pair (`preparedMastery` for
+  // the archmage, `spellbladeHandling` for the spellblade) and spec 271 for
+  // STR/PER (`executeBonus`, granted by nothing since spec 244). What is left in
+  // each is the systemic interaction, which is the thing spec 244 removed the
+  // authored layer to make legible -- Intelligence buys the magazine and Wisdom
+  // buys the reload, Perception reads the opening and Strength hits it, with no
+  // row saying so.
+  //
+  // A premise naming a mechanic that does not exist is worse in this file than
+  // anywhere else: it is the line `npm run balance` prints beside the row
+  // somebody reads to decide whether the attribute is balanced.
+  //
+  // Spec 272 makes it four, and two of them were written by the two specs
+  // above. AGI/PER still named `flowWeakPoint`, which no more exists than the
+  // three they caught. And STR/PER named the Guard: `poiseDamageOf` takes
+  // `1 + exploitPoiseFactor` on a weak point, and nothing grants that either --
+  // Exposed multiplies *damage* and never poise, so a weak point has never hit
+  // a Guard harder. What is true of that pair is the plainest systemic reading
+  // there is: Perception multiplies, Strength is the thing being multiplied.
+  //
+  // Spec 273 makes it **five**, and the count is the finding rather than the
+  // fix: CON/WIS named the Constitution+Wisdom synergy's doubled healing and
+  // its raised adaptation cap, and four separate track passes each rewrote the
+  // pairs they were looking at and left the ones they were not. Five stale
+  // premises out of six is what "authored prose beside a table nothing checks"
+  // costs, and the reason `data/description.ts` exists one file over.
+  hybrid('pair.intWis', 'INT/WIS', 'The archmage. A large pool that actually refills: sustained casting where pure Intelligence runs dry.', 'intelligence', 'wisdom'),
+  hybrid('pair.strPer', 'STR/PER', 'The opportunist. Perception finds the seam and Strength is the number that goes through it; what it staggers, it finishes.', 'strength', 'perception'),
+  hybrid('pair.agiInt', 'AGI/INT', 'The spellblade. Spell damage on a body that can leave a follow-through early -- and that gives up the artillery stance to do it.', 'agility', 'intelligence'),
+    // The sixth stale premise, and spec 275 is what made it stale rather than
+  // what found it stale: this named a big pool, and Wisdom stopped granting
+  // any pool at all. Neither attribute in the pair buys one now -- what makes
+  // it work is durability and healing that goes further on it.
+  hybrid('pair.conWis', 'CON/WIS', 'The attrition specialist. Durability, and every restorative that lands on it worth more.', 'constitution', 'wisdom'),
+  // Added by spec 275, which needs the third Wisdom pair to answer whether
+  // exploit-based sustain works through the systems alone. No pair node exists
+  // for it and none is wanted: what should make it good is that Perception's
+  // weak-point kill heal is healing, and Wisdom owns healing efficiency.
+  hybrid('pair.perWis', 'PER/WIS', 'Exploit-based sustain. Precision that pays, on a body that gets more from being paid.', 'perception', 'wisdom'),
+  hybrid('pair.conPer', 'CON/PER', 'The grinder. Outlasts the fight and takes the openings the fight gives up.', 'constitution', 'perception'),
+  hybrid('pair.conInt', 'CON/INT', 'The siege engine. A body that will not fall over, throwing spells from inside the crowd.', 'constitution', 'intelligence'),
+
 
   // The spending axis (spec 244). The twelve above are the attribute comparison
   // and every one of them spends nothing on tiers, which is what they always did
@@ -117,6 +228,132 @@ export const BUILD_PRESETS: readonly BuildPreset[] = [
     into: ['strength', 'perception'],
     level: PRESET_LEVEL,
     tierShare: 0.4,
+  },
+  // The Intelligence spending row (spec 270). Every `spend.*` preset was
+  // Strength-flavoured, so the axis spec 244 created had never been measured on
+  // the track with the most tier-gated capabilities -- which is exactly how a
+  // tree with three specializations priced in an irrelevant resource stayed
+  // green for twenty-six specs. 0.55 buys the whole Intelligence row and still
+  // advances the attribute far enough to open it.
+  {
+    id: 'spend.intCaster',
+    name: 'INT specialized',
+    premise: 'Intelligence only as far as the next milestone, then every specialization it unlocked. The caster the tree describes.',
+    into: ['intelligence'],
+    level: PRESET_LEVEL,
+    tierShare: 0.55,
+  },
+  // The full Strength loop, bought (spec 271): Crushing Blows into a break, the
+  // break into Momentum, Executioner onto what is left, Brutal Reserve paying
+  // for the next skill -- with the commitment armour that keeps all of it
+  // swinging while four things hit back. Run it with `--foes=4`; at one opponent
+  // nothing interrupts anybody and the defensive half reads as a flat row.
+  //
+  // **One row rather than the three this started as.** "Guard pressure",
+  // "execution" and "tempo" were authored as separate plans with `prefer` lists
+  // and came back byte-identical, for a reason worth recording rather than
+  // tuning around: the whole Strength tree costs 16 points, and a level-20 build
+  // that caps the attribute still has 27 spare -- so a Strength player buys
+  // *everything* and there is no internal choice to measure. `prefer` stays
+  // because it says which plan a row means and will bind the moment the tree
+  // grows or `costPerTier` stops being 1; three identical rows in a balance
+  // table would not.
+  {
+    id: 'spend.strLoop',
+    name: 'STR loop',
+    premise: 'The whole Strength loop bought: pressure, break, Momentum, execute, recover.',
+    into: ['strength'],
+    level: PRESET_LEVEL,
+    tierShare: 0.5,
+    prefer: [
+      'str.crushingBlows',
+      'str.committedSwing',
+      'str.followThrough',
+      'str.executioner',
+      'str.overkill',
+      'str.unstoppable',
+    ],
+  },
+
+  // The Constitution rows (spec 273). Until this spec the harness had never
+  // measured a Constitution build that spends on Constitution: the twelve
+  // pure/pair presets are `tierShare: 0` by construction, and all four
+  // `spend.*` rows above are Strength or Strength/Perception. So the track's
+  // own review had to read `pure.constitution` -- CON 60, no tiers, and 27 of
+  // its 82 points binned against the hard cap -- as the Constitution row.
+  //
+  // Two of these are the spending axis for this track and three are the
+  // *hybrid* question, which is the one that actually decides whether the
+  // redesign is safe: pure Constitution contributes almost no offence, so the
+  // danger case is never pure CON, it is a durability chassis carrying a full
+  // offensive identity. They buy tiers, deliberately, because a hybrid that
+  // spends nothing is the strawman all over again.
+  {
+    id: 'spend.con',
+    name: 'CON specialized',
+    premise: 'Constitution to the next milestone, then everything it unlocked. The endurance build a player makes.',
+    into: ['constitution'],
+    // A quarter: enough that the early tree fills in, not enough to reach the
+    // mastery rows. `spend.conFull` is the one that takes everything, and two
+    // presets producing the identical spread would be a duplicate row costing a
+    // thirty-second fight to say what the row beside it says.
+    level: PRESET_LEVEL,
+    tierShare: 0.25,
+  },
+  {
+    id: 'spend.conFull',
+    name: 'CON full',
+    premise: 'Constitution as far as it goes and every tier on the track, mastery included.',
+    into: ['constitution'],
+    // High enough that the deal is "take every tier the track offers as soon as
+    // it opens", which at this level reaches the cap and the mastery rows both.
+    level: PRESET_LEVEL,
+    tierShare: 0.45,
+  },
+  {
+    id: 'spend.conStr',
+    name: 'CON/STR spend',
+    premise: 'The danger case: a durability chassis carrying a real offensive identity, both of them bought into.',
+    into: ['constitution', 'strength'],
+    level: PRESET_LEVEL,
+    tierShare: 0.4,
+  },
+  {
+    id: 'spend.conPer',
+    name: 'CON/PER spend',
+    premise: 'The same question with exploitation rather than force behind it.',
+    into: ['constitution', 'perception'],
+    level: PRESET_LEVEL,
+    tierShare: 0.4,
+  },
+  {
+    id: 'spend.conWis',
+    name: 'CON/WIS spend',
+    premise: 'Maximum sustain interaction: the pool, and everything that makes what lands in it worth more.',
+    into: ['constitution', 'wisdom'],
+    level: PRESET_LEVEL,
+    tierShare: 0.4,
+
+  },
+  // The Wisdom spending rows (spec 275). Seven builds at one attribute value
+  // that differ only in which of Wisdom's specializations they bought, which is
+  // the comparison none of the rows above can make: `tierShare` picks by
+  // threshold, so every Wisdom row before this bought the same tree in the same
+  // order. `preferOnly` is what keeps them distinct -- see its own comment for
+  // the wall spec 271 met here first.
+  wisdomFocus('wis.raw', 'Raw WIS', 'The attribute and almost nothing else. The control the other five are read against.', []),
+  wisdomFocus('wis.recovery', 'Recovery WIS', 'Everything into healing received. What a restorative is worth to a specialist.', ['wis.measuredRecovery']),
+  wisdomFocus('wis.conservation', 'Conservation WIS', 'Attuned, deeply. Careful casting paying for the next cast.', ['wis.conservation']),
+  wisdomFocus('wis.adaptation', 'Adaptation WIS', 'Deep repeated-threat defence. The ceiling rather than the ramp.', ['wis.adaptation']),
+  wisdomFocus('wis.composure', 'Composure WIS', 'Broad cooldown availability. The whole bar rotating sooner.', ['wis.composure']),
+  wisdomFocus('wis.mastery', 'Mastery WIS', 'One tool, leaned on. Per-ability cooldown earned by repetition.', ['wis.mastery']),
+  {
+    id: 'wis.full',
+    name: 'Full WIS',
+    premise: 'Every Wisdom tier the level can pay for. What the track is worth bought outright.',
+    into: ['wisdom'],
+    level: PRESET_LEVEL,
+    tierShare: 0.5,
   },
   {
     id: 'spend.generalist',
@@ -186,9 +423,10 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
   const levels = Math.max(0, preset.level - 1);
   let budget = SCALING.startingPoints + SCALING.pointsPerLevel * levels;
   const wanted = new Set(preset.into);
+  const preferred = preset.prefer ?? [];
 
   /** The next tier this build would take, or null. Cheapest threshold first. */
-  const nextTier = (): string | null => {
+  const nextTier = (): SpecializationDefinition | null => {
     const open = ALL_SPECIALIZATIONS.filter(
       (specialization) =>
         wanted.has(specialization.attribute) &&
@@ -196,10 +434,22 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
         (tiers.get(specialization.id) ?? 0) < specialization.maxTier,
     );
     if (open.length === 0) return null;
-    // Lowest threshold, then id, so the choice is a property of the tables
-    // rather than of authoring order.
+    // A named preference first, in the order the row lists them, and still only
+    // where its milestone is reached (spec 271). The **definition** rather than
+    // the id, since spec 273: what a tier costs is a field on the row, and the
+    // caller has to be handed the row to read it.
+    for (const id of preferred) {
+      const found = open.find((specialization) => specialization.id === id);
+      if (found) return found;
+    }
+    // Otherwise: lowest threshold, then id, so the choice is a property of the
+    // tables rather than of authoring order.
+    // And for a row that says so, that list is the whole plan: nothing else is
+    // bought, so what the row measures is the specialization it names rather
+    // than the tree it could also afford (spec 275).
+    if (preset.preferOnly === true) return null;
     open.sort((a, b) => a.requires - b.requires || (a.id < b.id ? -1 : 1));
-    return open[0]?.id ?? null;
+    return open[0] ?? null;
   };
 
   let spent = 0;
@@ -210,12 +460,24 @@ export function fullSpreadOf(preset: BuildPreset): Spread {
     const wantTier = spent > 0 ? onTiers / spent < preset.tierShare : preset.tierShare > 0;
     const tier = wantTier ? nextTier() : null;
     if (tier !== null) {
-      tiers.set(tier, (tiers.get(tier) ?? 0) + 1);
-      onTiers += 1;
-      spent += 1;
-      budget -= 1;
+      // **What the tier costs, not one** (spec 273). This charged a flat point
+      // whatever `costPerTier` said, which was harmless while every row was
+      // absent-and-therefore-1 and silently under-pays the moment a mastery row
+      // exists -- so a preset would hold purchases no real character could
+      // afford, and the harness would be comparing a build nobody can make.
+      const cost = costOfNextTier(tier);
+      if (cost <= budget) {
+        tiers.set(tier.id, (tiers.get(tier.id) ?? 0) + 1);
+        onTiers += cost;
+        spent += cost;
+        budget -= cost;
+        stalled = 0;
+        continue;
+      }
+      // Cannot afford it: fall through and advance the track instead, exactly as
+      // an unavailable tier does. A mastery rank costs four points, so a budget
+      // with three left has to put them somewhere.
       stalled = 0;
-      continue;
     }
 
     // No tier wanted, or none available: advance the track instead. That

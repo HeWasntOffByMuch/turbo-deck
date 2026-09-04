@@ -44,6 +44,16 @@ export interface BuildMetrics {
   readonly castsCommitted: number;
   readonly castsWithdrawn: number;
   /**
+   * Casts ended by something other than the player's own decision (spec 271).
+   *
+   * The measurement Strength's whole defensive half exists to move, and the one
+   * a duel against a single opponent cannot produce: hyper-armour is worth
+   * nothing until something is actually trying to knock you out of a swing.
+   * Distinct from `castsWithdrawn`, which is a *choice* -- these are the ones
+   * taken away.
+   */
+  readonly castsInterrupted: number;
+  /**
    * Ticks the body was committed to something and could not move.
    *
    * Sampled rather than derived from events, and the one number that makes
@@ -123,6 +133,7 @@ export const EMPTY_METRICS: BuildMetrics = {
   resourceRestored: 0,
   castsCommitted: 0,
   castsWithdrawn: 0,
+  castsInterrupted: 0,
   ticksRooted: 0,
   backswingsCancelled: 0,
   mobileOffenseTriggers: 0,
@@ -185,6 +196,7 @@ export function foldMetrics(
     readonly cancelled: number;
     readonly backswingCancelled: number;
     readonly backswingPhase: number;
+    readonly interrupted: number;
   },
 ): BuildMetrics {
   const next = working(into);
@@ -224,6 +236,7 @@ export function foldMetrics(
       case 'castEnded':
         if (event.entityId !== entityId) break;
         if (event.reason === reasons.cancelled) next.castsWithdrawn += 1;
+        if (event.reason === reasons.interrupted) next.castsInterrupted += 1;
         if (event.reason === reasons.backswingCancelled) next.backswingsCancelled += 1;
         break;
       case 'died':

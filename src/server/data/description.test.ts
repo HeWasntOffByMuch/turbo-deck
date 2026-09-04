@@ -228,20 +228,29 @@ describe('derived numbers match the row they came from', () => {
 });
 
 describe('effects are described in the row order', () => {
-  it('puts Guard Break’s strip before its damage', () => {
+  it('states Guard Break’s pressure as a multiple of the caster’s own', () => {
     const ability = abilityById('skill.guardBreak');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const text = technicalText(describeAbility(ability));
-    // Read off the row rather than spelled here: what this asserts is the
-    // *order* the three lines come in, and a hand-written number turns it into
-    // a test that fails whenever somebody retunes the skill.
-    const strip = text.indexOf('Removes 50 Guard');
-    const guardDamage = text.indexOf('Guard damage');
-    const damage = text.indexOf(`Deals ${ability.damage} damage`);
-    expect(strip).toBeGreaterThanOrEqual(0);
-    expect(guardDamage).toBeGreaterThan(strip);
-    expect(damage).toBeGreaterThan(guardDamage);
+    // Read off the row rather than spelled here, so a retune does not fail this.
+    //
+    // The row used to open with a flat `poise: -50` and this asserted that the
+    // strip came before the damage. Spec 271 took the strip away -- it scaled
+    // with nothing, so the skill named after Strength's own mechanic ignored
+    // every point of it -- and what the line has to say now is that the pressure
+    // is a *multiple*, which is the visible sign that it goes through
+    // `staggerPower` rather than around it.
+    expect(text).toContain(`${String(ability.guardImpact)}x your Guard damage`);
+    expect(text).toContain(`Deals ${String(ability.damage)} damage`);
+    expect(text).not.toContain('Removes');
+  });
+
+  it('says nothing about Guard for a row that carries none', () => {
+    const ability = abilityById('skill.emberToss');
+    expect(ability).not.toBeNull();
+    if (!ability) return;
+    expect(technicalText(describeAbility(ability))).not.toContain('Guard damage');
   });
 
   it('names the status a skill applies, with its duration', () => {
@@ -284,20 +293,26 @@ describe('effects are described in the row order', () => {
 });
 
 describe('nothing is invented', () => {
-  it('adds no effect line beyond damage and scaling for a row that only damages', () => {
+  it('adds no effect line beyond what the row itself states', () => {
     // Whirlwind since spec 237 took `melee.heavy` out of the table, and it is
-    // the better subject anyway: two lines, both derived rather than invented
-    // -- what it does, and what that grows with.
+    // the better subject anyway: every line derived rather than invented -- what
+    // it does, what it does to a Guard, and what those grow with.
+    //
+    // The Guard line arrived with spec 271, and its presence here is the point:
+    // the row gained a `guardImpact`, so the description gained exactly one line
+    // and no other. A row that carries none still says nothing (asserted
+    // separately, on Ember Toss).
     const ability = abilityById('skill.whirlwind');
     expect(ability).not.toBeNull();
     if (!ability) return;
     const effects = describeAbility(ability).lines.filter((line) => line.tone === 'effect');
-    expect(effects).toHaveLength(2);
+    expect(effects).toHaveLength(3);
     expect(effects[0]?.text).toBe(`Deals ${ability.damage} damage.`);
+    expect(effects[1]?.text).toBe(`Deals ${String(ability.guardImpact)}x your Guard damage.`);
     // The weapon tooltip's notation, borrowed (spec 242): position is the
     // attribute, so Whirlwind's Strength `A` and Agility `D` sit first and
     // second -- the same string `sword.worn` draws.
-    expect(effects[1]?.text).toBe('A / D / -');
+    expect(effects[2]?.text).toBe('A / D / -');
   });
 
   it('says nothing about scaling for a row that scales with nothing (spec 238)', () => {
@@ -440,7 +455,14 @@ describe('the passive skill tree (spec 191)', () => {
     // and the trigger, and a player could not read a single figure off any of
     // the thirty-six rows.
     for (const skill of ALL_SPECIALIZATIONS) {
-      if (grantsOf(skill.perTier).length === 0) continue;
+      const grants = grantsOf(skill.perTier);
+      if (grants.length === 0) continue;
+      // A row that grants only **capabilities** states sentences rather than
+      // numbers, and should (spec 273). `con.deathsDoor` is the first: what it
+      // buys is which branch of `regenPoise` applies while you are badly hurt,
+      // and there is no quantity in that. `whole` is exactly the flag form's own
+      // marker, so this reads the shape of the grant rather than a list of ids.
+      if (grants.every((grant) => grant.whole === true)) continue;
       const text = technicalText(describeSpecialization(skill, 0));
       expect(text, skill.id).toMatch(/[+-]\d/);
     }
@@ -469,17 +491,24 @@ describe('the passive skill tree (spec 191)', () => {
   });
 
   it('skips a socket rather than claiming an effect', () => {
-    // A zero in `perTier` is a documented "this row is about that trait" whose
-    // magnitude comes from a milestone or a synergy. Catalysis authors
-    // `appliesSundered: 0`, which reaches nothing, and Opening Read authors
-    // `vulnerableWeakPointFactor: 0`. Neither may produce a line.
+    // A zero in `perTier` may never produce a line, whatever it is there for.
+    // Two kinds of zero survive and they are not the same thing: a *delta onto
+    // a base in `SCALING`* (`per.steadyAim`'s `steadyAimTicks`,
+    // `con.secondWind`'s `secondWindBelow`) is a row saying "the base is right",
+    // and a **socket** was a row naming a trait whose magnitude was to arrive
+    // from somewhere else. The second kind is gone: spec 244 deleted the
+    // somewhere-else, and spec 270 gave Catalysis's `appliesSundered` a real
+    // value rather than leaving a purchasable row describing a dead mechanic.
     for (const skill of ALL_SPECIALIZATIONS) {
       expect(technicalText(describeSpecialization(skill, 0)), skill.id).not.toMatch(/[+-]0[^.\d]/);
     }
+    // Catalysis grants two lines now -- the damage against an afflicted target,
+    // and the sunder that is the other half of the same trigger. One line here
+    // would mean the socket had come back.
     const catalysis = ALL_SPECIALIZATIONS.find((skill) => skill.id === 'int.catalysis');
     expect(catalysis).toBeDefined();
     if (!catalysis) return;
-    expect(grantsOf(catalysis.perTier)).toHaveLength(1);
+    expect(grantsOf(catalysis.perTier)).toHaveLength(2);
   });
 
   it('never appends a rate to a flag', () => {
@@ -545,16 +574,26 @@ describe('the passive skill tree (spec 191)', () => {
         if (!labelled.has(`trait:${key}`)) missing.add(`trait:${key}`);
       }
     }
-    // The three that cannot be turned into a signed quantity reading correctly
-    // in English, each left to its row's authored sentence on purpose:
-    // `juggernautBelow` is a health threshold, `masteryRelief` is a count that
-    // *lowers* a requirement, and `overflowHealthPerResource` is a price the
-    // skill charges for a benefit -- and since spec 239 it is a *capability*
-    // rather than a rate, since the rate itself is `SCALING`'s and what a layer
-    // grants is the relief beside it, which does have a label.
+    // The **one** field that cannot be turned into a signed quantity reading
+    // correctly in English, left to its row's authored sentence on purpose:
+    // `overflowHealthPerResource` is a price the skill charges for a benefit.
+    //
+    // There were three, and two track passes each removed one -- neither by
+    // finding a wording that worked, which is the part worth keeping. Spec 271
+    // took `juggernautBelow` off this list by ceasing to *grant* it: it was a
+    // health gate whose only source set it to 1, so the branch reading it could
+    // never run. Executioner's `executeBelow` is a health threshold too and
+    // *is* labelled, which is the distinction -- that one is a number the player
+    // moves. Spec 275 took `masteryRelief` off it by replacing the mechanic:
+    // being unlabellable was not a quirk of the field, it was the mechanic being
+    // meta-progression rather than combat, which is why the sheet drew "Always
+    // active." and no effect line for the one node whose whole value was that
+    // line. What replaced it is a set of quantities and every one has a row.
+    //
+    // Both are the same lesson from opposite ends: a field nobody can describe
+    // is usually a mechanic nobody should have shipped, rather than a gap in
+    // this table.
     expect([...missing].sort()).toEqual([
-      'trait:juggernautBelow',
-      'trait:masteryRelief',
       'trait:overflowHealthPerResource',
     ]);
   });

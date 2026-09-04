@@ -62,7 +62,7 @@ function catalyst(): EffectiveStats {
   return {
     ...derived,
     critChance: 0,
-    traits: { ...derived.traits, weakPointChance: 0, abilityWeakPoints: 0 },
+    traits: { ...derived.traits, weakPointChance: 0 },
   };
 }
 

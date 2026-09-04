@@ -139,13 +139,19 @@ export type SkillEffect = { readonly on?: EffectSubject } & (
    */
   | { readonly kind: 'damage'; readonly amount?: number; readonly multiplier?: number }
   /**
-   * Guard damage on top of what the blow itself carries.
+   * An **absolute** amount of Guard damage, for a caster with no force to scale.
    *
-   * Absolute, unlike `poiseDamageOf`'s `staggerPower * multiplier`, because a
-   * skill that says "and 40 guard" should mean 40 to everyone -- a Strength
-   * character already gets more out of every blow and does not also need the
-   * skill's stated number to scale. Runs through `applyPoiseDamage`, so
-   * hyper-armour, the immunity window and the break itself all apply.
+   * Deliberately not the ordinary way a skill pressures a Guard. Since spec 271
+   * that is `AbilityDefinition.guardImpact`, which the row's own blow carries
+   * through `resolveBlow` exactly as a basic attack carries the weapon's -- so
+   * Strength and Crushing Blows reach a skill without a second formula, and a
+   * row cannot accidentally land Guard pressure twice by authoring both.
+   *
+   * What this is for is the Warden, whose laser states a flat number because a
+   * boss's numbers are its own and there is no progression behind them.
+   *
+   * Runs through `applyPoiseDamage` either way, so hyper-armour, the immunity
+   * window and the break itself all apply.
    */
   | { readonly kind: 'poiseDamage'; readonly amount: number }
   /**

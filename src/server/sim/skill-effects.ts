@@ -17,9 +17,11 @@
  *
  * Two orderings are load-bearing:
  *
- *  - **Effects run in the order the row lists them**, so Guard Break's
- *    `poise: -50` comes off before its `poiseDamage: 25` is measured against
- *    the pool. Reordering a row is a balance change and is meant to be.
+ *  - **Effects run in the order the row lists them**, so a row that drains a
+ *    pool before measuring against it gets what it asked for. Reordering a row
+ *    is a balance change and is meant to be. (Guard Break was the example here
+ *    until spec 271 took its `poise: -50` away: its Guard pressure is carried by
+ *    its own blow now, out of `ability.guardImpact`.)
  *  - **The Rng is threaded**, exactly as it is everywhere else in this sim. Only
  *    `damage` draws from it -- through `resolveBlow`, which rolls crit first and
  *    always -- so a skill that lists two damage effects draws twice, every
@@ -33,7 +35,7 @@ import type { AbilityDefinition } from '../data/abilities.js';
 import { subjectOf, type SkillEffect } from '../data/skill-effects.js';
 import { applyDot } from './damage-over-time.js';
 import { applyHealing } from './healing.js';
-import { resolveBlow } from './blow.js';
+import { resolveBlow, rewardBreak } from './blow.js';
 import { abilityEffectPowerOf } from '../data/ability-scaling.js';
 import { applyPoiseDamage, isUnstaggerable, stagger } from './poise.js';
 import { applyStatus, clearStatus } from './statuses.js';
@@ -148,6 +150,11 @@ function applyOne(
       // Through the break machinery, so hyper-armour reduces it, the immunity
       // window refuses the break, and emptying the pool staggers exactly the way
       // a weapon emptying it does.
+      //
+      // **An absolute**, and the one way to author one (spec 271). A skill's
+      // ordinary Guard pressure is `ability.guardImpact`, carried by its own
+      // blow through `resolveBlow`; this is for a caster with no progression to
+      // scale. Authoring both would land Guard pressure twice for one press.
       const poised = applyPoiseDamage(target, effect.amount, tick, false);
       if (!poised.broke) return still(poised.entity);
       // The **caster's** duration, for `resolveBlow`'s reason (spec 243):
@@ -161,7 +168,16 @@ function applyOne(
         tick,
         poised.interrupted,
       );
-      return still(struck.entity, struck.events);
+      // And the break pays the breaker (spec 271). The same `rewardBreak`
+      // `resolveBlow` calls, so Momentum is granted by a Guard broken with a
+      // skill exactly as by one broken with a swing -- without this the ability
+      // half of the loop stopped at the break.
+      return {
+        caster: rewardBreak(caster, tick),
+        target: struck.entity,
+        events: struck.events,
+        rng,
+      };
     }
 
     case 'stun': {

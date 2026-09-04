@@ -27,10 +27,11 @@ import {
 import { SERVER_TICK_RATE } from '../config.js';
 import { BASIC_ATTACK_ID } from '../data/abilities.js';
 import { itemById } from '../data/items.js';
-import { above, SCALING } from '../data/scaling.js';
+import { above, SCALING, softCap } from '../data/scaling.js';
 import {
   attributeScalingBonus,
   damageOf,
+  guardImpactOfWeapon,
   effectiveScaling,
   gradeModifiersFrom,
   scalingOf,
@@ -127,12 +128,51 @@ export function baseAttackTimeTicksFrom(flatTicks: number): number {
  */
 export const CRIT_PER_PERCEPTION = SCALING.perception.critPer;
 export const MAX_CRIT_CHANCE = 0.5;
-/** The ability resource pool (spec 062): a base, plus intelligence and wisdom. */
+/**
+ * The ability resource pool (spec 062): a base, plus intelligence.
+ *
+ * **Wisdom no longer contributes** (spec 275). INT owns the magazine and WIS
+ * owns making it last -- so the pool is Intelligence's alone, and Wisdom keeps
+ * the recovery and efficiency half of the same economy. There is nothing to
+ * move: `RESOURCE_PER_INTELLIGENCE` is the primitive that already existed.
+ */
 export const BASE_RESOURCE = 20;
 export const RESOURCE_PER_INTELLIGENCE = SCALING.intelligence.resourcePer;
-export const RESOURCE_PER_WISDOM = SCALING.wisdom.resourcePer;
-/** Resource regained per second, before modifiers. Wisdom adds to it. */
-export const RESOURCE_REGEN_PER_SECOND = 2;
+/**
+ * Resource regained per second before Wisdom, and **the magazine's whole
+ * premise** (specs 270, 276).
+ *
+ * 2/s until spec 270, which is what made the Intelligence economy decorative: a
+ * four-slot rotation draws about 2.2/s, so every build in the game refilled
+ * about as fast as it could spend whatever its pool happened to be. The shaping
+ * premium could not be felt, Efficient Construction bought back nothing, and
+ * Arcane Overflow -- a capstone that fires on an empty pool -- waited on a state
+ * Intelligence's own 2-per-point pool guaranteed never arrived.
+ *
+ * That spec dropped it to 0.4 and moved the rate onto {@link REGEN_PER_WISDOM},
+ * so the split the design states is the split the numbers make: **Intelligence
+ * buys the magazine and Wisdom buys the reload.** The split is right and 0.4 was
+ * too far. Measured through `scripts/probe-resource.ts` over 150-second fights,
+ * a character who had spent nothing was starved -- unable to pay for anything on
+ * its own bar -- for **98% of the fight**, and got 25 skill casts against 118
+ * basic attacks. That is not "burst, then pace yourself"; it is one opening
+ * burst and two and a half minutes of auto-attacking, and it made Wisdom the
+ * only playable resource economy rather than the best one.
+ *
+ * 1.0 is measured against the content table from the other end: an ordinary
+ * mixed bar drains 1.86/s, so a character who has spent nothing sustains a
+ * little over half of it indefinitely and pays for the rest out of the
+ * magazine -- which is the decision the design is about. Recovery from empty
+ * becomes 3.0s to the cheapest skill and 27s to a full pool, against 7.5s and
+ * 67.5s.
+ *
+ * Deliberately not zero, and for a reason the 0.4 nearly reached anyway: zero
+ * would make a body that had spent its pool permanently unable to cast until it
+ * died, which is a wall rather than a pressure -- and would make the flask, not
+ * Wisdom, the only answer.
+ */
+export const RESOURCE_REGEN_PER_SECOND = 1;
+
 export const REGEN_PER_WISDOM = SCALING.wisdom.regenPer;
 
 const BASE_MOVE_SPEED = CHARACTERS[0]?.moveSpeed ?? 147.5;
@@ -233,6 +273,11 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
   const weaponDamageMin = resolve(weaponDamage.min);
   const weaponDamageMax = resolve(weaponDamage.max);
 
+  // What a swing weighs (spec 271). Authored on the row and resolved here
+  // beside the range, so the sim multiplies `staggerPower` by one number and
+  // never opens the item table mid-blow.
+  const weaponGuardImpact = guardImpactOfWeapon(weapon?.guardImpact, held);
+
   // The **midpoint**, which is what the character sheet's Damage row shows and
   // what a stagger's power is sized off. One number, because both of those want
   // one; the range is what a blow actually rolls between.
@@ -290,14 +335,28 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
 
   const maxResource = Math.max(
     0,
-    BASE_RESOURCE +
-      RESOURCE_PER_INTELLIGENCE * intelligence +
-      RESOURCE_PER_WISDOM * wisdom +
-      bonus.maxResource,
+    BASE_RESOURCE + RESOURCE_PER_INTELLIGENCE * intelligence + bonus.maxResource,
   );
   const resourceRegen = Math.max(
     0,
-    (RESOURCE_REGEN_PER_SECOND + REGEN_PER_WISDOM * wisdom) / SERVER_TICK_RATE + bonus.resourceRegen,
+    // Measured from `above()` since spec 270 -- the baseline rule `scaling.ts`
+    // states for every other scale, and the reason the first cut of that change
+    // barely moved: at the raw value a character who had spent *nothing* on
+    // Wisdom still collected five points of reload, which was most of what a
+    // pure-Intelligence build was living on. Wisdom investment is the reload
+    // now, and the starting five buy nothing, so `RESOURCE_REGEN_PER_SECOND` is
+    // genuinely what a body with no Wisdom gets.
+    //
+    // And **soft-capped** since spec 276, which is the half 270 could not see
+    // from inside Intelligence: the demand this supplies has a hard ceiling --
+    // the greediest legal bar, cast on cooldown by a body rooted through its own
+    // casts -- so a linear rate crosses it and every point past the crossing
+    // buys nothing. The curve, its knee and its falloff are all in
+    // `SCALING.wisdom`, where a balance pass can read them together.
+    (RESOURCE_REGEN_PER_SECOND +
+      softCap(above(wisdom), REGEN_PER_WISDOM, SCALING.wisdom.regenKnee, SCALING.wisdom.regenFalloff)) /
+      SERVER_TICK_RATE +
+      bonus.resourceRegen,
   );
 
   return {
@@ -320,6 +379,7 @@ export function computeEffectiveStats(player: PersistedPlayer): EffectiveStats {
     weaponScaling,
     weaponDamageMin,
     weaponDamageMax,
+    weaponGuardImpact,
     scalingModifiers,
     scalingAttributes,
     // Derived last, because two of its fields are fractions of maxHealth and

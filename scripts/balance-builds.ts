@@ -53,7 +53,19 @@ import { monsterById } from '../src/server/data/monsters.js';
 import { startingBaseStats } from '../src/server/player/attributes.js';
 import { milestoneProgress, resolveProgression } from '../src/server/player/progression.js';
 import { computeEffectiveStats } from '../src/server/player/stats.js';
-import { mayCancelBackswing } from '../src/server/sim/abilities.js';
+import {
+  attackTimingFor,
+  mayCancelBackswing,
+  resourceCostFor,
+} from '../src/server/sim/abilities.js';
+import {
+  ADAPTED_PREFIX,
+  hasStatus,
+  MASTERY_PREFIX,
+  statusOf,
+  StatusId,
+  type StatusState,
+} from '../src/server/sim/statuses.js';
 import {
   EMPTY_METRICS,
   foldMetrics,
@@ -66,6 +78,7 @@ import {
   CastEndReason,
   CastPhase,
   EntityKindValue,
+  type ServerEntity,
   type ServerInput,
   type ServerWorldState,
 } from '../src/server/sim/types.js';
@@ -95,6 +108,36 @@ function flag(name: string, fallback: string): string {
 
 const seconds = Number(flag('seconds', '30'));
 const monsterId = flag('monster', 'ravager');
+// How many opponents are kept alive in front of the build at once (specs 270,
+// 271, which arrived at this independently and wanted it for opposite reasons).
+//
+// One is the attribute comparison this table has always been, and it measures
+// two things badly. **Reach and radius**, because a stationary duel is the worst
+// possible test of an attribute whose identity is catching several bodies at
+// once -- spec 270. And **whether a commitment survives**, because hyper-armour
+// is worth nothing until something is trying to knock you out of a swing, and
+// one opponent on an attack cadence lands too few blows to interrupt anybody --
+// spec 271. The columns that read them are the INT table's damage ratio and
+// INTR/HELD respectively.
+const foes = Math.max(1, Math.round(Number(flag('foes', '1'))));
+
+/**
+ * How far around the build those opponents are spread, in degrees.
+ *
+ * **The two scenarios genuinely want different answers**, which is why this is a
+ * number rather than a constant either spec could have kept. Spec 270 needs them
+ * in a lane: `skill.arcLash` is a `line` and `skill.acidSpray` is directional, so
+ * a build that surrounds itself is measuring one target per cast whatever its
+ * radius says. Spec 271 needs the opposite -- a body pressed from every side is
+ * what actually interrupts a swing, and against a frontal arc the attack-slot
+ * ring and the crowd pass queue the attackers up so politely that every build in
+ * the table holds 100% of its commitments and the column says nothing.
+ *
+ * 180 is spec 270's own placement and stays the default, so its table is
+ * untouched. `--arc=360` surrounds, which is what the commitment table wants.
+ */
+const ARC_DEGREES = Math.max(1, Number(flag('arc', '180')));
+const ARC = (ARC_DEGREES * Math.PI) / 180;
 const seed = Number(flag('seed', '1'));
 const only = flag('preset', '');
 
@@ -125,6 +168,7 @@ const REASONS = {
   cancelled: CastEndReason.Cancelled,
   backswingCancelled: CastEndReason.BackswingCancelled,
   backswingPhase: CastPhase.Backswing,
+  interrupted: CastEndReason.Interrupted,
 };
 
 /**
@@ -189,7 +233,52 @@ interface Fight {
   readonly metrics: BuildMetrics;
   readonly survived: boolean;
   readonly maxHealth: number;
+  readonly watch: IntWatch;
 }
+
+/**
+ * What the Intelligence track does over a fight (spec 270).
+ *
+ * Sampled here rather than folded into {@link BuildMetrics}, and that is a scope
+ * decision rather than laziness: every one of these is a question about *this*
+ * attribute -- how long a caster held a stance, how much health a spell ate,
+ * how deep a weave got -- and widening the shared metrics record would put six
+ * Intelligence fields in front of every other build's row forever.
+ *
+ * All of it is read off the body each tick. Nothing new crosses the wire and
+ * nothing in the sim was changed to make it measurable, which is the property
+ * that keeps a harness honest: it watches the game rather than a version of the
+ * game instrumented for it.
+ */
+interface IntWatch {
+  /** Ticks holding `Prepared` -- a banked stance, waiting to be spent. */
+  preparedTicks: number;
+  /** Ticks holding `Preparing` -- planted, and visibly so. */
+  preparingTicks: number;
+  /** Times the stance actually paid out. */
+  primes: number;
+  /** Times a cast was paid for with health, and how much it cost. */
+  overdraws: number;
+  overdrawHealth: number;
+  /** Weave stacks summed per tick, and the deepest chain reached. */
+  weaveTickStacks: number;
+  weavePeak: number;
+  /** Resource spent, and how much of it was the shaping premium. */
+  resourceSpent: number;
+  premiumPaid: number;
+}
+
+const emptyWatch = (): IntWatch => ({
+  preparedTicks: 0,
+  preparingTicks: 0,
+  primes: 0,
+  overdraws: 0,
+  overdrawHealth: 0,
+  weaveTickStacks: 0,
+  weavePeak: 0,
+  resourceSpent: 0,
+  premiumPaid: 0,
+});
 
 interface Row extends Fight {
   readonly preset: BuildPreset;
@@ -216,7 +305,13 @@ type Policy = 'still' | 'cancelling';
  * A fresh monster appears the tick after the last one dies.
  */
 function run(preset: BuildPreset): Row {
-  return { preset, ...fight(recordFor(preset), 'still') };
+  // `foes` explicitly, and it is the one line that makes `--foes` mean anything
+  // for this table. Spec 270 made it a *parameter* defaulting to 1 so its own
+  // Intelligence table could ask for four without moving the comparison above
+  // it; spec 271 added the flag. Merged, the flag set a module constant that the
+  // parameter shadowed -- so `--foes=8` printed "8 opponent(s)" over a table
+  // fought one at a time, which is worse than the flag not existing.
+  return { preset, ...fight(recordFor(preset), 'still', foes) };
 }
 
 /**
@@ -226,10 +321,110 @@ function run(preset: BuildPreset): Row {
  * fight rather than a second harness written beside this one -- the whole value
  * of comparing rank 0 with rank 3 is that nothing else about the run differs.
  */
-function fight(record: PersistedPlayer, policy: Policy): Fight {
+/**
+ * What a Wisdom build did with its resource, cooldowns and stacks (spec 275).
+ *
+ * Sampled here rather than counted in `sim/metrics.ts`, and that is the whole
+ * decision: every field of `BuildMetrics` is sim-side state, and Wisdom's
+ * questions -- how deep did the pool get, how many Mastery stacks were held,
+ * which incoming ability was adapted to -- are answerable by reading the body
+ * each tick from outside. Adding six counters to the deterministic core to say
+ * something a script can observe would be new state to replicate and forget to
+ * clear, for a table nobody ships.
+ */
+interface WisdomProbe {
+  ticks: number;
+  minResource: number;
+  ticksStarved: number;
+  masteryStackTicks: number;
+  ticksAtMaxMastery: number;
+  masteryPeak: Record<string, number>;
+  attunedStackTicks: number;
+  adaptPeak: Record<string, number>;
+  cooldownSecondsSaved: number;
+  casts: number;
+}
+
+function emptyProbe(): WisdomProbe {
+  return {
+    ticks: 0,
+    minResource: Number.POSITIVE_INFINITY,
+    ticksStarved: 0,
+    masteryStackTicks: 0,
+    ticksAtMaxMastery: 0,
+    masteryPeak: {},
+    attunedStackTicks: 0,
+    adaptPeak: {},
+    cooldownSecondsSaved: 0,
+    casts: 0,
+  };
+}
+
+/** The cheapest thing this body could throw, for "was it starved". */
+function cheapestCost(self: ServerEntity, tick: number): number {
+  let cheapest = Number.POSITIVE_INFINITY;
+  for (const id of self.stats.skillAbilityIds) {
+    const ability = abilityById(id);
+    if (!ability) continue;
+    cheapest = Math.min(cheapest, resourceCostFor(ability, self, tick));
+  }
+  return Number.isFinite(cheapest) ? cheapest : 0;
+}
+
+function sampleWisdom(probe: WisdomProbe, self: ServerEntity, tick: number): void {
+  probe.ticks += 1;
+  probe.minResource = Math.min(probe.minResource, self.resource);
+  if (self.resource < cheapestCost(self, tick)) probe.ticksStarved += 1;
+
+  const max = self.stats.traits.masteryMaxStacks;
+  let held = 0;
+  let atMax = false;
+  const entries = Object.entries(self.statuses) as [string, StatusState][];
+  for (const [key, state] of entries) {
+    if (tick >= state.expiresAtTick) continue;
+    if (key.startsWith(MASTERY_PREFIX)) {
+      const abilityId = key.slice(MASTERY_PREFIX.length);
+      held += state.stacks;
+      if (max > 0 && state.stacks >= max) atMax = true;
+      probe.masteryPeak[abilityId] = Math.max(probe.masteryPeak[abilityId] ?? 0, state.stacks);
+    } else if (key.startsWith(ADAPTED_PREFIX)) {
+      const abilityId = key.slice(ADAPTED_PREFIX.length);
+      probe.adaptPeak[abilityId] = Math.max(probe.adaptPeak[abilityId] ?? 0, state.stacks);
+    } else if (key === StatusId.Attuned) {
+      probe.attunedStackTicks += state.stacks;
+    }
+  }
+  probe.masteryStackTicks += held;
+  if (atMax) probe.ticksAtMaxMastery += 1;
+}
+
+/**
+ * Seconds of cooldown this cast did not have to wait, against a Wisdom-less
+ * body holding the same bar.
+ *
+ * The number the whole cooldown half of the track is for, and it has to be
+ * measured per cast rather than derived from the scale: Mastery is per ability
+ * and depends on stacks the body happened to be holding at the moment it cast.
+ */
+function cooldownSavedBy(self: ServerEntity, abilityId: string, tick: number): number {
+  const ability = abilityById(abilityId);
+  if (!ability || ability.basicAttack) return 0;
+  const bare = ability.cooldownTicks;
+  const actual = attackTimingFor(ability, self, tick).intervalTicks;
+  return Math.max(0, bare - actual) / SERVER_TICK_RATE;
+}
+
+function fight(
+  record: PersistedPlayer,
+  policy: Policy,
+  foes = 1,
+  against = monsterId,
+  duration = seconds,
+  probe?: WisdomProbe,
+): Fight {
   const stats = computeEffectiveStats(record);
-  const monster = monsterById(monsterId);
-  if (!monster) throw new Error(`no such monster: ${monsterId}`);
+  const monster = monsterById(against);
+  if (!monster) throw new Error(`no such monster: ${against}`);
 
   let state: ServerWorldState = createWorldState(seed);
   const spawned = spawnEntity(state, {
@@ -252,28 +447,43 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
   // measured a rotation nobody plays.
   const basicDamage = stats.attackDamage;
   let metrics = EMPTY_METRICS;
+  const watch = emptyWatch();
   let seq = 0;
-  let foeId = 0;
+  let foeIds: number[] = [];
   let cancels = 0;
 
-  for (let tick = 1; tick <= Math.round(seconds * SERVER_TICK_RATE); tick++) {
+  for (let tick = 1; tick <= Math.round(duration * SERVER_TICK_RATE); tick++) {
     const self = state.entities.get(selfId);
     if (!self || self.health <= 0) break;
 
-    // Keep exactly one live opponent in front of the build.
-    const foe = foeId > 0 ? state.entities.get(foeId) : undefined;
-    if (!foe || foe.health <= 0) {
+    // Keep exactly `foes` live opponents in front of the build.
+    //
+    // More than one is spec 270's addition and it is the scenario Intelligence
+    // was never measured in: a stationary duel is the worst possible test of an
+    // attribute whose identity is reach and radius, and every row above this
+    // one had been fought against a single body since the harness was written.
+    // They are placed on an arc rather than in a line, close enough that one
+    // Arc Lash or one Rime Touch can catch several -- which is the thing being
+    // measured, not a courtesy.
+    foeIds = foeIds.filter((id) => (state.entities.get(id)?.health ?? 0) > 0);
+    while (foeIds.length < foes) {
+      const index = foeIds.length;
+      const angle = foes === 1 ? 0 : (index / foes) * ARC - ARC / 2;
       const next = spawnEntity(state, {
         kind: EntityKindValue.Monster,
         typeId: monster.id,
-        position: { x: ORIGIN.x + 60, y: ORIGIN.y, z: 0 },
+        position: {
+          x: ORIGIN.x + Math.cos(angle) * 60,
+          y: ORIGIN.y + Math.sin(angle) * 60,
+          z: 0,
+        },
         stats: monster.stats,
         radius: monster.radius,
         zoneId: 'greenmarch',
         targetId: selfId,
       });
       state = next.state;
-      foeId = next.entity.id;
+      foeIds.push(next.entity.id);
       // Each opponent gets its own spawner id (spec 156). Without one they all
       // share a per-type farm key, and this harness -- which is a stream of the
       // same monster at the same spot -- decays to the floor within seconds and
@@ -283,7 +493,7 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
       state = replaceEntity(state, { ...next.entity, spawnerId: `bench-${next.entity.id}` });
     }
 
-    const target = state.entities.get(foeId);
+    const target = state.entities.get(foeIds[0] ?? 0);
     seq += 1;
     // Asking to move is how a body walks out of a follow-through (spec 079),
     // and one tick of it is the whole gesture -- but only from the **cancel
@@ -326,8 +536,61 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
     state = result.state;
     const after = state.entities.get(selfId);
 
+    // --- the Intelligence watch (spec 270) -------------------------------
+    //
+    // Charged on the tick a cast **starts**, not on every tick the policy names
+    // one. The first cut did the latter and reported 989 resource spent from a
+    // 109-point pool over thirty seconds, because `bestReady` names an ability
+    // on nearly every idle tick and most of those are refused for cooldown.
+    if (before?.cast === null && after?.cast) {
+      const row = abilityById(after.cast.abilityId);
+      if (row) {
+        const paid = after.cast.spentResource + after.cast.spentHealth;
+        watch.resourceSpent += after.cast.spentResource;
+        // What shaping charged, as the difference between the price paid and the
+        // price without the premium -- rather than `cost * shapingCostPct`,
+        // which would double-count Wisdom's discount on the way past.
+        const premium = before.stats.traits.shapingCostPct;
+        if (premium > 0 && paid > 0) watch.premiumPaid += paid - paid / (1 + premium);
+      }
+    }
+    if (after) {
+      const now = state.tick;
+      if (hasStatus(after.statuses, StatusId.Prepared, now)) watch.preparedTicks += 1;
+      if (hasStatus(after.statuses, StatusId.Preparing, now)) watch.preparingTicks += 1;
+      // Counted on the *edge*, so holding a banked stance for a hundred ticks is
+      // one prime rather than a hundred.
+      if (
+        before &&
+        !hasStatus(before.statuses, StatusId.Prepared, tick) &&
+        hasStatus(after.statuses, StatusId.Prepared, now)
+      ) {
+        watch.primes += 1;
+      }
+      if (
+        before &&
+        !hasStatus(before.statuses, StatusId.Overdrawn, tick) &&
+        hasStatus(after.statuses, StatusId.Overdrawn, now)
+      ) {
+        watch.overdraws += 1;
+        watch.overdrawHealth += Math.max(0, before.health - after.health);
+      }
+      const stacks = statusOf(after.statuses, StatusId.Weave, now)?.stacks ?? 0;
+      watch.weaveTickStacks += stacks;
+      watch.weavePeak = Math.max(watch.weavePeak, stacks);
+    }
+
     metrics = foldMetrics(metrics, selfId, tick, result.events, REASONS);
     metrics = foldPosture(metrics, (after?.cast ?? null) !== null);
+    if (probe && after) {
+      sampleWisdom(probe, after, tick);
+      // Counted at the moment the cast is accepted, which is where the timing
+      // was snapshotted -- so the saving reported is the one that cast got.
+      if (before?.cast === null && after.cast !== null) {
+        probe.casts += 1;
+        probe.cooldownSecondsSaved += cooldownSavedBy(after, after.cast.abilityId, tick);
+      }
+    }
     if (before && after) {
       metrics = foldResource(
         metrics,
@@ -342,6 +605,7 @@ function fight(record: PersistedPlayer, policy: Policy): Fight {
     metrics,
     survived: (survivor?.health ?? 0) > 0,
     maxHealth: stats.maxHealth,
+    watch,
   };
 }
 
@@ -495,7 +759,16 @@ function bestReady(
   for (const ability of carried) {
     if (resolvedDamage(ability, self.stats) < basicDamage * PUNCTUATION_RATIO) continue;
     if (tick < (self.cooldowns[ability.id] ?? 0)) continue;
-    if (self.resource < ability.cost * self.stats.traits.resourceCostScale) continue;
+    // Affordable, **or overdrawable** (spec 270). The affordability line alone
+    // made Arcane Overflow unmeasurable by construction: the capstone exists for
+    // the moment a caster cannot pay, and a policy that refuses to try one it
+    // cannot pay for never reaches it. A build holding the capstone throws the
+    // spell and lets the sim decide whether health covers the gap -- which is
+    // what a player who bought it would do, and what `startCast` is there to
+    // refuse if the bill is too big.
+    const price = ability.cost * self.stats.traits.resourceCostScale;
+    const overdrawable = self.stats.traits.overflowHealthPerResource > 0;
+    if (self.resource < price && !overdrawable) continue;
     return ability.id;
   }
   return null;
@@ -534,6 +807,42 @@ for (const row of rows) {
       `${pad(num(s.resourceRatio, 2), 7)}${pad(num(s.rootedFraction * 100), 7)}` +
       `${pad(num(s.controlledFraction * 100), 6)}` +
       `${pad(row.survived ? 'yes' : 'NO', 6)}`,
+  );
+}
+
+// --- the commitment table (spec 271) --------------------------------------
+// What the table above cannot see. Strength's defensive half is entirely about
+// a swing *surviving*, and against one opponent nothing interrupts anybody, so
+// every hyper-armour tier in the tree reads as a flat row. Run with `--foes 4`
+// and these columns move.
+//
+// BREAKS is Guard breaks caused, TTB the seconds of fight per break, INTR the
+// casts taken away by something other than the player's own decision, and HELD
+// the fraction of committed casts that survived to land. HELD is the one to
+// read: it is what Committed Swing and Unstoppable are bought for.
+console.log('');
+console.log(`  Commitment and Guard pressure -- ${String(foes)} opponent(s):`);
+console.log('');
+console.log(
+  `  ${pad('BUILD', 16)}${pad('BREAKS', 8)}${pad('TTB s', 8)}${pad('COMMIT', 8)}` +
+    `${pad('INTR', 6)}${pad('HELD%', 7)}${pad('STAG TAKEN', 12)}${pad('TAKEN', 8)}${pad('KILLS', 6)}`,
+);
+console.log(`  ${'-'.repeat(80)}`);
+for (const row of rows) {
+  const m = row.metrics;
+  const secondsFought = m.ticks / SERVER_TICK_RATE;
+  const breaks = m.staggersCaused;
+  const committed = m.castsCommitted;
+  // A cast that committed and was not taken away. `castsInterrupted` counts the
+  // ones a break or a death removed; a withdrawal is the player's own choice and
+  // is deliberately not counted against them here.
+  const held = committed > 0 ? (committed - m.castsInterrupted) / committed : 1;
+  console.log(
+    `  ${pad(row.preset.name, 16)}${pad(String(breaks), 8)}` +
+      `${pad(breaks > 0 ? num(secondsFought / breaks, 2) : '-', 8)}` +
+      `${pad(String(committed), 8)}${pad(String(m.castsInterrupted), 6)}` +
+      `${pad(num(held * 100), 7)}${pad(String(m.staggersTaken), 12)}` +
+      `${pad(num(m.damageTaken), 8)}${pad(String(m.kills), 6)}`,
   );
 }
 
@@ -723,13 +1032,201 @@ if (base && top) {
   );
 }
 
+// --------------------------------------------------------------------------
+// Wisdom (spec 275)
+//
+// A section of its own rather than more columns on the table above, because the
+// questions are different in kind: the twelve-build table compares attributes
+// on damage and sustain, and these rows compare *one* attribute's
+// specializations against each other on whether the thing they bought happened.
+//
+// Every number here is measured off a real fight through the real `step`. The
+// resource columns are the ones to read against the crossover: `min` is how
+// deep the pool got and `starved` is how long the body could not afford its
+// cheapest skill, and both being comfortable is what says the global economy is
+// still too loose rather than that Wisdom is working.
+//
+// **They were both comfortable on every row when 275 shipped** -- minimum pool
+// 24.2, 0.0% starved -- which is what spec 276 then closed. What that spec also
+// established is the limit of reading it here: this fight is 30 seconds long and
+// the presets carry whichever four sigils they hit hardest with, so it measures
+// a *damage* build's economy over a burst. `scripts/probe-resource.ts` is the
+// instrument for the economy itself, at 150 seconds and against a bar chosen
+// for what it costs rather than for what it does.
+
+const WISDOM_PRESETS = BUILD_PRESETS.filter(
+  (preset) => preset.id.startsWith('wis.') || preset.id === 'pure.wisdom' || preset.id.endsWith('Wis'),
+);
+
+interface WisdomRow {
+  readonly preset: BuildPreset;
+  readonly fight: Fight;
+  readonly probe: WisdomProbe;
+}
+
+const wisdomRows: WisdomRow[] = WISDOM_PRESETS.map((preset) => {
+  const probe = emptyProbe();
+  const fought = fight(recordFor(preset), 'still', 1, monsterId, seconds, probe);
+  return { preset, fight: fought, probe };
+});
+
+console.log('\n  Wisdom (spec 275) -- what each spending row actually did:\n');
+console.log(
+  `  ${pad('BUILD', 18)}${pad('WIS', 5)}${pad('CASTS/M', 9)}${pad('CD SAVED', 10)}` +
+    `${pad('RES MIN', 9)}${pad('STARVED%', 10)}${pad('MASTERY', 9)}${pad('AT MAX%', 9)}` +
+    `${pad('ATTUNED', 9)}${pad('HEALED', 8)}`,
+);
+console.log(`  ${'-'.repeat(96)}`);
+for (const row of wisdomRows) {
+  const spread = fullSpreadOf(row.preset);
+  const ticks = Math.max(1, row.probe.ticks);
+  const perMinute = (row.probe.casts / ticks) * SERVER_TICK_RATE * 60;
+  const minResource = Number.isFinite(row.probe.minResource) ? row.probe.minResource : 0;
+  console.log(
+    `  ${pad(row.preset.name, 18)}${pad(String(spread.attributes.wisdom), 5)}` +
+      `${pad(num(perMinute, 1), 9)}${pad(`${num(row.probe.cooldownSecondsSaved, 1)}s`, 10)}` +
+      `${pad(num(minResource, 1), 9)}${pad(num((row.probe.ticksStarved / ticks) * 100, 1), 10)}` +
+      `${pad(num(row.probe.masteryStackTicks / ticks, 2), 9)}` +
+      `${pad(num((row.probe.ticksAtMaxMastery / ticks) * 100, 1), 9)}` +
+      `${pad(num(row.probe.attunedStackTicks / ticks, 2), 9)}` +
+      `${pad(num(row.fight.metrics.healingReceived, 0), 8)}`,
+  );
+}
+
+// Which incoming ability each build learned to resist, and how far it got. The
+// content-compression finding lives here: six of the seven hostile rows attack
+// through `melee.slash`, so one key is expected to carry every fight.
+console.log('\n  What Adaptation actually learned (peak stacks by incoming ability):\n');
+for (const row of wisdomRows) {
+  const adapted = Object.entries(row.probe.adaptPeak)
+    .sort((a, b) => b[1] - a[1])
+    .map(([abilityId, stacks]) => `${abilityId} x${stacks}`);
+  const stats = computeEffectiveStats(recordFor(row.preset));
+  const cap = stats.traits.adaptationCap;
+  const per = stats.traits.adaptationPerStack;
+  const hits = per > 0 ? Math.ceil(cap / per) : 0;
+  console.log(
+    `  ${pad(row.preset.name, 18)}${pad(`cap ${num(cap * 100, 0)}%`, 10)}` +
+      `${pad(hits > 0 ? `${hits} hits` : '-', 9)}${adapted.join(', ') || '(nothing)'}`,
+  );
+}
+
+// And which of its own tools each build mastered. A support build should show
+// stacks on abilities that never dealt damage.
+console.log('\n  What Mastery actually learned (peak stacks by ability used):\n');
+for (const row of wisdomRows) {
+  const mastered = Object.entries(row.probe.masteryPeak)
+    .sort((a, b) => b[1] - a[1])
+    .map(([abilityId, stacks]) => `${abilityId} x${stacks}`);
+  console.log(`  ${pad(row.preset.name, 18)}${mastered.join(', ') || '(nothing)'}`);
+}
+
 // The line the table exists to make checkable. A build that cannot kill the
 // thing in front of it is not a build, whatever its other numbers say.
+// --- the Intelligence track (spec 270) -------------------------------------
+//
+// Its own table, and a *second fight*, because the one above cannot answer the
+// question. Every row up there is a stationary duel against one body, which is
+// the worst possible test of the attribute whose identity is reach and radius --
+// and until this spec every Intelligence preset also spent nothing on its own
+// specializations, so the tree with the most tier-gated capabilities in the game
+// had never been measured with any of them bought.
+const INT_PRESETS = ['pure.intelligence', 'spend.intCaster', 'pair.intWis', 'pair.agiInt'];
+const FOES = 4;
+/**
+ * How long the Intelligence fight runs, against the table's thirty.
+ *
+ * Long enough for the magazine to matter, which is the whole point of spec 270:
+ * a pure-Intelligence pool takes about a minute of sustained casting to empty,
+ * so a thirty-second fight measures a caster who never ran out and reports the
+ * capstone -- which only fires on an empty pool -- as never firing.
+ */
+const INT_SECONDS = 90;
+
+const intRows = INT_PRESETS.map((id) => presetById(id))
+  .filter((preset): preset is BuildPreset => preset !== null)
+  .map((preset) => ({
+    preset,
+    solo: fight(recordFor(preset), 'still', 1, monsterId, INT_SECONDS),
+    group: fight(recordFor(preset), 'still', FOES, monsterId, INT_SECONDS),
+    // The same build against something that does not hit back.
+    //
+    // Not a courtesy row: `blow.ts` stamps the stance clock on every blow that
+    // lands, so a caster stood in melee range of a ravager can never finish a
+    // two-second stance -- which is the counterplay working, and is also why the
+    // contested rows below read `0` primes. This one is the other half of the
+    // claim: given the range an artillery build is supposed to fight at, does
+    // the cadence actually rebuild?
+    quiet: fight(recordFor(preset), 'still', 1, 'dummy', INT_SECONDS),
+  }));
+
+if (intRows.length > 0) {
+  const ticks = Math.round(INT_SECONDS * SERVER_TICK_RATE);
+  console.log(
+    `\n  Intelligence over ${String(INT_SECONDS)}s, alone and against ${String(FOES)} at once:\n`,
+  );
+  console.log(
+    `  ${pad('BUILD', 16)}${pad('KILLS', 6)}${pad('DPS', 7)}${pad('GRP KILLS', 10)}${pad('GRP DPS', 9)}` +
+      `${pad('RES SPENT', 10)}${pad('PREMIUM', 9)}${pad('PRIMES', 8)}${pad('PREPARED%', 10)}` +
+      `${pad('PLANT%', 8)}${pad('WEAVE', 7)}${pad('OVERDRAW', 9)}${pad('GRP ALIVE', 9)}`,
+  );
+  console.log(`  ${'-'.repeat(116)}`);
+  for (const row of intRows) {
+    const solo = summarise(row.solo.metrics, SERVER_TICK_RATE);
+    const group = summarise(row.group.metrics, SERVER_TICK_RATE);
+    const w = row.group.watch;
+    const q = row.quiet.watch;
+    console.log(
+      `  ${pad(row.preset.name, 16)}${pad(String(solo.kills), 6)}${pad(num(solo.dps), 7)}` +
+        `${pad(String(group.kills), 10)}${pad(num(group.dps), 9)}` +
+        `${pad(num(w.resourceSpent), 10)}${pad(num(w.premiumPaid), 9)}` +
+        `${pad(String(q.primes), 8)}${pad(num((q.preparedTicks / ticks) * 100), 10)}` +
+        `${pad(num((w.preparingTicks / ticks) * 100), 8)}` +
+        `${pad(num(w.weaveTickStacks / ticks, 2), 7)}` +
+        `${pad(w.overdraws > 0 ? `${String(w.overdraws)}/${num(w.overdrawHealth)}hp` : '-', 9)}` +
+        `${pad(row.group.survived ? 'yes' : 'NO', 9)}`,
+    );
+  }
+  console.log(
+    `\n  PRIMES and PREPARED% are measured **unhit** -- against a training dummy --` +
+      `\n  because a blow stamps the stance clock, so a caster held in melee range` +
+      `\n  never finishes one. PLANT% is time visibly taking a stance in the group` +
+      `\n  fight, which is the tell an opponent reads. WEAVE is the mean stacks held.` +
+      `\n  OVERDRAW reads '-' here because the magazine outlasts the fight: the spend` +
+      `\n  rate is bounded by cooldowns, not by the pool, so a caster runs out in a` +
+      `\n  long sustained rotation (see intelligence.test.ts) rather than in this one.`,
+  );
+
+  // What the group fight is *for*: the same build, measured against one body and
+  // against four, so the AoE the duel cannot see shows up as a ratio.
+  console.log('\n  What a second target is worth:\n');
+  for (const row of intRows) {
+    const solo = summarise(row.solo.metrics, SERVER_TICK_RATE);
+    const group = summarise(row.group.metrics, SERVER_TICK_RATE);
+    const ratio = solo.dps > 0 ? group.dps / solo.dps : 0;
+    console.log(
+      `  ${pad(row.preset.name, 16)}${num(ratio, 2)}x damage against ${String(FOES)}` +
+        `${row.group.survived ? '' : '  (and died doing it)'}`,
+    );
+  }
+}
+
+//
+// **Only in the one-opponent scenario** (spec 271). `--foes` is a stress test,
+// and a build failing to win against four ravagers at once is a fact about the
+// scenario rather than a broken row -- three of the six pure builds kill nothing
+// at `--foes=4`, which is the scenario doing its job. Failing the run there
+// would make the flag unusable, so the guard states its scope instead.
 const broken = rows.filter((row) => row.metrics.kills === 0);
 console.log('');
-if (broken.length > 0) {
+if (broken.length > 0 && foes === 1) {
   console.log(`  !! ${broken.map((row) => row.preset.name).join(', ')} killed nothing.\n`);
   process.exitCode = 1;
+} else if (broken.length > 0) {
+  console.log(
+    `  ${broken.map((row) => row.preset.name).join(', ')} killed nothing` +
+      ` -- expected against ${String(foes)} at once, not a failure.\n`,
+  );
 } else {
   console.log(`  every build won at least once. Baseline: ${startingBaseStats().strength} in each.\n`);
 }
