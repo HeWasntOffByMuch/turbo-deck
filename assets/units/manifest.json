@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "5cb646778873860789df087f63b2dc8e01f2a7690030966044ceb70fc94f950a",
+  "hash": "276b91ad44614959aa13e6873d739e27430cf4eb149d4d615ac592cd87bbaca6",
   "builtStages": [],
   "units": [
     {
@@ -197,7 +197,7 @@
         },
         {
           "path": "radish_raccoon_clips/attack.glb",
-          "sha256": "3d85927b4b4f312c77029f87bccf0fd15d525ae6fa01a26c098f4f5454888d45",
+          "sha256": "957813d749eaf825e116deaa84e5a08dc3c13d9b4ba6bd3d9ab4bad4ee87213e",
           "bytes": 35680
         }
       ]
