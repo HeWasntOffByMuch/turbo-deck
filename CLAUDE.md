@@ -1136,6 +1136,22 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  either side, because there is no torso to bend -- `lean` turns
                  the whole creature, and past about ten degrees a pounce becomes
                  a topple with the face going into the ground.
+                 It is a **monster row** since the same spec: `radish_raccoon`
+                 in `data/monsters.ts`, `defensive`, 8 health and 1 damage. That
+                 temperament is the whole of "non-aggressive" as that table can
+                 say it -- `noticeRangeOf` answers 0 for it, so `notice` never
+                 fires and there is no distance at which walking past one
+                 provokes it -- and it is a different thing from the grazer's
+                 `skittish`, which runs and therefore never lands a blow. This
+                 one stands and hits back, which is what makes it a fight rather
+                 than a chase. Measured through `resolveBlow` against a fresh
+                 character in the starter kit: four swings to kill, 3.2 of 68
+                 health lost, and 102 seconds for it to kill anybody. Where one
+                 stands is nobody's decision in code -- the spawner dropdown is
+                 built off `ALL_MONSTERS`, so the row *is* the editor entry, and
+                 a marker is where a raccoon goes. It carries no drop table,
+                 which means it drops nothing: a table is a content decision and
+                 `rollLoot` already answers null for a row without one.
                  `npx tsx scripts/preview-weapon.ts` is the one that puts the real
                  mesh through the real chain.
                  The rule the swing's wrist angles are subject to: **a hand pose
