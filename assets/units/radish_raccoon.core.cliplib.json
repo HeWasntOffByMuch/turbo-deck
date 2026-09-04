@@ -1,5 +1,5 @@
 {
-  "$comment": "The radish raccoon family's clip library (spec 277). Two clips and no more, which is the whole roster this animal has: it is scenery with a walk, not a combatant, so there is no swing to author and no cast to rebase. Both are authored rather than retargeted -- there is no bought library for a rig that exists nowhere but here -- and their source is `src/units/radish-raccoon-clips.ts`; regenerate the bytes with `npx tsx scripts/make-radish-raccoon-clips.ts`. Neither carries an event: events mark the frame a blow lands, and nothing here lands one.",
+  "$comment": "The radish raccoon family's clip library (spec 277). Three clips: it stands about, it runs, and it pounces. There is no cast to rebase and no death, which is the roster the state machine declares and no more. All three are authored rather than retargeted -- there is no bought library for a rig that exists nowhere but here -- and their source is `src/units/radish-raccoon-clips.ts`; regenerate the bytes with `npx tsx scripts/make-radish-raccoon-clips.ts`. Only `attack` carries events, because an event marks the frame a blow lands and it is the only clip that lands one; its `swing.impact` is at 500 of 900ms, which is `melee.slash`'s own wind-up, so the frame the picture lands and the frame the damage lands are the same frame.",
   "formatVersion": 1,
   "id": "radish_raccoon.core",
   "skeletonRef": "radish_raccoon.skeleton.json",
@@ -17,6 +17,22 @@
       "durationMs": 4800,
       "loop": true,
       "events": []
+    },
+    {
+      "id": "attack",
+      "source": "radish_raccoon_clips/attack.glb",
+      "durationMs": 900,
+      "loop": false,
+      "events": [
+        {
+          "name": "swing.start",
+          "normalizedTime": 0
+        },
+        {
+          "name": "swing.impact",
+          "normalizedTime": 0.5555555555555556
+        }
+      ]
     }
   ]
 }

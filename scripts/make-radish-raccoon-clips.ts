@@ -19,7 +19,7 @@ import { authorClipDocument, frameCount } from '../src/units/clip-author.js';
 import { writeGlb } from '../src/units/glb.js';
 import { readNodeTree, splitGlb } from '../src/units/glb-read.js';
 import { namingOf } from '../src/units/pose.js';
-import { RADISH_RACCOON_CLIPS } from '../src/units/radish-raccoon-clips.js';
+import { RADISH_RACCOON_LIBRARY } from '../src/units/radish-raccoon-clips.js';
 import { RADISH_RACCOON_FAMILY } from '../src/units/radish-raccoon-rig.js';
 
 const MESH = 'assets/units/radish_raccoon_2/radish_raccoon_2.glb';
@@ -36,7 +36,7 @@ if (naming === 'unknown') {
 const rig = { nodes, naming } as const;
 
 mkdirSync(CLIP_DIR, { recursive: true });
-for (const clip of RADISH_RACCOON_CLIPS) {
+for (const { clip } of RADISH_RACCOON_LIBRARY) {
   const document = authorClipDocument(clip, rig, GENERATOR);
   const bytes = writeGlb(document);
   writeFileSync(`${CLIP_DIR}/${clip.id}.glb`, bytes);
@@ -48,21 +48,23 @@ for (const clip of RADISH_RACCOON_CLIPS) {
 
 const library = {
   $comment:
-    "The radish raccoon family's clip library (spec 277). Two clips and no more, which is the whole roster this " +
-    'animal has: it is scenery with a walk, not a combatant, so there is no swing to author and no cast to ' +
-    'rebase. Both are authored rather than retargeted -- there is no bought library for a rig that exists ' +
+    "The radish raccoon family's clip library (spec 277). Three clips: it stands about, it runs, and it " +
+    'pounces. There is no cast to rebase and no death, which is the roster the state machine declares and no ' +
+    'more. All three are authored rather than retargeted -- there is no bought library for a rig that exists ' +
     'nowhere but here -- and their source is `src/units/radish-raccoon-clips.ts`; regenerate the bytes with ' +
-    '`npx tsx scripts/make-radish-raccoon-clips.ts`. Neither carries an event: events mark the frame a blow ' +
-    'lands, and nothing here lands one.',
+    '`npx tsx scripts/make-radish-raccoon-clips.ts`. Only `attack` carries events, because an event marks the ' +
+    'frame a blow lands and it is the only clip that lands one; its `swing.impact` is at 500 of 900ms, which ' +
+    'is `melee.slash`\'s own wind-up, so the frame the picture lands and the frame the damage lands are the ' +
+    'same frame.',
   formatVersion: 1,
   id: `${RADISH_RACCOON_FAMILY}.core`,
   skeletonRef: `${RADISH_RACCOON_FAMILY}.skeleton.json`,
-  clips: RADISH_RACCOON_CLIPS.map((clip) => ({
+  clips: RADISH_RACCOON_LIBRARY.map(({ clip, loop, events }) => ({
     id: clip.id,
     source: `${RADISH_RACCOON_FAMILY}_clips/${clip.id}.glb`,
     durationMs: clip.durationMs,
-    loop: true,
-    events: [],
+    loop,
+    events,
   })),
 };
 writeFileSync(LIBRARY, `${JSON.stringify(library, null, 2)}\n`);

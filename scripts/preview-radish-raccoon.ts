@@ -36,7 +36,15 @@ import { poseAt, type PosedRig } from '../src/units/clip-author.js';
 import { namingOf } from '../src/units/pose.js';
 import { MESH_OFFSET, RADISH_RACCOON_BONES, type PartId } from '../src/units/radish-raccoon-rig.js';
 import { labelOf } from '../src/units/radish-raccoon-skin.js';
-import { EAR_FLICK_AT, EAR_FLICK_SPAN, RADISH_RACCOON_CLIPS, RADISH_RACCOON_IDLE, RADISH_RACCOON_RUN } from '../src/units/radish-raccoon-clips.js';
+import {
+  ATTACK_CONTACT_MS,
+  EAR_FLICK_AT,
+  EAR_FLICK_SPAN,
+  RADISH_RACCOON_ATTACK,
+  RADISH_RACCOON_CLIPS,
+  RADISH_RACCOON_IDLE,
+  RADISH_RACCOON_RUN,
+} from '../src/units/radish-raccoon-clips.js';
 
 const MESH = 'assets/units/radish_raccoon_2/radish_raccoon_2.glb';
 const OUT_DIR = '.claude/screenshots';
@@ -319,7 +327,17 @@ function main(): void {
   const side = CAMERAS[0] as Camera;
   const front = CAMERAS[1] as Camera;
   sheet(
-    [strip(RADISH_RACCOON_RUN, side, 8), strip(RADISH_RACCOON_RUN, CAMERAS[2] as Camera, 8), strip(RADISH_RACCOON_IDLE, front, 8)],
+    [
+      strip(RADISH_RACCOON_RUN, side, 8),
+      strip(RADISH_RACCOON_RUN, CAMERAS[2] as Camera, 8),
+      strip(RADISH_RACCOON_IDLE, front, 8),
+      // The attack three-quarter rather than in profile. A pounce travels along
+      // the axis a side view compresses, and worse, both paws -- which are the
+      // whole read -- sit on the flanks, so the near one is a few pixels and the
+      // far one is behind the body. From the corner both are in shot and the
+      // travel is still visible.
+      strip(RADISH_RACCOON_ATTACK, CAMERAS[2] as Camera, 8),
+    ],
     `${OUT_DIR}/radish-raccoon-clips.png`,
   );
 
@@ -328,7 +346,13 @@ function main(): void {
   // probability about a third and a sheet that missed it looks exactly like a
   // sheet of an ear that never moved.
   sheet(
-    [strip(RADISH_RACCOON_IDLE, front, 8, EAR_FLICK_AT - 0.01, EAR_FLICK_AT + EAR_FLICK_SPAN + 0.01)],
+    [
+      strip(RADISH_RACCOON_IDLE, front, 8, EAR_FLICK_AT - 0.01, EAR_FLICK_AT + EAR_FLICK_SPAN + 0.01),
+      // The snap, at 25ms a frame either side of contact. The strike is 120ms
+      // of a 900ms clip and the whole read of the blow is in it, so an evenly
+      // spaced sheet shows the coil and the recovery and almost none of it.
+      strip(RADISH_RACCOON_ATTACK, CAMERAS[2] as Camera, 8, (ATTACK_CONTACT_MS - 120) / 900, (ATTACK_CONTACT_MS + 120) / 900),
+    ],
     `${OUT_DIR}/radish-raccoon-ear-flick.png`,
   );
 
@@ -359,6 +383,27 @@ function main(): void {
 
   for (const clip of RADISH_RACCOON_CLIPS) {
     console.log(`\n${clip.id}: ${clip.durationMs}ms`);
+    // On the attack the paws are the read, and they are two dark mittens a few
+    // pixels across on a sheet of a whole animal -- so where they go is a
+    // number rather than something to look for in a thumbnail. Forward reach is
+    // what the pounce is; height is what says it was thrown rather than shoved.
+    if (clip.id === 'attack') {
+      for (const hand of ['L_Hand', 'R_Hand'] as const) {
+        let ahead = Number.NEGATIVE_INFINITY;
+        let behind = Number.POSITIVE_INFINITY;
+        let high = Number.NEGATIVE_INFINITY;
+        let low = Number.POSITIVE_INFINITY;
+        for (let step = 0; step <= 36; step += 1) {
+          const world = poseWorldMatrices(nodes, poseAt(clip, rig, (step / 36) * clip.durationMs));
+          const m = world[nodes.findIndex((n) => n.name === hand)] as readonly number[];
+          ahead = Math.max(ahead, m[12] as number);
+          behind = Math.min(behind, m[12] as number);
+          high = Math.max(high, m[13] as number);
+          low = Math.min(low, m[13] as number);
+        }
+        console.log(`  ${hand}: reach ${(ahead - behind).toFixed(3)} forward, ${(high - low).toFixed(3)} vertical, furthest ${ahead.toFixed(3)}`);
+      }
+    }
     for (const foot of ['L_ToeBase', 'R_ToeBase'] as const) {
       const index = nodes.findIndex((n) => n.name === foot);
       let lowest = Number.POSITIVE_INFINITY;
