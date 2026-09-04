@@ -42,7 +42,7 @@ Wisdom specializations (data/specializations.ts:275-304), perTier (x1..x3 held t
 - `wis.discipline` T1 x3: `costReduction: 0.06`
 - `wis.measuredRecovery` T1 x3: `healingPct: 0.12`
 - `wis.mastery` T2 x3: `masteryRelief: 1`
-- `wis.conservation` T2 x3: `attunedCostPct: 0.04`
+- `wis.conservation` T2 x3: `attunedCostPct: 0.02` (0.04 before spec 276)
 - `wis.adaptation` T2 x3: `grantsAdaptation: 1, adaptationPerStack: 0.04`
 - `wis.conversion` T3 x1: `conversionCap: SCALING.wisdom.conversionCap`
 
@@ -63,7 +63,7 @@ exactly their `SCALING.wisdom` base whenever `grantsAdaptation` is true.
 |---|---|---|---|
 | `costReduction` | `resourceCostScale` (297, out 475) | `sim/abilities.ts:410` `resourceCostFor()`, called from `startCast` (abilities.ts:606) | yes (`resourceCostScale` in TRAIT_WIRE_ORDER) |
 | `healingPct` | `healingScale` (308, out 477) | `sim/healing.ts:64` `applyHealing()`, called from `world.ts:2029` (mote), `abilities.ts:1884` (self-heal), `skill-effects.ts:238` (skill heal) | yes |
-| `attunedCostPct` | passthrough, clamped [0,0.2] (482) | `sim/abilities.ts:399` (`resourceCostFor`, live); `sim/blow.ts:558` (gates granting Attuned on non-basic hit, `rewardAttacker`) | yes |
+| `attunedCostPct` | passthrough, clamped [0, SCALING.wisdom.attunedCostCap = 0.1] since spec 276 | `sim/abilities.ts:399` (`resourceCostFor`, live); `sim/blow.ts:558` (gates granting Attuned on non-basic hit, `rewardAttacker`) | yes |
 | `attunedTicks` | passthrough (481) | `sim/blow.ts:548-551` and `:558-561` (`rewardAttacker`, duration arg to `applyStatus(...StatusId.Attuned...)`) | yes |
 | `attunedMaxStacks` | passthrough (480) | `sim/blow.ts:550` and `:560` (`maxStacks: A.attunedMaxStacks`) | yes |
 | `grantsAdaptation` | NOT a TraitStats field -- consumed once as `adapts = t.grantsAdaptation > 0` (derived.ts:276), gates the 3 fields below | n/a directly; effect visible only via those 3 | no (not in TRAIT_WIRE_ORDER) |

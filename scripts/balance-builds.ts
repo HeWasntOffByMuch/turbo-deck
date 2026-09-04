@@ -1045,6 +1045,14 @@ if (base && top) {
 // deep the pool got and `starved` is how long the body could not afford its
 // cheapest skill, and both being comfortable is what says the global economy is
 // still too loose rather than that Wisdom is working.
+//
+// **They were both comfortable on every row when 275 shipped** -- minimum pool
+// 24.2, 0.0% starved -- which is what spec 276 then closed. What that spec also
+// established is the limit of reading it here: this fight is 30 seconds long and
+// the presets carry whichever four sigils they hit hardest with, so it measures
+// a *damage* build's economy over a burst. `scripts/probe-resource.ts` is the
+// instrument for the economy itself, at 150 seconds and against a bar chosen
+// for what it costs rather than for what it does.
 
 const WISDOM_PRESETS = BUILD_PRESETS.filter(
   (preset) => preset.id.startsWith('wis.') || preset.id === 'pure.wisdom' || preset.id.endsWith('Wis'),

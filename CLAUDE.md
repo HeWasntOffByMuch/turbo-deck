@@ -75,6 +75,7 @@ change a game outcome.
 | `npm run balance` | Fight the twelve build presets through the real sim and print what each one actually did (spec 147) |
 | `npm run balance:perception` | The Perception **loop**, rather than its damage (spec 272). `balance` measures whether an attribute is viable; this measures whether the sequence it is made of happened -- weak points and what threw them, reads banked and spent and what waiting cost, Exposed uptime, Exploits inside it, and what precision paid back. Five scenarios, because three of the readings are invisible in a stationary duel: `mobile` is the one that separates Patient Read from Intelligence's Prepared (a read survives repositioning, and the wait is **free** when you were going to move anyway -- the patient policy is 9% behind on duel DPS and level with continuous pressure while moving), `pack` is where an AoE reward explosion would show, `team` puts a second attacker with no Perception at all on a body somebody else exposed, and `stream` is the only one that can measure Resource Sense's *heal*, which is gated on a weak-point **kill** that a durable target never provides |
 | `npm run audit:progression` | Every specialization tier at every attribute value it can be bought at, and whether the purchase reaches anything the sim reads (specs 241, 244). `--all` lists the working ones too. It runs **three** passes since the progression reviews landed, and each answers a question the others cannot. The tier audit is the original: does a purchase move a number. Spec 271 added a **content-reachability pass** -- can any row in the content tables satisfy the gate the consumer reads -- which is what would have caught Heavy Handling, whose gate no ability had cleared since spec 237 deleted the only one that did. Spec 272 added a **conditional-effect observation pass**: the tier audit proves a purchase *moves a trait*, which Steady Aim did in all twelve of its cells while being incapable of firing, so each gated mechanic carries its own scenario and is driven through a real fight. `NOT OBSERVED` means the fight written to trigger it did not -- never that a short generic fight missed a rare effect, which is the false positive that would make the pass noise. Steady Aim is the case that needs all three: it moved a trait, its gate was satisfiable by content, and the tick order meant the simulation never satisfied it -- so it audited clean on the first two and only running the thing could see it. Spec 273 put Constitution's five gated mechanics in that third pass and widened it twice to fit them, both times because a Constitution gate is read off the **defender**: a `Frame` carries the body as it was *before* the tick, since Guard coming back and a shield being made are changes rather than states and are indistinguishable from a body that already had them; and a scenario counts blows landed *on* it beside blows it threw, because a repositioning body throws none at all -- asking to move withdraws from a wind-up (spec 079) -- and an unhit body drains no Guard, so three of the five first reported NOT OBSERVED for reasons that had nothing to do with the mechanic. `moving` is a slow circle rather than a sprint for that reason, and the opponent is engaged from tick one |
+| `npx tsx scripts/probe-resource.ts` | What the active-resource economy actually is (spec 276), and the only instrument here whose subject is **slower than a fight**: a build with a 104-point magazine and a 1.0/s reload looks identical to one with an infinite pool for twenty seconds, and the design question is what happens at ninety. Sixteen builds x six bars driven through the real `step()` for 150s each -- pool, regeneration, theoretical and measured drain, restoration **split by source** (Resource Sense, Brutal Reserve, motes), minimum pool, mean pool, time at the ceiling, time starved, time *ready-but-unaffordable*, skill casts against basic-attack fallbacks, and overdraws -- classifying each row `FULL` / `STABLE` / `OSCILLATES` / `DRAINS` / `EMPTY`, where **both extremes are failures**. Two things make it believable. The ceiling is computed over **wind-up plus cooldown**, because `advanceCast` stamps `nextReadyTick` at the *release*: read off `intervalTicks` alone it overstates every row by its own wind-up, 12% on the greediest bar, which is exactly the headroom a tuning pass then spends. And the greediest bar is **derived from `data/abilities.ts`** rather than chosen, so no tuning is fitted to one hand-picked worst case. `--sheet=paced` is the control the design's own question needs -- *a conservative player should be capable of pacing expenditure* -- and it is what shows that over a long fight greed buys nothing: every build is `STABLE` at 0% starved holding half its pool back, because throughput converges on regeneration either way. The magazine is burst depth, and it only pays once. `--sheet=sensitivity` prints the candidate reload curves against the *measured* demand, which is how the shipped one was chosen over the three others that also clear both hard failures |
 | `npx tsx scripts/probe-constitution.ts` | What one whole track is *worth*, as opposed to whether its rows are wired up (specs 273, and the review it was written for). `audit:progression` asks whether a purchase moves a number and `npm run balance` stands still, so neither can see a mechanic gated on a *posture*. Six sheets: the durability curve at every value on the track with and without the tiers it opens; each mechanic driven through the sim function that owns it; the moving/still/casting/staggered split; guard longevity against the roster; **the loop** under four kinds of pressure -- stationary, mobile, a crowd of four, and starting inside the danger band -- with Guard recovered split by the posture it was recovered in; and the hybrids. Two things in it were each learned by getting them wrong. The fight sheet stood perfectly still and reported the moving column as zero for a reason that had nothing to do with the rule; rewritten to kite at *full* speed it outran the ravager, took 5.5 damage in ninety seconds and reported zero again, because a pool that is never drained recovers nothing. It repositions at a third of its own speed now, which keeps it in the fight. And the hybrid sheet carries four Constitution-free controls, without which it cannot say whether a hybrid's kill count is high or merely present -- the pair it exists for being EHP against KILLS: at CON 60 with every tier a body is 778 effective health against a fresh character's 115, and kills exactly as many ravagers as it did at CON 25, because Constitution buys no offence at all |
 | `npx tsx scripts/probe-stance.ts` | Whether the pig is standing on anything (spec 245). Reads the committed combat clips -- not the pose table -- for where the pelvis sits along its own support span, how far each toe is off the ground the **idle** rests on, and each knee's bend and which way it points. `idle` is printed beside them as the control, and that is the whole instrument: every number is relative, so a probe without one cannot tell a stance that is planted from one measured against itself |
 | `npx tsx scripts/plant-foot.ts` | Solve that stance rather than author it (specs 143, 245): state where each foot is on the floor and how far the heel is off it, and get the six angles per leg that put it there |
@@ -4615,10 +4616,49 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  section, and the six spending rows differ where they should --
                  the attribute alone saves 8.9s of cooldown over a 30s fight,
                  Composure 16.3s, Mastery 15.2s at 2.44 average stacks, and the
-                 two together 24.7s. What it also says is that **resource still
-                 never binds**: minimum pool 24.2 and 0.0% of ticks starved on
-                 every row, which is the global economy rather than the track,
-                 and is the later pass rather than this one.
+                 two together 24.7s. What it also said is that **resource still
+                 never binds** -- minimum pool 24.2 and 0.0% of ticks starved on
+                 every row -- which 275 recorded as the global economy rather
+                 than the track, and left to the later pass.
+                 **Spec 276 is that pass**, and its one finding is that the
+                 supply had no ceiling to be measured against. The greediest
+                 four-skill bar a player can equip drains 3.38 resource/second --
+                 the four highest cost-per-cycle rows in `data/abilities.ts`, on
+                 cooldown, with a body rooted through its own casts, so nothing
+                 can spend faster -- and regeneration was `0.4 + 0.2 x
+                 above(WIS)`, linear, crossing that at about **Wisdom 21** and
+                 reaching 11.4/s at the cap. The waste was visible from the other
+                 side too: at Wisdom 40, 7.40/s was available and 2.15/s actually
+                 landed, because the pool was at its own ceiling. Past the
+                 crossover every other resource mechanic in the design --
+                 capacity, efficiency, Conservation, Overdraw, combat-earned
+                 restoration -- was measuring against a pool that was already
+                 full, and measured over 150-second fights the economy was
+                 **bimodal**: a character who had spent nothing was starved for
+                 98% of the fight at 10 skill casts a minute, and anything past
+                 Wisdom 25 sat at a full pool for the whole of it.
+                 Four constants, no new mechanic. `RESOURCE_REGEN_PER_SECOND`
+                 0.4 -> 1.0, so the floor is a floor rather than a wall;
+                 `regenPer` 0.2 linear -> `softCap(0.025, knee 20, falloff
+                 0.55)`, so supply rises the whole way and **never reaches the
+                 most the game can spend** -- 30% of the greediest bar at the
+                 start, 80% at the cap, and the last stretch closed by a
+                 *purchase* rather than accrued. And `attunedCostCap` 0.2 ->
+                 0.1 with Conservation's tiers and its milestone halved to match,
+                 because Attuned is a standing six-second buff refreshed by every
+                 cast rather than a charge spent by one: three stacks were a
+                 permanent 60% discount, nearly twice the whole attribute curve,
+                 and what took `WIS 40 + Conservation` to a pool that was full
+                 100% of a fight.
+                 `respawn` also names `resource` now. It rewrote eleven fields
+                 and every currency except that one, so a player who died empty
+                 got up empty -- against a `player-manager.ts` that hands over a
+                 full pool on every login unconditionally.
+                 `npx tsx scripts/probe-resource.ts` is the instrument all of it
+                 was decided by, and `resource-economy.test.ts` is the fence: its
+                 assertions **re-derive the demand from the content table** rather
+                 than naming a number, so a cheaper ability moves what the tests
+                 require, which is exactly when somebody should look.
                  What is **gone** is `synergies.ts` and its fifteen authored
                  two-attribute bonuses. They were content nobody asked to be
                  surprised by, present because a test required all fifteen to

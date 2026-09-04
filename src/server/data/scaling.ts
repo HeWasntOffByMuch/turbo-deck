@@ -468,14 +468,7 @@ export const SCALING = {
     cooldownFloor: 0.5,
     healingPer: 0.012,
     /**
-     * Resource per second per point of Wisdom (spec 270).
-     *
-     * Raised with the flat baseline's fall, and by more than enough to cover it:
-     * a Wisdom specialist regenerates 11.4/s where they used to get 9.2/s, so
-     * the attribute that owns sustain got *better* at it while the build that
-     * bought none of it lost the free ride. That direction is the point --
-     * lowering the floor alone would have been a nerf to everybody, and this is
-     * meant to be a transfer.
+     * Resource per second per point of Wisdom, **soft-capped** (spec 276).
      *
      * `resourcePer` used to sit above this and is gone (spec 275). Spec 270's
      * own sentence is *"Intelligence buys the magazine and Wisdom buys the
@@ -484,10 +477,81 @@ export const SCALING = {
      * opinion about it. The two specs reached the same rule from opposite ends
      * -- 270 from the Intelligence economy being decorative, 275 from six
      * automatic Wisdom scales all pointing at one problem.
+     *
+     * What neither of them fixed is that this rate was **linear and unbounded**
+     * against a demand with a hard ceiling. The greediest four-skill bar a
+     * player can equip drains 3.38 resource/second -- it is the four highest
+     * cost-per-cycle rows in the content table, and a body is rooted through its
+     * own casts, so nothing can spend faster. At 0.2 a point the supply passed
+     * that at about Wisdom 21 and reached **11.4/s at the hard cap, 3.4x the
+     * most the game can spend**. Measured through
+     * `scripts/probe-resource.ts`, the waste was visible from the other side
+     * too: at Wisdom 40, 7.40/s was available and 2.15/s actually landed,
+     * because the pool was at its ceiling. Every point past the crossover
+     * bought nothing at all, and every other resource mechanic in the design --
+     * capacity, efficiency, Conservation, Overdraw, combat-earned restoration
+     * -- was measuring against a pool that was already full.
+     *
+     * {@link softCap} for the reason `staggerPer` and `weakPointPer` use it: an
+     * unbounded specialist would stop the game being a game, and a hard cap
+     * would make the last twenty points worthless. Measured against the same
+     * bar, with both columns moving because Wisdom makes the bar cheaper too:
+     *
+     * ```
+     *   WIS   regen/s   greedy drain/s   supply/demand
+     *     5      1.00             3.38             30%
+     *    15      1.25             3.24             39%
+     *    25      1.50             2.37             63%
+     *    40      1.71             2.25             76%
+     *    60      2.00             2.13             94%
+     * ```
+     *
+     * The property that makes it a design rather than a number: **the ratio
+     * rises the whole way and never reaches 1.** Every point is worth
+     * something, and no amount of the attribute alone makes the greediest bar
+     * free -- what closes the last six percent is a *purchase*, which is where
+     * Conservation belongs. Asserted in `resource-economy.test.ts` against the
+     * content table rather than against a number typed into a test, so a
+     * cheaper ability moves the claim.
      */
-    regenPer: 0.2,
+    regenPer: 0.025,
+    /**
+     * Where the reload's rate halves, and by how much.
+     *
+     * The knee sits at `above(WIS) = 20` -- Wisdom 25, the second
+     * specialization threshold -- so the attribute is at its most generous
+     * exactly over the range a character is climbing to reach Composure,
+     * Adaptation and Mastery, and pays a diminishing rate for the deep
+     * investment past it. `regenFalloff` is a shade over half rather than the
+     * customary 0.5 so that the last twenty points still read as progress on
+     * the sheet: 0.0138/s a point against 0.025.
+     */
+    regenKnee: 20,
+    regenFalloff: 0.55,
     attunedTicks: seconds(6),
     attunedMaxStacks: 3,
+    /**
+     * The most one Attuned stack may be worth (spec 276).
+     *
+     * Here rather than as the literal `0.2` it was in `derived.ts`, for this
+     * file's own stated reason: a rate whose cap is three files away is a rate
+     * nobody can evaluate, and this one is a balance decision rather than a
+     * guard. The three Conservation tiers and the Wisdom 20 milestone sum to it
+     * *exactly*, so every tier moves the number and none of it disappears into
+     * the clamp -- a property the milestone's own comment states and which only
+     * holds while the grants and this move together.
+     *
+     * **Halved from 0.2** by the resource-economy pass. `Attuned` is a standing
+     * six-second buff refreshed by every non-basic ability that connects rather
+     * than a charge consumed by a cast, so any sustained rotation holds three
+     * stacks permanently -- which made Conservation a flat 60% discount, nearly
+     * twice the whole attribute curve's 35%, and took `WIS 40 + Conservation` to
+     * a pool that was full 100% of a 150-second fight. At 0.1 three stacks are
+     * 30% off: about what the attribute beside it is worth, which is what a
+     * specialization should be, and enough to close the last six percent the
+     * regeneration curve deliberately leaves open.
+     */
+    attunedCostCap: 0.1,
     adaptationTicks: seconds(10),
     /**
      * Where Adaptation starts, and no longer where it ends (spec 275).

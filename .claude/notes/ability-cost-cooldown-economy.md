@@ -1,5 +1,16 @@
 # Ability cost & cooldown economy, and Wisdom's reach into it
 
+> **UPDATED AGAIN BY SPEC 276.** The cost and cooldown *pipelines* below are
+> unchanged and still correct. Three numbers in them are not: base regeneration
+> is 1.0/s, Wisdom's regeneration term is soft-capped
+> (`softCap(above(WIS), 0.025, 20, 0.55)`, so 1.98/s at the cap rather than
+> 11.4), and `attunedCostPct` is capped at 0.1 with Conservation's tiers and
+> milestone halved to match -- three Attuned stacks are 30% off, not 60%. The
+> crossover this note computes at "WIS 13, then about 17" **no longer exists**:
+> regeneration is now provably below the greediest legal bar's drain at every
+> Wisdom value, asserted in `sim/resource-economy.test.ts` against the content
+> table rather than against a number.
+
 > **UPDATED BY SPEC 274.** The cooldown pipeline described here is unchanged and
 > still correct, including the finding that spec 250 split `COOLDOWN_BOUNDS`
 > from the attack-interval clamp. What changed: `cooldownReduction` is no longer
@@ -221,3 +232,110 @@ this class of question (per specialization tier, whether it reaches anything)
 but it only iterates *specializations* — a field like `cooldownReduction`
 that no specialization row ever names is invisible to it too, which is why it
 took a targeted grep rather than the audit tool to find this one.
+
+---
+
+## 2026-09-04 addendum: full resource-cost ability audit (branch `integration`)
+
+Traced fresh against `integration` (not `main`) for a "every ability with a
+nonzero `cost`, and its max drain rate" audit. Two findings this session made
+that the sections above do not have, plus a line-number staleness warning.
+
+**Line numbers above have drifted.** `resourceCostFor` is now at
+`sim/abilities.ts:458-478` (not `391-411`), `cooldownScaleFor` at `:386-403`
+(not `359-375`), `attackTimingFor` at `:191-240` (not `190-239`), `startCast`
+at `:633-849` (not `566-765`). The content between old and new positions is a
+**fourth term** in `cooldownScaleFor` that didn't exist when this note's body
+was written: `masteryReliefFor` (`:418-432`) — Wisdom's Mastery, `mastery:<id>`
+stacks earned per-ability at the commit in `advanceCast` (`:1544-1549`), each
+worth `traits.masteryCooldownPct` off *that ability's* cooldown, capped at
+`traits.masteryMaxStacks`. `cooldownScaleFor` is now `max(0.2, cooldownScale *
+handling * prepared * (1 - masteryRelief))` (`:402`), not the three-term
+version quoted above.
+
+**`costReduction` is now orphaned; `cooldownReduction` (fixed by this note's
+own banner) is not the only dead lever any more — the cost side has the same
+shape of bug the cooldown side used to have.** `wis.discipline` (which this
+note's body cites as granting `costReduction: 0.06`/tier) **no longer
+exists**. `data/specializations.ts:420-430` and `data/milestones.ts:281-304`
+record the rename: Conservation moved to Wisdom's T1 milestone slot and now
+grants `attunedCostPct` (Attuned stacking) instead, and "Resource Discipline"
+(the old T1 specialization) was deleted outright — its own comment says why:
+"three tiers of passive cost reduction on an economy that closes at WIS 13 was
+the clearest example of the branch spending points on a solved problem."
+Composure took its *name slot* in the cooldown story but grants
+`cooldownReduction`, not `costReduction`. Grepped the whole of `src/server`
+for `costReduction`: the only hits are the field declaration/default
+(`data/modifiers.ts:217,409`, default 0) and the consumer
+(`player/derived.ts:319`) — **nothing grants it**. So today,
+`reduction(t.costReduction)` (`derived.ts:39-41`, `1 - clamp(total,0,0.9)`) is
+always exactly `1` for every character, and `resourceCostScale` collapses to
+the bare Wisdom reciprocal term.
+
+That matters for the floor question. `resourceCostScale = clamp(reciprocal(
+above(WIS), S.wisdom.costPer=0.01, S.wisdom.costFloor=0.4) *
+reduction(t.costReduction), 0.2, 1)` (`derived.ts:318-322`,
+`scaling.ts:465-466`). With `reduction(...)` pinned at 1 and
+`attributeHardCap=60` / `startingAttribute=5` (`scaling.ts:102-103`), the
+reciprocal term's own floor (0.4) and the outer clamp's floor (0.2) are **both
+unreachable by any attainable character today**: at WIS 60,
+`above(WIS)=55`, `reciprocal = 1/(1+0.55) = 0.6452` — the actual, currently-
+reachable minimum `resourceCostScale`, well above either coded floor. Same
+shape as this note's original finding about `cooldownReduction` pre-Composure
+("neither floor is reachable by anything raisable in this game today") — it
+just moved to the other currency.
+
+**Cooldown vs. wind-up as the real per-ability cast-rate limiter.** For a
+`skill: true` (non-`basicAttack`) ability, `nextReadyTick` (`sim/abilities.ts:
+503-510`) stamps the cooldown from the **release** tick
+(`releasedAt + cast.timing.intervalTicks`), and the release only happens
+`windupTicks` after the commit. None of the 13 resource-costing rows author a
+`backswingTicks` (that field is basic-attack-only by convention), so
+`endTickFor` (`:858-865`) returns `releaseTick` unmodified and the cast frees
+the caster the instant it resolves. So the true minimum commit-to-commit
+period for spamming one skill on cooldown is **windup + cooldown**, not
+cooldown alone — the cooldown timer simply hasn't started yet for the
+`windupTicks` the cast spends winding up. Verified this is not a rounding
+trick: `startCast` (`:750`) and `advanceCast`'s commit block (`:1575`) confirm
+the cooldown map write happens once, at the attack point, off `tick`
+(the release tick), never off the commit tick. Table (authored, unmodified —
+`traits.cooldownScale`/`resourceCostScale` = 1 baseline, confirmed
+`NEUTRAL_TRAITS` at `derived.ts:132-133`):
+
+| ability | cost | windup | cooldown | effective cycle (windup+CD) | max drain (cost / cycle) | naive (cost / CD only) |
+|---|---:|---:|---:|---:|---:|---:|
+| skill.poisonDart | 3 | 0.4s | 2.0s | 2.4s | **1.250/s** | 1.500/s |
+| skill.whirlwind | 9 | 0.7s | 9.0s | 9.7s | 0.928/s | 1.000/s |
+| skill.arcLash | 6 | 0.55s | 9.0s | 9.55s | 0.628/s | 0.667/s |
+| skill.emberToss | 5 | 0.7s | 8.0s | 8.7s | 0.575/s | 0.625/s |
+| skill.acidSpray | 6 | 0.6s | 10.0s | 10.6s | 0.566/s | 0.600/s |
+| skill.cripplingStrike | 4 | 0.3s | 8.0s | 8.3s | 0.482/s | 0.500/s |
+| skill.guardBreak | 3 | 0.4s | 6.0s | 6.4s | 0.469/s | 0.500/s |
+| skill.rimeTouch | 5 | 0.6s | 11.0s | 11.6s | 0.431/s | 0.455/s |
+| skill.blight | 6 | 1.0s | 12.0s | 13.0s | 0.462/s | 0.500/s |
+| skill.rendingCut | 3 | 0.45s | 7.0s | 7.45s | 0.403/s | 0.429/s |
+| skill.stunningBlow | 6 | 0.9s | 14.0s | 14.9s | 0.403/s | 0.429/s |
+| skill.scorchedEarth | 7 | 0.6s | 24.0s | 24.6s | 0.285/s | 0.292/s |
+| skill.conjureLight | 4 | 0.5s | 20.0s | 20.5s | 0.195/s | 0.200/s |
+
+The gap between the two rightmost columns is exactly the wind-up's share of
+the cycle, and is largest (proportionally) for `poisonDart` (the row
+explicitly authored "you are *meant* to throw repeatedly") — the naive
+cooldown-only figure overstates its sustainable drain by 20%.
+
+**Reachability.** All 13 have a `slot: 'skill'` sigil item naming their
+`activeSkillId` (`data/items.ts:465-609`), and all 13 sigils appear in either
+a loot table (`data/loot.ts`, 11 of them) or vendor stock (`data/vendors.ts`,
+the other 2: `sigil.guardBreak`, `sigil.witchlight`) — genuinely obtainable in
+normal play, not admin-only. The 14th `skill: true` row, `skill.testStatuses`
+(cost 0, excluded from the table above), has a sigil too
+(`sigil.testStatuses`, `items.ts:617-625`) but it is explicitly **not** in
+either loot or vendor tables — `admin:giveItem` only, per its own comment.
+
+**The flask (`self.hearthdraught`) costs 0 resource, deliberately**
+(`data/abilities.ts:616-618`, comment: "Free of resource on purpose: a
+fallback that cost mana would be no fallback at all for the build most likely
+to be out of it"). It spends `chargeCost: 1` (`:619`) out of
+`fallbackCharges`, a separate currency from the resource pool, checked/spent
+alongside cost, health and poise in `startCast` (`sim/abilities.ts:683-686`
+check, `:786` spend) and refunded the same way on `cancelWindup` (`:1146-1149`).

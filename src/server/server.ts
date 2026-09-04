@@ -3167,6 +3167,16 @@ export class GameServer implements AdminHost {
       // shape the whole economy is built around -- a bad run costs the
       // momentum you had built, and never leaves you unable to start again.
       fallbackCharges: entity.stats.traits.fallbackCharges,
+      // And the magazine, since spec 276. This line was missing rather than
+      // decided: `respawn` rewrites eleven fields and named every currency
+      // except this one, so a player who died with an empty pool got up with an
+      // empty pool and stood on the spawn pad waiting out a reload. Every other
+      // start of an encounter in this game hands over a full one --
+      // `player-manager.ts` sets `resource: stats.maxResource` on every login,
+      // unconditionally -- and the resource pressure this economy is built on is
+      // meant to be *sustained expenditure*, never a wait before the first
+      // meaningful action.
+      resource: session.stats.maxResource,
       restoration: 0,
       // Afflictions, and afflictions only (spec 190). `respawn` has never
       // cleared `statuses` and nothing had ever noticed, because until now no

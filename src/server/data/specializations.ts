@@ -425,8 +425,14 @@ const DEFINITIONS: readonly SpecializationDefinition[] = [
   // reduction on an economy that closes at WIS 13 was the clearest example of
   // the branch spending points on a solved problem, and Conservation is where a
   // player specializes into cost now.
+  // 0.02 a tier since spec 276, against the milestone's 0.04: the two still sum
+  // to `SCALING.wisdom.attunedCostCap` exactly, so every tier moves the resolved
+  // cost and the ceiling is still reached. What moved is the size of the whole
+  // discount -- three stacks are 30% off rather than 60% -- because Attuned is a
+  // standing buff refreshed by every cast rather than a charge spent by one, so
+  // the old number was a permanent discount nearly twice the attribute curve's.
   specialization('wis.conservation', 'wisdom', 'Conservation', T1, 3, 'an ability that connects',
-    { traits: { grantsAttuned: 1, attunedCostPct: 0.04 } },
+    { traits: { grantsAttuned: 1, attunedCostPct: 0.02 } },
     'A cast that did something makes the next one cheaper. A wasted one does not.'),
   specialization('wis.measuredRecovery', 'wisdom', 'Measured Recovery', T1, 3, 'receiving healing',
     { traits: { healingPct: 0.12 } },

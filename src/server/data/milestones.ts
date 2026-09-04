@@ -290,14 +290,17 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'wisdom',
     threshold: TIER_1,
     name: 'Conservation',
-    // `attunedCostPct` is capped at 0.2 and the Wisdom 10 specialization adds
-    // to the same number: 0.08 here plus three tiers of 0.04 is the cap exactly,
-    // so every tier moves it and the ceiling is still reached.
-    effect: 'An ability that connects grants Attuned: 8% off your next cast, up to three stacks.',
+    // `attunedCostPct` is capped at `SCALING.wisdom.attunedCostCap` and the
+    // Wisdom 10 specialization adds to the same number: 0.04 here plus three
+    // tiers of 0.02 is the cap exactly, so every tier moves it and the ceiling
+    // is still reached. All three halved together by spec 276 -- see the cap's
+    // own docstring for why a standing discount that size was the whole of what
+    // made Conservation solve the economy on its own.
+    effect: 'An ability that connects grants Attuned: 4% off your next cast, up to three stacks.',
     grants: {
       traits: {
         grantsAttuned: 1,
-        attunedCostPct: 0.08,
+        attunedCostPct: 0.04,
       },
     },
     deepens: 'wis.conservation',

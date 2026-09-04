@@ -566,7 +566,7 @@ export function deriveTraits(
       ? Math.max(1, Math.round(S.wisdom.attunedMaxStacks + t.attunedMaxStacks))
       : 0,
     attunedTicks: attunes ? Math.max(1, Math.round(S.wisdom.attunedTicks + t.attunedTicks)) : 0,
-    attunedCostPct: attunes ? clamp(t.attunedCostPct, 0, 0.2) : 0,
+    attunedCostPct: attunes ? clamp(t.attunedCostPct, 0, S.wisdom.attunedCostCap) : 0,
     attunedFromWeakPoints: t.attunedFromWeakPoints > 0 ? 1 : 0,
     // **Adaptation, and what enables it** (spec 239). The third of the same
     // shape and the one that was inert twice over: `markTarget` needs a window

@@ -465,15 +465,39 @@ describe('the magazine (spec 270)', () => {
   it('lets an Intelligence/Wisdom caster keep going where a pure one cannot', () => {
     // The systemic interaction that replaced the deleted INT/WIS pair bonus: no
     // row says these two go together, and the economy says it anyway.
+    //
+    // Asserted as **time to empty on the same rotation** rather than as a
+    // multiple of the regeneration rate, which is what it was until spec 276
+    // soft-capped the reload. That version read `perSecond(hybrid) >
+    // perSecond(pure) * 3`, and the 3 was a proxy for this claim that only held
+    // because the base rate was 0.4/s -- so any change to the floor moved a
+    // number that was never about the floor. The hybrid keeps going because it
+    // regenerates faster *and* pays less, and both halves belong in the
+    // measurement.
     const half = Math.round(SCALING.attributeHardCap / 2);
     const pure = statsFor({ intelligence: SCALING.attributeHardCap });
     const hybrid = statsFor({ intelligence: half, wisdom: half });
-    expect(perSecond(hybrid)).toBeGreaterThan(perSecond(pure) * 3);
+    expect(perSecond(hybrid)).toBeGreaterThan(perSecond(pure));
 
     const ability = abilityById('skill.arcLash');
     if (!ability) throw new Error('no arc lash');
     expect(resourceCostFor(ability, { stats: hybrid }, 0)).toBeLessThan(
       resourceCostFor(ability, { stats: pure }, 0),
     );
+
+    const rotation = ['skill.arcLash', 'skill.acidSpray', 'skill.blight', 'skill.rimeTouch'];
+    const secondsToEmpty = (stats: EffectiveStats): number => {
+      let drain = 0;
+      for (const id of rotation) {
+        const row = abilityById(id);
+        if (!row) throw new Error(`no such ability: ${id}`);
+        drain += resourceCostFor(row, { stats }, 0) / (row.cooldownTicks / SERVER_TICK_RATE);
+      }
+      const net = drain - perSecond(stats);
+      return net > 0 ? stats.maxResource / net : Infinity;
+    };
+    // Half the magazine and half the Wisdom outlasts the whole magazine, which
+    // is the sentence the test exists for.
+    expect(secondsToEmpty(hybrid)).toBeGreaterThan(secondsToEmpty(pure) * 1.5);
   });
 });

@@ -242,7 +242,28 @@ const STAT_ROWS: readonly {
   },
   { label: 'Power', of: (s) => s.spellPower.toFixed(2), hint: 'Multiplies ability damage, not weapon damage. Intelligence.' },
   { label: 'Move', of: (s) => String(Math.round(s.moveSpeed)), hint: 'World units per second on foot. Agility.' },
-  { label: 'Pool', of: (s) => String(Math.round(s.maxResource)), hint: 'What abilities are paid out of. Intelligence, and a little Wisdom.' },
+  // "and a little Wisdom" was true until spec 275 removed `RESOURCE_PER_WISDOM`,
+  // and a stale hint is worse than a missing one: a player reads it as a fact
+  // and spends points on it. Intelligence owns the magazine, and the row below
+  // is the other half of the sentence.
+  {
+    label: 'Pool',
+    of: (s) => String(Math.round(s.maxResource)),
+    hint: 'What abilities are paid out of. Intelligence.',
+  },
+  {
+    // Per *tick* on `EffectiveStats`, like `poiseRegen` two rows down, and a
+    // player reads seconds. Multiplied back here rather than stored twice.
+    //
+    // Added by spec 276, and it is the row that spec is about: the pool and the
+    // reload are one economy and the sheet showed only the pool, so the number
+    // the whole Wisdom track buys -- and the one that decides whether running
+    // out is a setback or a wall -- was the only quantity in the game with no
+    // way to read it.
+    label: 'Resource regen',
+    of: (s) => `${(s.resourceRegen * TICK_RATE).toFixed(1)}/s`,
+    hint: 'Resource you get back per second, casting or not. Wisdom.',
+  },
   // The progression numbers (spec 147). Chosen so that every one of the six
   // attributes has at least one row that visibly moves when a point goes into
   // it -- a sheet where an attribute changes nothing you can see is a sheet that
