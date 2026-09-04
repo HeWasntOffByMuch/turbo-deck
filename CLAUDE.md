@@ -90,7 +90,7 @@ change a game outcome.
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
 | `npx tsx scripts/make-radish-raccoon.ts` | Bind the radish raccoon's mesh to its authored skeleton and derive the family document from the file it just wrote (spec 277). Container surgery rather than `writeGlb`: the model is textured and that writer has no UVs, no material and no image, so the geometry, the material and the 310 KB of jpeg are carried across verbatim and only the node tree, the skin, the two skinning attributes and the positions are rebuilt. Positions are rewritten because the mesh is re-centred, and that goes on the vertices rather than on a node transform because glTF **ignores a skinned mesh's own node transform** -- there is nowhere else the offset would be honoured |
-| `npx tsx scripts/make-radish-raccoon-clips.ts` | Write `run` and `idle` and the library that names them (spec 277). `make-pig-strike.ts`'s shape: read the **mesh** for the rig, never the skeleton document, because what three binds a track to is the bone tree it loaded and the bind rotations have to match what it will actually see. The library is written here rather than by hand because its `durationMs` has to equal the clip's, and two files that have to agree about a number should not be two files somebody edits |
+| `npx tsx scripts/make-radish-raccoon-clips.ts` | Write `run`, `idle` and `attack` and the library that names them (spec 277). `make-pig-strike.ts`'s shape: read the **mesh** for the rig, never the skeleton document, because what three binds a track to is the bone tree it loaded and the bind rotations have to match what it will actually see. The library is written here rather than by hand because its `durationMs`, its loop flag and its event times all have to agree with the clip, and files that have to agree about a number should not be files somebody edits -- `swing.impact` is `ATTACK_CONTACT_MS / ATTACK_MS`, so moving the contact moves the event |
 | `npx tsx scripts/preview-radish-raccoon.ts` | Three sheets, because three different things can be wrong and none is visible in the others (spec 277): the mesh painted by the part each vertex was labelled with **and** by the weights it ended up with -- a seam that is a cliff on the first and a gradient on the second is the relaxation having worked, and a cliff on both is a tear waiting for the frame that bends it; the skeleton over the silhouette, which is what says a bone is *inside* the limb it drives; and both clips sampled across their cycles through the real `poseAt` and the real `skinPositions`. The ear flick gets a strip of its own and needs one -- it is 216ms of a 4.8-second loop, so eight frames spread evenly land on it about a third of the time and a sheet that missed it looks exactly like a sheet of an ear that never moved |
 | `npx tsx scripts/preview-unit-plate.ts` | The two overhead shapes side by side -- a player's plate and a monster's bar -- photographed at four times life size, with every box measured (spec 257). A plate is 84x16 CSS pixels and every way it fails is a way a stylesheet fails: a row negotiated down to nothing by a flex parent, a level box the digits spill out of, a ring creeping back around them. All of those are visible in a rectangle, which is why it reads the boxes as well as taking the picture |
 | `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 252). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
@@ -1090,26 +1090,52 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  body and a shadowed crease in the tail tip a leaf. The rule
                  agrees on 727 of that mask's 790 and every one of the 90 it adds
                  is stalk or underside.
-                 The clips are **generated from the cycle phase rather than
-                 authored as keys**, which is the opposite of `pig-strike.ts` and
-                 for a stated reason: a strike is a shape and the frames between
-                 its keys are of no interest, where a cycle has to *close*. A
-                 hand-authored loop whose last key is a re-typed copy of its
-                 first is one edit away from a hitch at the moment of the wrap,
-                 which is the one frame nobody scrubs to. Every channel is a
-                 function of the phase, so closing is a property rather than a
-                 habit -- and the property has teeth: the first cut gave the
-                 three blades a second drift at rates 0.7, 1.3 and 1.0 "sharing
-                 no factor with the shift", which is right about not locking and
-                 wrong about closing, and `Leaf_A_02` came back 3.7 degrees out
-                 every 4.8 seconds. Every rate is a whole number now.
-                 What the animation is, is carried by the **body**: a roll and a
-                 yaw at the hip, which is what a round animal on short legs
-                 actually does, with the legs providing the beat rather than the
-                 travel. A leg this short cannot lift a foot by swinging -- the
-                 thigh is 0.06 long, so five degrees at the hip is 0.005 of
-                 clearance and invisible -- so the knee is what picks it up, at
-                 38 degrees in the run and 21 in a footfall.
+                 **Two of the three clips are generated from the cycle phase
+                 rather than authored as keys**, which is the opposite of
+                 `pig-strike.ts` and for a stated reason: a strike is a shape and
+                 the frames between its keys are of no interest, where a cycle
+                 has to *close*. A hand-authored loop whose last key is a
+                 re-typed copy of its first is one edit away from a hitch at the
+                 moment of the wrap, which is the one frame nobody scrubs to.
+                 Every channel is a function of the phase, so closing is a
+                 property rather than a habit -- and the property has teeth: the
+                 first cut gave the three blades a second drift at rates 0.7,
+                 1.3 and 1.0 "sharing no factor with the shift", which is right
+                 about not locking and wrong about closing, and `Leaf_A_02` came
+                 back 3.7 degrees out every 4.8 seconds. Every rate is a whole
+                 number now. `attack` is the other kind and is six authored
+                 poses, because it is a shape with one frame that has to *be* a
+                 stated instant rather than somewhere a curve passes through.
+                 What the locomotion is, is carried by the **legs**, and that
+                 was the correction: the first cut put it in the body -- 6
+                 degrees of hip roll against 3 of spine counter-roll and 4 more
+                 at the head, so 7 degrees of lean at the ears twice a second,
+                 on a sphere -- and the legs swung 26. It read as an animal
+                 being carried along by its own waddle. The thigh swings 40 now
+                 and the roll is 2.2, and the pitch bob moved to `phase * 2`
+                 where it always belonged: a cycle is two steps, so a
+                 once-per-cycle nod lurches on one footfall and not the other.
+                 A leg this short cannot lift a foot by swinging -- the thigh is
+                 0.06 long, so five degrees at the hip is 0.005 of clearance and
+                 invisible -- so the knee is what picks it up, at 54 degrees in
+                 the run and 30 in a footfall. The blades and the tail take
+                 separate amplitudes for a related reason: the tail is 0.49
+                 against a 0.55 body and is most of the silhouette, so calming it
+                 through a shared pair left the greens looking pinned.
+                 **And the arms cannot punch**, which was measured rather than
+                 reasoned and inverted the attack. The shoulder is at x 0.100 and
+                 the paw at 0.239 on an arm 0.16 long, so at rest the paw is
+                 within a centimetre of full forward extension and the furthest
+                 forward any shoulder angle reaches is 0.260. Worse, a positive
+                 swing rotates the arm from forward toward *down*, so the first
+                 cut's +46 at contact swung both paws under the belly and
+                 finished behind where they started, on the frame the blow lands.
+                 The blow is a downward swipe: the paws rise 0.19 over the coil
+                 and fall 0.26 into contact, and the read is the drop rather than
+                 a reach the limb has not got. The body's share is 9 degrees
+                 either side, because there is no torso to bend -- `lean` turns
+                 the whole creature, and past about ten degrees a pounce becomes
+                 a topple with the face going into the ground.
                  `npx tsx scripts/preview-weapon.ts` is the one that puts the real
                  mesh through the real chain.
                  The rule the swing's wrist angles are subject to: **a hand pose
