@@ -1,0 +1,759 @@
+{
+  "$comment": "The radish raccoon's rig family (spec 277), and the first in this project that was authored rather than bought. It is not a member of `biped`: that family is 41 bones of humanoid with twist chains, and this animal has no visible legs, two mittens, a root for a tail and three leaves -- so `compareToFamily` would reject it on every count, correctly. Derived from the mesh by `scripts/make-radish-raccoon.ts`, which is also what writes the mesh, so the two cannot drift; the bone table it is derived from is `src/units/radish-raccoon-rig.ts` and the reasoning is in that file. It is tripo-named because `naming.ts` claims a vocabulary only when every signature role resolves, and a rig on neither contract silently loses its sockets, its facing measurement and its bind-pose check.",
+  "formatVersion": 1,
+  "id": "radish_raccoon",
+  "naming": "tripo",
+  "upAxis": "+Y",
+  "forwardAxis": "+X",
+  "canonicalHeight": 55.65,
+  "boneBudget": {
+    "min": 31,
+    "max": 31
+  },
+  "bones": [
+    {
+      "name": "Root",
+      "parent": null
+    },
+    {
+      "name": "Hip",
+      "parent": "Root"
+    },
+    {
+      "name": "Spine01",
+      "parent": "Hip"
+    },
+    {
+      "name": "Head",
+      "parent": "Spine01"
+    },
+    {
+      "name": "L_Ear",
+      "parent": "Head"
+    },
+    {
+      "name": "R_Ear",
+      "parent": "Head"
+    },
+    {
+      "name": "Crown",
+      "parent": "Spine01"
+    },
+    {
+      "name": "Leaf_A_01",
+      "parent": "Crown"
+    },
+    {
+      "name": "Leaf_A_02",
+      "parent": "Leaf_A_01"
+    },
+    {
+      "name": "Leaf_B_01",
+      "parent": "Crown"
+    },
+    {
+      "name": "Leaf_B_02",
+      "parent": "Leaf_B_01"
+    },
+    {
+      "name": "Leaf_C_01",
+      "parent": "Crown"
+    },
+    {
+      "name": "Leaf_C_02",
+      "parent": "Leaf_C_01"
+    },
+    {
+      "name": "Tail01",
+      "parent": "Hip"
+    },
+    {
+      "name": "Tail02",
+      "parent": "Tail01"
+    },
+    {
+      "name": "Tail03",
+      "parent": "Tail02"
+    },
+    {
+      "name": "Tail04",
+      "parent": "Tail03"
+    },
+    {
+      "name": "L_Upperarm",
+      "parent": "Spine01"
+    },
+    {
+      "name": "L_Forearm",
+      "parent": "L_Upperarm"
+    },
+    {
+      "name": "L_Hand",
+      "parent": "L_Forearm"
+    },
+    {
+      "name": "R_Upperarm",
+      "parent": "Spine01"
+    },
+    {
+      "name": "R_Forearm",
+      "parent": "R_Upperarm"
+    },
+    {
+      "name": "R_Hand",
+      "parent": "R_Forearm"
+    },
+    {
+      "name": "L_Thigh",
+      "parent": "Hip"
+    },
+    {
+      "name": "L_Calf",
+      "parent": "L_Thigh"
+    },
+    {
+      "name": "L_Foot",
+      "parent": "L_Calf"
+    },
+    {
+      "name": "L_ToeBase",
+      "parent": "L_Foot"
+    },
+    {
+      "name": "R_Thigh",
+      "parent": "Hip"
+    },
+    {
+      "name": "R_Calf",
+      "parent": "R_Thigh"
+    },
+    {
+      "name": "R_Foot",
+      "parent": "R_Calf"
+    },
+    {
+      "name": "R_ToeBase",
+      "parent": "R_Foot"
+    }
+  ],
+  "sockets": [
+    {
+      "id": "weapon.main",
+      "bone": "R_Hand"
+    },
+    {
+      "id": "weapon.off",
+      "bone": "L_Hand"
+    },
+    {
+      "id": "weapon.stow",
+      "bone": "Spine01"
+    },
+    {
+      "id": "fx.cast",
+      "bone": "R_Hand"
+    },
+    {
+      "id": "fx.body",
+      "bone": "Spine01"
+    },
+    {
+      "id": "anchor.head",
+      "bone": "Head"
+    }
+  ],
+  "bindPose": {
+    "source": "radish_raccoon_2/radish_raccoon_2.glb",
+    "bones": [
+      {
+        "name": "Root",
+        "translation": [
+          0,
+          0,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Hip",
+        "translation": [
+          -0.035,
+          0.215,
+          0.015000000000000003
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Spine01",
+        "translation": [
+          0.01999999999999999,
+          0.11500000000000002,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Head",
+        "translation": [
+          0.06999999999999998,
+          0.09499999999999997,
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Ear",
+        "translation": [
+          0.015000000000000013,
+          0.09500000000000003,
+          -0.185
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Ear",
+        "translation": [
+          0.027000000000000024,
+          0.09500000000000003,
+          0.13999999999999999
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Crown",
+        "translation": [
+          -0.014999999999999986,
+          0.26999999999999996,
+          0.030000000000000002
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Leaf_A_01",
+        "translation": [
+          -0.006000000000000005,
+          0.062000000000000055,
+          -0.038000000000000006
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Leaf_A_02",
+        "translation": [
+          -0.079,
+          0.126,
+          -0.177
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Leaf_B_01",
+        "translation": [
+          -0.028999999999999998,
+          0.06800000000000006,
+          0.04199999999999999
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Leaf_B_02",
+        "translation": [
+          0.012999999999999984,
+          0.04699999999999993,
+          0.18800000000000003
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Leaf_C_01",
+        "translation": [
+          -0.013000000000000012,
+          0.05600000000000005,
+          0.033999999999999996
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Leaf_C_02",
+        "translation": [
+          -0.056999999999999995,
+          0.17399999999999993,
+          0.036000000000000004
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Tail01",
+        "translation": [
+          -0.29500000000000004,
+          -0.05499999999999999,
+          0.13
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Tail02",
+        "translation": [
+          -0.10000000000000003,
+          -0.015000000000000013,
+          0.10999999999999999
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Tail03",
+        "translation": [
+          -0.09999999999999998,
+          0.013000000000000012,
+          0.030000000000000027
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "Tail04",
+        "translation": [
+          -0.09999999999999998,
+          0.021999999999999992,
+          0.05999999999999994
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Upperarm",
+        "translation": [
+          0.095,
+          -0.057999999999999996,
+          -0.15000000000000002
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Forearm",
+        "translation": [
+          0.0539,
+          -0.03300000000000003,
+          -0.05059999999999998
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Hand",
+        "translation": [
+          0.04409999999999997,
+          -0.026999999999999996,
+          -0.04140000000000002
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Upperarm",
+        "translation": [
+          0.11500000000000002,
+          -0.05199999999999999,
+          0.09000000000000001
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Forearm",
+        "translation": [
+          0.07639999999999997,
+          -0.03240000000000001,
+          -0.006600000000000009
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Hand",
+        "translation": [
+          0.06259999999999999,
+          -0.026600000000000013,
+          -0.005400000000000002
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Thigh",
+        "translation": [
+          0.0030000000000000027,
+          -0.065,
+          -0.165
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Calf",
+        "translation": [
+          0.0010999999999999899,
+          -0.059399999999999994,
+          -0.007700000000000012
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_Foot",
+        "translation": [
+          0.0009000000000000119,
+          -0.0486,
+          -0.0063
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "L_ToeBase",
+        "translation": [
+          0.068,
+          -0.018000000000000002,
+          0.009000000000000008
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Thigh",
+        "translation": [
+          0.033,
+          -0.065,
+          0.16199999999999998
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Calf",
+        "translation": [
+          0.003899999999999987,
+          -0.05829999999999999,
+          0.0011000000000000176
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_Foot",
+        "translation": [
+          0.0030999999999999917,
+          -0.047700000000000006,
+          0.0008999999999999841
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      {
+        "name": "R_ToeBase",
+        "translation": [
+          0.067,
+          -0.015999999999999997,
+          0.006000000000000005
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      }
+    ]
+  }
+}
