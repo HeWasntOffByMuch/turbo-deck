@@ -89,6 +89,9 @@ change a game outcome.
 | `npx tsx scripts/preview-afflictions-vfx.ts` | Photograph the seven afflictions' paint through the judging rig, with the crispness numbers (spec 215) |
 | `npx tsx scripts/probe-afflictions.ts` | The same paint in the shipped Play tab, measured against a control frame (spec 215) |
 | `npx tsx scripts/probe-aura.ts` | Whether the aura ring is really on the ground in the shipped Play tab, and only when something carries a field (spec 223) |
+| `npx tsx scripts/make-radish-raccoon.ts` | Bind the radish raccoon's mesh to its authored skeleton and derive the family document from the file it just wrote (spec 277). Container surgery rather than `writeGlb`: the model is textured and that writer has no UVs, no material and no image, so the geometry, the material and the 310 KB of jpeg are carried across verbatim and only the node tree, the skin, the two skinning attributes and the positions are rebuilt. Positions are rewritten because the mesh is re-centred, and that goes on the vertices rather than on a node transform because glTF **ignores a skinned mesh's own node transform** -- there is nowhere else the offset would be honoured |
+| `npx tsx scripts/make-radish-raccoon-clips.ts` | Write `run` and `idle` and the library that names them (spec 277). `make-pig-strike.ts`'s shape: read the **mesh** for the rig, never the skeleton document, because what three binds a track to is the bone tree it loaded and the bind rotations have to match what it will actually see. The library is written here rather than by hand because its `durationMs` has to equal the clip's, and two files that have to agree about a number should not be two files somebody edits |
+| `npx tsx scripts/preview-radish-raccoon.ts` | Three sheets, because three different things can be wrong and none is visible in the others (spec 277): the mesh painted by the part each vertex was labelled with **and** by the weights it ended up with -- a seam that is a cliff on the first and a gradient on the second is the relaxation having worked, and a cliff on both is a tear waiting for the frame that bends it; the skeleton over the silhouette, which is what says a bone is *inside* the limb it drives; and both clips sampled across their cycles through the real `poseAt` and the real `skinPositions`. The ear flick gets a strip of its own and needs one -- it is 216ms of a 4.8-second loop, so eight frames spread evenly land on it about a third of the time and a sheet that missed it looks exactly like a sheet of an ear that never moved |
 | `npx tsx scripts/preview-unit-plate.ts` | The two overhead shapes side by side -- a player's plate and a monster's bar -- photographed at four times life size, with every box measured (spec 257). A plate is 84x16 CSS pixels and every way it fails is a way a stylesheet fails: a row negotiated down to nothing by a flex parent, a level box the digits spill out of, a ring creeping back around them. All of those are visible in a rectangle, which is why it reads the boxes as well as taking the picture |
 | `npm run build && npx tsx scripts/probe-living-ground.ts` | Whether the grass is alive in the shipped page, and only the grass (spec 252). Defines **its own footprint** rather than measuring a crop somebody chose: with the weather clock stilled, the pixels that change when the panel's Ground detail goes to zero *are* the pixels the layer reaches, so its mean colour answers "did it stay on grass" and every later number is counted inside it. Reports the tones that ground holds with the layer off against with it on, because a modulation the retro pass rounds away adds no tones at all -- which is exactly how spec 074's streak shipped invisible |
 | `npx tsx scripts/bench-crowd.ts` | What the crowd pass costs, against what a whole tick costs |
@@ -1021,6 +1024,92 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  not the point -- but that proxy runs down the hand bone's own
                  +Y and predates `weapon.main`'s calibration, so it is evidence
                  about the arm and not about the grip.
+                 radish-raccoon-rig.ts, radish-raccoon-skin.ts and
+                 radish-raccoon-clips.ts are the first rig in this project that
+                 was **authored rather than bought** (spec 277), and the reason
+                 is measured rather than a preference: the raccoon arrived
+                 auto-rigged onto the `biped` family with `R_Calf` at x -0.325
+                 on a body 0.5 wide and its right foot at 0.235 -- a knee a
+                 body's width outside the animal, out where the tail is -- and
+                 `bake-units.ts` refused it a second time for a rest pose that
+                 is somebody's idle (elbows at 69 degrees against a straight
+                 180). Neither is fixable by re-generating. A humanoid auto-rig
+                 looks for a humanoid, and this animal is a sphere with three
+                 leaves in it: no visible legs, two mittens, a root for a tail.
+                 There is nothing limb-shaped to find, so the rigger puts the
+                 chain where the silhouette is widest.
+                 It is a **family of its own** rather than a member of `biped`:
+                 31 bones against 41, and `compareToFamily` would reject it on
+                 every count, correctly, since that family's clip library
+                 animates twist chains this creature has not got.
+                 Three things in it are decisions rather than defaults.
+                 **It is tripo-named, and that is not decoration.** `naming.ts`
+                 claims a vocabulary only when every signature role resolves,
+                 and a rig on neither contract is `unknown` -- which costs the
+                 facing measurement, the bind-pose check, and every weapon
+                 socket *silently*, since `skeleton-from-rig.ts` omits a socket
+                 whose role found nothing rather than failing. So the seven
+                 bones carrying those roles are spelled the way the family's
+                 other rigs spell them even where the anatomy is a stretch: this
+                 animal's "hand" is a mitten. The bones the vocabulary has no
+                 role for at all -- the ears, the tail, the three leaves -- are
+                 posed **by name** instead, which is what `PoseKey.bones` is:
+                 inventing a `tail` role would be a row in a shared table that
+                 exactly one family could ever resolve.
+                 **Bind rotations are identity.** A generated rig's are not, and
+                 `clip-author.ts` carries a comment about the bug that causes; an
+                 authored rig has no reason to inherit it. Every bone is a pure
+                 translation at bind, so a bone's local frame is the world frame
+                 and an inverse bind matrix is a translation by minus the rest
+                 position.
+                 And **the skin is labelled before it is weighted.** The obvious
+                 skin -- weight every vertex by its distance to the nearest bone
+                 -- is wrong here in a way that is invisible until something
+                 moves: the leaves fold back *over* the head and the tail sweeps
+                 back across the body, so measured off the mesh the nearest bone
+                 to a great many leaf vertices is `Head` and to a great many tail
+                 vertices is `Hip`. A distance skin therefore looks perfect at
+                 bind and drags the animal's own leaves down when it nods. So a
+                 vertex is labelled with a *part* first (which encodes what it
+                 **is**, which distance cannot recover), weighted along that
+                 part's own chain, and only then is the whole field relaxed over
+                 the mesh's **welded** surface graph -- welded because a `.glb`
+                 splits a vertex at every UV seam (11,254 positions arrive as
+                 11,276 vertices on the rigged copy) and relaxing over the raw
+                 index buffer leaves every seam a discontinuity in the weights,
+                 which is a visible tear the first time the body bends. A vertex
+                 more than `PIN_RINGS` from any other part is pinned, or the
+                 relaxation washes the leaf bones out of a blade thin enough to
+                 lose them.
+                 Which vertices are the greens is decided **geometrically**, and
+                 that is the one place the obvious signal was both unavailable
+                 and worse: the blades are the only green thing on the model, but
+                 nothing in the deterministic core can decode a jpeg, and a
+                 texture test is a test on *shading* -- checked against a mask
+                 decoded in a browser it called the pale undersides of the blades
+                 body and a shadowed crease in the tail tip a leaf. The rule
+                 agrees on 727 of that mask's 790 and every one of the 90 it adds
+                 is stalk or underside.
+                 The clips are **generated from the cycle phase rather than
+                 authored as keys**, which is the opposite of `pig-strike.ts` and
+                 for a stated reason: a strike is a shape and the frames between
+                 its keys are of no interest, where a cycle has to *close*. A
+                 hand-authored loop whose last key is a re-typed copy of its
+                 first is one edit away from a hitch at the moment of the wrap,
+                 which is the one frame nobody scrubs to. Every channel is a
+                 function of the phase, so closing is a property rather than a
+                 habit -- and the property has teeth: the first cut gave the
+                 three blades a second drift at rates 0.7, 1.3 and 1.0 "sharing
+                 no factor with the shift", which is right about not locking and
+                 wrong about closing, and `Leaf_A_02` came back 3.7 degrees out
+                 every 4.8 seconds. Every rate is a whole number now.
+                 What the animation is, is carried by the **body**: a roll and a
+                 yaw at the hip, which is what a round animal on short legs
+                 actually does, with the legs providing the beat rather than the
+                 travel. A leg this short cannot lift a foot by swinging -- the
+                 thigh is 0.06 long, so five degrees at the hip is 0.005 of
+                 clearance and invisible -- so the knee is what picks it up, at
+                 38 degrees in the run and 21 in a footfall.
                  `npx tsx scripts/preview-weapon.ts` is the one that puts the real
                  mesh through the real chain.
                  The rule the swing's wrist angles are subject to: **a hand pose
