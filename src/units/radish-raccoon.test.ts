@@ -31,10 +31,14 @@ import {
 } from './radish-raccoon-rig.js';
 import { INFLUENCES, labelOf, PART_CHAINS } from './radish-raccoon-skin.js';
 import {
+  ATTACK_CONTACT_MS,
+  ATTACK_MS,
   EAR_FLICK_AT,
   EAR_FLICK_SPAN,
+  RADISH_RACCOON_ATTACK,
   RADISH_RACCOON_CLIPS,
   RADISH_RACCOON_IDLE,
+  RADISH_RACCOON_LIBRARY,
   RADISH_RACCOON_RUN,
 } from './radish-raccoon-clips.js';
 
@@ -167,11 +171,20 @@ describe('the documents', () => {
     // `unit-assets.ts` derives the render-side family id by stripping `.core`,
     // so a library named anything else is a family nothing can look up.
     expect(library.value.id).toBe(`${RADISH_RACCOON_FAMILY}.core`);
-    expect(library.value.clips.map((clip) => clip.id).sort()).toEqual(['idle', 'run']);
+    expect(library.value.clips.map((clip) => clip.id).sort()).toEqual(['attack', 'idle', 'run']);
     for (const clip of library.value.clips) {
-      const authored = RADISH_RACCOON_CLIPS.find((entry) => entry.id === clip.id);
-      expect(clip.durationMs, `${clip.id} duration drifted from its source`).toBe(authored?.durationMs);
+      const row = RADISH_RACCOON_LIBRARY.find((entry) => entry.clip.id === clip.id);
+      expect(clip.durationMs, `${clip.id} duration drifted from its source`).toBe(row?.clip.durationMs);
+      expect(clip.loop, `${clip.id} loop flag drifted`).toBe(row?.loop);
+      expect(clip.events.map((event) => event.name)).toEqual(row?.events.map((event) => event.name));
     }
+    // The only clip carrying events is the only one that lands a blow, and its
+    // impact has to sit on the contact the clip was authored around -- the two
+    // are derived from one constant and this is what says so.
+    const attack = library.value.clips.find((clip) => clip.id === 'attack');
+    expect(attack?.loop).toBe(false);
+    const impact = attack?.events.find((event) => event.name === 'swing.impact');
+    expect(impact?.normalizedTime).toBeCloseTo(ATTACK_CONTACT_MS / ATTACK_MS, 6);
   });
 });
 
@@ -288,7 +301,12 @@ function boneAt(clip: AuthoredClip, phase: number, bone: string): readonly [numb
 }
 
 describe('the clips', () => {
-  it.each(RADISH_RACCOON_CLIPS.map((clip): readonly [string, AuthoredClip] => [clip.id, clip]))('%s closes its loop exactly', (_id, clip) => {
+  // Only the cycles. `attack` is a one-shot: it starts and ends at the neutral
+  // pose because that is what blends cleanly back to the idle, not because it
+  // wraps -- and asserting closure on it would be asserting the wrong property
+  // of the right numbers.
+  const cycles = RADISH_RACCOON_LIBRARY.filter((row) => row.loop).map((row): readonly [string, AuthoredClip] => [row.clip.id, row.clip]);
+  it.each(cycles)('%s closes its loop exactly', (_id, clip) => {
     // The one property a hand-authored cycle does not get for free, and the one
     // whose failure lands on the single frame nobody scrubs to.
     const start = poseFor(clip, 0);
@@ -326,6 +344,44 @@ describe('the clips', () => {
     expect(moved.has('Root'), 'Root is animated, which is root motion by another name').toBe(false);
   });
 
+  it('the attack lands where it says it does, and settles back to neutral', () => {
+    // A one-shot has to leave the body where the idle expects it, or the blend
+    // out of the locking state is a snap. Both ends are the neutral pose.
+    for (const phase of [0, 1]) {
+      for (const [, quat] of poseFor(RADISH_RACCOON_ATTACK, phase)) {
+        expect(quatAngle(quat, [0, 0, 0, 1])).toBeLessThan(0.5);
+      }
+    }
+    // The gesture, measured where it happens. A shoulder at x 0.100 on an arm
+    // 0.16 long puts the paw within a centimetre of full forward extension at
+    // rest, so there is no thrust to author -- what this blow is, is a swipe
+    // that comes down. The coil takes the paws *up*; the strike drops them
+    // below where they started and forward of where the coil left them.
+    const paw = (ms: number): readonly [number, number] => {
+      const world = poseWorldMatrices(nodes, poseAt(RADISH_RACCOON_ATTACK, rig, ms));
+      const m = world[nodes.findIndex((n) => n.name === 'R_Hand')] as readonly number[];
+      return [m[12] as number, m[13] as number];
+    };
+    const rest = paw(0);
+    const coil = paw(380);
+    const strike = paw(ATTACK_CONTACT_MS);
+    expect(coil[1], 'the coil does not raise the paw').toBeGreaterThan(rest[1] + 0.12);
+    expect(coil[0], 'the coil does not draw the paw back').toBeLessThan(rest[0]);
+    expect(strike[1], 'the strike does not bring the paw down past its rest').toBeLessThan(rest[1] - 0.05);
+    expect(strike[0], 'the strike does not carry the paw forward of the coil').toBeGreaterThan(coil[0]);
+    // The read is in the arms rather than in the body: on a sphere with no
+    // torso a big `lean` is a topple, so the paw has to travel much further
+    // than the head does between the coil and contact.
+    const headAt = (ms: number): readonly [number, number] => {
+      const world = poseWorldMatrices(nodes, poseAt(RADISH_RACCOON_ATTACK, rig, ms));
+      const m = world[nodes.findIndex((n) => n.name === 'Head')] as readonly number[];
+      return [m[12] as number, m[13] as number];
+    };
+    const span = (a: readonly [number, number], b: readonly [number, number]): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
+    expect(span(coil, strike)).toBeGreaterThan(0.2);
+    expect(span(coil, strike)).toBeGreaterThan(span(headAt(380), headAt(ATTACK_CONTACT_MS)) * 4);
+  });
+
   it('run alternates its feet', () => {
     const lift = (bone: string): number[] => Array.from({ length: 24 }, (_, i) => boneAt(RADISH_RACCOON_RUN, i / 24, bone)[1]);
     const left = lift('L_ToeBase');
@@ -335,7 +391,10 @@ describe('the clips', () => {
     const apart = Math.abs(peak(left) - peak(right));
     expect(Math.min(apart, 24 - apart)).toBeGreaterThan(8);
     // And each foot genuinely leaves the ground.
-    for (const track of [left, right]) expect(Math.max(...track) - Math.min(...track)).toBeGreaterThan(0.03);
+    // The stride, and the number this spec's second pass moved: 26 degrees at
+    // the thigh lifted the toe 0.030 and read as an animal carried along by its
+    // own waddle. It is 40 degrees and 0.053 now.
+    for (const track of [left, right]) expect(Math.max(...track) - Math.min(...track)).toBeGreaterThan(0.045);
   });
 
   it('idle steps from one foot to the other', () => {
