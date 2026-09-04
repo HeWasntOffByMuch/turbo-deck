@@ -64,6 +64,17 @@ describe('authoredUnitFor', () => {
 });
 
 describe('the roster is discovered, not listed (spec 113)', () => {
+  it('draws the radish raccoon from the rig this project authored (spec 277)', () => {
+    // Three separate things have to line up before a monster row is drawn with
+    // an authored unit -- the row, this table, and the unit being in the baked
+    // manifest -- and `authoredUnitFor` falls back to the old rig for any of
+    // them being wrong, silently. Two of the three are asserted here; the third
+    // is `npm run bake:units`, which refuses to write a manifest at all.
+    const unit = DEFAULT_AUTHORED_UNITS['radish_raccoon'];
+    expect(unit).toBe('radish_raccoon_2');
+    expect(authoredUnitIds()).toContain(unit);
+  });
+
   it('finds every unit the manifest carries', () => {
     // The registry used to be five hardcoded imports naming one unit, which
     // meant the answer to "I exported a unit, now what" was "nothing". Adding

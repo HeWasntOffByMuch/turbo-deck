@@ -451,6 +451,65 @@ const AUTHORED: readonly AuthoredMonster[] = [
     },
   },
   {
+    // The one row on the map a fresh character is *meant* to beat, and the only
+    // hostile one that will not start a fight. `defensive` is the whole of
+    // "non-aggressive" as this table can say it: `noticeRangeOf` answers 0 for
+    // it, so `notice` never fires and the body has no way to acquire a target
+    // on its own -- it wanders, it is ignorable, and it answers a blow. That is
+    // a different thing from the grazer's `skittish`, which runs and therefore
+    // never lands one; this one stands and hits back, which is what makes it a
+    // fight rather than a chase.
+    //
+    // Where they stand is nobody's decision here: this row is the *type*, and a
+    // spawner marker in the map editor is where one goes. The dropdown that
+    // marker chooses from is `ALL_MONSTERS` (`editor/tools.ts`), so adding this
+    // row is the whole of putting it in the editor.
+    id: 'radish_raccoon',
+    name: 'Radish Raccoon',
+    // 20 rather than the 16 its own body measures, because `ROUTING_RADII`
+    // builds one nav grid per *distinct* radius at boot and 20 is one three
+    // other rows already pay for. The drawn ball is about 31 units across, so a
+    // 20 ring is the body plus a little, which is the band a collider wants.
+    radius: 20,
+    // Above the sheep's 5 and the grazer's 8, because unlike either of them it
+    // fights back and the kill has to be worth walking over to.
+    experience: 10,
+    temperament: { kind: 'defensive' },
+    // A shorter ramble than the grazer's 200 and a shorter cycle to match: the
+    // pair is one decision, since the cycle has to cover the walk and leave the
+    // dwell over. Measured through the real tick it spends about a third of its
+    // life moving, which `idle.test.ts` is what checks rather than this comment.
+    idle: { kind: 'wander', radius: 130, cycleTicks: seconds(11) },
+    stats: {
+      // Eight, which is three or four swings of the Worn Sword a fresh
+      // character starts with (1-3 damage): a real fight and a short one. The
+      // grazer's 3 dies to the first blow that lands and the small spider's 22
+      // is already a commitment.
+      maxHealth: 8,
+      // Ambling. A player moves at 155, so it can never escape and never chase
+      // anybody down -- which is the right shape for a body that only fights
+      // because you started it.
+      moveSpeed: 55,
+      turnRate: 200,
+      // One. At a fresh character's 68 health that is sixty-eight landed blows,
+      // which is not a threat and is not meant to be -- what it is, is the
+      // difference between hitting something and hitting scenery.
+      attackDamage: 1,
+      // Shorter than the grazer's 60 on a body of about the same size, because
+      // this one's reach is two mittens: the attack clip's paws travel about 14
+      // units past the body and the range says so.
+      attackRange: 55,
+      baseAttackTimeTicks: seconds(1.5),
+      ...NO_ATTACK_SPEED,
+      armor: 0,
+      spellPower: 1,
+      critChance: 0,
+      maxResource: 0,
+      resourceRegen: 0,
+      basicAttackId: 'melee.slash',
+    },
+  },
+  {
     id: 'stalker',
     name: 'Stalker',
     radius: 20,
