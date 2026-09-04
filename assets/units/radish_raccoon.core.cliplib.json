@@ -1,0 +1,22 @@
+{
+  "$comment": "The radish raccoon family's clip library (spec 277). Two clips and no more, which is the whole roster this animal has: it is scenery with a walk, not a combatant, so there is no swing to author and no cast to rebase. Both are authored rather than retargeted -- there is no bought library for a rig that exists nowhere but here -- and their source is `src/units/radish-raccoon-clips.ts`; regenerate the bytes with `npx tsx scripts/make-radish-raccoon-clips.ts`. Neither carries an event: events mark the frame a blow lands, and nothing here lands one.",
+  "formatVersion": 1,
+  "id": "radish_raccoon.core",
+  "skeletonRef": "radish_raccoon.skeleton.json",
+  "clips": [
+    {
+      "id": "run",
+      "source": "radish_raccoon_clips/run.glb",
+      "durationMs": 600,
+      "loop": true,
+      "events": []
+    },
+    {
+      "id": "idle",
+      "source": "radish_raccoon_clips/idle.glb",
+      "durationMs": 4800,
+      "loop": true,
+      "events": []
+    }
+  ]
+}
