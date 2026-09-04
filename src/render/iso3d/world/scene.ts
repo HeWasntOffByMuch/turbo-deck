@@ -2717,18 +2717,29 @@ export class WorldScene {
    */
   authoredUnitReadout(): {
     readonly loaded: number;
-    readonly bones: number;
+    /**
+     * The distinct bone counts on screen, ascending, comma-joined.
+     *
+     * The largest one, which is what this was until spec 277, is only an answer
+     * while there is one rig family in the frame. There are three -- the
+     * mannequin's 25, the biped's 41 and the radish raccoon's 31 -- and the
+     * player is always a biped, so a second family's rig is masked by the
+     * player's the moment it is drawn beside one. The whole thing this readout
+     * exists to catch is a `.glb` this repo wrote by hand not loading, and a
+     * maximum reports that as a pass.
+     */
+    readonly bones: string;
     readonly states: string;
     readonly held: string;
   } {
     let loaded = 0;
-    let bones = 0;
+    const counts = new Set<number>();
     const states: string[] = [];
     const held: string[] = [];
     for (const body of this.bodies.values()) {
       if (!body.unit?.rig.loaded) continue;
       loaded += 1;
-      bones = Math.max(bones, body.unit.bones);
+      counts.add(body.unit.bones);
       states.push(`${body.unit.machine.stateId}@${body.unit.machine.tick}`);
       // What is actually hanging off a bone, not what was asked for (spec 165).
       // The whole failure this exists to catch is a weapon that is wanted,
@@ -2739,6 +2750,7 @@ export class WorldScene {
         held.push(`${body.unit.weapon.weapon.socket}=${body.unit.weapon.weapon.id}`);
       }
     }
+    const bones = [...counts].sort((a, b) => a - b).join(',');
     return { loaded, bones, states: states.sort().join(','), held: held.sort().join(',') };
   }
 

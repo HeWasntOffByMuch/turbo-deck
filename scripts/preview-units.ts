@@ -29,9 +29,20 @@ const outDir = join(root, '.claude', 'screenshots');
 const PORT = 4327;
 const VIEWPORT = { width: 1280, height: 800 };
 
-/** Every monster the arena spawns, all drawn from the one authored unit. */
+/**
+ * Every monster the arena spawns, all drawn from the one authored unit.
+ *
+ * Which unit is an argument since spec 277, because there is more than one now
+ * and the `.glb` this repo writes by hand is exactly what this script exists to
+ * put in front of three's own loader -- a second authored rig that nothing ever
+ * drove through a browser would be the risk this file's header describes,
+ * unchecked again.
+ */
+const UNIT = process.argv[2] ?? process.env['UNIT'] ?? 'mannequin';
+/** How many bones the unit under test has, which is what proves it is the one drawn. */
+const EXPECTED_BONES = Number(process.argv[3] ?? process.env['BONES'] ?? 25);
 const UNITS = ['grazer', 'stalker', 'ravager', 'slinger', 'dummy']
-  .map((id) => `${id}:mannequin`)
+  .map((id) => `${id}:${UNIT}`)
   .join(',');
 
 const CHROMIUM_PATH = process.env['CHROMIUM_PATH'] ?? '/opt/pw-browsers/chromium';
@@ -91,15 +102,16 @@ async function main(): Promise<void> {
     // is not black" is satisfied by a ground plane. What is being asked is
     // whether a *skinned* body exists with the right bone count and whether its
     // machine is advancing, which are the two things a headless test cannot see.
-    const readout = async (): Promise<{ loaded: number; bones: number; states: string }> =>
+    const readout = async (): Promise<{ loaded: number; bones: string; states: string }> =>
       page.evaluate(() => {
         const root = document.querySelector('[data-world-ready]') as HTMLElement | null;
         return {
           loaded: Number(root?.dataset['authoredUnits'] ?? 0),
-          bones: Number(root?.dataset['authoredBones'] ?? 0),
+          bones: root?.dataset['authoredBones'] ?? '',
           states: root?.dataset['authoredStates'] ?? '',
         };
       });
+    const drawn = (bones: string): boolean => bones.split(',').includes(String(EXPECTED_BONES));
 
     const before = await readout();
     await page.waitForTimeout(1500);
@@ -108,8 +120,14 @@ async function main(): Promise<void> {
     if (after.loaded === 0) {
       failures.push('no authored unit was built -- the .glb never loaded, or the catalogue never matched a monster');
     } else {
-      console.log(`  ${after.loaded} authored bod(ies), ${after.bones} bones`);
-      if (after.bones !== 25) failures.push(`expected 25 bones on the mixamo contract, got ${after.bones}`);
+      console.log(`  ${after.loaded} authored bod(ies), bone counts on screen: ${after.bones}`);
+      // The player and the three shopkeepers are authored bodies by default
+      // (specs 246, 247), so a count is not evidence and neither is the largest
+      // rig in the frame. What is asked is whether *this* unit's own bone count
+      // is among the ones being drawn.
+      if (!drawn(after.bones)) {
+        failures.push(`no ${EXPECTED_BONES}-bone rig on screen -- ${UNIT} did not load. Counts drawn: ${after.bones || 'none'}`);
+      }
       // The machine tick is in the readout, so a state string that did not move
       // means nothing is being driven at all.
       if (before.states !== '' && before.states === after.states) {
@@ -121,8 +139,15 @@ async function main(): Promise<void> {
       }
     }
 
-    await page.screenshot({ path: join(outDir, 'units.png') });
-    console.log(`  wrote ${join('.claude', 'screenshots', 'units.png')}`);
+    // Take the title screen away before photographing (spec 255). The world is
+    // mounted and running behind it -- which is why the readout above is valid
+    // either way -- but a screenshot of the front door is a screenshot of the
+    // front door, and this script's whole job is a picture of the unit.
+    await page.evaluate(() => document.querySelector<HTMLElement>('[data-title-entry="start"]')?.click());
+    await page.waitForTimeout(2500);
+    const shot = UNIT === 'mannequin' ? 'units.png' : `units-${UNIT}.png`;
+    await page.screenshot({ path: join(outDir, shot) });
+    console.log(`  wrote ${join('.claude', 'screenshots', shot)}`);
 
     // --- and the arena is unchanged without the switch ----------------------
     await page.goto(`http://localhost:${PORT}/?seed=7`);
@@ -130,11 +155,24 @@ async function main(): Promise<void> {
     await page.waitForTimeout(6000);
     const plain = await page.evaluate(() => {
       const root = document.querySelector('[data-world-ready]') as HTMLElement | null;
-      return Number(root?.dataset['authoredUnits'] ?? 0);
+      return root?.dataset['authoredBones'] ?? '';
     });
-    if (plain !== 0) failures.push(`${plain} authored bodies with the switch off -- the Play tab did not stay unchanged`);
+    // Not "no authored bodies": the player is one and so are the shopkeepers.
+    // What must be gone is the rig the switch put there.
+    if (drawn(plain)) {
+      failures.push(`a ${EXPECTED_BONES}-bone rig is still drawn with the switch off -- the Play tab did not stay unchanged`);
+    }
 
-    const unexpected = consoleErrors.filter((message) => !/failed to load resource|net::ERR_/i.test(message));
+    // `[units] ... travels ... over the clip` is the importer saying it took
+    // root motion out of a bought clip, which is a correction it is *supposed*
+    // to make: `validate-units.ts` reports the same finding as a warning, and
+    // the two biped clips that carry it have carried it since they were bought.
+    // It reaches the console at error level and started reaching this page when
+    // the player became an authored body (spec 246), which is what has had this
+    // script red on every unit including its own.
+    const unexpected = consoleErrors.filter(
+      (message) => !/failed to load resource|net::ERR_/i.test(message) && !/\[units\].*travels .* over the clip/.test(message),
+    );
     for (const message of unexpected) failures.push(`console error: ${message}`);
 
     await browser.close();
