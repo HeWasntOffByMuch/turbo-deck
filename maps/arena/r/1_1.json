@@ -100,7 +100,9 @@
             { "species": "fence-wood", "x": 612.547, "z": 509.44, "rotation": 0.016, "scale": 0.5, "tint": 0.224 },
             { "species": "lamp-post", "x": 437.478, "z": 415.701, "rotation": 0, "scale": 0.8, "tint": -0.376 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-raccoon-3", "x": 283.346, "z": 444.333, "label": "radish_raccoon" }
+          ]
         },
         {
           "cx": 3,
@@ -202,7 +204,8 @@
             { "kind": "spawner", "id": "spawner-10", "x": 91.058, "z": 454.575, "label": "sheep" },
             { "kind": "spawner", "id": "spawner-11", "x": 126.595, "z": 414.303, "label": "sheep" },
             { "kind": "spawner", "id": "spawner-12", "x": 248.141, "z": 445.396, "label": "sheep" },
-            { "kind": "spawner", "id": "npc-armourer", "x": 493, "z": 583, "label": "npc.armourer" }
+            { "kind": "spawner", "id": "npc-armourer", "x": 493, "z": 583, "label": "npc.armourer" },
+            { "kind": "spawner", "id": "spawner-raccoon-4", "x": 579.306, "z": 341.517, "label": "radish_raccoon" }
           ]
         },
         {
@@ -326,7 +329,10 @@
             { "species": "torch-stand", "x": 34.423, "z": 408.625, "rotation": 0, "scale": 0.6, "tint": -0.383 },
             { "species": "campfire", "x": 225.354, "z": 211.119, "rotation": 0, "scale": 0.8, "tint": 0.274 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-raccoon-1", "x": 464.09, "z": 288.333, "label": "radish_raccoon" },
+            { "kind": "spawner", "id": "spawner-raccoon-2", "x": 69.014, "z": 472.56, "label": "radish_raccoon" }
+          ]
         }
       ]
     }

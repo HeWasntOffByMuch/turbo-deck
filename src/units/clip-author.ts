@@ -35,7 +35,7 @@
 import type { GlbAnimation, GlbChannel, GlbDocument, GlbNode } from './glb.js';
 import type { GlbReadNode } from './glb-read.js';
 import type { BoneRole, NamingSpec } from './naming.js';
-import { bodyFrame, boneNode, turnQuat, type PoseAxis } from './pose.js';
+import { bodyFrame, boneNode, turnQuat, turnQuatOn, type PoseAxis } from './pose.js';
 import type { PoseRotations } from './skin.js';
 
 export type Quat = readonly [number, number, number, number];
@@ -76,6 +76,19 @@ export type BoneTurns = Readonly<Partial<Record<PoseAxis, number>>>;
 /** A whole body's pose: which bones are turned, and how far. */
 export type PoseTable = Readonly<Partial<Record<BoneRole, BoneTurns>>>;
 
+/**
+ * One key's turns for bones addressed by the rig's own name.
+ *
+ * The companion to {@link PoseTable}, and the reason it is a second field
+ * rather than a widening of the first: a role is checked against
+ * `naming.ts`'s vocabulary at compile time and a bone name cannot be, so
+ * folding the two together would trade every mistyped role in every existing
+ * clip for the ability to name a tail. A key may carry both -- the roles are
+ * applied first, and a bone named in both is the author saying two things about
+ * one node, which the later pass wins.
+ */
+export type BoneTable = Readonly<Record<string, BoneTurns>>;
+
 export interface PoseKey {
   /** What this pose *is*, for a diagnostic and for the preview's caption. */
   readonly label: string;
@@ -83,6 +96,12 @@ export interface PoseKey {
   /** How the segment arriving at this key is timed. */
   readonly ease: Easing;
   readonly turns: PoseTable;
+  /**
+   * Turns on bones the biped vocabulary has no role for -- an ear, a tail
+   * segment, a leaf. Absent on every clip authored before spec 277, which is
+   * why it is optional rather than an empty object.
+   */
+  readonly bones?: BoneTable;
 }
 
 export interface AuthoredClip {
@@ -174,12 +193,16 @@ export interface PosedRig {
  * what an assertion about "how far did the shoulder turn" can be written
  * against. {@link finalRotations} is what turns them into channel values.
  */
-export function keyRotations(rig: PosedRig, turns: PoseTable): PoseRotations {
+export function keyRotations(rig: PosedRig, turns: PoseKey | PoseTable): PoseRotations {
   const frame = bodyFrame(rig.nodes, rig.naming);
   const out = new Map<string, Quat>();
   if (!frame) return out;
 
-  for (const [role, axes] of Object.entries(turns) as [BoneRole, BoneTurns][]) {
+  // A bare table is the pre-277 call and carries no named bones; a whole key
+  // carries both. Accepting either keeps every existing caller and test intact.
+  const roles = 'turns' in turns ? (turns as PoseKey).turns : (turns as PoseTable);
+  const named = 'bones' in turns ? ((turns as PoseKey).bones ?? {}) : {};
+  for (const [role, axes] of Object.entries(roles) as [BoneRole, BoneTurns][]) {
     const node = boneNode(rig.nodes, rig.naming, role);
     if (!node) continue;
     let composed: Quat = IDENTITY;
@@ -197,6 +220,20 @@ export function keyRotations(rig: PosedRig, turns: PoseTable): PoseRotations {
     // to the bind pose for the whole clip.
     if (turned || Object.keys(axes).length > 0) out.set(node.name, composed);
   }
+
+  for (const [name, axes] of Object.entries(named)) {
+    const node = rig.nodes.find((entry) => entry.name === name);
+    if (!node) continue;
+    let composed: Quat = IDENTITY;
+    for (const axis of AXIS_ORDER) {
+      const degrees = axes[axis];
+      if (degrees === undefined || degrees === 0) continue;
+      const turn = turnQuatOn(node, axis, degrees, frame, rig.nodes);
+      if (!turn) continue;
+      composed = quatMul(composed, turn.rotation);
+    }
+    if (Object.keys(axes).length > 0) out.set(node.name, composed);
+  }
   return out;
 }
 
@@ -207,6 +244,9 @@ export function animatedBones(clip: AuthoredClip, rig: PosedRig): readonly strin
     for (const role of Object.keys(key.turns) as BoneRole[]) {
       const node = boneNode(rig.nodes, rig.naming, role);
       if (node) names.add(node.name);
+    }
+    for (const name of Object.keys(key.bones ?? {})) {
+      if (rig.nodes.some((entry) => entry.name === name)) names.add(name);
     }
   }
   // In rig order rather than in the order the table happened to mention them,
@@ -232,7 +272,7 @@ function prepare(clip: AuthoredClip, rig: PosedRig): { bones: readonly string[];
   prepared.set(clip, byRig);
   const already = byRig.get(rig.nodes);
   if (already) return already;
-  const built = { bones: animatedBones(clip, rig), perKey: clip.keys.map((key) => keyRotations(rig, key.turns)) };
+  const built = { bones: animatedBones(clip, rig), perKey: clip.keys.map((key) => keyRotations(rig, key)) };
   byRig.set(rig.nodes, built);
   return built;
 }

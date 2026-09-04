@@ -61,6 +61,11 @@ export const DEFAULT_AUTHORED_UNITS: Readonly<Record<string, AuthoredUnitId>> = 
   // it would need is this one, edited.
   'npc.quartermaster': 'fox_a_pose',
   'npc.armourer': 'fox_a_pose',
+  // The first *hostile* row to be drawn from an authored unit, and the first
+  // drawn from a rig this project authored rather than bought (spec 277). It
+  // needs no more than this line: the roster, the spawner dropdown, the loot
+  // roll and the sim have never asked what a body is drawn with.
+  radish_raccoon: 'radish_raccoon_2',
 };
 
 const authored = new Map<string, AuthoredUnitId>(Object.entries(DEFAULT_AUTHORED_UNITS));

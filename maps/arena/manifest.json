@@ -2990,6 +2990,12 @@
           "z": -285.95
         },
         {
+          "id": "spawner-raccoon-3",
+          "monsterId": "radish_raccoon",
+          "x": -84.654,
+          "z": 76.33300000000003
+        },
+        {
           "id": "spawner-8",
           "monsterId": "sheep",
           "x": 275.159,
@@ -3024,6 +3030,12 @@
           "monsterId": "npc.armourer",
           "x": 741,
           "z": 215
+        },
+        {
+          "id": "spawner-raccoon-4",
+          "monsterId": "radish_raccoon",
+          "x": 827.306,
+          "z": -26.483000000000004
         },
         {
           "id": "spawner-13",
@@ -3072,6 +3084,18 @@
           "monsterId": "npc.quartermaster",
           "x": 240,
           "z": 508
+        },
+        {
+          "id": "spawner-raccoon-1",
+          "monsterId": "radish_raccoon",
+          "x": 712.0899999999999,
+          "z": 536.3330000000001
+        },
+        {
+          "id": "spawner-raccoon-2",
+          "monsterId": "radish_raccoon",
+          "x": 317.014,
+          "z": 720.56
         }
       ],
       "regions": [
@@ -3384,7 +3408,7 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "0d5a76f4",
+          "hash": "8ca85466",
           "cells": 3136
         },
         {
@@ -3828,5 +3852,5 @@
       ]
     }
   ],
-  "mapId": "5afc9c10"
+  "mapId": "40efdf50"
 }

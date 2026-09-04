@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "23fc3253c43bcfbb0b68c8dcda897698b456ff85614d8eeee5c53a97a93346d6",
+  "hash": "276b91ad44614959aa13e6873d739e27430cf4eb149d4d615ac592cd87bbaca6",
   "builtStages": [],
   "units": [
     {
@@ -163,6 +163,42 @@
           "path": "clips/walk.glb",
           "sha256": "d5d33df0f568b33802f975724ad50518b52f02bda040b3de3285deec68dadad8",
           "bytes": 409296
+        }
+      ]
+    },
+    {
+      "id": "radish_raccoon_2",
+      "family": "radish_raccoon",
+      "entries": [
+        {
+          "path": "radish_raccoon_2/radish_raccoon_2.unitdef.json",
+          "sha256": "38a6e581b186e6e2c884241d1271672e9dfdc5bf99ecd54903ba8ef44c5499a0",
+          "bytes": 4433
+        },
+        {
+          "path": "radish_raccoon_2/radish_raccoon_2.glb",
+          "sha256": "68e994dc14ecd6e03e98d08f9c062b8f9531aa47eb3233bee7dafcffae290fe2",
+          "bytes": 972252
+        },
+        {
+          "path": "radish_raccoon.core.cliplib.json",
+          "sha256": "6ad58554d7948a9cf0923ffa28ca41da894b76d2ff4ce02e5f10992e8ba2628c",
+          "bytes": 1506
+        },
+        {
+          "path": "radish_raccoon_clips/run.glb",
+          "sha256": "7b4dd48da3a975865c37e00ff85e83e60352f7a8aa31be905418f0843caf4e4e",
+          "bytes": 28948
+        },
+        {
+          "path": "radish_raccoon_clips/idle.glb",
+          "sha256": "bb2ff5589507538ed120aae2703ef6228912cb05f5dd667a5d7a8bd4fb1f7ac9",
+          "bytes": 89696
+        },
+        {
+          "path": "radish_raccoon_clips/attack.glb",
+          "sha256": "957813d749eaf825e116deaa84e5a08dc3c13d9b4ba6bd3d9ab4bad4ee87213e",
+          "bytes": 35680
         }
       ]
     }

@@ -213,15 +213,33 @@ export function turnQuat(
 ): { bone: string; rotation: [number, number, number, number] } | null {
   const node = boneNode(nodes, naming, turn.bone);
   if (!node) return null;
-  const axis =
-    turn.axis === 'flex'
-      ? flexAxis(nodes, node, frame)
-      : turn.axis === 'twist'
-        ? twistAxis(nodes, node, frame)
-        : frame[turn.axis];
-  const local = intoLocalFrame(axis, node.world);
+  return turnQuatOn(node, turn.axis, turn.degrees, frame, nodes);
+}
+
+/**
+ * The same turn about a bone the caller has already found.
+ *
+ * Every line of the arithmetic above is about a *node* -- the axis is chosen in
+ * world space and carried into that node's frame -- and only the first line is
+ * about a role. Splitting them is what lets a rig pose a bone the vocabulary has
+ * no role for: this animal's tail, its ears and its leaves are real bones with
+ * no entry in `naming.ts`, and inventing three roles that exactly one family
+ * could ever resolve would be three rows in a shared table for one file's
+ * benefit. {@link turnQuat} is this function with a lookup in front of it, so
+ * the two cannot come to different answers about what a turn means.
+ */
+export function turnQuatOn(
+  node: GlbReadNode,
+  axis: PoseAxis,
+  degrees: number,
+  frame: BodyFrame,
+  nodes: readonly GlbReadNode[],
+): { bone: string; rotation: [number, number, number, number] } | null {
+  const world =
+    axis === 'flex' ? flexAxis(nodes, node, frame) : axis === 'twist' ? twistAxis(nodes, node, frame) : frame[axis];
+  const local = intoLocalFrame(world, node.world);
   if (magnitude(local) < 1e-6) return null;
-  return { bone: node.name, rotation: axisQuat(local, (turn.degrees * Math.PI) / 180) };
+  return { bone: node.name, rotation: axisQuat(local, (degrees * Math.PI) / 180) };
 }
 
 /** The node a role resolves to in this rig, or undefined. */
