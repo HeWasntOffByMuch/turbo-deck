@@ -199,6 +199,26 @@ docs/            durable direction that outlives one spec.
                  now holds. Read it before touching progression; it is the
                  companion to the next one, which is about what a *number* may do
                  rather than about what a *point* buys.
+                 resource-economy-review.md is the pass that made resource a
+                 constraint (spec 276), kept in the register the Constitution
+                 review set: the measurement rather than a description of the
+                 answer. What it is *for* is the number the whole thing turned
+                 on -- **the greediest four-skill bar a player can equip drains
+                 3.38 resource/second**, which is a ceiling rather than a worst
+                 case, because it is the four highest cost-per-cycle rows in
+                 `data/abilities.ts` cast on cooldown by a body rooted through
+                 its own casts. Everything else in the review is a comparison
+                 against that: the old supply crossed it at Wisdom 21 and
+                 reached 3.4x it at the cap, and the shipped curve rises the
+                 whole way and provably never reaches it.
+                 Read it before touching a resource coefficient, and read its
+                 last section first -- three things it deliberately did not fix
+                 are recorded there with their measurements, and the largest is
+                 that a Focus mote restores `0.2 x maxResource`, so in a
+                 kill-rich fight it pays an Intelligence build 3.24/s against a
+                 baseline's 1.08/s. That is the one place *"INT owns the
+                 magazine, WIS owns the reload"* does not hold, and it belongs to
+                 the drop economy rather than to this pass.
                  constitution-progression-review.md is the first review of a
                  single track end to end -- what its nine nodes grant, whether
                  each reaches the sim, whether they compose, and what the whole
