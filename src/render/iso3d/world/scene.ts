@@ -2718,28 +2718,34 @@ export class WorldScene {
   authoredUnitReadout(): {
     readonly loaded: number;
     /**
-     * The distinct bone counts on screen, ascending, comma-joined.
+     * How many bodies are on screen at each bone count: `31x4,41x8`, ascending.
      *
-     * The largest one, which is what this was until spec 277, is only an answer
-     * while there is one rig family in the frame. There are three -- the
-     * mannequin's 25, the biped's 41 and the radish raccoon's 31 -- and the
-     * player is always a biped, so a second family's rig is masked by the
-     * player's the moment it is drawn beside one. The whole thing this readout
-     * exists to catch is a `.glb` this repo wrote by hand not loading, and a
-     * maximum reports that as a pass.
+     * Two corrections to what this was, both from spec 277. It was the
+     * *largest* count, which is an answer only while there is one rig family in
+     * the frame -- there are three, the mannequin's 25, the biped's 41 and the
+     * radish raccoon's 31, and the player is always a biped, so a second
+     * family's rig was masked by the player's the moment it was drawn beside
+     * one. The whole thing this readout exists to catch is a `.glb` this repo
+     * wrote by hand not loading, and a maximum reports that as a pass.
+     *
+     * And it carries the count per rig rather than the set, because presence
+     * stopped being a question the moment a rig was on the shipped map: the
+     * arena spawns four radish raccoons of its own, so "is this rig drawn" is
+     * true with or without `?units=` and only "how many" can tell the switch
+     * apart from the map.
      */
     readonly bones: string;
     readonly states: string;
     readonly held: string;
   } {
     let loaded = 0;
-    const counts = new Set<number>();
+    const counts = new Map<number, number>();
     const states: string[] = [];
     const held: string[] = [];
     for (const body of this.bodies.values()) {
       if (!body.unit?.rig.loaded) continue;
       loaded += 1;
-      counts.add(body.unit.bones);
+      counts.set(body.unit.bones, (counts.get(body.unit.bones) ?? 0) + 1);
       states.push(`${body.unit.machine.stateId}@${body.unit.machine.tick}`);
       // What is actually hanging off a bone, not what was asked for (spec 165).
       // The whole failure this exists to catch is a weapon that is wanted,
@@ -2750,7 +2756,10 @@ export class WorldScene {
         held.push(`${body.unit.weapon.weapon.socket}=${body.unit.weapon.weapon.id}`);
       }
     }
-    const bones = [...counts].sort((a, b) => a - b).join(',');
+    const bones = [...counts]
+      .sort((a, b) => a[0] - b[0])
+      .map(([count, bodies]) => `${count}x${bodies}`)
+      .join(',');
     return { loaded, bones, states: states.sort().join(','), held: held.sort().join(',') };
   }
 

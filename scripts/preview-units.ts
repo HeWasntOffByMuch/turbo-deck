@@ -111,7 +111,14 @@ async function main(): Promise<void> {
           states: root?.dataset['authoredStates'] ?? '',
         };
       });
-    const drawn = (bones: string): boolean => bones.split(',').includes(String(EXPECTED_BONES));
+    /** How many bodies on screen carry the unit-under-test's bone count. */
+    const drawn = (bones: string): number => {
+      for (const pair of bones.split(',')) {
+        const [count, bodies] = pair.split('x');
+        if (count === String(EXPECTED_BONES)) return Number(bodies ?? 0);
+      }
+      return 0;
+    };
 
     const before = await readout();
     await page.waitForTimeout(1500);
@@ -125,7 +132,7 @@ async function main(): Promise<void> {
       // (specs 246, 247), so a count is not evidence and neither is the largest
       // rig in the frame. What is asked is whether *this* unit's own bone count
       // is among the ones being drawn.
-      if (!drawn(after.bones)) {
+      if (drawn(after.bones) === 0) {
         failures.push(`no ${EXPECTED_BONES}-bone rig on screen -- ${UNIT} did not load. Counts drawn: ${after.bones || 'none'}`);
       }
       // The machine tick is in the readout, so a state string that did not move
@@ -157,10 +164,19 @@ async function main(): Promise<void> {
       const root = document.querySelector('[data-world-ready]') as HTMLElement | null;
       return root?.dataset['authoredBones'] ?? '';
     });
-    // Not "no authored bodies": the player is one and so are the shopkeepers.
-    // What must be gone is the rig the switch put there.
-    if (drawn(plain)) {
-      failures.push(`a ${EXPECTED_BONES}-bone rig is still drawn with the switch off -- the Play tab did not stay unchanged`);
+    // Not "no authored bodies", and since spec 277 not "not this rig" either.
+    // The player is an authored body and so are the three shopkeepers, and the
+    // arena spawns four radish raccoons of its own -- so a rig being on screen
+    // without the switch is the map doing its job rather than the switch
+    // leaking. What the switch has to have done is *add* bodies: it maps five
+    // monster types to the unit, and if it reached nothing the two counts would
+    // be equal.
+    console.log(`  ${drawn(after.bones)} ${EXPECTED_BONES}-bone bod(ies) with the switch, ${drawn(plain)} without`);
+    if (drawn(plain) >= drawn(after.bones)) {
+      failures.push(
+        `the switch added no ${EXPECTED_BONES}-bone bodies: ${drawn(after.bones)} with it, ${drawn(plain)} without. ` +
+          `Counts drawn: on ${after.bones || 'none'}, off ${plain || 'none'}`,
+      );
     }
 
     // `[units] ... travels ... over the clip` is the importer saying it took
@@ -185,7 +201,7 @@ async function main(): Promise<void> {
     process.exitCode = 1;
     return;
   }
-  console.log('an authored unit stands in the arena, skinned and posed, and is absent without the switch');
+  console.log('an authored unit stands in the arena, skinned and posed, and the switch is what put it there');
 }
 
 await main();
