@@ -466,11 +466,19 @@ const AUTHORED: readonly AuthoredMonster[] = [
     // row is the whole of putting it in the editor.
     id: 'radish_raccoon',
     name: 'Radish Raccoon',
-    // 20 rather than the 16 its own body measures, because `ROUTING_RADII`
-    // builds one nav grid per *distinct* radius at boot and 20 is one three
-    // other rows already pay for. The drawn ball is about 31 units across, so a
-    // 20 ring is the body plus a little, which is the band a collider wants.
-    radius: 20,
+    // The drawn body, plus a little. Measured off the mesh at the unit's own
+    // import scale, the ball reaches 10.7 units from the root axis -- the tail
+    // reaches 28.8 and the greens 16.2, and neither is a collider, for the
+    // reason the sign's board and the grave's mound are not one either.
+    //
+    // It was 20 against a body of 17.9 when the unit was drawn at a player's
+    // height, and both halves fell by the same 0.6 when the drawing did, which
+    // is the point: a ring the drawn body does not fill stops a small thing in
+    // doorways it visibly fits through (`small_spider` says the same in its own
+    // comment). 12 also costs nothing -- `ROUTING_RADII` builds one nav grid per
+    // *distinct* radius at boot, and the sheep and the small spider already pay
+    // for that one.
+    radius: 12,
     // Above the sheep's 5 and the grazer's 8, because unlike either of them it
     // fights back and the kill has to be worth walking over to.
     experience: 10,
@@ -495,10 +503,23 @@ const AUTHORED: readonly AuthoredMonster[] = [
       // which is not a threat and is not meant to be -- what it is, is the
       // difference between hitting something and hitting scenery.
       attackDamage: 1,
-      // Shorter than the grazer's 60 on a body of about the same size, because
-      // this one's reach is two mittens: the attack clip's paws travel about 14
-      // units past the body and the range says so.
-      attackRange: 55,
+      // 55 x 0.6, the one factor the radius above took: `withinReach` measures
+      // from this body's centre to the target's *surface*, so a range is a claim
+      // about this animal's own limbs, and its limbs are what shrank.
+      //
+      // Deliberately *not* kept at the small spider's 55 on the same 12 radius.
+      // That one is a body whose legs genuinely span about 45 units from its
+      // centre; this one's reach is two mittens that stop 8.3 out, at the front
+      // of the drawn ball, so the number the two rows shared was a coincidence.
+      //
+      // What scaling it buys is the *absolute* gap rather than a proportional
+      // one, and that is the honest way round: `standoffFrom` walks the body to
+      // `(33 + 16) * 0.8`, so it stops 12.5 units of air short of a player where
+      // 55 stopped it 22.9 short. Against its own body that is 0.58 body widths
+      // against 0.64 -- barely moved, because the player's radius is half the
+      // sum and did not shrink. Twelve units of air is simply less to look at
+      // than twenty-three.
+      attackRange: 33,
       baseAttackTimeTicks: seconds(1.5),
       ...NO_ATTACK_SPEED,
       armor: 0,

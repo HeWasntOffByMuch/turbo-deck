@@ -1,6 +1,6 @@
 {
   "formatVersion": 1,
-  "hash": "276b91ad44614959aa13e6873d739e27430cf4eb149d4d615ac592cd87bbaca6",
+  "hash": "92677d7add84aedeba9a235ec4abc5b298be0f6a4a9e46d15ba98c04ad703376",
   "builtStages": [],
   "units": [
     {
@@ -172,8 +172,8 @@
       "entries": [
         {
           "path": "radish_raccoon_2/radish_raccoon_2.unitdef.json",
-          "sha256": "38a6e581b186e6e2c884241d1271672e9dfdc5bf99ecd54903ba8ef44c5499a0",
-          "bytes": 4433
+          "sha256": "544539b685ddb9bf09bcb5262ada114543fbdb2e5dafe1dfe128819b8264cbed",
+          "bytes": 5059
         },
         {
           "path": "radish_raccoon_2/radish_raccoon_2.glb",

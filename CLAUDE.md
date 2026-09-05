@@ -1137,6 +1137,22 @@ src/units/       the unit authoring format and its validator (spec 107): the thr
                  either side, because there is no torso to bend -- `lean` turns
                  the whole creature, and past about ten degrees a pounce becomes
                  a topple with the face going into the ground.
+                 It is drawn at **0.6 of the height its own document asks
+                 for**, and the two sim numbers underneath it took the same
+                 factor. `canonicalHeight` is the height the renderer draws a
+                 *player* at, so an import scale that honours it exactly -- which
+                 is what the measured 55.7589 is -- gives a raccoon as tall as
+                 the person fighting it; 33.4553 draws it 33.39 units tall
+                 instead. The collider went 20 to 12 and the reach 55 to 33,
+                 because the alternative is `small_spider`'s own stated failure
+                 one row along: a ring the drawn body does not fill stops a small
+                 thing in doorways it visibly fits through. 12 is free, being a
+                 radius the sheep and the small spider already pay a nav grid
+                 for. What it is deliberately **not** is that spider's 55 on the
+                 same radius -- that body's legs genuinely span 45 units from its
+                 centre, and this one's reach is two mittens that stop 8.3 out,
+                 at the front of the drawn ball, so the number they share was a
+                 coincidence rather than a precedent.
                  It is a **monster row** since the same spec: `radish_raccoon`
                  in `data/monsters.ts`, `defensive`, 8 health and 1 damage. That
                  temperament is the whole of "non-aggressive" as that table can
