@@ -2,6 +2,7 @@ import { createHud } from './world/hud.js';
 import { UiLayer } from './world/ui-layer.js';
 import { InputMap } from '../../ui/input/input-map.js';
 import type { ClientView } from '../../server/client/game-client.js';
+import { RespawnGate } from './world/respawn-gate.js';
 
 /**
  * The measuring rig for the bottom band (spec 164).
@@ -47,6 +48,16 @@ interface ProbeApi {
   reward(amount: number): void;
   /** Draw `frames` more frames, so a floating number gets somewhere. */
   advance(frames: number): void;
+  /**
+   * Drive the respawn cover from the *real* gate, at `nowMs` (spec 281).
+   *
+   * The gate rather than a hand-made `RespawnCover`, because what this rig
+   * exists to check is the path from a decision to a box on screen -- and a
+   * driver that posted its own object would be checking the box against
+   * itself. `null` presses nothing; a number is a frame timestamp, and the
+   * arming press is `ask(0)`.
+   */
+  cover(nowMs: number | null, over?: Record<string, unknown>): void;
   /**
    * Put a body's floating bar at a screen point, or take it away (spec 186).
    *
@@ -142,6 +153,8 @@ let overrides: Record<string, unknown> = {};
  */
 const PROBE_POINT = { x: 560, y: 300 };
 const hud = createHud(() => ({ x: PROBE_POINT.x, y: PROBE_POINT.y, onScreen: true }));
+/** The real gate, driven by the driver's clock (spec 281). See `cover`. */
+const respawnGate = new RespawnGate();
 hud.onRespawn(() => {
   respawnCount += 1;
 });
@@ -240,8 +253,26 @@ for (const phase of ['down', 'up', 'move'] as const) {
  */
 let anchors: { id: number; x: number; y: number; onScreen: boolean }[] = [];
 
+/** `GameClient.deadNow`, over whatever this rig has been handed. */
+function selfDeadIn(view: Record<string, unknown>): boolean {
+  const entities = view['entities'];
+  if (!Array.isArray(entities)) return false;
+  const self = (entities as { id?: number; health?: number }[]).find(
+    (entity) => entity.id === view['selfEntityId'],
+  );
+  return self !== undefined && (self.health ?? 0) <= 0;
+}
+
 function draw(): void {
-  const view = { ...baseView(), ...overrides } as unknown as ClientView;
+  const merged: Record<string, unknown> = { ...baseView(), ...overrides };
+  // `selfDead` is *derived* on the real view (spec 229) -- the local body's
+  // health against zero -- rather than being a field anybody assigns, so the rig
+  // has to derive it too. Without this a case that sets health to 0 gets a
+  // living HUD, `deathOverlay` reads `undefined` and answers null, and the death
+  // screen is simply unreachable from this page: five checks in
+  // `probe-bottom-hud.ts` had been failing on it since that spec moved the test.
+  if (!('selfDead' in merged)) merged['selfDead'] = selfDeadIn(merged);
+  const view = merged as unknown as ClientView;
   // The interface first, so the bar has been laid out by the time the HUD is
   // asked to place the pool block against it.
   ui.update(view, 1000, 400);
@@ -297,5 +328,24 @@ window.hudProbe = {
   },
   advance(frames) {
     for (let frame = 0; frame < frames; frame++) draw();
+  },
+  cover(nowMs, over) {
+    if (nowMs === null) {
+      hud.setRespawnCover(null);
+      draw();
+      return;
+    }
+    if (nowMs === 0) respawnGate.ask(0);
+    hud.setRespawnCover(
+      respawnGate.read({
+        nowMs,
+        dead: true,
+        needed: 25,
+        held: 0,
+        meshPending: 0,
+        ...over,
+      }),
+    );
+    draw();
   },
 };
