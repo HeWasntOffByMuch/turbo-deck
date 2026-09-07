@@ -80,7 +80,9 @@
             { "species": "bush", "x": 80.912, "z": 451.737, "rotation": 1.263, "scale": 0.856, "tint": 0.323 },
             { "species": "bush", "x": 170.306, "z": 318.561, "rotation": 0.23, "scale": 0.854, "tint": 0.607 }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-117", "x": 411.156, "z": 158.789, "label": "ravager", "spawner": { "respawnSeconds": 120, "leashRadius": 420, "when": "night" } }
+          ]
         },
         {
           "cx": 5,

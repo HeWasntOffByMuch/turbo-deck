@@ -1036,6 +1036,7 @@
     "fence-boards",
     "fence-rubble",
     "fence-wood",
+    "grave",
     "house",
     "lamp-post",
     "torch-stand",
@@ -2930,70 +2931,190 @@
       ],
       "spawners": [
         {
-          "id": "spawner-17",
-          "monsterId": "small_spider",
-          "x": 4044.585,
-          "z": -1092.97
+          "id": "spawner-145",
+          "monsterId": "slinger",
+          "x": 3829.51,
+          "z": -4133.84
         },
         {
-          "id": "spawner-18",
-          "monsterId": "small_spider",
-          "x": 4067.028,
-          "z": -1302.68
+          "id": "spawner-141",
+          "monsterId": "stalker",
+          "x": 3853.193,
+          "z": -3535.413
         },
         {
-          "id": "spawner-19",
-          "monsterId": "small_spider",
-          "x": 4295.064,
-          "z": -1244.8890000000001
+          "id": "spawner-142",
+          "monsterId": "stalker",
+          "x": 3785.413,
+          "z": -3896.807
         },
         {
-          "id": "spawner-20",
-          "monsterId": "small_spider",
-          "x": 4381.158,
-          "z": -601.629
+          "id": "spawner-140",
+          "monsterId": "stalker",
+          "x": 4214.5869999999995,
+          "z": -3603.193
         },
         {
-          "id": "spawner-21",
-          "monsterId": "small_spider",
-          "x": 4095.49,
-          "z": -453.946
+          "id": "spawner-143",
+          "monsterId": "stalker",
+          "x": 4146.807,
+          "z": -3964.587
         },
         {
-          "id": "spawner-1",
-          "monsterId": "small_spider",
-          "x": -660.548,
-          "z": -205.723
+          "id": "spawner-146",
+          "monsterId": "slinger",
+          "x": 4417.66,
+          "z": -3705.728
         },
         {
-          "id": "spawner-2",
-          "monsterId": "small_spider",
-          "x": -652.552,
-          "z": -310.92
+          "id": "spawner-144",
+          "monsterId": "slinger",
+          "x": 3752.83,
+          "z": -3410.432
         },
         {
-          "id": "spawner-3",
-          "monsterId": "small_spider",
-          "x": -612.01,
-          "z": -236.589
+          "id": "spawner-138",
+          "monsterId": "stalker",
+          "x": 3650,
+          "z": -2540
         },
         {
-          "id": "spawner-4",
-          "monsterId": "small_spider",
-          "x": -593.797,
-          "z": -169.382
+          "id": "spawner-137",
+          "monsterId": "slinger",
+          "x": 4350,
+          "z": -2280
         },
         {
-          "id": "spawner-5",
-          "monsterId": "small_spider",
-          "x": -592.1030000000001,
-          "z": -285.95
+          "id": "spawner-139",
+          "monsterId": "slinger",
+          "x": 4350,
+          "z": -2800
         },
         {
-          "id": "spawner-raccoon-3",
+          "id": "spawner-133",
+          "monsterId": "stalker",
+          "x": 3365.145,
+          "z": -1689.4740000000002
+        },
+        {
+          "id": "spawner-136",
+          "monsterId": "stalker",
+          "x": 3650,
+          "z": -2020
+        },
+        {
+          "id": "spawner-135",
+          "monsterId": "slinger",
+          "x": 4350,
+          "z": -1760
+        },
+        {
+          "id": "spawner-107",
+          "monsterId": "small_spider",
+          "x": -1152.824,
+          "z": -1013.564
+        },
+        {
+          "id": "spawner-132",
+          "monsterId": "stalker",
+          "x": 3394.855,
+          "z": -1270.526
+        },
+        {
+          "id": "spawner-134",
+          "monsterId": "slinger",
+          "x": 3680,
+          "z": -1520
+        },
+        {
+          "id": "spawner-128",
+          "monsterId": "small_spider",
+          "x": 4189.808,
+          "z": -1139.784
+        },
+        {
+          "id": "spawner-131",
+          "monsterId": "slinger",
+          "x": 4465.4619999999995,
+          "z": -1143.167
+        },
+        {
+          "id": "spawner-105",
+          "monsterId": "small_spider",
+          "x": -1182.7939999999999,
+          "z": -596.174
+        },
+        {
+          "id": "spawner-106",
+          "monsterId": "small_spider",
+          "x": -1319.435,
+          "z": -815.756
+        },
+        {
+          "id": "spawner-102",
           "monsterId": "radish_raccoon",
-          "x": -84.654,
-          "z": 76.33300000000003
+          "x": -741.067,
+          "z": -479.104
+        },
+        {
+          "id": "spawner-103",
+          "monsterId": "radish_raccoon",
+          "x": -490.896,
+          "z": -611.067
+        },
+        {
+          "id": "spawner-104",
+          "monsterId": "small_spider",
+          "x": -931.735,
+          "z": -658.2719999999999
+        },
+        {
+          "id": "spawner-108",
+          "monsterId": "small_spider",
+          "x": -913.212,
+          "z": -916.233
+        },
+        {
+          "id": "spawner-130",
+          "monsterId": "slinger",
+          "x": 3934.538,
+          "z": -656.8330000000001
+        },
+        {
+          "id": "spawner-125",
+          "monsterId": "small_spider",
+          "x": 4349.186,
+          "z": -712.002
+        },
+        {
+          "id": "spawner-126",
+          "monsterId": "small_spider",
+          "x": 4067.304,
+          "z": -700.021
+        },
+        {
+          "id": "spawner-127",
+          "monsterId": "small_spider",
+          "x": 3968.803,
+          "z": -964.404
+        },
+        {
+          "id": "spawner-129",
+          "monsterId": "small_spider",
+          "x": 4424.898,
+          "z": -983.79
+        },
+        {
+          "id": "spawner-101",
+          "monsterId": "radish_raccoon",
+          "x": -609.104,
+          "z": -228.933
+        },
+        {
+          "id": "spawner-100",
+          "monsterId": "radish_raccoon",
+          "x": -358.933,
+          "z": -360.896
         },
         {
           "id": "spawner-8",
@@ -3032,46 +3153,46 @@
           "z": 215
         },
         {
-          "id": "spawner-raccoon-4",
+          "id": "spawner-121",
+          "monsterId": "stalker",
+          "x": 3138.156,
+          "z": -39.565999999999974
+        },
+        {
+          "id": "spawner-119",
+          "monsterId": "stalker",
+          "x": 3561.844,
+          "z": 139.56599999999997
+        },
+        {
+          "id": "spawner-122",
+          "monsterId": "stalker",
+          "x": 3439.566,
+          "z": -161.844
+        },
+        {
+          "id": "spawner-124",
+          "monsterId": "slinger",
+          "x": 3459.918,
+          "z": -271.742
+        },
+        {
+          "id": "spawner-110",
+          "monsterId": "ravager",
+          "x": -897.67,
+          "z": 819.558
+        },
+        {
+          "id": "spawner-111",
+          "monsterId": "ravager",
+          "x": -574.802,
+          "z": 694.034
+        },
+        {
+          "id": "spawner-113",
           "monsterId": "radish_raccoon",
-          "x": 827.306,
-          "z": -26.483000000000004
-        },
-        {
-          "id": "spawner-13",
-          "monsterId": "stalker",
-          "x": 1832.796,
-          "z": -64.945
-        },
-        {
-          "id": "spawner-14",
-          "monsterId": "stalker",
-          "x": 1892.305,
-          "z": -144.727
-        },
-        {
-          "id": "spawner-15",
-          "monsterId": "stalker",
-          "x": 2021.5819999999999,
-          "z": -15.451000000000022
-        },
-        {
-          "id": "spawner-16",
-          "monsterId": "stalker",
-          "x": 2146.677,
-          "z": 217.98199999999997
-        },
-        {
-          "id": "spawner-6",
-          "monsterId": "ravager",
-          "x": -87.45499999999998,
-          "z": 823.523
-        },
-        {
-          "id": "spawner-7",
-          "monsterId": "ravager",
-          "x": -106.07900000000001,
-          "z": 750.837
+          "x": -425.79600000000005,
+          "z": 685.04
         },
         {
           "id": "npc-merchant",
@@ -3086,16 +3207,106 @@
           "z": 508
         },
         {
-          "id": "spawner-raccoon-1",
-          "monsterId": "radish_raccoon",
-          "x": 712.0899999999999,
-          "z": 536.3330000000001
+          "id": "spawner-115",
+          "monsterId": "small_spider",
+          "x": 1237.743,
+          "z": 848.856
         },
         {
-          "id": "spawner-raccoon-2",
+          "id": "spawner-116",
+          "monsterId": "small_spider",
+          "x": 1395.517,
+          "z": 560.053
+        },
+        {
+          "id": "spawner-114",
+          "monsterId": "small_spider",
+          "x": 1566.741,
+          "z": 841.091
+        },
+        {
+          "id": "spawner-118",
+          "monsterId": "ravager",
+          "x": 1524.844,
+          "z": 477.211
+        },
+        {
+          "id": "spawner-120",
+          "monsterId": "stalker",
+          "x": 3260.434,
+          "z": 261.844
+        },
+        {
+          "id": "spawner-123",
+          "monsterId": "slinger",
+          "x": 3240.082,
+          "z": 371.742
+        },
+        {
+          "id": "spawner-153",
+          "monsterId": "slinger",
+          "x": 7609.884,
+          "z": 686.9010000000001
+        },
+        {
+          "id": "spawner-150",
+          "monsterId": "stalker",
+          "x": 7942.921,
+          "z": 650.0840000000001
+        },
+        {
+          "id": "spawner-152",
+          "monsterId": "ravager",
+          "x": 8141.842,
+          "z": 621.98
+        },
+        {
+          "id": "spawner-109",
+          "monsterId": "ravager",
+          "x": -627.528,
+          "z": 1036.408
+        },
+        {
+          "id": "spawner-112",
           "monsterId": "radish_raccoon",
-          "x": 317.014,
-          "z": 720.56
+          "x": -974.204,
+          "z": 1014.96
+        },
+        {
+          "id": "spawner-117",
+          "monsterId": "ravager",
+          "x": 1275.156,
+          "z": 1022.789
+        },
+        {
+          "id": "spawner-147",
+          "monsterId": "warden",
+          "x": 7950,
+          "z": 950
+        },
+        {
+          "id": "spawner-148",
+          "monsterId": "stalker",
+          "x": 8213.275,
+          "z": 1093.828
+        },
+        {
+          "id": "spawner-149",
+          "monsterId": "stalker",
+          "x": 7693.804,
+          "z": 1106.089
+        },
+        {
+          "id": "spawner-151",
+          "monsterId": "ravager",
+          "x": 7758.158,
+          "z": 1278.02
+        },
+        {
+          "id": "spawner-154",
+          "monsterId": "slinger",
+          "x": 8290.116,
+          "z": 1213.099
         }
       ],
       "regions": [
@@ -3132,19 +3343,19 @@
         {
           "rx": 3,
           "rz": -3,
-          "hash": "9e4389cd",
+          "hash": "05b23b0d",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": -3,
-          "hash": "dec799f8",
+          "hash": "32606b21",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": -3,
-          "hash": "c628c1f7",
+          "hash": "4ea3e98b",
           "cells": 3136
         },
         {
@@ -3204,19 +3415,19 @@
         {
           "rx": 3,
           "rz": -2,
-          "hash": "037e7a7c",
+          "hash": "a87d9369",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": -2,
-          "hash": "18ebfd25",
+          "hash": "347dde4d",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": -2,
-          "hash": "49f6976e",
+          "hash": "8a9217f3",
           "cells": 3136
         },
         {
@@ -3276,19 +3487,19 @@
         {
           "rx": 3,
           "rz": -1,
-          "hash": "516a615e",
+          "hash": "a2906e66",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": -1,
-          "hash": "3d530baf",
+          "hash": "94b6cfdb",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": -1,
-          "hash": "fe41579f",
+          "hash": "f354e57c",
           "cells": 3136
         },
         {
@@ -3330,7 +3541,7 @@
         {
           "rx": 0,
           "rz": 0,
-          "hash": "f812900e",
+          "hash": "b2346a3c",
           "cells": 3136
         },
         {
@@ -3348,19 +3559,19 @@
         {
           "rx": 3,
           "rz": 0,
-          "hash": "394f5322",
+          "hash": "7e92d845",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": 0,
-          "hash": "26368ff0",
+          "hash": "bdaa27b7",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": 0,
-          "hash": "14283bd3",
+          "hash": "f311d487",
           "cells": 3136
         },
         {
@@ -3402,55 +3613,55 @@
         {
           "rx": 0,
           "rz": 1,
-          "hash": "5e0b4fd3",
+          "hash": "cbcfed96",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 1,
-          "hash": "8ca85466",
+          "hash": "791ab9a1",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 1,
-          "hash": "3517dcb7",
+          "hash": "327155b1",
           "cells": 3136
         },
         {
           "rx": 3,
           "rz": 1,
-          "hash": "9dea3154",
+          "hash": "3ee90c2a",
           "cells": 3136
         },
         {
           "rx": 4,
           "rz": 1,
-          "hash": "a7c3cc34",
+          "hash": "173ca3e6",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": 1,
-          "hash": "c32913e7",
+          "hash": "4996fd72",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": 1,
-          "hash": "819c3b1c",
+          "hash": "48e3b856",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": 1,
-          "hash": "5c269bd8",
+          "hash": "ce1743ca",
           "cells": 3136
         },
         {
           "rx": 8,
           "rz": 1,
-          "hash": "95a4af13",
+          "hash": "2b006ec8",
           "cells": 3136
         },
         {
@@ -3480,19 +3691,19 @@
         {
           "rx": 0,
           "rz": 2,
-          "hash": "b3d8de36",
+          "hash": "1ff4f841",
           "cells": 3136
         },
         {
           "rx": 1,
           "rz": 2,
-          "hash": "3cb5b693",
+          "hash": "052c727f",
           "cells": 3136
         },
         {
           "rx": 2,
           "rz": 2,
-          "hash": "418edc1b",
+          "hash": "66928b73",
           "cells": 3136
         },
         {
@@ -3504,31 +3715,31 @@
         {
           "rx": 4,
           "rz": 2,
-          "hash": "70a4a9b0",
+          "hash": "21a87b70",
           "cells": 3136
         },
         {
           "rx": 5,
           "rz": 2,
-          "hash": "4de42e9a",
+          "hash": "98140045",
           "cells": 3136
         },
         {
           "rx": 6,
           "rz": 2,
-          "hash": "8e5867e1",
+          "hash": "366ec92e",
           "cells": 3136
         },
         {
           "rx": 7,
           "rz": 2,
-          "hash": "416631a4",
+          "hash": "f9501d94",
           "cells": 3136
         },
         {
           "rx": 8,
           "rz": 2,
-          "hash": "2d944d91",
+          "hash": "04565c5d",
           "cells": 3136
         },
         {
@@ -3852,5 +4063,5 @@
       ]
     }
   ],
-  "mapId": "40efdf50"
+  "mapId": "e4daf54e"
 }

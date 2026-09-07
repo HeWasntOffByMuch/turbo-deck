@@ -557,7 +557,7 @@ zigzag varints throughout, so a negative chunk coordinate still costs one byte.
 `varuint speciesCount` · `str × speciesCount` ·
 `varuint propCount`, then per prop: `varuint speciesIndex` · `varint x` · `varint z` ·
 `varint rotation` · `varint scale` · `varint tint` · `u8 flags` ·
-`varuint markerCount`, then per marker: `u8 kind` · `str id` · `varint x` · `varint z` · `str label`
+`varuint markerCount`, then per marker: `u8 kind` · `str id` · `varint x` · `varint z` · `str label` · `u8 flags`
 
 A `runs` is `varuint pairCount` then that many `varuint`s — the document's own
 run-length `value, count` pairs, passed through rather than expanded.
@@ -566,6 +566,23 @@ run-length `value, count` pairs, passed through rather than expanded.
 follow its flags byte in bit order: two `varint`s of light when `4` is set, then
 a `str` of message when `8` is set. `kind`: `0` spawn, `1` objective, `2`
 campfire, `3` trigger. An empty `label` string means the marker had none.
+
+A marker's own `flags` is `1` respawn, `2` leash, `4` window, and its blocks
+follow in bit order too (spec 279): a `varint` of seconds when `1` is set, a
+`varint` of world units when `2` is set, then a `u8` index into `SPAWN_WINDOWS`
+(`0` night, `1` day) when `4` is set. Together they are `MapSpawnerSettings`,
+which spec 222 put in the map document and never here — so until this a marker
+went over as five fields and came back with its clock and its leash gone, and no
+committed map authored one, so the round-trip test compared three-field markers
+against themselves for fifty-seven specs.
+
+The byte is written for **every** marker rather than only for a `spawner`, which
+is the prop's own contract one field along: a reader that has to know the kind
+before it knows how many bytes to take breaks the day a second kind grows a
+block. Settings on a kind that cannot read them are a `CodecError`, because
+`parseMap` refuses them in a document and the wire and the document have to agree
+about what a marker may be. An empty block is encoded as absent — again what the
+document parser does to one — so the frame cannot invent a key no map would hold.
 
 A message is a sign's words (spec 260). It is bounded to `MAX_SIGN_TEXT`
 characters by the document parser rather than here, because a `str` is

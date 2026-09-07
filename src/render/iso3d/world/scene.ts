@@ -96,6 +96,7 @@ import {
   DEFAULT_CAMERA_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
   followAlpha,
+  groundForward,
   offsetToOrbit,
   orbitToOffset,
 } from '../view-settings.js';
@@ -1637,14 +1638,13 @@ export class WorldScene {
    * reason picking is deliberately kept off the snapped matrix too.
    */
   listenerPose(): ListenerPose {
-    const dx = -this.camOffsetCurrent.x;
-    const dz = -this.camOffsetCurrent.z;
-    const flat = Math.hypot(dx, dz);
-    // Straight overhead: the bearing is undefined, so hold the last sensible
-    // one rather than dividing by zero. The elevation slider stops at 85
-    // degrees so this is unreachable today; it costs one branch to not depend
-    // on that.
-    const forward = flat > 1e-6 ? { x: dx / flat, y: 0, z: dz / flat } : { x: 0, y: 0, z: -1 };
+    // `groundForward` is that flattening, and it is a function rather than four
+    // lines here because the legs ask the same question (spec 278): what the
+    // movement keys are rotated into is this same bearing, and two files
+    // deriving it separately agree until one is edited. It holds the
+    // straight-overhead fallback too, since a bearing is undefined there.
+    const flat = groundForward(this.camOffsetCurrent);
+    const forward = { x: flat.x, y: 0, z: flat.z };
     return {
       x: this.listenerX,
       // Ear height rather than the ground, so a body standing beside the player
@@ -1654,6 +1654,28 @@ export class WorldScene {
       forward,
       up: { x: 0, y: 1, z: 0 },
     };
+  }
+
+  /**
+   * Which way "up the screen" is, in the sim's axes (spec 278).
+   *
+   * What the four movement keys are rotated into, so `W` walks away from the
+   * camera at every angle the player can turn it to. The sim's `y` is the
+   * world's `z` -- the one place this conversion is made for the walk, the way
+   * every position handed to the scene already makes it.
+   *
+   * Read from `camOffsetCurrent`, the **drawn** offset, rather than from
+   * `controls.cameraOffset()`, which is where the panel's slider currently
+   * points. `applyControls` eases the one toward the other at `CAMERA_SMOOTH` a
+   * frame, and that ease is exactly what makes the walk turn *with* the view:
+   * steered by the target, a flicked two-finger swipe (which moves it in one
+   * jump) would re-aim the body instantly toward a bearing that is not on
+   * screen yet. There is deliberately no easing of its own in any of this --
+   * the camera has one, and a second would be a second thing to keep in step.
+   */
+  viewBasis(): { x: number; y: number } {
+    const flat = groundForward(this.camOffsetCurrent);
+    return { x: flat.x, y: flat.z };
   }
 
   /** What the VFX debug readout shows. */

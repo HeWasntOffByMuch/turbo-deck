@@ -4,7 +4,7 @@
     {
       "id": "move.north",
       "category": "movement",
-      "label": "Move north",
+      "label": "Move forward",
       "context": "gameplay",
       "primary": {
         "code": "KeyW"
@@ -16,7 +16,7 @@
     {
       "id": "move.south",
       "category": "movement",
-      "label": "Move south",
+      "label": "Move back",
       "context": "gameplay",
       "primary": {
         "code": "KeyS"
@@ -28,7 +28,7 @@
     {
       "id": "move.west",
       "category": "movement",
-      "label": "Move west",
+      "label": "Move left",
       "context": "gameplay",
       "primary": {
         "code": "KeyA"
@@ -40,7 +40,7 @@
     {
       "id": "move.east",
       "category": "movement",
-      "label": "Move east",
+      "label": "Move right",
       "context": "gameplay",
       "primary": {
         "code": "KeyD"

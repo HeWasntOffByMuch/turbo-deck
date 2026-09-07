@@ -12,7 +12,7 @@ import { describe, expect, it } from 'vitest';
 
 import { MAP_VERSION, isKnownPropKind, type MapChunk } from '../../terrain/map.js';
 import { MAX_SIGN_TEXT } from '../../terrain/vegetation.js';
-import { BufferReader } from './codec.js';
+import { BufferReader, CodecError } from './codec.js';
 import {
   decodeChunkDenied,
   decodeMapChunk,
@@ -156,6 +156,105 @@ describe('MapChunk round trip', () => {
       payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: said })),
     );
     expect(back.chunk).toEqual(said);
+  });
+
+  /**
+   * A spawner's own clock, leash and hours cross too (spec 279).
+   *
+   * Spec 222 put this block in the document, the parser, the editor and the sim
+   * and never on the frame, and it went unseen for fifty-seven specs because no
+   * committed map authored one -- so the round-trip above compared three-field
+   * markers against themselves and passed. These are the cases that test could
+   * not be: a block whose fields are *not* all present, which is what reads a
+   * flags byte in the wrong bit order and still passes the all-three case.
+   */
+  it("reproduces a spawner's own clock, leash and hours", () => {
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const camp: MapChunk = {
+      ...chunk,
+      markers: [
+        {
+          kind: 'spawner',
+          id: 'spawner-1',
+          x: 10,
+          z: 20,
+          label: 'ravager',
+          spawner: { respawnSeconds: 150, leashRadius: 470, when: 'night' },
+        },
+        // One field each, and a different one each time: all three present is
+        // the one arrangement a mis-ordered flags byte survives.
+        { kind: 'spawner', id: 'spawner-2', x: 30, z: 40, label: 'grazer', spawner: { respawnSeconds: 12.5 } },
+        { kind: 'spawner', id: 'spawner-3', x: 50, z: 60, label: 'stalker', spawner: { leashRadius: 800 } },
+        { kind: 'spawner', id: 'spawner-4', x: 70, z: 80, label: 'slinger', spawner: { when: 'day' } },
+        // And one carrying none, beside them, so the byte is proved to be per
+        // marker rather than per chunk -- a decoder that read numbers it was not
+        // sent would desynchronise on this one and fail loudly.
+        { kind: 'spawner', id: 'spawner-5', x: 90, z: 100, label: 'sheep' },
+        { kind: 'campfire', id: 'fire-1', x: 110, z: 120 },
+      ],
+    };
+    const back = decodeMapChunk(
+      payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: camp })),
+    );
+    expect(back.chunk).toEqual(camp);
+  });
+
+  it('encodes an empty block as absent rather than as an empty object', () => {
+    // What the parser does to one, so the wire cannot hand a client a key no
+    // document would have written. `spawnerSettingsEmpty` is the shared answer.
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const camp: MapChunk = {
+      ...chunk,
+      markers: [{ kind: 'spawner', id: 'spawner-1', x: 10, z: 20, label: 'ravager', spawner: {} }],
+    };
+    const back = decodeMapChunk(
+      payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: camp })),
+    );
+    expect(back.chunk.markers[0]).toEqual({
+      kind: 'spawner',
+      id: 'spawner-1',
+      x: 10,
+      z: 20,
+      label: 'ravager',
+    });
+  });
+
+  it('costs one byte for a marker that carries nothing, and no more', () => {
+    // The flags byte is unconditional, which is a prop's own contract one field
+    // along -- so what a map with no overrides pays is exactly this, and the
+    // whole shipped map pays it about sixty times.
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const marker = { kind: 'spawner', id: 'spawner-1', x: 10, z: 20, label: 'ravager' } as const;
+    const bare: MapChunk = { ...chunk, markers: [marker] };
+    const withBlock: MapChunk = { ...chunk, markers: [{ ...marker, spawner: { when: 'night' } }] };
+    const size = (c: MapChunk): number =>
+      encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: c }).length;
+    // A window is one more byte on top of the flags byte both already pay.
+    expect(size(withBlock) - size(bare)).toBe(1);
+  });
+
+  it('refuses a block on a kind that cannot read one', () => {
+    // `parseMap` refuses it in a document (spec 222), so the frame has to as
+    // well: the two have to agree about what a marker may be, or a client ends
+    // up holding a campfire with a leash on it.
+    const chunk = chunks[0]?.chunk;
+    expect(chunk).toBeDefined();
+    if (!chunk) return;
+    const wrong: MapChunk = {
+      ...chunk,
+      markers: [{ kind: 'campfire', id: 'fire-1', x: 10, z: 20, spawner: { leashRadius: 400 } }],
+    };
+    expect(() =>
+      decodeMapChunk(
+        payload(encodeMapChunk({ type: ServerMessageType.MapChunk, mapId: index.mapId, layer: 0, chunk: wrong })),
+      ),
+    ).toThrow(CodecError);
   });
 
   it('reproduces heights bit for bit, not merely close', () => {
