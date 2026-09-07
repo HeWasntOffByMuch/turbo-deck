@@ -272,3 +272,36 @@ export function offsetToOrbit({ x, y, z }: Vec3): Orbit {
     distance,
   };
 }
+
+/**
+ * A camera offset flattened onto the ground plane: which way the view looks.
+ *
+ * The normalised `-offset` with its height thrown away, in world `xz`. Unit
+ * length, so a caller can use the components directly as a basis rather than
+ * re-normalising them.
+ *
+ * Here rather than at either call site because there are two of them and they
+ * are the same question. `WorldScene.listenerPose` has computed this since spec
+ * 229 to orient the audio listener, and `WorldScene.viewBasis` computes it for
+ * the movement keys (spec 278) -- and "which way is up the screen" answered
+ * separately in two files is two answers that agree until one is edited.
+ *
+ * What is deliberately dropped is the *elevation*. The camera's true forward
+ * dives as the Height slider climbs (10 to 85 degrees), and neither caller
+ * wants that: a listener would begin panning altitude as depth, and the legs
+ * would walk shorter and shorter steps as the view tipped toward straight down.
+ * `camera.up` is never assigned, so the camera's own right vector is exactly
+ * horizontal at every elevation and this basis reproduces it exactly rather
+ * than approximating it.
+ *
+ * Straight overhead has no bearing at all, so it falls back to due north rather
+ * than dividing by zero. The elevation band stops at 85 degrees, which makes
+ * that unreachable today; it costs one branch to not depend on that, and the
+ * fallback is a direction rather than a zero because both callers need a basis
+ * they can use.
+ */
+export function groundForward({ x, z }: Vec3): { x: number; z: number } {
+  const flat = Math.hypot(x, z);
+  if (!(flat > 1e-6)) return { x: 0, z: -1 };
+  return { x: -x / flat, z: -z / flat };
+}

@@ -11,6 +11,7 @@ import {
   DEFAULT_LIGHT_OFFSET,
   DEFAULT_VIEW_HALF_WIDTH,
   followAlpha,
+  groundForward,
   MAX_VIEW_HALF_WIDTH,
   MIN_VIEW_HALF_WIDTH,
   DEFAULT_CAMERA_ORBIT,
@@ -364,5 +365,62 @@ describe('the widest zoom a player chose (spec 202)', () => {
     let span = SUPPORTED_MAX_VIEW_HALF_WIDTH;
     for (let i = 0; i < 20; i++) span = pinchViewHalfWidth(span, 0.5, SUPPORTED_MAX_VIEW_HALF_WIDTH);
     expect(span).toBe(SUPPORTED_MAX_VIEW_HALF_WIDTH);
+  });
+});
+
+describe('groundForward (spec 278)', () => {
+  it('is the offset negated, flattened and normalised', () => {
+    // The camera sits east and above; it therefore looks west, along the
+    // ground, however high up it is.
+    const forward = groundForward({ x: 300, y: 900, z: 0 });
+    expect(forward.x).toBeCloseTo(-1, 9);
+    expect(forward.z).toBeCloseTo(0, 9);
+  });
+
+  it('is a unit vector at every elevation the slider reaches', () => {
+    for (let deg = CAMERA_ELEVATION_MIN_DEG; deg <= CAMERA_ELEVATION_MAX_DEG; deg += 5) {
+      const offset = orbitToOffset({
+        azimuth: 1.1,
+        elevation: (deg * Math.PI) / 180,
+        distance: 6000,
+      });
+      const forward = groundForward(offset);
+      expect(Math.hypot(forward.x, forward.z)).toBeCloseTo(1, 9);
+    }
+  });
+
+  it('throws the height away, so the pitch cannot re-map altitude into depth', () => {
+    // The same bearing at ten degrees and at eighty-five is the same basis. A
+    // camera's *true* forward dives as the pitch climbs, which is what the
+    // listener and the legs both have to be kept away from.
+    const shallow = groundForward(orbitToOffset({ azimuth: 0.7, elevation: 0.17, distance: 6000 }));
+    const steep = groundForward(orbitToOffset({ azimuth: 0.7, elevation: 1.48, distance: 6000 }));
+    expect(steep.x).toBeCloseTo(shallow.x, 9);
+    expect(steep.z).toBeCloseTo(shallow.z, 9);
+  });
+
+  it('is the azimuth turned half a turn', () => {
+    for (const azimuth of [0, 0.4, Math.PI / 2, 2.9, -1.3]) {
+      const forward = groundForward(orbitToOffset({ azimuth, elevation: 0.5, distance: 100 }));
+      const bearing = Math.atan2(forward.z, forward.x);
+      const wanted = Math.atan2(Math.sin(azimuth + Math.PI), Math.cos(azimuth + Math.PI));
+      expect(Math.atan2(Math.sin(bearing - wanted), Math.cos(bearing - wanted))).toBeCloseTo(0, 9);
+    }
+  });
+
+  it('falls back to a direction when the camera is straight overhead', () => {
+    // Unreachable through the slider, which stops at 85 degrees, and it must
+    // not be a zero: both callers use these components as a basis.
+    const forward = groundForward({ x: 0, y: 6000, z: 0 });
+    expect(Math.hypot(forward.x, forward.z)).toBe(1);
+  });
+
+  it('opens looking north-west, which is what the default framing draws', () => {
+    // The camera parks to the south-east at 45 degrees, so "up the screen" is
+    // 45 degrees off due north -- the offset the four movement keys used to be
+    // wrong by even before anybody turned the view.
+    const forward = groundForward(DEFAULT_CAMERA_OFFSET);
+    expect(forward.x).toBeCloseTo(-Math.SQRT1_2, 9);
+    expect(forward.z).toBeCloseTo(-Math.SQRT1_2, 9);
   });
 });

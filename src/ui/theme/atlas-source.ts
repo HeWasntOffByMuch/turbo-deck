@@ -106,7 +106,7 @@ export const PATCHES: Readonly<Record<string, PatchSource>> = {
    * A **patch** rather than one sprite per key, and that is the decision the
    * whole card rests on: a sprite per key is twenty-six letters plus the digits
    * plus `SPACE`, `ESC`, `SHIFT` and `TAB` -- and it would still have nothing to
-   * draw the day somebody rebinds `Move north` to a key nobody authored. A
+   * draw the day somebody rebinds `Move forward` to a key nobody authored. A
    * stretchable cap with the key's own label drawn on it covers every key there
    * is, at whatever width the label needs, from one piece of art.
    *

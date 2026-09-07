@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 import { MOVE_EAST, MOVE_NORTH, MOVE_SOUTH, MOVE_WEST } from '../../../ui/input/actions.js';
-import { aligned, ARRIVE_EPS, moveIntent, RoutePlanner, steerTo, type IntentInput } from './intent.js';
+import {
+  aligned,
+  ARRIVE_EPS,
+  moveIntent,
+  rotateToBasis,
+  RoutePlanner,
+  steerTo,
+  type IntentInput,
+} from './intent.js';
 import { createWorldColliders } from '../../../sim/collision.js';
 import { PATH_RETRY_TICKS, WORLD_BOUNDS } from '../../../sim/constants.js';
 
@@ -762,5 +770,172 @@ describe('a corpse asks for nothing (spec 229)', () => {
     // has to behave exactly as it did.
     const asked = { held: new Set([MOVE_EAST]), destination: { x: 900, y: 0 } };
     expect(intent({ ...asked, dead: false })).toEqual(intent(asked));
+  });
+});
+
+/**
+ * The keys are read in the camera's frame (spec 278).
+ *
+ * Every case here is about `moveBasis` and the four keys, and one of them is
+ * about everything else: the basis must reach `keyDirection` and nothing else,
+ * because a move order, a route and the three aims are points in the world and
+ * turning the view must not move any of them.
+ */
+describe('the camera-relative basis (spec 278)', () => {
+  /** Looking east: the camera sits west of the body. */
+  const EAST = { x: 1, y: 0 };
+  /** Due north, the frame `MOVE_ACTIONS` is written in. */
+  const NORTH = { x: 0, y: -1 };
+
+  it('is exactly the identity with no basis at all', () => {
+    // Not "close to": every existing caller -- the sandboxes, the bots, every
+    // test above -- has no camera, and the server reads an exact zero as "not
+    // asking" (spec 079).
+    expect(intent({ held: new Set([MOVE_NORTH]) }).moveY).toBe(-1);
+    expect(intent({ held: new Set([MOVE_EAST]) }).moveX).toBe(1);
+  });
+
+  it('is exactly the identity when the basis is due north', () => {
+    // Same claim, but through the rotation rather than around it: every term is
+    // a multiplication by 0 or 1, so it is exact rather than nearly so.
+    const north = intent({ held: new Set([MOVE_NORTH]), moveBasis: NORTH });
+    expect(north.moveX).toBe(0);
+    expect(north.moveY).toBe(-1);
+    const east = intent({ held: new Set([MOVE_EAST]), moveBasis: NORTH });
+    expect(east.moveX).toBe(1);
+    expect(east.moveY).toBe(0);
+  });
+
+  it('walks W away from the camera', () => {
+    const walk = intent({ held: new Set([MOVE_NORTH]), moveBasis: EAST });
+    expect(walk.moveX).toBeCloseTo(1, 9);
+    expect(walk.moveY).toBeCloseTo(0, 9);
+  });
+
+  it('turns the other three with it', () => {
+    // Looking east, screen-right is south and screen-left is north.
+    const back = intent({ held: new Set([MOVE_SOUTH]), moveBasis: EAST });
+    expect(back.moveX).toBeCloseTo(-1, 9);
+    const right = intent({ held: new Set([MOVE_EAST]), moveBasis: EAST });
+    expect(right.moveY).toBeCloseTo(1, 9);
+    const left = intent({ held: new Set([MOVE_WEST]), moveBasis: EAST });
+    expect(left.moveY).toBeCloseTo(-1, 9);
+  });
+
+  it('rotates and never reflects, at every basis', () => {
+    // The failure a sign gets you is `A` and `D` swapped at some camera angles
+    // and not others, which is unplayable and looks like a bug in the keyboard.
+    // Left is always a quarter turn anticlockwise from forward, in a `y`-down
+    // frame -- which is `cross(forward, left) < 0` for every basis.
+    for (let deg = 0; deg < 360; deg += 15) {
+      const radians = (deg * Math.PI) / 180;
+      const moveBasis = { x: Math.cos(radians), y: Math.sin(radians) };
+      const forward = intent({ held: new Set([MOVE_NORTH]), moveBasis });
+      const left = intent({ held: new Set([MOVE_WEST]), moveBasis });
+      expect(forward.moveX * left.moveY - forward.moveY * left.moveX).toBeCloseTo(-1, 9);
+    }
+  });
+
+  it('walks W exactly along the basis, at every basis', () => {
+    for (let deg = 0; deg < 360; deg += 15) {
+      const radians = (deg * Math.PI) / 180;
+      const moveBasis = { x: Math.cos(radians), y: Math.sin(radians) };
+      const forward = intent({ held: new Set([MOVE_NORTH]), moveBasis });
+      expect(forward.moveX).toBeCloseTo(moveBasis.x, 9);
+      expect(forward.moveY).toBeCloseTo(moveBasis.y, 9);
+    }
+  });
+
+  it('keeps the diagonal at unit speed, so W+D is still not a sprint', () => {
+    const walk = intent({ held: new Set([MOVE_NORTH, MOVE_EAST]), moveBasis: EAST });
+    expect(Math.hypot(walk.moveX, walk.moveY)).toBeCloseTo(1, 9);
+  });
+
+  it('still cancels opposed keys to an exact zero', () => {
+    // A rotated zero would be a zero, but only by luck of the arithmetic: the
+    // cancellation happens before the rotation, so this is structural.
+    const walk = intent({
+      held: new Set([MOVE_NORTH, MOVE_SOUTH, MOVE_WEST, MOVE_EAST]),
+      moveBasis: { x: 0.37, y: -0.929 },
+    });
+    expect(walk.moveX).toBe(0);
+    expect(walk.moveY).toBe(0);
+  });
+
+  it('faces where it walks rather than where the keys point', () => {
+    const walk = intent({ held: new Set([MOVE_NORTH]), moveBasis: EAST });
+    expect(walk.facing).toBeCloseTo(0, 9);
+  });
+
+  it('falls back to north for a basis that is not a direction', () => {
+    // A zero-length basis is the camera straight overhead and a non-finite one
+    // is a lost pointer or an offset read before it was written. Either way the
+    // answer must be a direction: a NaN on the wire is a body the server cannot
+    // place and the prediction cannot recover.
+    for (const moveBasis of [
+      { x: 0, y: 0 },
+      { x: Number.NaN, y: -1 },
+      { x: 0, y: Number.POSITIVE_INFINITY },
+      null,
+    ]) {
+      const walk = intent({ held: new Set([MOVE_NORTH]), moveBasis });
+      expect(walk.moveX).toBe(0);
+      expect(walk.moveY).toBe(-1);
+    }
+  });
+
+  it('normalises a basis that is not unit length', () => {
+    const walk = intent({ held: new Set([MOVE_NORTH]), moveBasis: { x: 0, y: -9000 } });
+    expect(Math.hypot(walk.moveX, walk.moveY)).toBeCloseTo(1, 9);
+    expect(walk.moveY).toBeCloseTo(-1, 9);
+  });
+
+  it('leaves a move order in the world where it was put', () => {
+    // The whole of "only the keys are rotated". A right-click is a point the
+    // player picked off the screen, so it is camera-relative already and
+    // turning the view must not walk them somewhere else.
+    const walk = intent({ destination: { x: 100, y: 0 }, moveBasis: EAST });
+    expect(walk.moveX).toBeCloseTo(1, 9);
+    expect(walk.moveY).toBeCloseTo(0, 9);
+    const routed = intent({
+      destination: { x: 0, y: 100 },
+      route: { x: 0, y: 100 },
+      moveBasis: EAST,
+    });
+    expect(routed.moveY).toBeCloseTo(1, 9);
+  });
+
+  it('leaves the aims alone too', () => {
+    // A cast aim roots the body and points it at a world point; a basis that
+    // reached it would turn the blow away from what was clicked.
+    const cast = intent({ castAim: { x: 0, y: -50 }, moveBasis: EAST });
+    expect(cast.facing).toBeCloseTo(-Math.PI / 2, 9);
+    const drop = intent({ dropAim: { x: 0, y: -50 }, moveBasis: EAST });
+    expect(drop.facing).toBeCloseTo(-Math.PI / 2, 9);
+    const target = intent({ targetAim: { x: 0, y: -50 }, moveBasis: EAST });
+    expect(target.facing).toBeCloseTo(-Math.PI / 2, 9);
+  });
+});
+
+describe('rotateToBasis (spec 278)', () => {
+  it('preserves length, so a rotation can never become a speed', () => {
+    const basis = { x: -0.6, y: 0.8 };
+    for (const direction of [
+      { x: 1, y: 0 },
+      { x: 0, y: -1 },
+      { x: Math.SQRT1_2, y: Math.SQRT1_2 },
+    ]) {
+      const turned = rotateToBasis(direction, basis);
+      expect(Math.hypot(turned.x, turned.y)).toBeCloseTo(Math.hypot(direction.x, direction.y), 9);
+    }
+  });
+
+  it('preserves the angle between two directions', () => {
+    // A rotation and not a shear: `W` and `W+D` are 45 degrees apart before and
+    // after, whatever the camera is doing.
+    const basis = { x: 0.28, y: 0.96 };
+    const forward = rotateToBasis({ x: 0, y: -1 }, basis);
+    const diagonal = rotateToBasis({ x: Math.SQRT1_2, y: -Math.SQRT1_2 }, basis);
+    expect(forward.x * diagonal.x + forward.y * diagonal.y).toBeCloseTo(Math.SQRT1_2, 9);
   });
 });

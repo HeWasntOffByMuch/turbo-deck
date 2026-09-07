@@ -52,14 +52,26 @@ export interface MoveIntent {
 }
 
 /**
- * Which *actions* drive which way, in the sim's axes: +y is "down the screen"
- * (south), matching the terrain module's `z`.
+ * Which *actions* drive which way, in the basis the keys are read in: +y is
+ * "toward the viewer" and -y is "up the screen".
+ *
+ * Since spec 278 that is a *camera-relative* basis rather than the compass, and
+ * the table did not move because it never had to: these four are the frame
+ * {@link IntentInput.moveBasis} rotates out of, and with no basis the rotation
+ * is the identity and they are the world axes they have always been -- +y down
+ * the screen, matching the terrain module's `z`. So a caller with no camera
+ * (the sandboxes, the bots, a test) reads exactly the table below.
  *
  * Four entries, not eight (spec 125). This used to be keyed by `KeyboardEvent.code`
  * and list WASD and the arrows separately -- which is two bindings of one action
  * spelled as two actions, and put "the arrows walk too" in a table no player
  * could reach. The arrows are now the secondary binding of these four, in
  * `src/ui/input/bindings.json`, where they can be changed.
+ *
+ * The ids still say north and south, and that is deliberate: an id is what a
+ * stored profile references, so renaming one is a player's binding silently
+ * discarded (spec 189). What the *player* is shown moved with the basis --
+ * `bindings.json` labels them forward, back, left and right.
  */
 export const MOVE_ACTIONS: Readonly<Record<string, readonly [number, number]>> = {
   [MOVE_NORTH]: [0, -1],
@@ -165,6 +177,35 @@ export function heldAfterHold(
 export interface IntentInput {
   /** Action ids currently held. See {@link MOVE_ACTIONS}. */
   readonly held: ReadonlySet<string>;
+  /**
+   * The unit vector `move.north` walks along -- "up the screen" (spec 278).
+   *
+   * The camera has been turnable since spec 129, so the four keys pointing at
+   * the compass meant that what `W` does on screen was a function of a slider
+   * the player was also holding: 45 degrees off the screen's own up at the
+   * opening framing, and walking toward the viewer half a turn away. Every
+   * other control here is aimed off the screen with the cursor and so is
+   * camera-relative by construction; this is the one that is not.
+   *
+   * Rotating the *keys* rather than the answer is the whole of it. A move
+   * order, a route, a cast aim, a drop aim and an attack mark are all points in
+   * the world, and turning the view must not move any of them -- so the basis
+   * reaches `keyDirection` and nothing else.
+   *
+   * Absent or null is `(0, -1)`, true north, which makes the rotation the
+   * identity exactly: every term is a multiplication by 0 or 1, so the
+   * sandboxes, the bots and every test that predates this behave byte for byte
+   * as they did. A degenerate vector -- zero length, or a component that is not
+   * finite -- reads as absent rather than as a NaN the server would have to
+   * defend against.
+   *
+   * What supplies it is the **drawn** camera (`WorldScene.viewBasis`, off
+   * `camOffsetCurrent`) rather than the control's target azimuth, which is what
+   * makes the walk turn with the view at the view's own rate. There is
+   * deliberately no easing here: the camera already has one, and a second would
+   * be a second thing to keep in step with it.
+   */
+  readonly moveBasis?: Point | null;
   /** Where the body is now -- the predicted position, not the replica. */
   readonly self: Point;
   /** The standing move order from the last right-click, or null. */
@@ -299,7 +340,7 @@ export interface IntentInput {
 }
 
 export function moveIntent(input: IntentInput): MoveIntent {
-  const keyed = keyDirection(input.held);
+  const keyed = keyDirection(input.held, input.moveBasis);
   // Arrival is measured against the *order*, never against a waypoint: reaching
   // a corner is not reaching where you were going, and clearing the order there
   // would strand the player at the first turn.
@@ -424,8 +465,17 @@ export function aligned(facing: number, wanted: number): boolean {
   return Math.abs(Math.atan2(Math.sin(facing - wanted), Math.cos(facing - wanted))) <= ALIGNED_RADIANS;
 }
 
-/** The normalised direction the held keys ask for, or null when they cancel out. */
-function keyDirection(held: ReadonlySet<string>): Point | null {
+/**
+ * The normalised direction the held keys ask for, in world axes, or null when
+ * they cancel out.
+ *
+ * Summed in {@link MOVE_ACTIONS}' own frame and rotated into `basis` once, at
+ * the end -- rather than rotating each axis on the way in, which is four
+ * rotations for one answer and would round the cancellation of two opposed keys
+ * into a hair of movement instead of the exact zero the server reads as "not
+ * asking" (spec 079).
+ */
+function keyDirection(held: ReadonlySet<string>, basis: Point | null | undefined): Point | null {
   let x = 0;
   let y = 0;
   for (const code of held) {
@@ -434,7 +484,46 @@ function keyDirection(held: ReadonlySet<string>): Point | null {
     x += axis[0];
     y += axis[1];
   }
-  return normalise(x, y);
+  const keyed = normalise(x, y);
+  return keyed === null ? null : rotateToBasis(keyed, basis);
+}
+
+/**
+ * A direction in {@link MOVE_ACTIONS}' frame, in world axes (spec 278).
+ *
+ * `basis` is where `-y` points -- up the screen. Screen *right* is derived from
+ * it rather than passed beside it, because a forward and a right authored
+ * separately are one sign away from a reflection, and a reflected basis is a
+ * game where `A` and `D` are swapped at some camera angles and not others.
+ *
+ * The pair is `f = (fx, fy)` and `r = (-fy, fx)`, whose determinant is
+ * `fx^2 + fy^2 = 1` -- a rotation, never a mirror, for every basis this can be
+ * handed. No trigonometry: the camera's bearing arrives as components and is
+ * wanted as components, so an angle would be an `atan2` in and a `cos`/`sin`
+ * out for a quantity neither end asked for in radians.
+ *
+ * Exported for the tests, which assert the handedness and the identity directly
+ * rather than through a whole `moveIntent`.
+ */
+export function rotateToBasis(direction: Point, basis: Point | null | undefined): Point {
+  if (!basis) return direction;
+  const { x: fx, y: fy } = basis;
+  // A basis that is not a direction is not one to rotate into. Zero length is
+  // the camera straight overhead and a non-finite component is a lost pointer
+  // or an uninitialised offset; both fall back to the frame the table is
+  // written in rather than emitting a NaN, which the server would have to
+  // defend against and the prediction could not recover from.
+  if (!Number.isFinite(fx) || !Number.isFinite(fy)) return direction;
+  const length = Math.hypot(fx, fy);
+  if (!(length > 1e-6)) return direction;
+  const nx = fx / length;
+  const ny = fy / length;
+  return {
+    // `k.x * r - k.y * f`, written out. North `(0, -1)` lands on `f` and east
+    // `(1, 0)` lands on `r`, so a basis of `(0, -1)` is the identity exactly.
+    x: -direction.x * ny - direction.y * nx,
+    y: direction.x * nx - direction.y * ny,
+  };
 }
 
 /**
