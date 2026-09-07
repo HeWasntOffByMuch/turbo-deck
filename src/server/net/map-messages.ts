@@ -16,15 +16,19 @@
 
 import {
   MAP_QUANTUM,
+  SPAWN_WINDOWS,
+  spawnerSettingsEmpty,
   type MapChunk,
   type MapMarker,
   type MapMarkerKind,
   type MapPoint,
   type MapProp,
   type MapRect,
+  type SpawnWindow,
 } from '../../terrain/map.js';
 import { BufferReader, BufferWriter, CodecError } from './codec.js';
 import {
+  MapMarkerFlag,
   MapMarkerKindValue,
   MapPropFlag,
   ServerMessageType,
@@ -296,6 +300,31 @@ export function encodeMapChunk(msg: MapChunkMessage): Uint8Array {
     w.str(marker.id);
     w.varint(q(marker.x)).varint(q(marker.z));
     w.str(marker.label ?? '');
+    // A spawner's own clock, leash and hours, and only where the document
+    // carries them (spec 279). `spawnerSettingsEmpty` rather than testing the
+    // three fields here, because that is already the one answer to "does this
+    // block say anything" -- shared with the parser, which normalizes an empty
+    // block to absent, and with the editor, which drops one somebody emptied.
+    // So a `spawner: {}` nobody could have written a document for encodes as
+    // absent rather than as a key the decoder would then invent.
+    const spawner = marker.spawner !== undefined && !spawnerSettingsEmpty(marker.spawner)
+      ? marker.spawner
+      : undefined;
+    const window = spawner?.when === undefined ? -1 : SPAWN_WINDOWS.indexOf(spawner.when);
+    if (window === -1 && spawner?.when !== undefined) {
+      throw new CodecError(`unknown spawn window: ${spawner.when}`);
+    }
+    w.u8(
+      (spawner?.respawnSeconds === undefined ? 0 : MapMarkerFlag.Respawn) |
+        (spawner?.leashRadius === undefined ? 0 : MapMarkerFlag.Leash) |
+        (window < 0 ? 0 : MapMarkerFlag.Window),
+    );
+    // In bit order, which is the only thing that makes a flags byte readable
+    // from the other end -- the same contract a prop's light and message are
+    // under, one message along.
+    if (spawner?.respawnSeconds !== undefined) w.varint(q(spawner.respawnSeconds));
+    if (spawner?.leashRadius !== undefined) w.varint(q(spawner.leashRadius));
+    if (window >= 0) w.u8(window);
   }
 
   return w.toBytes();
@@ -375,7 +404,35 @@ export function decodeMapChunk(r: BufferReader): MapChunkMessage {
     const x = unq(r.varint());
     const z = unq(r.varint());
     const label = r.str();
-    markers[i] = { kind, id, x, z, ...(label === '' ? {} : { label }) };
+    const flags = r.u8();
+    const settings: {
+      respawnSeconds?: number;
+      leashRadius?: number;
+      when?: SpawnWindow;
+    } = {};
+    if ((flags & MapMarkerFlag.Respawn) !== 0) settings.respawnSeconds = unq(r.varint());
+    if ((flags & MapMarkerFlag.Leash) !== 0) settings.leashRadius = unq(r.varint());
+    if ((flags & MapMarkerFlag.Window) !== 0) {
+      const index = r.u8();
+      const window = SPAWN_WINDOWS[index];
+      if (window === undefined) throw new CodecError(`spawn window out of range: ${index}`);
+      settings.when = window;
+    }
+    // A block on a kind that cannot read one is a frame `parseMap` would refuse
+    // (spec 222 makes it spawner-only), so it is refused here too: the wire and
+    // the document have to agree about what a marker may be, or a client ends up
+    // holding a campfire with a leash on it.
+    if (!spawnerSettingsEmpty(settings) && kind !== 'spawner') {
+      throw new CodecError(`marker ${id} of kind ${kind} carries spawner settings`);
+    }
+    markers[i] = {
+      kind,
+      id,
+      x,
+      z,
+      ...(label === '' ? {} : { label }),
+      ...(spawnerSettingsEmpty(settings) ? {} : { spawner: settings }),
+    };
   }
 
   return {
