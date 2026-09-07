@@ -1813,7 +1813,7 @@ export class GameClient {
       return {
         abilityId: confirmed.abilityId,
         // Not replicated either, and false is the honest answer rather than a
-        // guess (spec 279): whether a swing has lost its mark decides only what
+        // guess (spec 280): whether a swing has lost its mark decides only what
         // the *server* lands, and this copy exists to drive the local cast bar
         // and the commitment window.
         disjointed: false,

@@ -1318,7 +1318,7 @@ export function step(
     const owner = working.get(flight.ownerId);
     const ability = abilityById(flight.abilityId);
     // The two ways a shot leaves without landing, together, and asked before it
-    // is moved so that everything below may assume a shooter (spec 279).
+    // is moved so that everything below may assume a shooter (spec 280).
     //
     // **A shot outlives its target but not its shooter.** Everything an impact
     // needs is measured from the body that loosed it: `isHostile` reads its
@@ -1348,7 +1348,7 @@ export function step(
     // ground. Nothing was ever scheduled, so there is nothing to un-schedule --
     // the travel is the only thing that decides when, or whether, this lands.
     //
-    // **And a disjoint is permanent** (spec 279). This was re-derived from the
+    // **And a disjoint is permanent** (spec 280). This was re-derived from the
     // mark's *current* health every tick, so it was false while a player was a
     // corpse and true again the instant they respawned -- and a respawn is a
     // teleport, so the shot turned and followed them to the spawn pad, and
@@ -1419,12 +1419,12 @@ export function step(
       // the reason it reaches a Quake: the radius is what a player walks out of.
       //
       // Worked out *before* the effect event rather than two lines after it
-      // (spec 279), which is `landPoint`'s order and had to be this one's: the
+      // (spec 280), which is `landPoint`'s order and had to be this one's: the
       // ring the client draws is the whole of how a player knows where "out of
       // it" is, and drawing the authored radius while damaging at the shaped one
       // made the picture wrong for exactly the builds that bought the shaping.
       const blastRadius = ability.radius * (1 + owner.stats.traits.spellRadiusPct);
-      // A corpse is not caught by a burst (spec 279). `landOnTarget`, `landCone`,
+      // A corpse is not caught by a burst (spec 280). `landOnTarget`, `landCone`,
       // `landPoint` and `landArea` each skip one and only `isHostile` was asked
       // here, which has never known about health -- so a body that died earlier
       // in this same tick, two passes before the sweep, took a blow that computed

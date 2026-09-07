@@ -507,7 +507,7 @@ describe('the beam (spec 262)', () => {
   });
 });
 
-describe('a lance that lost its mark (spec 279)', () => {
+describe('a lance that lost its mark (spec 280)', () => {
   it('does not swing round after a body that died and respawned', () => {
     // The lock-on is 1.8s and the beam 2s, so there is nearly four seconds in
     // which a player can die and press Respawn -- and a respawn is a teleport.

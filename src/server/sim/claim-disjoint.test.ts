@@ -1,5 +1,5 @@
 /**
- * A claim on a body does not outlive that body (spec 279).
+ * A claim on a body does not outlive that body (spec 280).
  *
  * Two places in the sim hold a claim on a named body across ticks -- a shot in
  * the air and a swing mid-wind-up -- and both used to re-derive "is my mark

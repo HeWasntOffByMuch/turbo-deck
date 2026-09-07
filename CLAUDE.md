@@ -3979,7 +3979,7 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  mutation fails exactly the test written for it, including the
                  turning one, whose first cut asserted a miss and so passed on
                  the default with the alignment re-stamp deleted.
-                 **A claim on a body does not outlive that body** (spec 279),
+                 **A claim on a body does not outlive that body** (spec 280),
                  which is the rule the rest of the sim already followed and
                  three places did not. `settle` calms a monster on the tick its quarry
                  hits zero health so that `Calm <-> targetId === null` is an

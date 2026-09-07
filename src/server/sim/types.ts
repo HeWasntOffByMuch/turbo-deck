@@ -273,7 +273,7 @@ export interface CastState {
    */
   readonly targetInReach: boolean;
   /**
-   * Has this cast lost the body it named (spec 279)?
+   * Has this cast lost the body it named (spec 280)?
    *
    * `landOnTarget` misses on a target that is absent or at zero health, which
    * covers a mark that stays dead -- and a *player* does not: `respawn` heals
@@ -378,7 +378,7 @@ export interface ProjectileState {
    * it last had and flies on to that spot. Nothing was scheduled, so there is
    * nothing to un-schedule -- the travel is the only thing that decides.
    *
-   * It is **not** cleared by that (spec 279), because it answers a second
+   * It is **not** cleared by that (spec 280), because it answers a second
    * question that has to keep its answer: a shot that named a body resolves
    * against that body and nothing else, so a disjointed one must go on refusing
    * the bystander who wanders into the line. What the chase is over is
@@ -386,7 +386,7 @@ export interface ProjectileState {
    */
   readonly targetEntityId: number;
   /**
-   * Has this shot lost the body it named (spec 279)?
+   * Has this shot lost the body it named (spec 280)?
    *
    * **A disjoint is permanent.** It was re-derived every tick as "is my mark
    * present and above zero health", which is false while a player is a corpse

@@ -747,7 +747,7 @@ export function startCast(
 
   const cast: CastState = {
     abilityId: ability.id,
-    // A fresh cast has lost nothing yet (spec 279); `advanceCast` is what
+    // A fresh cast has lost nothing yet (spec 280); `advanceCast` is what
     // observes the corpse and latches it.
     disjointed: false,
     spentResource: Math.min(cost, entity.resource),
@@ -1380,12 +1380,12 @@ export function advanceCast(
   // What the corpse itself needs is almost nothing: `landOnTarget` misses on a
   // target that is absent or at zero health, and `landCone` skips one. The one
   // thing those two cannot see is a mark that is *not a corpse any more* by the
-  // release, which is spec 279's latch a few lines below.
+  // release, which is spec 280's latch a few lines below.
   /**
    * The body this cast named, as `candidates` has it *this* tick.
    *
    * One lookup with three readers -- the cancel below, the two places
-   * `targetInReach` is stamped, and spec 279's latch -- because they are all
+   * `targetInReach` is stamped, and spec 280's latch -- because they are all
    * asking the same question of the same list, and three `find`s over it were
    * three chances for them to come to different answers about the same body on
    * the same tick. `undefined` for a cast that names nobody, and for one whose
@@ -1414,7 +1414,7 @@ export function advanceCast(
   let currentRng = rng;
   let caster = entity;
 
-  // --- and past the turn, the mark is lost rather than the cast (spec 279) ---
+  // --- and past the turn, the mark is lost rather than the cast (spec 280) ---
   //
   // The paragraph above says the blow "completes and finds what it finds", and
   // that `landOnTarget` needs nothing new because it misses on a body that is
@@ -1823,7 +1823,7 @@ export function applyToTarget(
   tick: number,
 ): { readonly attacker: ServerEntity; readonly target: ServerEntity; readonly events: readonly ServerSimEvent[]; readonly rng: Rng } {
   // A corpse takes no blow, as a property of the one seam every hostile landing
-  // goes through rather than as four habits (spec 279). `landOnTarget`,
+  // goes through rather than as four habits (spec 280). `landOnTarget`,
   // `landCone`, `landPoint`, `landArea` and the affliction pulse each guard it
   // and the projectile burst did not, which is all it takes: `resolveBlow`
   // computes `killed` from `max(0, health - damage)`, true for a body already at
@@ -2179,7 +2179,7 @@ function launchProjectile(
   const state: ProjectileState = {
     abilityId: ability.id,
     ownerId: caster.id,
-    // It leaves the bow holding whatever the *cast* still held (spec 279).
+    // It leaves the bow holding whatever the *cast* still held (spec 280).
     //
     // Inherited rather than opened at false, because the wind-up is long enough
     // for a mark to die and respawn inside it: the cast latched the loss, and a

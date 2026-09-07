@@ -162,7 +162,7 @@ export function wardenClaim(
     // to different answers on the same tick.
     const held = cast.targetEntityId > 0 ? (entities.get(cast.targetEntityId) ?? null) : null;
     // And `cast.disjointed`, which is that commitment held rather than re-asked
-    // (spec 279). `held.health > 0` alone is false while a player is a corpse
+    // (spec 280). `held.health > 0` alone is false while a player is a corpse
     // and true again the instant they respawn -- and a respawn is a *teleport*,
     // so over the 1.8s lock-on and the 2s beam the lance would swing round after
     // a body that had left the fight entirely, sweeping whoever was standing
