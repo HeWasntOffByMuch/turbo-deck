@@ -12,6 +12,8 @@ import {
   accountButtonCaption,
   bottomEdge,
   centredClearance,
+  coverDetailWidth,
+  coverLabelWidth,
   errorLineWidth,
   errorStackBottom,
   ACTION_SLOT_CSS,
@@ -34,6 +36,12 @@ import {
   windowButtonCaptionMaxChars,
 } from './hud-layout.js';
 import { BAR_SLOT_COUNT } from './action-bar.js';
+import {
+  ASKING_DETAIL,
+  BUILDING_DETAIL,
+  COVER_LABEL,
+  RESPAWN_COVER_TIMEOUT_MS,
+} from './respawn-gate.js';
 import { barWidth } from '../../../ui/screens/action-bar.js';
 import { THEME } from '../../../ui/theme/theme.js';
 import { SYSTEM_BUTTONS, WEAPON_SWITCH } from './hud.js';
@@ -330,6 +338,26 @@ describe('the HUD layout', () => {
     expect(errorStackBottom(desktop, buttons)).toBeGreaterThan(
       errorStackBottom(compact, buttons),
     );
+  });
+
+  it('fits the longest thing a respawn cover can say on a phone', () => {
+    // Both strings are authored, so what has to hold is arithmetic rather than
+    // a guess about a name somebody typed: the widest label and the widest
+    // detail the gate can produce, at the compact scales, inside the frame.
+    const widest = [ASKING_DETAIL, BUILDING_DETAIL, `SHOWING THE WORLD IN ${String(
+      RESPAWN_COVER_TIMEOUT_MS / 1000,
+    )}`, '999 / 999 CHUNKS'].reduce((a, b) => (b.length > a.length ? b : a));
+    const frame = PHONE_LANDSCAPE.width - compact.edge * 2;
+    expect(coverLabelWidth(compact, COVER_LABEL)).toBeLessThanOrEqual(frame);
+    expect(coverDetailWidth(compact, widest)).toBeLessThanOrEqual(frame);
+    // Bigger on a desktop, the rule every scale in this table follows.
+    expect(coverLabelWidth(desktop, COVER_LABEL)).toBeGreaterThan(
+      coverLabelWidth(compact, COVER_LABEL),
+    );
+    // ...and under the death banner it replaces, which is the one thing the
+    // scale was chosen against: a status set at a shout's size reads as a shout.
+    expect(desktop.coverLabelScale).toBeLessThan(8);
+    expect(compact.coverLabelScale).toBeLessThan(5);
   });
 
   it('draws a refusal wider on a desktop than on a phone, and both fit', () => {
