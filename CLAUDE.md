@@ -82,6 +82,7 @@ change a game outcome.
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
 | `npx tsx scripts/probe-warden.ts` | What the Warden is doing, tick by tick (spec 262): the state it is in, the body its lance is committed to, where that lance points against where the body does, the state's own clock, both Guard pools and every pulse that lands. It exists because the encounter *is* timing, which is the one thing a pass/fail test says nothing about -- `warden.test.ts` asserts that stepping aside works, and only this says whether stepping aside is a half-second decision or a two-second one. `--strafe` reacts once the beam is live, `--orbit` never stops moving, `--at N` fights it from further out. On the shipped numbers one beam costs a body that stands still all **eight** of its pulses and a body that moves **two** -- and the gap widens with range rather than closing, because a lane sweeps its tip faster the further out you are: at 400 units the same reaction costs six |
 | `npx tsx scripts/probe-already-casting.ts` | Where `alreadyCasting` comes from in an ordinary fight (spec 264). Drives the shipped loop against a real server over a delayed wire -- `autoAttack` deciding the swings, `startAim` deciding the presses -- and counts every refusal by reason beside the phase the caster's **own** cast was in when the press was made. It has to run both halves at once, which is why no existing harness could have found this: `auto-attack-wire.test.ts` swings and asserts the refusals are `staggered` and nothing else, and that still holds. Add the presses and thirteen of them were refused thirteen times, a third during a *follow-through*. `--now` is the control, sending on the press as `castNow` did; `--no-press` is the swings-only half |
+| `npm run build && npx tsx scripts/probe-camera-relative.ts` | Whether the movement keys are read in the camera's frame, in the shipped page (spec 278). Three questions, because each can be true while the next is false: `data-move-basis` follows the camera, the **legs** follow `data-move-basis` (measured off `data-self-at`, since a basis computed correctly and wired to nothing passes the first check perfectly), and the basis **trails** `data-camera-orbit` during a swing and converges after -- both halves, because steered by the slider instead the two would be equal on every frame, which is also what a broken ease reads as. Every wait is a poll: the swing and the ease are both per-frame quantities (`orbitStep` clamps its step to a tenth of a second, `CAMERA_SMOOTH` closes 15% of the gap a frame), so a turn that takes a second on a real machine takes several here and a constant wait reads the bearing before the turn. A walk is measured for **straightness** as well as distance, because a body sliding along one of the arena's 6942 trunks travels perfectly well in the wrong direction -- the one failure that would otherwise read as a wrongly rotated basis |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
 | `npx tsx scripts/preview-afflictions.ts` | Run the seven afflictions through the real pass and print the curve each one actually is (spec 190) |
@@ -5835,7 +5836,78 @@ src/render/iso3d/world/ the Play tab (spec 063, spec 057's stage 3): the isometr
                  grow only parks the head in the future of a server that
                  restarted and every remote body goes back to the 20Hz stutter
                  for good, for the players who reconnected alone),
-                 intent.ts, target.ts (the
+                 intent.ts (the keys, in the **camera's** frame since spec 278:
+                 `moveBasis` is the unit vector `move.north` walks along, and
+                 `keyDirection` sums `MOVE_ACTIONS` in its own table's frame and
+                 rotates the answer into it once, at the end -- four rotations
+                 on the way in would round two opposed keys into a hair of
+                 movement rather than the exact zero the server reads as "not
+                 asking". The camera has been turnable since spec 129 and the
+                 four keys went on pointing at the compass for a hundred and
+                 fifty specs, so what `W` did on screen was a function of a
+                 slider the player was also holding: 45 degrees off the screen's
+                 own up at the opening framing, and walking *toward* the viewer
+                 half a turn away. Every other control here is aimed off the
+                 screen with the cursor and so was camera-relative already.
+                 Four decisions. **Only the keys are rotated** -- a move order, a
+                 route, a cast aim, a drop aim and an attack mark are points in
+                 the world, and turning the view must not move any of them, so
+                 the basis reaches `keyDirection` and nothing else. **Screen
+                 right is derived from forward** (`r = (-f.y, f.x)`) rather than
+                 passed beside it, because a pair authored separately is one sign
+                 from a reflection -- and a reflected basis is `A` and `D`
+                 swapped at some camera angles and not others, which reads as a
+                 broken keyboard; the determinant is `fx^2 + fy^2 = 1`, so it is
+                 a rotation for every basis it can be handed, asserted over a
+                 whole turn rather than at one angle. **A vector, not an angle**,
+                 so there is no trigonometry in it at all: the camera's bearing
+                 arrives as components and is wanted as components, and an angle
+                 would be an `atan2` in and a `cos`/`sin` out for a quantity
+                 neither end asked for in radians. And **absent is the identity,
+                 exactly** -- every term is a multiplication by 0 or 1 -- which
+                 is what let the two sandboxes, the bots and every test that
+                 predates it stay byte for byte unchanged.
+                 Where the basis comes from is `WorldScene.viewBasis`, off
+                 `groundForward(camOffsetCurrent)` -- the **drawn** camera, never
+                 `controls.cameraOffset()`, which is where the slider currently
+                 points. `applyControls` eases the one toward the other at
+                 `CAMERA_SMOOTH` a frame, and that ease *is* the smoothness:
+                 there is deliberately no easing in this feature, because a
+                 second one would be a second thing to keep in step with the
+                 picture. Steered by the target instead, a flicked two-finger
+                 swipe -- which moves the target in one jump, where `[`/`]` move
+                 it continuously -- would re-aim the body instantly toward a
+                 bearing that is not on screen yet. `groundForward` lives in
+                 `view-settings.ts` because it already existed twice over:
+                 `listenerPose` has flattened the same offset for the audio
+                 listener since spec 229 and spends four lines saying why, and
+                 "which way is up the screen" answered separately in two files is
+                 two answers that agree until one is edited. What it drops is the
+                 *elevation*, which both callers need dropped -- the camera's
+                 true forward dives as the Height slider climbs, so a listener
+                 would pan altitude as depth and the legs would take shorter
+                 steps as the view tipped toward straight down.
+                 The four action **ids** did not move, because an id is what a
+                 stored profile references and renaming one is a player's binding
+                 silently discarded (spec 189); the four **labels** did, to
+                 forward/back/left/right, and `bindings.json`'s version did not,
+                 since a label is not persisted. `data-move-basis` is the
+                 observable -- the bearing `move.north` currently walks along,
+                 published from the vector actually handed to `moveIntent` rather
+                 than recomputed at publish time, which is `data-props`' rule and
+                 its reason. Beside `data-camera-orbit`, which is the *target*
+                 off the slider, it is also the only way to see the ease at all
+                 on a container that paints five frames a second: the two
+                 disagree during a swing by exactly the lag and converge after
+                 it. `npx tsx scripts/probe-camera-relative.ts` is the half no
+                 headless test can reach, and it needs all three of its questions
+                 -- a basis wired to nothing passes the attribute check
+                 perfectly, so the walked bearing is measured off `data-self-at`
+                 as well, and a walk is checked for **straightness** rather than
+                 only distance, since a body sliding along one of the arena's
+                 6942 trunks travels perfectly well in the wrong direction and is
+                 otherwise indistinguishable from a wrongly rotated basis),
+                 target.ts (the
                  right-click attack order, spec 072), cast.ts, appearance.ts,
                  projectile-shape.ts and trail.ts (an arrow's and a shuriken's
                  silhouettes, and the streak a thrown star leaves, spec 087)

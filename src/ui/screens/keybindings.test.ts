@@ -187,7 +187,7 @@ describe('conflicts', () => {
     built.beginCapture('move.south', 'primary');
     built.captureKey('KeyW', NONE);
 
-    expect(built.conflict).toContain('Move north');
+    expect(built.conflict).toContain('Move forward');
     // Both live. Refusing would make swapping two keys impossible.
     expect([...map.resolve('KeyW', NONE, 'gameplay')].sort()).toEqual(['move.north', 'move.south']);
   });
@@ -271,8 +271,13 @@ describe('filtering', () => {
 
   it('matches the label and the id, case-insensitively', () => {
     const { screen: built } = screen();
+    // One row, reachable by two different strings -- and since spec 278 they are
+    // genuinely two, because the label and the id stopped agreeing: the keys are
+    // read in the camera's frame now, so `move.north` is labelled `Move
+    // forward`. The pair used to be one label match written twice.
+    //
     // Case-insensitive: shouting at it finds the same row.
-    built.filter.setText('MOVE NORTH');
+    built.filter.setText('MOVE FORWARD');
     built.refresh();
     expect(built.visibleRows().map((row) => row.action.id)).toEqual(['move.north']);
 
@@ -368,7 +373,7 @@ describe('capturing a mouse button', () => {
     //
     // At the gallery's viewport rather than this file's, and the difference is
     // the whole point of stating one: the harness above builds at 260x180, which
-    // is under the theme's smallest supported frame, and `Move north` does not
+    // is under the theme's smallest supported frame, and `Move forward` does not
     // fit its own column even today. 400x300 is where the goldens are judged.
     //
     // One screen per tab, and not for tidiness: a tab switched away is hidden

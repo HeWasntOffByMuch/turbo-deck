@@ -1455,6 +1455,15 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   let lastUiCost = '';
   /** The last camera pair published, so a still view invalidates no styles. */
   let lastCamera = '';
+  /**
+   * The basis the last input was actually built with, and the last bearing
+   * published from it (spec 278). Null until the first input, because "the walk
+   * has not been steered yet" is a different thing from any bearing it could be
+   * given, and publishing a default would be the attribute answering for a
+   * frame that never happened.
+   */
+  let lastMoveBasis: { x: number; y: number } | null = null;
+  let lastMoveBearing = '';
   function publishUiReadout(): void {
     const readout = ui.readout();
     // Its own comparison, because this one moves on its own: it is the worst of
@@ -4128,8 +4137,21 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     });
     castPress = null;
 
+    // Which way "up the screen" is, off the **drawn** camera (spec 278). Only
+    // the keys are rotated by it: the destination, the route and the three aims
+    // below are points in the world, and turning the view must not move any of
+    // them.
+    //
+    // Read here rather than plumbed in from the frame loop because it is a pure
+    // read of a value that cannot change inside a frame -- `applyControls` eases
+    // the offset once, during `scene.update` -- so on a frame that drains three
+    // ticks all three are steered by the same bearing, which is the one that
+    // was on screen when the player was looking at it.
+    const moveBasis = scene.viewBasis();
+    lastMoveBasis = moveBasis;
     const intent = moveIntent({
       held: heldAfterHold(held, swingHeld),
+      moveBasis,
       self: me,
       destination,
       // Routed once and remembered, not re-searched every tick: an A* at 60Hz
@@ -4687,6 +4709,26 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       const [orbit, zoom] = camera.split('|');
       root.dataset['cameraOrbit'] = orbit;
       root.dataset['cameraZoom'] = zoom;
+    }
+
+    // Which world bearing `move.north` currently walks along, in degrees
+    // (spec 278) -- the one number that says the legs are being steered by the
+    // camera at all, and the one thing no headless test can see, since every
+    // rule about the rotation is green in Node beside a `sendInput` that passes
+    // no basis.
+    //
+    // Published from the vector actually handed to `moveIntent` rather than
+    // re-read here, which is `data-props`' rule and its reason: `applyControls`
+    // runs between the two, so a basis recomputed at publish time could be a
+    // bearing the walk was never steered by -- and one computed and wired to
+    // nothing would read as correct. Absent until the first input has been
+    // built, because there is no answer before then rather than a default one.
+    if (lastMoveBasis !== null) {
+      const bearing = ((Math.atan2(lastMoveBasis.y, lastMoveBasis.x) * 180) / Math.PI).toFixed(2);
+      if (bearing !== lastMoveBearing) {
+        lastMoveBearing = bearing;
+        root.dataset['moveBasis'] = bearing;
+      }
     }
 
     // The setting is the subscription (spec 076): turning it on is what asks

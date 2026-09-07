@@ -14,7 +14,8 @@ import { DEFAULT_SPAWN } from '../player/player-manager.js';
 import { GameServer } from '../server.js';
 import { buildWorldFromMap } from '../world/build.js';
 import { loadMapFile } from '../world/map-file.js';
-import { spawnPointsFrom } from '../world/spawners.js';
+import { spawnPointsFrom, spawnWindowOpen } from '../world/spawners.js';
+import { worldClockAt } from '../data/day-night.js';
 import { GameClient } from './game-client.js';
 
 /**
@@ -157,8 +158,18 @@ describe('watching the map spawners', () => {
       // representable, and it failed the moment one was not.
       expect(status.x).toBeCloseTo(point?.x ?? Number.NaN, 3);
       expect(status.y).toBeCloseTo(point?.y ?? Number.NaN, 3);
-      // Everything is filled on the first tick, so nothing is counting down.
-      expect(status.state).toBe(SpawnerStateValue.Occupied);
+      // Everything whose hours are open is filled on the first tick, so nothing
+      // is counting down. A point that keeps hours is the exception and it is
+      // the map's first (spec 268): tick 0 is the first tick of *Day*
+      // (spec 264), so a `night` spawner has not filled and never will until the
+      // sun goes down -- which is `Holding` rather than a countdown, because
+      // what it is waiting for is not a clock this message carries.
+      //
+      // Asserted per point rather than relaxed to "either", or the day somebody
+      // breaks filling outright every spawner on the map reads as nocturnal.
+      const shut = point !== undefined && !spawnWindowOpen(point.when, worldClockAt(0));
+      expect(status.state, `${status.id} keeps ${String(point?.when)} hours`)
+        .toBe(shut ? SpawnerStateValue.Holding : SpawnerStateValue.Occupied);
       expect(status.ticks).toBe(0);
     }
   });

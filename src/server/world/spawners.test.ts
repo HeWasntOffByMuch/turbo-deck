@@ -122,7 +122,7 @@ describe('reading spawners out of a map', () => {
 describe('the shipped map', () => {
   const shipped = loadMapFile().doc;
 
-  /** How long a walk from the spawn point still counts as content a player meets. */
+  /** How long a walk between two camps still counts as content a player meets. */
   const REACH_SECONDS = 45;
 
   it('places spawners, and every one names a monster in the table', () => {
@@ -173,35 +173,74 @@ describe('the shipped map', () => {
   });
 
   /**
-   * The other half: on the map is not the same as in the game. The world is
-   * 18,480 across and a spawner in the far corner of it is content nobody will
-   * ever walk to.
+   * The other half: on the map is not the same as in the game. A spawner in the
+   * far corner of the world is content nobody will ever walk to.
    *
    * The bound is derived rather than picked. `MOVE_SPEED_HARD_MIN` is the
    * slowest anything in this game may ever move, so `MOVE_SPEED_HARD_MIN *
    * REACH_SECONDS` is the distance even the slowest body covers in
    * `REACH_SECONDS` -- which makes it a distance *anybody* is inside that walk
-   * of, rather than a number somebody liked. It is not a loose bound: that
-   * circle is 19% of the world's area, so the other 81% still fails.
+   * of, rather than a number somebody liked.
    *
-   * `REACH_SECONDS` was twenty, and twenty was a claim about how far out the
-   * map had been *built* rather than about how far a player will walk. The
-   * spider nest east of the square sits 3,610-4,065 out, which is a place
-   * somebody put monsters on purpose; a bound that called it unreachable was
-   * describing a smaller world than the one being made. Forty-five is the
-   * furthest of those plus about a tenth, so the next marker nudged a few units
-   * outward does not re-open this -- and it is still four fifths of the world
-   * refused, which is what keeps it a bound rather than a formality.
+   * What moved is what it is measured *from*, and only that -- the constant is
+   * the 45 seconds it has been since the spider nest was authored. It used to be
+   * the distance to the **spawn point**, which is a claim that every camp in the
+   * game is pitched around the village; the northern-mountain pass replaced that
+   * layout with a connected graph on purpose, and its own summary says so --
+   * *"nothing but the tutorial sheep sits within 900 of Emberwatch"*, with the
+   * road climbing to camps 7,728 out. Under the old reading the only way to pass
+   * was to raise `REACH_SECONDS` to about 195, at which point the circle it
+   * describes is 99% of the world's area and the bound stops refusing anything.
+   * A rule that has to be switched off to admit the content it is about is a
+   * rule that was measuring the wrong thing.
    *
-   * What it is NOT is permission to place content anywhere. Raise it again only
-   * for content somebody has actually authored out there, and re-derive the
-   * area fraction above when you do, or the sentence stops being true.
+   * So it is measured **camp to camp**: no spawner may be further than that walk
+   * from the nearest place a player has already got to, starting at the spawn
+   * point. That is the largest edge of a minimum spanning tree over the spawn
+   * point and every spawner, and it is the same sentence the old one was trying
+   * to say -- *you can get there from here* -- without the assumption that
+   * "here" is always the village.
+   *
+   * It is not a loose bound, and this is the half that has to be re-derived
+   * whenever it moves. The shipped map's largest hop is **3,548 units, 79% of
+   * the allowance**, so a camp nudged outward does not re-open it; and the
+   * world's diagonal is 19,720, so a marker dropped in an empty corner is
+   * refused by more than four times the bound. It also still catches the case it
+   * was written for: one spawner alone out there is far from *everything*, not
+   * merely far from the village.
+   *
+   * What it is NOT is permission to place content anywhere. A chain of markers
+   * laid every 4,000 units into empty ground would satisfy it, and that is a map
+   * nobody should merge; what stops that is review, which is why the map is
+   * committed as a diff.
    */
-  it('puts them within a walk of the spawn point, where a player will actually meet them', () => {
+  it('puts them within a walk of somewhere a player has already got to', () => {
     const reach = MOVE_SPEED_HARD_MIN * REACH_SECONDS;
-    for (const point of spawnPointsFrom(shipped)) {
-      const away = Math.hypot(point.x - DEFAULT_SPAWN.x, point.y - DEFAULT_SPAWN.y);
-      expect(away, `${point.id} (${point.monsterId}) is ${Math.round(away)} out`).toBeLessThanOrEqual(reach);
+    const origin = { id: 'the spawn point', x: DEFAULT_SPAWN.x, y: DEFAULT_SPAWN.y };
+    const away = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
+      Math.hypot(a.x - b.x, a.y - b.y);
+    // Prim from the spawn point: each pending camp carries how far it is from
+    // the reached set, so the largest value ever taken out is the longest walk
+    // the map asks anybody to make between two camps.
+    const pending = spawnPointsFrom(shipped).map((point) => {
+      const camp = { id: `${point.id} (${point.monsterId})`, x: point.x, y: point.y };
+      return { camp, gap: away(camp, origin) };
+    });
+    while (pending.length > 0) {
+      let at = 0;
+      for (const [index, entry] of pending.entries()) {
+        const best = pending[at];
+        if (best === undefined || entry.gap < best.gap) at = index;
+      }
+      const [next] = pending.splice(at, 1);
+      if (next === undefined) break;
+      expect(
+        next.gap,
+        `${next.camp.id} is ${Math.round(next.gap)} from anywhere reachable`,
+      ).toBeLessThanOrEqual(reach);
+      for (const entry of pending) {
+        entry.gap = Math.min(entry.gap, away(entry.camp, next.camp));
+      }
     }
   });
 

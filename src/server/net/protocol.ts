@@ -344,6 +344,36 @@ export const MapPropFlag = {
 } as const;
 
 /**
+ * Bit flags on a wire marker, mirroring `MapSpawnerSettings` (spec 279).
+ *
+ * `MapPropFlag.Light`'s shape one field along, and for its reason: almost no
+ * marker is a spawner and almost no spawner overrides the sim's defaults, so
+ * the common case pays the flags byte and nothing else. Spec 222 added this
+ * block to the document, the parser, the editor and the sim and never to the
+ * frame, and no committed map authored one until spec 279's -- so a marker went
+ * over as five fields and came back with its clock and its leash gone.
+ *
+ * The byte itself is **unconditional**, as a prop's is, rather than written only
+ * for a `spawner` kind: a reader that has to know the kind before it knows how
+ * many bytes to take is one that breaks the day a second kind grows a block of
+ * its own.
+ */
+export const MapMarkerFlag = {
+  /** A quantized `varint` of seconds follows. */
+  Respawn: 1 << 0,
+  /** A quantized `varint` of world units follows. */
+  Leash: 1 << 1,
+  /**
+   * A `u8` index into `SPAWN_WINDOWS` follows (spec 268).
+   *
+   * An index rather than a `str`, because the windows are a closed table the
+   * parser already refuses anything outside of -- the same argument the marker
+   * kinds above are an index for.
+   */
+  Window: 1 << 2,
+} as const;
+
+/**
  * The marker kinds, in wire order: a marker's byte is its index here, so new
  * kinds are appended and none is ever reordered or removed in place.
  */
