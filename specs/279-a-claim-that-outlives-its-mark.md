@@ -2,19 +2,21 @@
 
 ## Problem
 
-Five bugs in the projectile pass, four of them one bug: **a claim on a body
-survives that body's death, and is handed back when the body comes back.**
+Six bugs. Three of them -- 2, 3 and 5 below, plus a fourth door into the same
+room that the fix itself turned up -- are one bug: **a claim on a body survives
+that body's death, and is handed back when the body comes back.**
 
 The sim's house rule for this is already written down elsewhere and already
 followed everywhere else. `settle` calms a monster on the tick its quarry hits
 zero health, so `Calm <-> targetId === null` is an invariant rather than a
 convention. `sweepConversations` re-asks every broadcast whether a conversation
 is still holdable, so either body dying releases it. The client's standing
-attack order forgets a dead target. Two places in the sim do not follow it, and
-both were reported as the same symptom: *a projectile that follows you around.*
+attack order forgets a dead target. Three places in the sim do not follow it,
+and the first two were reported as the same symptom: *a projectile that follows
+you around.*
 
-Measured through the real `step()` (all five numbers are asserted in the tests
-this spec adds, so they cannot quietly stop being true):
+Measured through the real `step()`; every number below is asserted in the tests
+this spec adds, so none of them can quietly stop being true.
 
 1. **A shot outlives its shooter and cannot resolve.** `world.ts` reads
    `working.get(flight.ownerId)` and `continue`s when the shooter is gone --
@@ -55,7 +57,16 @@ this spec adds, so they cannot quietly stop being true):
    the killing blow. Reachable with one Ember Toss on a body that died earlier in
    the same tick, since the sweep is two passes later.
 
-5. **The burst is drawn at the wrong size.** The `effect` event carries
+5. **The Warden's lance re-acquires the same way.** `sim/warden.ts` reads
+   `held.health > 0` off `cast.targetEntityId` every tick, and the comment on
+   `lockOn` beside it already states the intended behaviour -- *"a target that
+   died or left the world during the wind-up leaves the aim where it is"*. It
+   does, for a monster. For a player it does not: the lock-on is 1.8s and the
+   beam 2.0s, so there is nearly four seconds in which a mark can die and press
+   Respawn, and the lance takes the id back and begins turning after a body that
+   has left the fight -- sweeping whoever is standing between.
+
+6. **The burst is drawn at the wrong size.** The `effect` event carries
    `ability.radius` while the damage uses `ability.radius * (1 +
    spellRadiusPct)`. `landPoint` computes the shaped radius first and sends
    that; this one computes it two lines after the event. So for exactly the
@@ -99,10 +110,22 @@ aim it last had -- which is what spec 079 already says a disjointed shot does.
 `targetEntityId` is untouched, because it answers a *different* question that
 must keep its answer: a shot that named a body is single-target, so a disjointed
 one must still not take the bystander who wanders into the line. The cast
-latches it only on an **observed corpse** (`named !== undefined && named.health
-<= 0`), never on absence from `candidates` -- absence also means "not hostile
-right now", a state a body can leave, and `landOnTarget` already answers it
-correctly at the release without help.
+latches it only on an **observed corpse** (`mark !== undefined && mark.health <=
+0`), never on absence from `candidates` -- absence also means "not hostile right
+now", a state a body can leave, and `landOnTarget` already answers it correctly
+at the release without help.
+
+`sim/warden.ts` reads the cast's flag rather than keeping one of its own, since
+the lance's commitment *is* that cast's -- one line beside the health check it
+already makes, and what finally makes its own `lockOn` comment true of a player.
+
+The two latches meet at one line, and it is the whole reason they had to be the
+same rule: **`launchProjectile` seeds the shot's flag from the cast's.** A
+wind-up is long enough for a mark to die and come back inside it -- a slinger's
+is 30 ticks -- so a cast that correctly gave up on the body would otherwise hand
+a *fresh* shot its id and send it to the spawn pad one pass later. Bug 2
+arriving through bug 3's door, and reachable before either fix. Past the loose,
+the projectile pass keeps the latch on its own.
 
 Neither field crosses the wire. `ProjectileState` is server-only, and a cast
 reaches the client as `castStarted`/`castEnded` events, so no protocol version
@@ -139,6 +162,9 @@ is the way to go if a third claim ever wants the same thing.
   landing no hit, and it never comes within reach of the spawn point.
 - A disjointed shot still refuses a bystander: naming a body is what makes a
   shot single-target, and losing the body does not make it a point shot.
+- A shot loosed by a wind-up that lost its mark is born disjointed: a mark that
+  dies and respawns *inside* the wind-up is not chased by the arrow that
+  wind-up produced.
 - A shot disjointed by a mark that leaves the world behaves exactly as it does
   today (the existing spec 079 test still passes unchanged).
 - A wind-up whose named target dies lands on nobody, whether or not that target
@@ -146,6 +172,9 @@ is the way to go if a third claim ever wants the same thing.
   reach still lands (spec 221 is untouched).
 - A cast whose target dies while it is still *turning* is still cancelled with a
   refund (spec 079/080 untouched).
+- A Warden that loses its mark mid-cycle holds its aim: it does not turn after a
+  respawned body, and lands no pulse on one. Every other rule about the
+  encounter (spec 262) is unchanged.
 - No body ever raises two `died` events: a burst that overlaps a corpse deals no
   damage to it, pays no second restoration award, spawns no second set of motes,
   and does not reassign the loot credit.

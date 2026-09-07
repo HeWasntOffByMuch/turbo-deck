@@ -28,7 +28,7 @@ import {
   type ServerSimEvent,
   type ServerWorldState,
 } from './types.js';
-import { createWorldState, spawnEntity, step, type StepContext } from './world.js';
+import { createWorldState, replaceEntity, spawnEntity, step, type StepContext } from './world.js';
 
 const RECORD: PersistedPlayer = {
   id: 'p1',
@@ -504,6 +504,39 @@ describe('the beam (spec 262)', () => {
     expect(start - onePulse).toBeLessThan(start * 0.15);
     expect(start - whole).toBeGreaterThan(start * 0.4);
     expect(whole).toBeGreaterThan(0);
+  });
+});
+
+describe('a lance that lost its mark (spec 279)', () => {
+  it('does not swing round after a body that died and respawned', () => {
+    // The lock-on is 1.8s and the beam 2s, so there is nearly four seconds in
+    // which a player can die and press Respawn -- and a respawn is a teleport.
+    // Re-asked from the mark's live health the lance took the id back and began
+    // turning toward Hearthstead, sweeping whoever was standing in between.
+    const { state, playerId, wardenId } = fight();
+    const locked = advanceTo(state, wardenId, [playerId], WardenPhase.LockOn);
+
+    const dead = replaceEntity(locked.state, { ...mech(locked.state, playerId), health: 0 });
+    const stepped = run(dead, 1, []);
+    // Health back and the body a long way off: what `server.respawn` does.
+    const home = replaceEntity(stepped.state, {
+      ...mech(stepped.state, playerId),
+      position: { x: -2000, y: -2000, z: 0 },
+      health: mech(stepped.state, playerId).stats.maxHealth,
+    });
+
+    const before = mech(home, wardenId).facing;
+    const after = run(home, LOCK_ON + FIRING, [playerId]);
+    const turned = Math.abs(
+      Math.atan2(
+        Math.sin(mech(after.state, wardenId).facing - before),
+        Math.cos(mech(after.state, wardenId).facing - before),
+      ),
+    );
+
+    // The aim stayed where it was, and nothing landed on the respawned body.
+    expect(turned).toBeLessThan(0.02);
+    expect(pulseTicks(after.frames, wardenId, playerId)).toEqual([]);
   });
 });
 

@@ -490,6 +490,7 @@ describe('what a lethal pulse leaves behind', () => {
       cast: {
         abilityId: 'skill.blight',
         phase: CastPhase.Windup,
+        disjointed: false,
         startedTick: 0,
         releaseTick: 200,
         endTick: 200,

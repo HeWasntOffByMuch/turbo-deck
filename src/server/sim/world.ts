@@ -1315,7 +1315,28 @@ export function step(
     const flight = entity.projectile;
     if (!flight) continue;
 
-    if (tick >= flight.expiresAtTick) {
+    const owner = working.get(flight.ownerId);
+    const ability = abilityById(flight.abilityId);
+    // The two ways a shot leaves without landing, together, and asked before it
+    // is moved so that everything below may assume a shooter (spec 279).
+    //
+    // **A shot outlives its target but not its shooter.** Everything an impact
+    // needs is measured from the body that loosed it: `isHostile` reads its
+    // kind, its zone, whether it is friendly and whether it is walking home;
+    // `applyToTarget` reads its stats and hands back an attacker to write into
+    // the world. With the shooter gone there is no honest answer to any of it.
+    //
+    // This used to be a bare `continue` further down -- after the shot had been
+    // moved and re-aimed, and before anything that could despawn it. A monster
+    // is swept in pass 4 and this is pass 3b, so from the tick after its death
+    // its arrow flew, tracked, arrived, and was incapable of either landing or
+    // leaving: measured on a slinger's star, 230 ticks glued to the player at a
+    // gap of zero, following them until its own lifetime ran out.
+    //
+    // What it costs is that killing an archer as its arrow flies makes the
+    // arrow disappear. A dead *player* is still in the world -- their entity is
+    // never swept -- so this reaches a killed monster and a client that left.
+    if (tick >= flight.expiresAtTick || !owner || !ability) {
       working.delete(entity.id);
       events.push({ kind: 'despawned', entityId: entity.id });
       continue;
@@ -1326,9 +1347,19 @@ export function step(
     // *disjoints* it: the last aim stands and the shot finishes at a patch of
     // ground. Nothing was ever scheduled, so there is nothing to un-schedule --
     // the travel is the only thing that decides when, or whether, this lands.
+    //
+    // **And a disjoint is permanent** (spec 279). This was re-derived from the
+    // mark's *current* health every tick, so it was false while a player was a
+    // corpse and true again the instant they respawned -- and a respawn is a
+    // teleport, so the shot turned and followed them to the spawn pad, and
+    // landed there. Latched now: once a shot has lost its mark it never gets it
+    // back, whatever is standing there later.
     const chased =
-      flight.targetEntityId > 0 ? working.get(flight.targetEntityId) ?? null : null;
+      flight.targetEntityId > 0 && !flight.disjointed
+        ? working.get(flight.targetEntityId) ?? null
+        : null;
     const tracking = chased !== null && chased.health > 0;
+    const disjointed = flight.disjointed || (flight.targetEntityId > 0 && !tracking);
     const aimX = tracking && chased ? chased.position.x : flight.targetX;
     const aimY = tracking && chased ? chased.position.y : flight.targetY;
 
@@ -1355,13 +1386,9 @@ export function step(
       ...entity,
       position: { x, y, z },
       facing: toGo > 1e-6 ? Math.atan2(dirY, dirX) : entity.facing,
-      projectile: { ...flight, targetX: aimX, targetY: aimY, totalDistance, travelled },
+      projectile: { ...flight, targetX: aimX, targetY: aimY, totalDistance, travelled, disjointed },
     };
     working.set(entity.id, moved);
-
-    const owner = working.get(flight.ownerId);
-    const ability = abilityById(flight.abilityId);
-    if (!ability || !owner) continue;
 
     // What a shot answers to is whether it *named* something, not how high it
     // flew (spec 079). A shot fired at a body resolves against that body and
@@ -1388,8 +1415,32 @@ export function step(
     // A projectile with a blast radius bursts where it stops, hit or not; a
     // plain bolt only does something when it actually connects.
     if (ability.radius !== undefined && ability.radius > 0) {
-      const blastCandidates = [...working.values()].filter((candidate) =>
-        isHostile(owner, candidate, context.zones),
+      // Intelligence's shaping reaches a projectile's burst too (spec 147), for
+      // the reason it reaches a Quake: the radius is what a player walks out of.
+      //
+      // Worked out *before* the effect event rather than two lines after it
+      // (spec 279), which is `landPoint`'s order and had to be this one's: the
+      // ring the client draws is the whole of how a player knows where "out of
+      // it" is, and drawing the authored radius while damaging at the shaped one
+      // made the picture wrong for exactly the builds that bought the shaping.
+      const blastRadius = ability.radius * (1 + owner.stats.traits.spellRadiusPct);
+      // A corpse is not caught by a burst (spec 279). `landOnTarget`, `landCone`,
+      // `landPoint` and `landArea` each skip one and only `isHostile` was asked
+      // here, which has never known about health -- so a body that died earlier
+      // in this same tick, two passes before the sweep, took a blow that computed
+      // `killed` from zero health and raised a *second* `died` event for it.
+      // `creditDeaths` runs off those events, so the meter and the motes were
+      // paid twice; and the sweep's `killedBy` takes the last one, so the loot
+      // went to whoever's burst brushed the corpse rather than to whoever landed
+      // the killing blow.
+      //
+      // The guard that actually holds the line is in `applyToTarget`, which is
+      // the seam every hostile landing goes through and so the one place this
+      // can be a property rather than four habits. This line is here because the
+      // asymmetry *was* the bug: a burst whose candidate list reads as though it
+      // catches the dead is the thing somebody looks at next time.
+      const blastCandidates = [...working.values()].filter(
+        (candidate) => candidate.health > 0 && isHostile(owner, candidate, context.zones),
       );
       events.push({
         kind: 'effect',
@@ -1397,12 +1448,9 @@ export function step(
         x: moved.position.x,
         y: moved.position.y,
         z: 0,
-        radius: ability.radius,
+        radius: blastRadius,
         durationTicks: Math.round(SERVER_TICK_RATE * 0.4),
       });
-      // Intelligence's shaping reaches a projectile's burst too (spec 147), for
-      // the reason it reaches a Quake: the radius is what a player walks out of.
-      const blastRadius = ability.radius * (1 + owner.stats.traits.spellRadiusPct);
       let shooter = owner;
       for (const target of blastCandidates) {
         const dx = target.position.x - moved.position.x;

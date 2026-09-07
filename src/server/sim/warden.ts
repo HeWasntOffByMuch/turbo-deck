@@ -161,7 +161,14 @@ export function wardenClaim(
     // pointed. Read here rather than in `monsterIntent` so the two cannot come
     // to different answers on the same tick.
     const held = cast.targetEntityId > 0 ? (entities.get(cast.targetEntityId) ?? null) : null;
-    const target = held && held.health > 0 ? held : null;
+    // And `cast.disjointed`, which is that commitment held rather than re-asked
+    // (spec 279). `held.health > 0` alone is false while a player is a corpse
+    // and true again the instant they respawn -- and a respawn is a *teleport*,
+    // so over the 1.8s lock-on and the 2s beam the lance would swing round after
+    // a body that had left the fight entirely, sweeping whoever was standing
+    // between. The comment on `lockOn` below already says a target that died
+    // "leaves the aim where it is"; this is what makes that true of a player.
+    const target = held && held.health > 0 && !cast.disjointed ? held : null;
     return cast.phase === CastPhase.Channel
       ? firing(monster, cast, target, cycle)
       : lockOn(monster, cast, target);
