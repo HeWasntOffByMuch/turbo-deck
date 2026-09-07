@@ -747,6 +747,9 @@ export function startCast(
 
   const cast: CastState = {
     abilityId: ability.id,
+    // A fresh cast has lost nothing yet (spec 280); `advanceCast` is what
+    // observes the corpse and latches it.
+    disjointed: false,
     spentResource: Math.min(cost, entity.resource),
     // The overflow and the skill's own blood price are one number from here on
     // (spec 188): both are health this cast took, both come back on a
@@ -1374,12 +1377,27 @@ export function advanceCast(
   // deliberately and described as "nothing was scheduled, so there is nothing to
   // un-schedule". A wind-up is nothing scheduled either.
   //
-  // Nothing new is needed to handle the corpse: `landOnTarget` misses on a
-  // target that is absent or at zero health, and `landCone` skips one.
+  // What the corpse itself needs is almost nothing: `landOnTarget` misses on a
+  // target that is absent or at zero health, and `landCone` skips one. The one
+  // thing those two cannot see is a mark that is *not a corpse any more* by the
+  // release, which is spec 280's latch a few lines below.
+  /**
+   * The body this cast named, as `candidates` has it *this* tick.
+   *
+   * One lookup with three readers -- the cancel below, the two places
+   * `targetInReach` is stamped, and spec 280's latch -- because they are all
+   * asking the same question of the same list, and three `find`s over it were
+   * three chances for them to come to different answers about the same body on
+   * the same tick. `undefined` for a cast that names nobody, and for one whose
+   * mark is not hostile right now: `candidates` is filtered by hostility.
+   */
+  const mark =
+    cast.targetEntityId > 0
+      ? candidates.find((candidate) => candidate.id === cast.targetEntityId)
+      : undefined;
   const cancellable = cast.phase === CastPhase.Turning;
   if (cast.targetEntityId > 0 && cancellable) {
-    const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
-    if (!named || named.health <= 0) {
+    if (!mark || mark.health <= 0) {
       const called = cancelCast(entity, tick, CastEndReason.Cancelled);
       return {
         updated: new Map([[entity.id, called.entity]]),
@@ -1395,6 +1413,37 @@ export function advanceCast(
   const spawns: ProjectileSpawn[] = [];
   let currentRng = rng;
   let caster = entity;
+
+  // --- and past the turn, the mark is lost rather than the cast (spec 280) ---
+  //
+  // The paragraph above says the blow "completes and finds what it finds", and
+  // that `landOnTarget` needs nothing new because it misses on a body that is
+  // absent or at zero health. That holds for every mark except a *player*:
+  // `respawn` heals and teleports the same entity, so a mark that died 30 ticks
+  // into a ravager's wind-up was alive again at the release, `targetInReach` was
+  // still true from the wind-up (spec 221 measures it once, deliberately), and
+  // the swing landed on them standing at Hearthstead.
+  //
+  // So the death is *remembered* rather than re-asked: a swing that has seen its
+  // mark fall lands on nobody, whatever is standing there when it releases. The
+  // cast itself is untouched -- it runs its clock, spends its cooldown and ends
+  // as a miss, which is what spec 079 chose past the turn.
+  //
+  // Latched on an **observed corpse** and never on `mark === undefined`:
+  // `candidates` is filtered by hostility, so absence also means "not hostile
+  // right now" -- a safe zone stepped into and out of, a body briefly walking
+  // home -- which is a state a body can leave and which `landOnTarget` already
+  // answers correctly at the release without help. A body that truly left the
+  // world never comes back, because ids are never reused.
+  //
+  // Written onto `caster` as well as onto the local, because an ordinary
+  // mid-wind-up tick changes nothing else and ends at `updated.set(caster.id,
+  // caster)` -- a latch left in this function's head would be dropped on the
+  // very ticks it exists for.
+  if (!cast.disjointed && mark !== undefined && mark.health <= 0) {
+    cast = { ...cast, disjointed: true };
+    caster = { ...caster, cast };
+  }
 
   // --- turning ---------------------------------------------------------
   // Held here until the body is pointing at what it committed to. Movement runs
@@ -1418,7 +1467,6 @@ export function advanceCast(
     // range when I started" is asking about. Off the target's *live* position
     // rather than the aim captured at the commit, because a body that walked
     // away during a long turn has walked away.
-    const turned = candidates.find((candidate) => candidate.id === cast.targetEntityId);
     caster = {
       ...caster,
       cast: {
@@ -1428,8 +1476,8 @@ export function advanceCast(
         releaseTick,
         endTick,
         targetInReach:
-          turned !== undefined &&
-          withinReach(ability, caster, turned.position.x, turned.position.y, turned.radius),
+          mark !== undefined &&
+          withinReach(ability, caster, mark.position.x, mark.position.y, mark.radius),
       },
       activityUntilTick: endTick,
     };
@@ -1461,12 +1509,11 @@ export function advanceCast(
   // The turning branch above stamps its own on the tick it aligns, through this
   // same `withinReach`, because it returns before reaching this.
   if (cast.phase === CastPhase.Windup && cast.windupStartTick === tick && cast.targetEntityId > 0) {
-    const named = candidates.find((candidate) => candidate.id === cast.targetEntityId);
     cast = {
       ...cast,
       targetInReach:
-        named !== undefined &&
-        withinReach(ability, caster, named.position.x, named.position.y, named.radius),
+        mark !== undefined &&
+        withinReach(ability, caster, mark.position.x, mark.position.y, mark.radius),
     };
     caster = { ...caster, cast };
   }
@@ -1775,6 +1822,19 @@ export function applyToTarget(
   rng: Rng,
   tick: number,
 ): { readonly attacker: ServerEntity; readonly target: ServerEntity; readonly events: readonly ServerSimEvent[]; readonly rng: Rng } {
+  // A corpse takes no blow, as a property of the one seam every hostile landing
+  // goes through rather than as four habits (spec 280). `landOnTarget`,
+  // `landCone`, `landPoint`, `landArea` and the affliction pulse each guard it
+  // and the projectile burst did not, which is all it takes: `resolveBlow`
+  // computes `killed` from `max(0, health - damage)`, true for a body already at
+  // zero, so it raised a *second* `died` event and `creditDeaths` paid for the
+  // kill twice.
+  //
+  // Nothing else moves. The four callers above never pass a corpse, so no Rng
+  // draw and no seeded combat sequence in the tree changes -- and refusing here
+  // returns both bodies and the Rng untouched, so a caller that writes the
+  // result back writes back what it already had.
+  if (target.health <= 0) return { attacker, target, events: [], rng };
   if (!ability.effects || ability.effects.length === 0) {
     return applyDamage(ability, attacker, target, rng, tick);
   }
@@ -1900,7 +1960,7 @@ function landOnTarget(
   // naming an id is a request, not a licence to hit an ally or a projectile.
   const target = candidates.find((candidate) => candidate.id === cast.targetEntityId);
 
-  if (!target || target.health <= 0 || !cast.targetInReach) {
+  if (!target || target.health <= 0 || !cast.targetInReach || cast.disjointed) {
     return {
       updated: new Map(),
       spawns: [],
@@ -2119,6 +2179,14 @@ function launchProjectile(
   const state: ProjectileState = {
     abilityId: ability.id,
     ownerId: caster.id,
+    // It leaves the bow holding whatever the *cast* still held (spec 280).
+    //
+    // Inherited rather than opened at false, because the wind-up is long enough
+    // for a mark to die and respawn inside it: the cast latched the loss, and a
+    // shot born fresh out of it would name the id again and chase the body to
+    // the spawn pad -- the bug arriving through the other door, one pass later.
+    // Past the loose the projectile pass keeps the latch on its own.
+    disjointed: cast.disjointed,
     originX: caster.position.x,
     originY: caster.position.y,
     targetX: caster.position.x + dirX * distance,

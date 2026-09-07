@@ -133,6 +133,7 @@ function body(stats: EffectiveStats, overrides: Partial<ServerEntity> = {}): Ser
 function casting(abilityId: string, phase: number): CastState {
   return {
     abilityId,
+    disjointed: false,
     spentResource: 0,
     spentHealth: 0,
     spentCharges: 0,

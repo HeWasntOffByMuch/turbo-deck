@@ -272,6 +272,27 @@ export interface CastState {
    * has been.
    */
   readonly targetInReach: boolean;
+  /**
+   * Has this cast lost the body it named (spec 280)?
+   *
+   * `landOnTarget` misses on a target that is absent or at zero health, which
+   * covers a mark that stays dead -- and a *player* does not: `respawn` heals
+   * and teleports the same entity, so a mark that died 30 ticks into a
+   * ravager's wind-up was alive again at the release, `targetInReach` was still
+   * true from the wind-up (spec 221 measures it once, deliberately), and the
+   * blow landed on them standing at Hearthstead.
+   *
+   * Latched by `advanceCast` on an **observed corpse** and never on absence
+   * from `candidates`: that list is filtered by hostility, so absence also
+   * means "not hostile right now" -- a state a body can leave, and one
+   * `landOnTarget` already answers correctly at the release without help.
+   *
+   * Separate from {@link targetInReach} rather than folded into it, because
+   * that field is a stamped answer to "was it in range when the swing began"
+   * and this is "is it still the same body". Two questions, and a name that
+   * answered both would be a name that answered neither.
+   */
+  readonly disjointed: boolean;
   /** Channels only: the next tick a pulse is due. */
   readonly nextPulseTick: number;
 }
@@ -356,8 +377,28 @@ export interface ProjectileState {
    * When it dies or leaves the world the shot is *disjointed*: it keeps the aim
    * it last had and flies on to that spot. Nothing was scheduled, so there is
    * nothing to un-schedule -- the travel is the only thing that decides.
+   *
+   * It is **not** cleared by that (spec 280), because it answers a second
+   * question that has to keep its answer: a shot that named a body resolves
+   * against that body and nothing else, so a disjointed one must go on refusing
+   * the bystander who wanders into the line. What the chase is over is
+   * {@link disjointed}.
    */
   readonly targetEntityId: number;
+  /**
+   * Has this shot lost the body it named (spec 280)?
+   *
+   * **A disjoint is permanent.** It was re-derived every tick as "is my mark
+   * present and above zero health", which is false while a player is a corpse
+   * and true again the instant they respawn -- and a respawn is a *teleport*,
+   * so the shot turned and followed them to the spawn pad, and landed there.
+   * Latched instead: once a shot has seen its mark at zero health or gone from
+   * the world it never gets it back, whatever is standing there later.
+   *
+   * The same rule and the same word as {@link CastState.disjointed}, which is
+   * the other place in the sim that holds a claim on a body across ticks.
+   */
+  readonly disjointed: boolean;
   /** World units per tick along the ground line. */
   readonly speed: number;
   /**

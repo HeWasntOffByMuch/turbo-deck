@@ -1812,6 +1812,11 @@ export class GameClient {
       const ability = abilityById(confirmed.abilityId);
       return {
         abilityId: confirmed.abilityId,
+        // Not replicated either, and false is the honest answer rather than a
+        // guess (spec 280): whether a swing has lost its mark decides only what
+        // the *server* lands, and this copy exists to drive the local cast bar
+        // and the commitment window.
+        disjointed: false,
         // Not replicated and not guessed at (spec 147): a refund is the server's
         // to issue, and a client that invented a number here would predict a
         // pool it does not have. Zero means "this client is not modelling the

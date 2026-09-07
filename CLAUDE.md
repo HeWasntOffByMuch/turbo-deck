@@ -3979,6 +3979,95 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  mutation fails exactly the test written for it, including the
                  turning one, whose first cut asserted a miss and so passed on
                  the default with the alignment re-stamp deleted.
+                 **A claim on a body does not outlive that body** (spec 280),
+                 which is the rule the rest of the sim already followed and
+                 three places did not. `settle` calms a monster on the tick its quarry
+                 hits zero health so that `Calm <-> targetId === null` is an
+                 invariant; `sweepConversations` re-asks holdability every
+                 broadcast; the client's standing order forgets a dead target.
+                 A shot in the air and a swing mid-wind-up instead *re-derived*
+                 "is my mark still there" from the mark's current health every
+                 tick -- which is false while a player is a corpse and true again
+                 the instant they respawn. And a respawn is a **teleport**: the
+                 shot turned and followed them to the spawn pad and landed there,
+                 and a ravager's swing had 30 ticks of wind-up in which the same
+                 thing could happen. `ProjectileState.disjointed` and
+                 `CastState.disjointed` are the latch -- one boolean each, the
+                 same word because it is one rule -- and neither crosses the wire,
+                 the first being server-only and the second reaching the client as
+                 `castStarted`/`castEnded`. Three things in it were decided rather
+                 than defaulted. `targetEntityId` is **not** cleared by a
+                 disjoint, because it answers a second question that has to keep
+                 its answer: naming a body is what makes a shot single-target, so
+                 a disjointed one must go on refusing the bystander who wanders
+                 into the line. The cast latches on an **observed corpse** and
+                 never on absence from `candidates`, since that list is filtered
+                 by hostility -- absence also means "not hostile right now", a
+                 state a body can leave and one `landOnTarget` already answers
+                 correctly at the release. And `launchProjectile` **seeds the
+                 shot's flag from the cast's**, which is where the two latches
+                 meet and the reason they had to be one rule: a wind-up is long
+                 enough for a mark to die and come back inside it, so a cast that
+                 had correctly given up would otherwise hand a fresh shot the same
+                 id and send it to the spawn pad one pass later. What was turned
+                 down is a generation counter on `ServerEntity` bumped by
+                 `respawn` -- more general, and *announced* rather than
+                 *reconciled*, so a fifth way back from the dead would have to
+                 remember to bump it where a latch that observes the corpse itself
+                 cannot be forgotten. It is the way to go if a fourth claim ever
+                 wants the same thing.
+                 The third claim is the Warden's lance, and it reads the *cast's*
+                 flag rather than keeping one of its own, since its commitment is
+                 that cast's: one line beside the health check `wardenTarget`
+                 already made, and what finally makes its own `lockOn` comment
+                 -- *"a target that died or left the world during the wind-up
+                 leaves the aim where it is"* -- true of a **player**. It was
+                 already true of a monster; the lock-on is 1.8s and the beam 2s,
+                 so there is nearly four seconds in which a player can die and
+                 press Respawn, and the lance took the id back and began turning
+                 after a body that had left the fight, sweeping whoever was
+                 standing between.
+                 The same spec closed two more in the projectile pass, both of
+                 them the pass being the odd one out. **A shot outlives its
+                 target but not its shooter**: `world.ts` read
+                 `working.get(flight.ownerId)` and `continue`d on a miss --
+                 *after* the shot had been moved and re-aimed, and *before*
+                 anything that could despawn it. A monster is swept in pass 4 and
+                 this is pass 3b, so from the tick after its death the arrow flew,
+                 tracked, arrived and was incapable of either landing or leaving:
+                 measured on a slinger's star, **230 ticks glued to the player at
+                 a gap of 0.00**, following them until its own lifetime ran out.
+                 That is the reported bug, and it is folded into the expiry check
+                 now, where the other reason a shot leaves without landing already
+                 lives -- everything an impact needs is measured from the shooter
+                 (`isHostile` reads its kind, zone, friendliness and whether it is
+                 walking home; `applyToTarget` reads its stats and hands back an
+                 attacker to write into the world), so with the shooter gone there
+                 is no honest answer to any of it. The cost is stated rather than
+                 hidden: killing an archer as its arrow flies makes the arrow
+                 disappear. A dead *player* is still in the world, their entity
+                 never being swept, so their arrows still land.
+                 And **a corpse takes no blow**, which every landing in the sim
+                 guarded except the projectile burst -- whose candidates were
+                 filtered by `isHostile` alone, and that function has never known
+                 about health. `resolveBlow` computes `killed` from
+                 `max(0, health - damage)`, true for a body already at zero, so a
+                 burst catching a body that died earlier in the same tick raised a
+                 **second `died` event** for it: `creditDeaths` runs off those
+                 events with no dedupe, so the restoration meter and the motes
+                 were paid twice, and the sweep's `killedBy` takes the *last* one,
+                 so the loot went to whoever's burst brushed the corpse rather
+                 than to whoever landed the killing blow. The guard is in
+                 `applyToTarget` -- the seam every hostile landing goes through,
+                 so it is a property rather than four habits -- with the burst's
+                 own filter restored beside it because the asymmetry *was* the
+                 bug. No Rng draw moved: the four already-guarded callers never
+                 passed a corpse. The last of the five is a picture rather than a
+                 number: the burst's `effect` event carried `ability.radius` while
+                 the damage used `ability.radius * (1 + spellRadiusPct)`, so the
+                 ring an Intelligence build walked out of was smaller than the one
+                 that hit them. `landPoint` computes the shaped radius first and
+                 sends that; this one now does too.
                  Where a player's attack speed comes from is the **weapon**,
                  since spec 174: 091 took the cadence off it and 144 rebuilt the
                  socket without plugging anything in, which left four rows in
