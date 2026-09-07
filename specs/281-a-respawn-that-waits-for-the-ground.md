@@ -78,10 +78,16 @@ export class RespawnGate {
   ask(nowMs: number): void;
   /** Null when there is nothing to cover — the same shape `deathOverlay` returns. */
   read(input: RespawnGateInput): RespawnCover | null;
-  /** Disarm without lifting anything, for a disconnect. */
-  forget(): void;
 }
 ```
+
+Two methods and no way to disarm it. A cover a caller could take down is a
+cover with two answers to when the world comes back, and the one case that
+looks like it wants an exit — the socket dropping mid-return — wants the cover
+to *stay*: the body is still standing on ground that has not arrived, and the
+reconnect banner is at `z-index:60` over everything anyway. What bounds every
+one of those cases is the deadline, which is one rule that always fires rather
+than a list of exits somebody has to keep complete.
 
 `ask` is called from `hud.onRespawn`, beside `client.respawn()`. Nothing else
 arms it: a gate that armed itself off *thin ground* would be the fog the boot
@@ -166,12 +172,15 @@ and the wait pays the loading budget rather than the playing one.
   complete.
 - Lifts on the frame everything is in, and stays lifted without a second `ask`.
 - Lifts immediately when the return has nothing to wait for (died at the spawn).
-- Lifts at the deadline with the ground still short, and reports
-  `secondsLeft === 0` there.
-- `secondsLeft` counts down whole seconds and never goes negative.
+- Lifts at the deadline with the ground still short, and stays lifted on the
+  frame after it — a bail-out that re-covered would be worse than none.
+- Lifts at the deadline on a respawn the server never answered, which is the
+  half of the timeout the `asking` phase owns.
+- `secondsLeft` counts whole seconds down and reaches 1 on the last frame.
 - The countdown reaches `detail` only inside `COUNTDOWN_VISIBLE_MS`.
 - `fraction` is monotone within a return and resets on the next `ask`.
-- A second death while armed disarms rather than covering.
+- A second death while armed disarms rather than covering, and does not come
+  back when the ground finally arrives.
 - Every string the module can produce is drawable by `pixel-font`.
 
 `server/client/respawn-order.test.ts`:
@@ -181,7 +190,27 @@ and the wait pays the loading budget rather than the playing one.
 
 `hud-layout.test.ts`:
 
-- The cover's banner and detail fit the compact frame at their scales.
+- The widest label and the widest detail the gate can produce fit the compact
+  frame at their scales, and the label is drawn under the death banner's own
+  size — the one thing that scale was chosen against.
+
+`scripts/probe-bottom-hud.ts` — the half no headless test can see, over spec
+164's rig, driven through the **real** gate so a driver posting its own
+`RespawnCover` cannot flatter the boxes:
+
+- The layer stays up across the press, with the banner and the button gone.
+- Its ground is **opaque**, read back off the browser's own computed style.
+  That is the whole feature in one check: 42% of an empty void is an empty void.
+- The label, the bar and the detail are on screen, inside the frame, in order.
+- The bar fills as chunks land, and the detail counts them.
+- The countdown appears near the deadline and not before it.
+- The cover lifts, and what is under it is the death screen it was drawn over
+  rather than a layer nobody can dismiss.
+
+That rig could not show a death screen at all when this was written: `baseView`
+has never carried `selfDead`, which spec 229 made the test `deathOverlay` reads,
+so five of `probe-bottom-hud.ts`'s checks had been failing since. It derives it
+the way `GameClient.deadNow` does now.
 
 ## Out of scope
 
