@@ -107,6 +107,7 @@ import { FrameBudget } from './frame-budget.js';
 import { createMapWorker } from './map-worker-client.js';
 import type { MapWorkerReply } from './map-worker-protocol.js';
 import { LoadGate } from './loading.js';
+import { RespawnGate, type RespawnCover } from './respawn-gate.js';
 import { createLoadingOverlay } from './loading-overlay.js';
 import { createTitleOverlay } from './title-overlay.js';
 import { CostMeter, FrameMeter } from './fps-meter.js';
@@ -802,6 +803,18 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    */
   const pendingInserts = new Map<string, HeldChunk>();
   const gate = new LoadGate();
+  /**
+   * The second gate, armed by the RESPAWN button (spec 281).
+   *
+   * `LoadGate` latches on purpose -- its own header says covering the screen for
+   * a walk into unstreamed ground would be a fog rather than a loading screen --
+   * and a respawn is not a walk. It is a jump to a place the server chooses, so
+   * the ground under the body is known in advance to be wrong, and the press is
+   * what says so. Nothing else arms this.
+   */
+  const respawnGate = new RespawnGate();
+  /** What that gate last answered, so the frame's budgets can read it too. */
+  let respawnCover: RespawnCover | null = null;
   // One of these, never both (spec 255). The shipped client greets somebody
   // with the title screen and shows the load *on* it; a bench has no title
   // screen, so it keeps the bar it has always had. Built here because this is
@@ -1058,7 +1071,13 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // left a hole in the world that never filled in (spec 165 follow-up 4);
     // this is the same trap on the other side of a thread boundary.
     const meshStart = performance.now();
-    const adoptBudget = gate.open ? ADOPT_BUDGET_PER_FRAME : ADOPT_BUDGET_LOADING;
+    // The loading budgets are the covered ones, not the booting ones (spec 281).
+    // `ADOPT_BUDGET_LOADING`'s own reason -- "nothing is on screen but a bar,
+    // and the load's *length* is what the player is waiting on" -- is true word
+    // for word behind a respawn cover, so the wait pays it rather than the
+    // budget sized to keep a *playing* frame smooth.
+    const covered = !gate.open || respawnCover !== null;
+    const adoptBudget = covered ? ADOPT_BUDGET_LOADING : ADOPT_BUDGET_PER_FRAME;
     let adopted = 0;
     while (meshInbox.length > 0 && adopted < adoptBudget) {
       const reply = meshInbox.shift();
@@ -1083,7 +1102,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     const held = streamed;
     const rects = ingest.takePropRects(
       nowMs,
-      gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING,
+      covered ? PROP_REGIONS_LOADING : PROP_REGIONS_PER_FRAME,
       (rect) => held.rectCovered(rect),
     );
     if (rects.length > 0) {
@@ -1093,7 +1112,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // ...and hanging what comes back, which is the 4ms half of what a region
     // rebuild used to be. Budgeted for the same reason the meshes are: a burst
     // arrives as one task on this thread's event loop.
-    const adoptRegions = gate.open ? PROP_REGIONS_PER_FRAME : PROP_REGIONS_LOADING;
+    const adoptRegions = covered ? PROP_REGIONS_LOADING : PROP_REGIONS_PER_FRAME;
     let adoptedRegions = 0;
     while (propInbox.length > 0 && adoptedRegions < adoptRegions) {
       const reply = propInbox.shift();
@@ -1193,7 +1212,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
    * the first pump of the stream, not the end of the load. Harnesses wait on it,
    * so it now means what they always read it as meaning.
    */
-  function updateLoading(view: ReturnType<typeof client.view>): void {
+  function updateLoading(view: ReturnType<typeof client.view>, nowMs: number): void {
     const self = view.self ?? null;
     const coverage =
       streamed && self ? streamed.coverage(self.x, self.y, READY_CHUNK_RADIUS) : { held: 0, needed: 0 };
@@ -1301,6 +1320,19 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
         `gen=${String(navGeneration)} asked=${String(navAsked)}` +
         ` adopted=${String(navAdopted)} refused=${String(navStale)}`;
     }
+
+    // The return, off the very same counts (spec 281). Asked after the boot gate
+    // and never instead of it: a client that has not shown the world once has
+    // nothing to respawn from, and `RespawnGate` is armed by a button rather
+    // than by the state of the ground, so the two can never be up at once.
+    respawnCover = respawnGate.read({
+      nowMs,
+      dead: view.selfDead,
+      held: coverage.held,
+      needed: coverage.needed,
+      meshPending: ingest.pending + ingest.dirtyRegionCount + propsInFlight,
+    });
+    hud.setRespawnCover(respawnCover);
 
     const label = `${progress.phase}:${Math.round(progress.fraction * 100)}`;
     if (label !== lastLoadLabel) {
@@ -1614,6 +1646,12 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // At the intent, like every other press (spec 229). The body coming back is
     // a round trip away and the button is the thing that was pressed.
     audioDriver.flat('player.respawn');
+    // And the cover goes up on the press too (spec 281), for the same reason
+    // and one stronger: the teleport arrives on whatever frame the answer does,
+    // and a cover raised on *seeing* it would be at least one frame of the void
+    // it exists to hide. Nothing else arms it -- a gate that watched the ground
+    // instead would be a fog over an ordinary walk.
+    respawnGate.ask(performance.now());
     client.respawn();
   });
   // The same call a key binding makes (spec 140). The button knows which window
@@ -4436,7 +4474,7 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     ingestChunks(view, now);
     const ingestMs = performance.now() - ingestStart;
     worstIngestMs = Math.max(worstIngestMs * INGEST_DECAY, ingestMs);
-    updateLoading(view);
+    updateLoading(view, now);
     seedTheField(view);
     // Two different clocks, and the difference matters.
     //

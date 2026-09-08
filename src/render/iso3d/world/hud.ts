@@ -98,6 +98,7 @@ import {
   swapOverhead,
 } from './skill-swap-view.js';
 import { deathOverlay } from './death.js';
+import type { RespawnCover } from './respawn-gate.js';
 import { poolBars } from './pool-bars.js';
 import { xpBar, XP_SUBDIVISIONS } from './xp-bar.js';
 import type { WindowId } from './control-actions.js';
@@ -378,6 +379,27 @@ const XP_PURPLE_DARK = '#200d36';
  */
 const DEATH_RED = '#ff2b2b';
 
+/**
+ * The ground a return is drawn on (spec 281).
+ *
+ * Opaque, where the death wash is 42% so the player can see their own corpse:
+ * 42% of an empty void is an empty void, and hiding it is the whole feature.
+ *
+ * It is the loading screen's own colour, and the bar below is the loading
+ * screen's own two, deliberately -- a player waiting for the world to arrive
+ * has read this exact screen once already, and a second vocabulary for the
+ * same wait would be a second thing to learn.
+ */
+const COVER_GROUND = '#0b0b12';
+const COVER_TRACK = '#1e1e2a';
+const COVER_FILL = '#6f7ae8';
+/** The label over it, and the line under the bar. Quieter than the banner. */
+const COVER_TEXT = '#c8c8d4';
+const COVER_DETAIL = '#7a7a90';
+
+/** The wash over a death, so {@link COVER_GROUND} has something to swap with. */
+const DEATH_WASH = 'rgba(20,2,4,.42)';
+
 export interface HudHandle {
   readonly element: HTMLElement;
   /** Called once per frame, after the scene has drawn and anchors are current. */
@@ -549,6 +571,20 @@ export interface HudHandle {
    * server decides where a respawn puts you and what it restores. This end asks.
    */
   onRespawn(handler: () => void): void;
+  /**
+   * What to draw over the world while a respawn's ground arrives, or null
+   * (spec 281).
+   *
+   * Pushed in rather than derived from the view, because what it is waiting on
+   * is the chunk stream: the loader's own pass already counts the ground held
+   * against the ground declared every frame, and a second count taken here
+   * would be a second answer to the one question the cover exists to ask.
+   *
+   * Null rather than a covered flag, the shape `deathOverlay` returns and for
+   * its reason: a value that can be present and not covering has an extra way
+   * to be wrong.
+   */
+  setRespawnCover(cover: RespawnCover | null): void;
   /**
    * Show or hide the diagnostic readout (spec 183). Returns whether it is now
    * shown, which on a compact layout is always false -- see `readoutShown`.
@@ -1034,7 +1070,7 @@ export function createHud(project: Projector): HudHandle {
   const deathLayer = document.createElement('div');
   deathLayer.style.cssText =
     'position:absolute;inset:0;display:none;flex-direction:column;align-items:center;' +
-    'justify-content:center;gap:18px;background:rgba(20,2,4,.42);pointer-events:auto;' +
+    `justify-content:center;gap:18px;background:${DEATH_WASH};pointer-events:auto;` +
     // The one z-index in this file. Everything else here is `position:absolute`
     // with no stacking of its own, so DOM order decides -- and this layer is
     // built before the weapon switch and the window buttons, which would
@@ -1056,8 +1092,110 @@ export function createHud(project: Projector): HudHandle {
   respawnButton.setAttribute('aria-label', 'Respawn');
   respawnButton.dataset['respawn'] = 'true';
   respawnButton.addEventListener('click', () => respawnHandler());
-  deathLayer.append(deathBanner, respawnButton);
+
+  /**
+   * The same layer, wearing the other thing it can say (spec 281).
+   *
+   * A return is the death screen with the button swapped for a bar, rather than
+   * a second overlay: this element is already `inset:0` over the whole frame,
+   * already above the world canvas and below the interface canvas, and already
+   * the thing on screen at the moment RESPAWN is pressed. One element and one
+   * z-index, and the change from *YOU ARE DEAD* to *RESPAWNING* happens in
+   * place instead of as a cut between two covers.
+   *
+   * What it says is decided in `respawn-gate.ts`. This file owns the elements,
+   * which is the division the rest of it already keeps.
+   */
+  const coverLabel = document.createElement('div');
+  coverLabel.dataset['coverLabel'] = '';
+  const coverTrack = document.createElement('div');
+  coverTrack.style.cssText =
+    `width:min(320px,60vw);height:3px;background:${COVER_TRACK};overflow:hidden;`;
+  const coverFill = document.createElement('div');
+  coverFill.dataset['coverFill'] = '';
+  // Eased rather than snapped, the loading bar's rule: chunk counts arrive in
+  // bursts, so an unanimated bar is a row of jumps and a jump reads as a stall.
+  coverFill.style.cssText = `width:0%;height:100%;background:${COVER_FILL};transition:width 180ms linear;`;
+  coverTrack.append(coverFill);
+  const coverDetail = document.createElement('div');
+  coverDetail.dataset['coverDetail'] = '';
+  deathLayer.append(deathBanner, respawnButton, coverLabel, coverTrack, coverDetail);
   root.append(deathLayer);
+
+  /** Whether the local body is dead, as of the last {@link update}. */
+  let deadNow = false;
+  /** The return being waited on, or null. Pushed in rather than derived here. */
+  let cover: RespawnCover | null = null;
+  /**
+   * What the layer last drew, so the DOM is written only on change.
+   *
+   * This is reconciled from the frame loop *twice* -- once off the view and once
+   * off the loader's pass -- so without it every frame of an ordinary session
+   * would write eight style properties to say nothing has happened, which is
+   * eight style invalidations a frame for a layer that is not on screen.
+   */
+  let lastLayerState = '';
+
+  /**
+   * Reconcile the one layer against the two things that can put it on screen.
+   *
+   * One function rather than a branch in each caller, because they arrive from
+   * different places on different frames -- `update` reads the view and
+   * `setRespawnCover` is pushed from the loader's own pass -- and a layer whose
+   * visibility is decided in two places is a layer that can be told two things
+   * in one frame.
+   *
+   * The cover wins. It is only ever up because the player pressed the button,
+   * and the one state where both are true is the round trip between the press
+   * and the answer, where what belongs on screen is the thing that was asked
+   * for rather than the thing being left behind.
+   */
+  function applyDeathLayer(): void {
+    const covering = cover !== null;
+    const percent = cover ? Math.round(cover.fraction * 100) : 0;
+    // Published from what is *drawn* rather than from what was asked for, the
+    // rule `data-held-weapons` follows: a cover computed and hung on nothing has
+    // to read as absent, which is the failure worth being able to see.
+    const readout = cover
+      ? `${cover.phase} ${String(percent)}% ${String(cover.secondsLeft)}s`
+      : 'off';
+    const state = `${String(deadNow)}|${readout}|${cover?.label ?? ''}|${cover?.detail ?? ''}`;
+    if (state === lastLayerState) return;
+    lastLayerState = state;
+    root.dataset['respawnCover'] = readout;
+
+    if (!covering && !deadNow) {
+      deathLayer.style.display = 'none';
+      return;
+    }
+    deathLayer.style.display = 'flex';
+    deathLayer.style.background = covering ? COVER_GROUND : DEATH_WASH;
+    deathBanner.style.display = covering ? 'none' : '';
+    respawnButton.style.display = covering ? 'none' : '';
+    coverLabel.style.display = covering ? '' : 'none';
+    coverTrack.style.display = covering ? '' : 'none';
+    coverDetail.style.display = covering ? '' : 'none';
+    if (!cover) return;
+
+    coverFill.style.width = `${String(percent)}%`;
+    if (coverLabel.dataset['text'] !== cover.label) {
+      coverLabel.dataset['text'] = cover.label;
+      coverLabel.innerHTML = pixelTextSvg(cover.label, {
+        scale: layout.coverLabelScale,
+        fill: COVER_TEXT,
+        outline: '#000000',
+      });
+    }
+    if (coverDetail.dataset['text'] !== cover.detail) {
+      coverDetail.dataset['text'] = cover.detail;
+      coverDetail.innerHTML = pixelTextSvg(cover.detail, {
+        scale: layout.coverDetailScale,
+        fill: COVER_DETAIL,
+        outline: '#000000',
+      });
+    }
+  }
+  applyDeathLayer();
 
   /**
    * Builds one window-style button: the box, border, background and caption
@@ -1957,19 +2095,20 @@ export function createHud(project: Projector): HudHandle {
     // from replicated health, and the button asks the server -- nothing here
     // decides that a player is alive again.
     const death = deathOverlay(view);
-    if (death) {
-      if (deathBanner.dataset['text'] !== death.text) {
-        deathBanner.dataset['text'] = death.text;
-        deathBanner.innerHTML = pixelTextSvg(death.text, {
-          scale: layout.compact ? 5 : 8,
-          fill: DEATH_RED,
-          outline: '#000000',
-        });
-      }
-      deathLayer.style.display = 'flex';
-    } else {
-      deathLayer.style.display = 'none';
+    if (death && deathBanner.dataset['text'] !== death.text) {
+      deathBanner.dataset['text'] = death.text;
+      deathBanner.innerHTML = pixelTextSvg(death.text, {
+        scale: layout.compact ? 5 : 8,
+        fill: DEATH_RED,
+        outline: '#000000',
+      });
     }
+    // Whether the layer is on screen is `applyDeathLayer`'s answer, not this
+    // one: a return can be up over a body that is still dead (spec 281), and
+    // two callers deciding a display property is how one of them wins by frame
+    // order rather than by rule.
+    deadNow = death !== null;
+    applyDeathLayer();
 
     const self = view.entities.find((entity) => entity.id === view.selfEntityId);
     const stats = view.stats;
@@ -2189,6 +2328,10 @@ export function createHud(project: Projector): HudHandle {
     },
     onRespawn(handler) {
       respawnHandler = handler;
+    },
+    setRespawnCover(next) {
+      cover = next;
+      applyDeathLayer();
     },
     toggleReadout() {
       readoutWanted = !readoutWanted;

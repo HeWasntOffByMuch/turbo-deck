@@ -141,6 +141,24 @@ export interface HudLayout {
   readonly captionScale: number;
   /** The word on the respawn button, which has a whole screen to itself. */
   readonly respawnScale: number;
+  /**
+   * The word over a return, while the ground under the spawn arrives (spec 281).
+   *
+   * Under the death banner's own scale and deliberately: `YOU ARE DEAD` is a
+   * shout and this is a status, and the two are drawn in the same place a
+   * moment apart -- a return set at the banner's size would read as the game
+   * shouting a second thing at somebody who has already pressed the button.
+   */
+  readonly coverLabelScale: number;
+  /**
+   * The line under the return's bar.
+   *
+   * The smallest thing in this table that is still a sentence, because the
+   * constraint is the longest of them -- `WAITING FOR THE SERVER` at 22
+   * characters -- and because what it says is a detail by construction: the
+   * label above it is what the player is meant to read.
+   */
+  readonly coverDetailScale: number;
   /** The gap between the HUD and the edge of the frame, before any safe-area inset. */
   readonly edge: number;
 }
@@ -183,6 +201,8 @@ const DESKTOP: HudLayout = {
   xpDetailScale: 2,
   captionScale: 1,
   respawnScale: 3,
+  coverLabelScale: 4,
+  coverDetailScale: 2,
   edge: 16,
 };
 
@@ -229,6 +249,8 @@ const COMPACT: HudLayout = {
   xpDetailScale: 2,
   captionScale: 1,
   respawnScale: 2,
+  coverLabelScale: 3,
+  coverDetailScale: 1,
   edge: 12,
 };
 
@@ -485,6 +507,22 @@ export function accountButtonCaption(signedInAs: string | null, layout: HudLayou
  */
 export function errorLineWidth(layout: HudLayout, text: string): number {
   return (textWidth(text) + 2) * layout.errorScale;
+}
+
+/**
+ * How wide the word over a return is drawn, in CSS px (spec 281).
+ *
+ * The same `+ 2` and for the same reason: the font pixel of margin
+ * `pixelTextSvg` leaves on each side for the outline is part of the box the
+ * browser lays out.
+ */
+export function coverLabelWidth(layout: HudLayout, text: string): number {
+  return (textWidth(text) + 2) * layout.coverLabelScale;
+}
+
+/** ...and the line under its bar. */
+export function coverDetailWidth(layout: HudLayout, text: string): number {
+  return (textWidth(text) + 2) * layout.coverDetailScale;
 }
 
 /**

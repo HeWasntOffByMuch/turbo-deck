@@ -29,6 +29,12 @@ import { chromium, type Page } from 'playwright';
 import { hudLayout, MIN_TAP_PX } from '../src/render/iso3d/world/hud-layout.js';
 import { ACTION_BAR, VIAL_ABILITY_ID } from '../src/render/iso3d/world/action-bar.js';
 import { xpBar } from '../src/render/iso3d/world/xp-bar.js';
+import {
+  ASKING_DETAIL,
+  COUNTDOWN_VISIBLE_MS,
+  COVER_LABEL,
+  RESPAWN_COVER_TIMEOUT_MS,
+} from '../src/render/iso3d/world/respawn-gate.js';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const outDir = join(root, '.claude', 'screenshots');
@@ -75,6 +81,25 @@ async function box(page: Page, selector: string): Promise<DOMRect | null> {
 
 async function set(page: Page, overrides: Record<string, unknown>): Promise<void> {
   await page.evaluate((next) => window.hudProbe?.set(next), overrides);
+}
+
+/** What one element is set in, as the browser resolved it. */
+async function styleOf(page: Page, selector: string, property: string): Promise<string> {
+  return page.evaluate(
+    ([sel, prop]) => {
+      const node = document.querySelector(sel as string);
+      return node ? getComputedStyle(node).getPropertyValue(prop as string) : '';
+    },
+    [selector, property],
+  );
+}
+
+/** The text a `pixelTextSvg` element is drawing, which has no text content. */
+async function drawnText(page: Page, selector: string): Promise<string> {
+  return page.evaluate(
+    (sel) => (document.querySelector(sel as string) as HTMLElement | null)?.dataset['text'] ?? '',
+    selector,
+  );
 }
 
 async function main(): Promise<void> {
@@ -469,6 +494,84 @@ async function main(): Promise<void> {
     }
     const asked = await page.evaluate(() => window.hudProbe?.respawns() ?? 0);
     check(asked === 1, `pressing it asks the server exactly once (${asked})`);
+
+    // --- the return (spec 281) ---------------------------------------------
+    //
+    // The half of the cover no headless test can see: `respawn-gate.test.ts`
+    // says what it decides and this says whether the decision reaches a box.
+    // Driven through the *real* gate (see `hud-probe.ts`'s `cover`), so a rig
+    // posting its own object cannot flatter it.
+    console.log('returning');
+    await page.evaluate(() => window.hudProbe?.cover(0));
+    await page.waitForTimeout(50);
+    check((await box(page, '[data-death]')) !== null, 'the layer stays up for the return');
+    check(
+      (await box(page, '[data-respawn]')) === null,
+      'the respawn button is gone -- it has already been pressed',
+    );
+    check(
+      (await box(page, '[data-death] > div:first-child')) === null,
+      'and so is the death banner',
+    );
+    // The one check the whole feature is: 42% of an empty void is an empty void,
+    // so the wash a death is drawn under will not do for a return.
+    const ground = await styleOf(page, '[data-death]', 'background-color');
+    const alpha = /rgba?\(([^)]*)\)/.exec(ground)?.[1]?.split(',')[3];
+    check(
+      alpha === undefined || Number(alpha) === 1,
+      `the ground is opaque (${ground})`,
+    );
+    check(
+      (await drawnText(page, '[data-cover-label]')) === COVER_LABEL,
+      `it says ${COVER_LABEL}`,
+    );
+    check(
+      (await drawnText(page, '[data-cover-detail]')) === ASKING_DETAIL,
+      'and what it is waiting on',
+    );
+    const label = await box(page, '[data-cover-label]');
+    const track = await box(page, '[data-cover-detail]');
+    check(
+      label !== null && label.x >= 0 && label.x + label.width <= VIEWPORT.width,
+      'the label is inside the frame',
+    );
+    check(track !== null && label !== null && track.y > label.y, 'the detail sits under it');
+    await page.screenshot({ path: join(outDir, 'bottom-hud-returning.png') });
+    console.log('  wrote bottom-hud-returning.png');
+
+    // The bar follows the ground arriving, which is the only thing on this
+    // screen that says the wait is going anywhere.
+    const coverFillWidth = async (): Promise<number> =>
+      (await box(page, '[data-cover-fill]'))?.width ?? -1;
+    await page.evaluate(() => window.hudProbe?.cover(100, { dead: false, held: 6 }));
+    await page.waitForTimeout(250);
+    const early = await coverFillWidth();
+    await page.evaluate(() => window.hudProbe?.cover(200, { dead: false, held: 22 }));
+    await page.waitForTimeout(250);
+    const late = await coverFillWidth();
+    check(early > 0 && late > early, `the bar fills as chunks land (${early} -> ${late})`);
+    check(
+      (await drawnText(page, '[data-cover-detail]')).includes('CHUNKS'),
+      'and counts them',
+    );
+
+    // ...and says when it will give up, but only once that is close.
+    await page.evaluate(
+      (nowMs) => window.hudProbe?.cover(nowMs as number, { dead: false, held: 22 }),
+      RESPAWN_COVER_TIMEOUT_MS - COUNTDOWN_VISIBLE_MS,
+    );
+    await page.waitForTimeout(50);
+    check(
+      (await drawnText(page, '[data-cover-detail]')).startsWith('SHOWING THE WORLD IN'),
+      'the countdown appears near the deadline',
+    );
+
+    // And the way back: the cover lifts, and what is underneath is the death
+    // screen it was drawn over rather than a layer nobody can dismiss.
+    await page.evaluate(() => window.hudProbe?.cover(null));
+    await page.waitForTimeout(50);
+    check((await box(page, '[data-cover-label]')) === null, 'the cover lifts');
+    check((await box(page, '[data-respawn]')) !== null, 'and the button is back under it');
 
     // Alive again: the overlay goes when the body does, and nothing here
     // decided that -- the health it was handed did.
