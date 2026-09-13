@@ -225,17 +225,39 @@ export class ItemSlot extends StyledWidget implements DropTarget {
    * one release over this cell, and carrying needs nothing else:
    *
    *  - `click`, the ordinary case;
-   *  - `dragEnd`, because a press that wanders past the drag threshold produces
-   *    one and *no* click, so ignoring it would make an unsteady click on a cell
-   *    do nothing at all;
+   *  - `dragEnd` that {@link onDrag} declined, because a press that wanders past
+   *    the drag threshold produces one and *no* click, so ignoring it would make
+   *    an unsteady click on a cell do nothing at all;
    *  - `doubleClick`, because taking something and putting it straight back is
    *    two fast clicks on one cell, and dropping the second would leave the
    *    player holding an item they had already put down.
    */
   onClick: ((slot: ItemSlot, gesture: Gesture) => void) | null = null;
+  /**
+   * A press held and moved, for a screen that wants one (spec 282).
+   *
+   * Opt-in, and the return value is what makes it safe: a `dragEnd` this
+   * declines falls through to {@link onClick}, so a cell whose screen sets
+   * nothing here reads a drag exactly as spec 137 left it. That is not a
+   * courtesy to dead code -- the shop's cells, the trade table's and the skill
+   * row's all depend on that reading for an unsteady click, and none of them
+   * has decided yet what dropping something on it would mean.
+   *
+   * `dragStart` and `drag` have no fallback, because neither is a press *and* a
+   * release and neither has ever meant anything to a cell.
+   */
+  onDrag: ((slot: ItemSlot, gesture: Gesture) => boolean) | null = null;
 
   onGesture(gesture: Gesture): void {
-    if (gesture.kind === 'click' || gesture.kind === 'doubleClick' || gesture.kind === 'dragEnd') {
+    if (gesture.kind === 'dragStart' || gesture.kind === 'drag' || gesture.kind === 'dragEnd') {
+      if (this.onDrag?.(this, gesture) === true) return;
+      // Only the end, and only where the drag was declined: this is the shaky
+      // click, which is one press and one release over this cell like the two
+      // below it.
+      if (gesture.kind === 'dragEnd') this.onClick?.(this, gesture);
+      return;
+    }
+    if (gesture.kind === 'click' || gesture.kind === 'doubleClick') {
       this.onClick?.(this, gesture);
     }
   }

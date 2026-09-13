@@ -143,9 +143,52 @@ async function clickUi(page: Page, at: { x: number; y: number }): Promise<void> 
   await page.waitForTimeout(200);
 }
 
+/**
+ * A press, a travel and a release: the gesture no headless test can reach
+ * (spec 282).
+ *
+ * The Node tests drive `UiRoot.handle` directly, so what they cannot say is
+ * whether the *page* forwards a move with a button held -- which is the one
+ * thing the whole feature rests on, since a drag that delivers no moves never
+ * crosses the threshold and arrives as an ordinary click.
+ *
+ * `steps` is what makes it a drag rather than a teleport: playwright sends one
+ * move per step, and the router promotes a press on the first one past
+ * `dragThreshold`. A single jump would still work here and would stop proving
+ * that the intermediate moves land.
+ */
+async function dragUi(page: Page, from: { x: number; y: number }, to: { x: number; y: number }): Promise<void> {
+  const start = await toCss(page, from);
+  const end = await toCss(page, to);
+  if (!start || !end) throw new Error('the interface published no viewport to drag in');
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 12 });
+  await page.waitForTimeout(120);
+  await page.mouse.up();
+  await page.waitForTimeout(200);
+}
+
 /** The first bag cell with something in it, or -1. */
 async function filledCell(page: Page): Promise<number> {
   return (await cellNames(page)).findIndex((name) => name !== '');
+}
+
+/** The first bag cell with nothing in it, or -1. */
+async function emptyCell(page: Page): Promise<number> {
+  return (await cellNames(page)).findIndex((name) => name === '');
+}
+
+/** Wait for the bag to draw something, and say which cell. Returns -1 if it never does. */
+async function filledCellUntil(page: Page, timeoutMs = 10_000): Promise<number> {
+  const deadline = Date.now() + timeoutMs;
+  let last = -1;
+  while (Date.now() < deadline) {
+    last = await filledCell(page);
+    if (last >= 0) return last;
+    await page.waitForTimeout(150);
+  }
+  return last;
 }
 
 /**
@@ -184,12 +227,25 @@ async function main(): Promise<void> {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await context.newPage();
     await page.goto(`http://localhost:${PORT}/`, { waitUntil: 'domcontentloaded' });
+
+    // Through the front door first (spec 255), the step `probe-shop.ts` records
+    // learning. This probe predates the title screen and had been pressing
+    // `KeyI` at an `inset: 0` overlay ever since, so the bag never opened and
+    // the failure read as "the bag drew no cell with anything in it" -- which is
+    // also exactly what a genuinely empty starting kit would read as.
+    await page.waitForSelector('[data-title][data-title-ready="true"]', { timeout: 120_000 });
+    await page.click('[data-title-entry="start"]', { position: { x: 6, y: 6 } });
+    await page.waitForSelector('[data-title]', { state: 'detached', timeout: 30_000 });
+    console.log('  through the title screen');
     await waitForTick(page, 30);
 
     await page.keyboard.press('KeyI');
-    await page.waitForTimeout(500);
 
-    const index = await filledCell(page);
+    // Polled, for the reason `waitForCell` below is: the readout is published
+    // from the frame and this environment paints about five a second, so the
+    // fixed 500ms that used to stand here is under one frame -- and reads an
+    // unopened bag as an empty one.
+    const index = await filledCellUntil(page);
     if (index < 0) {
       problems.push('the bag drew no cell with anything in it');
       throw new Error(problems.join('; '));
@@ -225,6 +281,31 @@ async function main(): Promise<void> {
       problems.push(`Escape did not put ${held} back in cell ${index}`);
     } else {
       console.log('  a carry cancelled with Escape goes back in its cell');
+    }
+
+    // --- dragging, beside the click (spec 282) -----------------------------
+    // Before the world drop, because that one is destructive: once the item is
+    // on the grass there is nothing left in the bag to drag.
+    const free = await emptyCell(page);
+    const target = free < 0 ? null : await cellBox(page, free);
+    if (!target) {
+      problems.push('the bag drew no empty cell to drag into');
+    } else {
+      const onTarget = { x: target.x + Math.floor(target.width / 2), y: target.y + Math.floor(target.height / 2) };
+      await dragUi(page, onCell, onTarget);
+      const landed = await waitForCell(page, free, held);
+      if (!landed) {
+        problems.push(`dragging ${held} from cell ${index} to ${free} did not move it`);
+      } else if (((await cellNames(page))[index] ?? '') !== '') {
+        problems.push(`cell ${index} still holds ${held} after the drag -- the server refused it`);
+      } else {
+        console.log(`  a drag moved ${held} from cell ${index} to ${free}, and the server agreed`);
+      }
+      // And back, so the rest of the probe measures the bag it was written for.
+      await dragUi(page, onTarget, onCell);
+      if (!(await waitForCell(page, index, held))) {
+        problems.push(`dragging ${held} back to cell ${index} did not move it`);
+      }
     }
 
     // --- the measurement ---------------------------------------------------

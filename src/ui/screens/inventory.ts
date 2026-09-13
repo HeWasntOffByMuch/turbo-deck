@@ -449,10 +449,81 @@ export class InventoryScreen extends Row {
     cell.onClick = (slot, gesture) => {
       this.clickCell(slot, gesture);
     };
+    cell.onDrag = (slot, gesture) => this.dragCell(slot, gesture);
     cell.onDropItem = (drag, to) => {
       this.emitMove(drag, to);
     };
     return cell;
+  }
+
+  /**
+   * A press held and moved over a cell (spec 282).
+   *
+   * The other way into the same hand, and it is the *same* hand: a drag begins
+   * the controller `pickUp` already begins, rides the ghost `onDragChanged`
+   * already feeds, and lights the candidate cell that callback already lights.
+   * Nothing here is a second carry.
+   *
+   * So there is one rule, and it is {@link dragLetGo}'s: the release places what
+   * is in hand on whatever is under it, and if nothing takes it the hand keeps
+   * it. A drag that lands nowhere hands over to the click model rather than
+   * being undone.
+   *
+   * Returns whether the drag was taken. A declined `dragEnd` falls back to
+   * {@link clickCell}, which is what keeps an unsteady shift+left equipping.
+   */
+  dragCell(slot: ItemSlot, gesture: Gesture): boolean {
+    if (gesture.kind === 'drag') {
+      // Belt and braces: `pointerMoved` already moves the carry on every pointer
+      // move, button down or not, and that is the path the mount takes. A caller
+      // that routes gestures and not moves still gets a ghost that follows.
+      if (!this.drag.active) return false;
+      this.drag.moveTo(gesture.pos);
+      return true;
+    }
+    if (gesture.kind === 'dragEnd') {
+      // Nothing was taken -- an empty cell, or the shift+left below. Read the
+      // whole gesture as the click it wobbled out of.
+      if (!this.drag.active) return false;
+      this.dragLetGo(gesture.pos);
+      return true;
+    }
+    // A drag that starts with something already in hand is claimed rather than
+    // ignored, so its release places where it is let go rather than on the cell
+    // that happened to take the press -- which is the only widget the router
+    // addresses once a press is captured.
+    if (this.drag.active) return true;
+    const item = slot.item;
+    if (!item) return false;
+    // Equipping is not a pick-up, so it has no carry to drag. Declining hands
+    // the release to `clickCell`, which wears it.
+    if (gesture.button === 0) return gesture.mods.shift ? false : this.pickUp(slot, gesture.pos, item.count);
+    if (gesture.button !== 2) return false;
+    return this.pickUp(slot, gesture.pos, gesture.mods.shift ? 1 : Math.ceil(item.count / 2));
+  }
+
+  /**
+   * Let go of a drag over `at`.
+   *
+   * Deliberately not {@link DragController.drop}, which cancels whatever it does
+   * not land -- spec 127's rule, written when there was no hand for an item to
+   * stay in. There is one now, so a release that nobody takes leaves the player
+   * carrying, and the next click puts it down.
+   *
+   * That covers three cases with no branch between them, which is the whole
+   * reason the rule is worth stating this way: a release over the world, over a
+   * cell whose slot refuses the item, and over the cell the drag began on --
+   * which `canAcceptDrop` refuses on its own account. The last of those is the
+   * unsteady click spec 137 was written about, and it comes out identical to a
+   * clean one.
+   */
+  private dragLetGo(at: Point): void {
+    this.drag.moveTo(at);
+    const target = this.drag.hovering;
+    if (!target) return;
+    // The same sound and the same rule as a click that places: only where the
+    // cell actually took it (spec 229).
+    if (this.drag.dropOnTarget(target)) this.emitSound('ui.drop');
   }
 
   /**

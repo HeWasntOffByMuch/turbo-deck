@@ -283,3 +283,67 @@ describe('a cell that takes no drops', () => {
     expect(cell.canAcceptDrop(payloadFrom(source, drag))).toBe(false);
   });
 });
+
+/**
+ * Which router gestures reach which hook (spec 282).
+ *
+ * The fallback is the whole of what makes drag-and-drop opt-in: the shop's
+ * cells, the trade table's and the skill row's all set `onClick` and nothing
+ * else, and every one of them relies on a `dragEnd` reading as an unsteady
+ * click (spec 137). A cell that handles drags takes them instead.
+ */
+describe('a cell that is dragged', () => {
+  const NO_MODS = { shift: false, ctrl: false, alt: false, meta: false };
+
+  function gesture(kind: 'click' | 'doubleClick' | 'dragStart' | 'drag' | 'dragEnd') {
+    return { kind, pos: { x: 0, y: 0 }, delta: { x: 0, y: 0 }, button: 0, mods: NO_MODS, time: 0 } as const;
+  }
+
+  function watched(): { cell: ItemSlot; clicks: string[]; drags: string[]; takes: boolean } {
+    const state = {
+      cell: new ItemSlot({ container: 'inventory', index: 0 }),
+      clicks: [] as string[],
+      drags: [] as string[],
+      takes: false,
+    };
+    state.cell.onClick = (_slot, g) => state.clicks.push(g.kind);
+    state.cell.onDrag = (_slot, g) => {
+      state.drags.push(g.kind);
+      return state.takes;
+    };
+    return state;
+  }
+
+  it('gives every drag gesture to the drag hook', () => {
+    const state = watched();
+    state.takes = true;
+    for (const kind of ['dragStart', 'drag', 'dragEnd'] as const) state.cell.onGesture(gesture(kind));
+    expect(state.drags).toEqual(['dragStart', 'drag', 'dragEnd']);
+    expect(state.clicks).toEqual([]);
+  });
+
+  it('falls back to the click when the drag declines the release', () => {
+    const state = watched();
+    state.cell.onGesture(gesture('dragEnd'));
+    expect(state.drags).toEqual(['dragEnd']);
+    expect(state.clicks).toEqual(['dragEnd']);
+  });
+
+  /** Neither is a press *and* a release, so neither has a click to fall back to. */
+  it('never turns a declined start or move into a click', () => {
+    const state = watched();
+    state.cell.onGesture(gesture('dragStart'));
+    state.cell.onGesture(gesture('drag'));
+    expect(state.clicks).toEqual([]);
+  });
+
+  it('leaves a cell with no drag hook reading a dragEnd as a click (spec 137)', () => {
+    const seen: string[] = [];
+    const cell = new ItemSlot({ container: 'inventory', index: 0 });
+    cell.onClick = (_slot, g) => seen.push(g.kind);
+    for (const kind of ['click', 'doubleClick', 'dragStart', 'drag', 'dragEnd'] as const) {
+      cell.onGesture(gesture(kind));
+    }
+    expect(seen).toEqual(['click', 'doubleClick', 'dragEnd']);
+  });
+});
