@@ -536,6 +536,21 @@ export interface ClientView {
    */
   readonly selfCommitted: boolean;
   /**
+   * How much of a follow-through this body must spend before it may be walked
+   * out of (spec 283), 0..1 — or null while there is no follow-through running.
+   *
+   * The *same* number {@link selfCommitted} is decided by, published rather than
+   * re-derived, which is the point: the mark on the cast bar and the rule that
+   * roots the legs are one answer. Computed twice they would agree until one of
+   * `backswingCancelPointOf`'s three inputs moved — and one of them is Flow,
+   * which moves during the phase being drawn.
+   *
+   * Null rather than a default for a body with no cast, because a fraction with
+   * nothing to be a fraction *of* is not a smaller number, it is a different
+   * claim; the bar draws nothing for it.
+   */
+  readonly selfCancelPoint: number | null;
+  /**
    * True while a request of ours has been sent and not yet answered (spec 080).
    *
    * The other half of "am I committed", and the half nothing outside this class
@@ -1748,8 +1763,26 @@ export class GameClient {
     if (!cast?.committed || !this.stats) return false;
     const backswingTicks = cast.endTick - cast.releaseTick;
     if (backswingTicks <= 0) return false;
-    const pct = backswingCancelPointOf(this.stats.traits, this.selfFlowStacks());
+    const pct = this.followThroughCancelPoint();
+    if (pct === null) return false;
     return this.estimated < cast.releaseTick + backswingCancelTicksFrom(backswingTicks, pct);
+  }
+
+  /**
+   * The fraction {@link heldByFollowThrough} is deciding against, or null when
+   * there is no follow-through to decide about (spec 283).
+   *
+   * Lifted out of that method rather than copied beside it so that what the bar
+   * draws and what holds the legs cannot drift — the whole argument for
+   * publishing it at all. The guards are that method's own, in the same order:
+   * no cast, no stats, or a cast with no follow-through in it, and none of the
+   * three has an honest fraction to answer with.
+   */
+  private followThroughCancelPoint(): number | null {
+    const cast = this.selfCast();
+    if (!cast?.committed || !this.stats) return null;
+    if (cast.endTick - cast.releaseTick <= 0) return null;
+    return backswingCancelPointOf(this.stats.traits, this.selfFlowStacks());
   }
 
   /** The cast this client will still be in at `tick`, or null if it is over. */
@@ -2144,6 +2177,7 @@ export class GameClient {
       selfStaggered: this.staggeredNow(),
       selfDead: this.deadNow(),
       selfCommitted: this.heldByFollowThrough(),
+      selfCancelPoint: this.followThroughCancelPoint(),
       awaitingCast: this.outstandingCasts.length > 0,
       awaitingPickup: this.pickUpInFlight !== null,
       resource: this.modelledResource(),

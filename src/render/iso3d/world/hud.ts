@@ -238,6 +238,8 @@ interface Bar {
   readonly guardFill: HTMLElement;
   readonly cast: HTMLElement;
   readonly castFill: HTMLElement;
+  /** The tick a follow-through may first be left on (spec 283). */
+  readonly castCancel: HTMLElement;
   /**
    * Changing a skill (spec 188).
    *
@@ -342,6 +344,16 @@ const STATUS_AFFLICTION = '#d0796f';
  * leaves nothing, and this is simply the colour that will come to mean it.
  */
 const WEAK_POINT_NUMBER = STATUS_AFFLICTION;
+
+/**
+ * The line on a follow-through where it stops holding the legs (spec 283).
+ *
+ * Near-white, because it has to read against both of the things it sits on: the
+ * blue a committed bar fills with, and the dark track ahead of the fill. A
+ * colour borrowed from either side of that boundary would vanish on one of them
+ * for exactly half the phase.
+ */
+const CAST_CANCEL_MARK = '#f4f2ee';
 /** Small enough that eight fit over a body, big enough to tell apart. */
 const STATUS_ICON_PX = 13;
 
@@ -1589,7 +1601,19 @@ export function createHud(project: Projector): HudHandle {
       'background:rgba(0,0,0,.65);border-radius:2px;overflow:hidden;display:none;';
     const castFill = document.createElement('div');
     castFill.style.cssText = 'height:100%;width:0;background:#ffcf6b;';
-    cast.append(castFill);
+    // Where the follow-through stops holding the legs (spec 283). Built once and
+    // hidden, like the stun swirl below and for its reason: it appears on every
+    // committed blow the local player throws, and an element per swing would
+    // churn the DOM at the rate of the fighting.
+    //
+    // Absolutely positioned over the fill rather than appended after it, because
+    // the mark is a *place on the track* and not a part of what has filled --
+    // laid out in flow it would be pushed along by the very bar it is measuring.
+    const castCancel = document.createElement('div');
+    castCancel.dataset['bar'] = 'castCancel';
+    castCancel.style.cssText =
+      `position:absolute;top:0;bottom:0;width:1px;background:${CAST_CANCEL_MARK};display:none;`;
+    cast.append(castFill, castCancel);
 
     // The stun swirl (spec 173). Built once and hidden, like the name: a body
     // is stunned for well under a second at a time and creating an element per
@@ -1716,6 +1740,7 @@ export function createHud(project: Projector): HudHandle {
       guardFill,
       cast,
       castFill,
+      castCancel,
       stun,
       statusRow,
       statusSlots,
@@ -1940,9 +1965,26 @@ export function createHud(project: Projector): HudHandle {
       element.root.style.display = look.showsHealth ? 'block' : 'none';
 
       if (cast) {
-        const progress = castBar(cast, tick);
+        // The cancel point is the local player's alone (spec 283): it is read off
+        // traits and Flow stacks, and this client holds nobody else's. Handing
+        // `null` for every other body is the honest answer rather than a
+        // degraded one -- a mark guessed from our own tree and drawn on a
+        // monster's bar would be a lie about when *it* stops being rooted.
+        const progress = castBar(
+          cast,
+          tick,
+          entity.id === view.selfEntityId ? (view.selfCancelPoint ?? null) : null,
+        );
         element.cast.style.display = 'block';
         element.castFill.style.width = `${progress.progress * 100}%`;
+        // Past the mark the body is free, so the mark has said what it had to
+        // say: leaving it up would draw a boundary that is behind the player.
+        const cancelAt = progress.cancelAt;
+        const showMark = cancelAt !== null && progress.progress < cancelAt;
+        element.castCancel.style.display = showMark ? 'block' : 'none';
+        if (showMark && cancelAt !== null) {
+          element.castCancel.style.left = `${cancelAt * 100}%`;
+        }
         // Amber while it can still be called off, blue once it cannot -- the
         // one distinction the whole wind-up design rests on. A turn shows as an
         // empty track in its own colour: committed, but not yet swinging.

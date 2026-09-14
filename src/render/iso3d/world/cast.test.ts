@@ -164,4 +164,61 @@ describe('backswing', () => {
     expect(castBar(cast, 200 + hasted / 2).progress).toBeCloseTo(0.5, 9);
     expect(castBar(cast, 200 + hasted).progress).toBeCloseTo(1, 9);
   });
+
+  describe('the follow-through cancel point (spec 283)', () => {
+    const backswing = 24;
+    const bar = (phase: number, tick: number, pct: number | null = null) =>
+      castBar(
+        { abilityId: 'melee.slash', phase, startTick: 940, releaseTick: 1000, endTick: 1000 + backswing },
+        tick,
+        pct,
+      );
+
+    it('marks nothing in any phase but the follow-through', () => {
+      // A wind-up may be withdrawn from on every tick of itself and a channel
+      // has no follow-through, so a mark on either claims a boundary that does
+      // not exist. Passed a fraction anyway, so this pins the phase rule rather
+      // than the absence of an argument.
+      expect(bar(CastPhaseValue.Turning, 1000, 0.5).cancelAt).toBeNull();
+      expect(bar(CastPhaseValue.Windup, 980, 0.5).cancelAt).toBeNull();
+      expect(bar(CastPhaseValue.Channel, 1010, 0.5).cancelAt).toBeNull();
+    });
+
+    it('marks nothing for a caller that does not know the fraction', () => {
+      // Every body but the local player: this client holds nobody else's traits
+      // or Flow stacks, and the default keeps every caller written before this
+      // existed drawing exactly what it drew.
+      expect(bar(CastPhaseValue.Backswing, 1010).cancelAt).toBeNull();
+    });
+
+    it('puts the mark on the tick the rule lands on, not on the raw fraction', () => {
+      // `backswingCancelTicksFrom` rounds to a whole tick, so 0.5 of a 24-tick
+      // phase is tick 12 and the mark is exactly half way. A fraction passed
+      // straight through would agree here and disagree wherever it rounds.
+      expect(bar(CastPhaseValue.Backswing, 1010, 0.5).cancelAt).toBeCloseTo(0.5, 9);
+      // 0.54 of 24 is 12.96, which rounds to 13 -- so the mark sits at 13/24
+      // rather than at 0.54.
+      expect(bar(CastPhaseValue.Backswing, 1010, 0.54).cancelAt).toBeCloseTo(13 / 24, 9);
+    });
+
+    it('stays inside the bar for a fraction outside 0..1', () => {
+      // The traits this is read off arrive from the wire, and clamping here is
+      // cheaper than trusting `backswingCancelPointOf`'s own clamp to be the
+      // only path a number can take to get here.
+      expect(bar(CastPhaseValue.Backswing, 1010, -1).cancelAt).toBeGreaterThanOrEqual(0);
+      expect(bar(CastPhaseValue.Backswing, 1010, 4).cancelAt).toBeLessThanOrEqual(1);
+    });
+
+    it('agrees with the rule that roots the legs: progress reaches the mark on the freeing tick', () => {
+      // The one property worth asserting, because it is what makes the mark
+      // honest rather than decorative. `game-client.ts` frees the body on the
+      // first tick at or past `releaseTick + backswingCancelTicksFrom(span,pct)`,
+      // and this walks the same span and checks the bar arrives there with it.
+      const pct = 0.45;
+      const freeAt = 1000 + Math.round(backswing * pct);
+      const mark = bar(CastPhaseValue.Backswing, 1000, pct).cancelAt ?? -1;
+      expect(bar(CastPhaseValue.Backswing, freeAt - 1, pct).progress).toBeLessThan(mark);
+      expect(bar(CastPhaseValue.Backswing, freeAt, pct).progress).toBeGreaterThanOrEqual(mark);
+    });
+  });
 });

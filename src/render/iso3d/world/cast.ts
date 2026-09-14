@@ -31,6 +31,7 @@
  */
 
 import { CastPhaseValue } from '../../../server/net/protocol.js';
+import { backswingCancelTicksFrom as cancelTicksFrom } from '../../../server/sim/attack-timing.js';
 
 export interface CastLike {
   readonly abilityId: string;
@@ -59,6 +60,29 @@ export interface CastBar {
   readonly turning: boolean;
   /** True past the attack point: the blow has landed (spec 144). */
   readonly committed: boolean;
+  /**
+   * Where along *this bar* the follow-through may first be walked out of
+   * (spec 283), 0..1 — or null when there is no such point to draw.
+   *
+   * Null in every phase but the backswing, and that is the whole of what it
+   * means: a wind-up may be withdrawn from on any tick of it, so a mark on one
+   * would be claiming a boundary that is not there, and a channel has no
+   * follow-through at all.
+   *
+   * It exists because `agi.quickRecovery` is a threshold-10 purchase — among
+   * the first mechanics anybody unlocks — and what it buys is exactly this tick.
+   * Spec 258 made the phase a fixed length and made Agility buy the point it may
+   * be left on rather than shortening it, which is the right rule and was drawn
+   * nowhere: three tiers moved a boundary the player had no way to see. Marked,
+   * it is a line that visibly walks left as the tree is bought.
+   *
+   * The *fraction* is handed in rather than worked out here, because
+   * `backswingCancelPointOf` reads traits and Flow stacks and this module is
+   * handed four ticks and a clock. Absent means "this caller does not know",
+   * which is the honest answer for every body but the local player: nobody
+   * else's traits are on this client.
+   */
+  readonly cancelAt: number | null;
 }
 
 function clamp01(value: number): number {
@@ -87,7 +111,11 @@ export function committedPhase(phase: number): boolean {
  * Since spec 144 that length is on the cast, so this needs nothing but the four
  * ticks -- which also closes the way the two could disagree.
  */
-export function castBar(cast: CastLike, tick: number): CastBar {
+export function castBar(
+  cast: CastLike,
+  tick: number,
+  cancelPoint: number | null = null,
+): CastBar {
   const phase = cast.phase;
 
   // Turning. `releaseTick` is provisional here and the server will re-stamp it
@@ -101,6 +129,7 @@ export function castBar(cast: CastLike, tick: number): CastBar {
       phase,
       turning: true,
       committed: committedPhase(phase),
+      cancelAt: null,
     };
   }
 
@@ -115,6 +144,9 @@ export function castBar(cast: CastLike, tick: number): CastBar {
       phase,
       turning: false,
       committed: committedPhase(phase),
+      // A wind-up is withdrawable on every tick of itself, so there is no
+      // boundary here to mark.
+      cancelAt: null,
     };
   }
 
@@ -129,6 +161,14 @@ export function castBar(cast: CastLike, tick: number): CastBar {
       phase,
       turning: false,
       committed: committedPhase(phase),
+      // `backswingCancelTicksFrom` rounds to a whole tick and floors at one, so
+      // the mark is put where the *rule* lands rather than at the raw fraction:
+      // a line drawn a pixel before the tick the server will accept is a line
+      // that lies on exactly the frame somebody is watching it.
+      cancelAt:
+        cancelPoint === null || cancelPoint === undefined
+          ? null
+          : clamp01(cancelTicksFrom(span, cancelPoint) / span),
     };
   }
 
@@ -140,5 +180,7 @@ export function castBar(cast: CastLike, tick: number): CastBar {
     phase,
     turning: false,
     committed: committedPhase(phase),
+    // A channel has no follow-through, so nothing to leave early.
+    cancelAt: null,
   };
 }
