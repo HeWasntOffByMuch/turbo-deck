@@ -472,12 +472,17 @@ export class UiLayer {
     this.screens.toggle(id);
   }
 
-  /** Open the shop at this vendor rather than at the nearest one (spec 246). */
+  /** Open a window outright, where `toggle` would shut one already open. */
+  show(id: WindowId): void {
+    this.screens.show(id);
+  }
+
   /** Say what a track just gave you (spec 283). */
   showUnlock(notice: UnlockNotice, nowMs: number): void {
     this.screens.showUnlock(notice, nowMs);
   }
 
+  /** Open the shop at this vendor rather than at the nearest one (spec 246). */
   showShopFor(vendorId: string): void {
     this.screens.showShopFor(vendorId);
   }

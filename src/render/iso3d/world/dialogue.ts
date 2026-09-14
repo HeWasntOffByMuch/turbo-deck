@@ -103,10 +103,19 @@ export type DialogueOutcome =
   /** The conversation is over. The caller tells the server and puts the camera back. */
   | { readonly kind: 'closed' }
   /** Open this vendor's shop, and keep talking. */
-  | { readonly kind: 'shop'; readonly vendorId: string };
+  | { readonly kind: 'shop'; readonly vendorId: string }
+  /**
+   * Open the character sheet, and keep talking (spec 283).
+   *
+   * Carries nothing, which is the difference from `shop` beside it: a shop is
+   * *somebody's* stock and needs to say whose, and there is one character sheet
+   * and it is already about the player reading it.
+   */
+  | { readonly kind: 'character' };
 
 const NONE: DialogueOutcome = { kind: 'none' };
 const CLOSED: DialogueOutcome = { kind: 'closed' };
+const CHARACTER: DialogueOutcome = { kind: 'character' };
 
 export class DialogueSession {
   private line: DialogueLine | null = null;
@@ -229,17 +238,21 @@ export class DialogueSession {
     // Read before the line moves: `start` replaces `this.line`, and the vendor
     // this reply opens is a property of the reply rather than of where it goes.
     const opens = choice.opens;
+    // What this reply opens, or null where it asks for a window this speaker
+    // cannot offer -- `'shop'` on an NPC with no vendor has always been inert
+    // rather than an error, and `'character'` cannot be refused at all.
+    const opened: DialogueOutcome | null =
+      opens === 'character'
+        ? CHARACTER
+        : opens === 'shop' && this.npc.vendorId !== null
+          ? { kind: 'shop', vendorId: this.npc.vendorId }
+          : null;
     if (choice.go === null) {
       const outcome = this.end();
-      return opens === 'shop' && this.npc.vendorId !== null
-        ? { kind: 'shop', vendorId: this.npc.vendorId }
-        : outcome;
+      return opened ?? outcome;
     }
     this.start(choice.go, nowMs);
-    if (opens === 'shop' && this.npc.vendorId !== null) {
-      return { kind: 'shop', vendorId: this.npc.vendorId };
-    }
-    return NONE;
+    return opened ?? NONE;
   }
 
   /**

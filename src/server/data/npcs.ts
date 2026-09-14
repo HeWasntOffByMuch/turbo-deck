@@ -172,6 +172,93 @@ const ARMOURER_DIALOGUE: DialogueScript = {
   ],
 };
 
+/**
+ * The trainer's script (spec 283).
+ *
+ * The first NPC here with nothing to sell, and the first whose replies are
+ * about the *game* rather than about the world. What it is for is the gap spec
+ * 283 opens with: the first node on every track is at 10, a fresh character can
+ * reach one before its first level-up, and until this there was nobody to ask.
+ *
+ * Three rules it is written to, and the first two are
+ * `docs/mechanics-vocabulary.md`'s.
+ *
+ * **The controlled vocabulary, exactly.** Guard, wind-up, follow-through, weak
+ * point. A synonym is a second concept whether or not anybody meant it to be,
+ * and a trainer that said "stamina" or "stun bar" would be teaching a word the
+ * rest of the game does not use.
+ *
+ * **No numbers.** Not one line here states a quantity, and that is the same
+ * rule this file's own `description` fields are held to: a number authored in
+ * prose is a second copy of a table with nothing keeping it true, and the sheet
+ * and the tooltips already say how much. These lines say what a mechanic *is*
+ * and what the player *does*.
+ *
+ * And **it points rather than explains**: the last reply opens the character
+ * sheet, which is where the numbers actually are. A trainer that recited the
+ * tree would be a worse character sheet.
+ *
+ * What it cannot do is react to what you have built -- `DialogueScript` has no
+ * conditions and no flags -- so it offers a menu. That is written down in spec
+ * 283's Out of scope rather than worked around, because a condition language
+ * would be the first stateful content in this tree.
+ */
+const TRAINER_DIALOGUE: DialogueScript = {
+  start: 'greet',
+  lines: [
+    {
+      id: 'greet',
+      text: 'You have the look of someone still finding out what they can do. Ask.',
+      choices: [
+        { text: 'How does an attack work?', go: 'swing' },
+        { text: 'What is Guard?', go: 'guard' },
+        { text: 'What am I supposed to spend points on?', go: 'points' },
+        { text: 'Nothing for now.', go: null },
+      ],
+    },
+    {
+      id: 'swing',
+      // The wind-up and the follow-through, which is the decision this whole
+      // game is built on -- and the one thing a new player is never told.
+      text: 'Every blow winds up before it lands. Move, and you withdraw from it and keep what it cost you. After it lands you are still committed for a moment, and walking out of that moment costs nothing at all.',
+      choices: [
+        { text: 'And a weak point?', go: 'weak' },
+        { text: 'What is Guard?', go: 'guard' },
+        { text: 'That helps.', go: null },
+      ],
+    },
+    {
+      id: 'guard',
+      text: 'Guard is what keeps a body on its feet. Wear it down and the next blow staggers them. Stand still and yours comes back; keep swinging and it does not.',
+      choices: [
+        { text: 'How does an attack work?', go: 'swing' },
+        { text: 'And a weak point?', go: 'weak' },
+        { text: 'Understood.', go: null },
+      ],
+    },
+    {
+      id: 'weak',
+      text: 'Some blows find a seam. You will know one when you see it -- it bites deeper, and against a body already opened up it is worse still. Read what is in front of you and you will find more of them.',
+      choices: [
+        { text: 'What am I supposed to spend points on?', go: 'points' },
+        { text: 'Good.', go: null },
+      ],
+    },
+    {
+      id: 'points',
+      // The one reply in the tree that opens a window, and it opens the sheet
+      // rather than describing it. Everything a player wants next -- what a
+      // track holds, what a tier costs, what they already have -- is drawn
+      // there properly, and saying it here would be a worse copy of it.
+      text: 'Whatever you mean to do more of. Every track opens something the moment you reach far enough into it, and it will say so when you do. Look for yourself.',
+      choices: [
+        { text: 'Show me.', go: 'greet', opens: 'character' },
+        { text: 'Later.', go: null },
+      ],
+    },
+  ],
+};
+
 const DEFINITIONS: readonly NpcDefinition[] = [
   {
     id: 'npc.merchant',
@@ -216,6 +303,23 @@ const DEFINITIONS: readonly NpcDefinition[] = [
     voice: { voice: 'soft', pitchMultiplier: 0.88, speed: 0.92 },
     vendorId: 'vendor.armourer',
     dialogue: ARMOURER_DIALOGUE,
+  },
+  {
+    id: 'npc.trainer',
+    name: 'Trainer',
+    talkRadius: 130,
+    // The fourth engine, which spec 246 left unspoken for and said so --
+    // *"the honest state of a roster this size rather than a gap"*. This is the
+    // row that collects it, so the four bodies in the village are four voices,
+    // which is the first thing that tells them apart at a distance.
+    //
+    // Pitched and paced down, hard: the preset's own character is bright and a
+    // bright teacher is a squeak, where the same engine slowed reads as brisk.
+    voice: { voice: 'chirpy', pitchMultiplier: 0.86, speed: 0.9 },
+    // Nothing to sell, and the first row here to say so. `'shop'` on a reply
+    // would be inert rather than an error, which is why no reply has one.
+    vendorId: null,
+    dialogue: TRAINER_DIALOGUE,
   },
 ];
 

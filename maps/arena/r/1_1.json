@@ -325,9 +325,17 @@
             { "species": "bush", "x": 528.332, "z": 119.391, "rotation": 1.436, "scale": 1.642, "tint": -0.985 },
             { "species": "well", "x": 96.271, "z": 66.552, "rotation": 5.76, "scale": 0.55, "tint": -0.886 },
             { "species": "torch-stand", "x": 34.423, "z": 408.625, "rotation": 0, "scale": 0.6, "tint": -0.383 },
-            { "species": "campfire", "x": 225.354, "z": 211.119, "rotation": 0, "scale": 0.8, "tint": 0.274 }
+            { "species": "campfire", "x": 225.354, "z": 211.119, "rotation": 0, "scale": 0.8, "tint": 0.274 },
+            { "species": "sign", "x": 352.514, "z": 199.762, "rotation": 0, "scale": 1, "tint": 0, "text": "Every strike starts with a wind-up: you're rooted, and it has not landed yet. Move early and you withdraw instead — it is called off, and any Resource spent comes back. Hold still, and it lands as thrown." },
+            { "species": "sign", "x": 253.789, "z": 306.874, "rotation": 0, "scale": 1, "tint": 0, "text": "Guard is a pool apart from health. A landed blow drains some of it too. Empty it and you're Staggered: rooted, and whatever you are doing drops. Guard refills whole after, and stays safe from another break for a while." },
+            { "species": "sign", "x": 198.464, "z": 329.79, "rotation": 0, "scale": 1, "tint": 0, "text": "A strike keeps you rooted a moment after it lands, too — the backswing. Partway through you can break off and move again for free; the blow already struck, so nothing is refunded. Hold instead, and it finishes on its own." },
+            { "species": "sign", "x": 151.627, "z": 357.801, "rotation": 0, "scale": 1, "tint": 0, "text": "Not every hit lands the same. A weak point is a sharper one — its own roll, apart from a critical, and both can land on one blow. Read enough of them and the seam stays open: a body left Exposed takes more from everyone, not just from you." }
           ],
-          "markers": []
+          "markers": [
+            { "kind": "spawner", "id": "spawner-training-dummy-1", "x": 311.474, "z": 260.989, "label": "dummy" },
+            { "kind": "spawner", "id": "spawner-training-dummy-2", "x": 309.284, "z": 366.708, "label": "dummy" },
+            { "kind": "spawner", "id": "spawner-trainer", "x": 107.11, "z": 417.116, "label": "npc.trainer" }
+          ]
         }
       ]
     }

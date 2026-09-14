@@ -68,19 +68,22 @@ interface Harness {
   readonly sink: Recorder;
   readonly shops: string[];
   readonly leaves: number[];
+  readonly sheets: number[];
 }
 
 function harness(): Harness {
   const sink = new Recorder();
   const shops: string[] = [];
   const leaves: number[] = [];
+  const sheets: number[] = [];
   const driver = new DialogueDriver({
     speech: sink,
     bodyLift: BODY_LIFT,
     onShop: (vendorId) => shops.push(vendorId),
+    onCharacter: () => sheets.push(1),
     onLeave: () => leaves.push(1),
   });
-  return { driver, sink, shops, leaves };
+  return { driver, sink, shops, leaves, sheets };
 }
 
 /** Drive the reveal the way a frame loop would. */

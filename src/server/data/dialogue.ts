@@ -72,12 +72,19 @@ export interface DialogueChoice {
   /**
    * What this reply opens besides moving, or null.
    *
-   * `'shop'` is the only member and that is the honest state of it: the shop is
-   * the one window an NPC has to offer. A second member is a second window plus
-   * one branch where this is read, which is what makes it worth being a union
-   * rather than a boolean called `opensShop`.
+   * Two members, and the second is what the first's own note said it would
+   * cost: *"a second member is a second window plus one branch where this is
+   * read, which is what makes it worth being a union rather than a boolean
+   * called `opensShop`"*. That was written when `'shop'` was the only one, and
+   * spec 283 collected on it -- `'character'` is the sheet, so a trainer can
+   * put a player in front of the thing it has just told them about instead of
+   * naming a key they may have rebound.
+   *
+   * A reply asking for a window an NPC cannot offer is **inert rather than an
+   * error**, which is the rule a `light` on a hut already follows: `'shop'` on
+   * an NPC with no `vendorId` opens nothing today and always has.
    */
-  readonly opens?: 'shop';
+  readonly opens?: 'shop' | 'character';
 }
 
 export interface DialogueLine {

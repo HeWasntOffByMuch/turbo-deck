@@ -298,14 +298,20 @@ function seconds(value: number): number {
  * `sim/idle.ts`, is moved by `resolveMovement`, replicates and is drawn. What it
  * *says* lives in `data/npcs.ts`, keyed by this id.
  *
- * A factory rather than three literal rows, because since spec 247 there are
- * three of them and every field but the id and the name is the same -- and the
- * fields are the same for reasons, written out below, that would then be
- * written out three times or (worse) once, beside whichever row happened to be
- * first. What a shopkeeper differs in is its shop and its script, and neither
+ * A factory rather than four literal rows, because since spec 247 there is more
+ * than one of them and every field but the id and the name is the same -- and
+ * the fields are the same for reasons, written out below, that would then be
+ * written out four times or (worse) once, beside whichever row happened to be
+ * first. What one of these differs in is its shop and its script, and neither
  * of those is in this table.
+ *
+ * It was `shopkeeper` until spec 283 put a trainer on it, which sells nothing.
+ * The rename is not tidying: the docstring above already said that what a
+ * shopkeeper differs in is not here, so the name was describing the three
+ * callers it happened to have rather than what the function builds -- which is
+ * a friendly body that stands in a town.
  */
-function shopkeeper(id: string, name: string): AuthoredMonster {
+function townsfolk(id: string, name: string): AuthoredMonster {
   return {
     id,
     name,
@@ -763,15 +769,21 @@ const AUTHORED: readonly AuthoredMonster[] = [
       basicAttackId: 'melee.slash',
     },
   },
-  shopkeeper('npc.merchant', 'Rell'),
+  townsfolk('npc.merchant', 'Rell'),
   // The two shops that used to be invisible coordinates near the spawn
   // (spec 247). They were reached by standing on the spot and pressing a key,
   // which is what "there is no map that says where a town is" bought in spec
   // 129; there is a town now, and the key is gone, so they are bodies like
   // Rell -- same row shape, same wander, same voice machinery, different
-  // stock. What that costs is one `shopkeeper(...)` line each.
-  shopkeeper('npc.quartermaster', 'Quartermaster'),
-  shopkeeper('npc.armourer', 'Armourer'),
+  // stock. What that costs is one `townsfolk(...)` line each.
+  townsfolk('npc.quartermaster', 'Quartermaster'),
+  townsfolk('npc.armourer', 'Armourer'),
+  // The fourth body on the same row shape and the first with nothing to sell
+  // (spec 283), which is what took the helper's name from `shopkeeper` to
+  // `townsfolk`: everything it builds is what a friendly standing body *is*,
+  // and what one *sells* has lived in `data/vendors.ts` since it was written.
+  // A trainer's `vendorId` is null and nothing else about it differs.
+  townsfolk('npc.trainer', 'Trainer'),
 ];
 
 const DUMMY: AuthoredMonster = {

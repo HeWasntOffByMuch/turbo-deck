@@ -159,6 +159,15 @@ export interface DialogueDriverOptions {
   readonly bodyLift: number;
   /** Open this vendor's shop. The dialogue names it; the mount opens it. */
   readonly onShop: (vendorId: string) => void;
+  /**
+   * Open the character sheet (spec 283).
+   *
+   * A callback rather than something this driver does, for `onShop`'s reason
+   * exactly: a dialogue driver knows about a conversation and the mount knows
+   * about windows, and a driver that reached into one would be the second thing
+   * in the tree deciding what is on screen.
+   */
+  readonly onCharacter: () => void;
   /** Tell the server the conversation is over. */
   readonly onLeave: () => void;
 }
@@ -370,6 +379,7 @@ export class DialogueDriver {
       // A shop reply may also have ended the line, so the closed check below
       // still has to run -- which is why this is not an early return.
     }
+    if (outcome.kind === 'character') this.options.onCharacter();
     if (this.session?.closed ?? false) this.leave();
   }
 }

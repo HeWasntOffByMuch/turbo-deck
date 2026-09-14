@@ -2124,6 +2124,9 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
       // its only caller.
       ui.showShopFor(vendorId);
     },
+    // A trainer puts the player in front of the thing it has just described
+    // (spec 283), rather than naming a key they may have rebound.
+    onCharacter: () => ui.show('character'),
     onLeave: () => client.talk(0),
   });
   let audioMix = loadMix(bindingStorage);

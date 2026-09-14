@@ -1039,6 +1039,7 @@
     "grave",
     "house",
     "lamp-post",
+    "sign",
     "torch-stand",
     "tree",
     "well"
@@ -3207,6 +3208,24 @@
           "z": 508
         },
         {
+          "id": "spawner-training-dummy-1",
+          "monsterId": "dummy",
+          "x": 559.4739999999999,
+          "z": 508.989
+        },
+        {
+          "id": "spawner-training-dummy-2",
+          "monsterId": "dummy",
+          "x": 557.284,
+          "z": 614.7080000000001
+        },
+        {
+          "id": "spawner-trainer",
+          "monsterId": "npc.trainer",
+          "x": 355.11,
+          "z": 665.116
+        },
+        {
           "id": "spawner-115",
           "monsterId": "small_spider",
           "x": 1237.743,
@@ -3619,7 +3638,7 @@
         {
           "rx": 1,
           "rz": 1,
-          "hash": "791ab9a1",
+          "hash": "e7b2183c",
           "cells": 3136
         },
         {
@@ -4063,5 +4082,5 @@
       ]
     }
   ],
-  "mapId": "e4daf54e"
+  "mapId": "6954a044"
 }
