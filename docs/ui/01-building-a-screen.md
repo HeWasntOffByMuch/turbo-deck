@@ -382,11 +382,12 @@ screen.pointerMoved(at, nowMs);            // hover -> tooltip, and the carry fo
 layers.place('tooltip', screen.tooltip);
 ```
 
-- **A click picks up and a click puts down**, and dragging as a way to move an
-  item is gone. `click`, `dragEnd` and `doubleClick` all mean the same thing to a
-  cell, because each is one press and one release over it: a press that wandered
-  past the drag threshold produces `dragEnd` and no click, and putting something
-  straight back is two fast clicks whose second arrives as a double.
+- **A click picks up and a click puts down.** `click`, `doubleClick` and a
+  `dragEnd` the cell did not take as a drag all mean the same thing, because each
+  is one press and one release over it: a press that wandered past the drag
+  threshold produces `dragEnd` and no click, and putting something straight back
+  is two fast clicks whose second arrives as a double. (Spec 137 removed dragging
+  and spec 282 put it back beside this — see below.)
 - **Which click means what**: left takes the stack, right takes half rounding up,
   shift+right takes one, shift+left wears it or takes it off. While carrying,
   every button places — one rule, so nothing is left mysteriously in hand.
@@ -426,6 +427,45 @@ display-store.ts` beside the bindings store, a `DisplayScreen` in the options
 window's second tab, and `resolveUiScale` in `core/frame.ts` — `'auto'` is
 `autoUiScale` unchanged, and a number is honoured outright rather than clamped
 back into the rules that exist for people who have not chosen.
+
+### And dragging, beside it (spec 282)
+
+```ts
+// src/ui/widgets/item-slot.ts -- opt-in, and the return value is the opt
+cell.onDrag = (slot, gesture) => screen.dragCell(slot, gesture);
+```
+
+Spec 137 removed dragging as an *input* and left every piece of machinery it ran
+on: the controller, the drop target, the ghost, the non-interactive layer and the
+router's own `dragStart`/`drag`/`dragEnd`. What was missing was one decision, and
+it is the rule the two gestures now share:
+
+> **A drag places what is in hand on whatever is under the release. If nothing
+> takes it, the hand keeps it.**
+
+- **A drag and a carry are one state.** A drag begins the `DragController`
+  `pickUp` already begins and rides the ghost `onDragChanged` already feeds.
+  There is no second carry to keep in step, and no mode to be in.
+- **A release nobody takes hands over to the click model** rather than undoing
+  the carry — so a release over the world, over a cell whose slot refuses the
+  item, and over the cell the drag began on are one case with no branch between
+  them. The last of those is spec 137's unsteady click, and it comes out
+  identical to a clean one. This is deliberately *not* `DragController.drop`,
+  which cancels what it does not land: spec 127's rule, written when there was no
+  hand for an item to stay in.
+- **The hook is opt-in, and a declined `dragEnd` falls through to `onClick`.**
+  `ItemSlot` has three other users — the shop, the trade table, the skill row —
+  and every one relies on a `dragEnd` reading as a shaky click. Their `onDrag` is
+  null and nothing about them moved.
+- **Equipping declines.** Shift+left is not a pick-up, so it has no carry to
+  drag; declining hands the release to the click, which wears it.
+- **The count is the click table's**, decided when the drag begins so the ghost
+  carries it the whole way: left takes the stack, right half, shift+right one.
+
+The tests drive `UiRoot.handle` with a real down/move/up rather than a synthetic
+gesture, which is the point of them: nothing in the tree had ever exercised the
+router's drag derivation against a bag cell, which is exactly the path that was
+dead.
 
 ## What is not here yet
 

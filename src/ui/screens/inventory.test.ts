@@ -734,3 +734,169 @@ describe('the purse', () => {
     expect(purseText(test.screen)).toEqual(['0 coins']);
   });
 });
+
+/**
+ * Dragging, alongside the click (spec 282).
+ *
+ * Driven through `UiRoot.handle` rather than by calling `dragCell` directly,
+ * which is the point of this block: every other test here builds a synthetic
+ * `click` and hands it over, so nothing in the tree has ever exercised the
+ * router's own `dragStart`/`drag`/`dragEnd` derivation against a bag cell --
+ * which is exactly the path that was dead.
+ */
+describe('dragging an item', () => {
+  const at = (test: Harness, ref: Ref): { x: number; y: number } => {
+    const cell = test.screen.cellAt(ref);
+    if (!cell) throw new Error('no such cell');
+    return {
+      x: cell.rect.x + Math.floor(cell.rect.width / 2),
+      y: cell.rect.y + Math.floor(cell.rect.height / 2),
+    };
+  };
+
+  const press = (
+    test: Harness,
+    pos: { x: number; y: number },
+    phase: 'down' | 'move' | 'up',
+    time: number,
+    button = 0,
+    mods: Modifiers = NO_MODIFIERS,
+  ): void => {
+    test.root.handle({ kind: 'pointer', phase, pos, button, mods, time });
+  };
+
+  /** Press on `from`, travel well past the threshold, release over `to`. */
+  function dragBetween(
+    test: Harness,
+    from: Ref,
+    to: { x: number; y: number } | Ref,
+    button = 0,
+    mods: Modifiers = NO_MODIFIERS,
+  ): void {
+    const end = 'container' in to ? at(test, to) : to;
+    press(test, at(test, from), 'down', 0, button, mods);
+    press(test, end, 'move', 10, button, mods);
+    press(test, end, 'up', 20, button, mods);
+  }
+
+  it('moves a stack to the cell it was let go over, not the one it was pressed on', () => {
+    const test = harness();
+    dragBetween(test, inv(0), inv(5));
+    expect(test.moves).toEqual([{ from: inv(0), to: inv(5), count: 0 }]);
+    expect(test.screen.drag.active).toBeNull();
+  });
+
+  /** The rule every gesture on this screen shares: the server moves things. */
+  it('does not move the item itself', () => {
+    const test = harness();
+    dragBetween(test, inv(0), inv(5));
+    expect(test.screen.cellAt(inv(0))?.item?.defId).toBe('sword');
+    expect(test.screen.cellAt(inv(5))?.item).toBeNull();
+  });
+
+  it('carries the count the press asked for, and says so on the ghost', () => {
+    const half = harness();
+    press(half, at(half, inv(1)), 'down', 0, 2);
+    press(half, { x: at(half, inv(1)).x + 40, y: at(half, inv(1)).y }, 'move', 10, 2);
+    expect(half.screen.ghost.count).toBe(3);
+
+    const test = harness();
+    dragBetween(test, inv(1), inv(5), 2);
+    expect(test.moves).toEqual([{ from: inv(1), to: inv(5), count: 3 }]);
+  });
+
+  it('takes one with shift and the right button', () => {
+    const test = harness();
+    dragBetween(test, inv(1), inv(5), 2, { ...NO_MODIFIERS, shift: true });
+    expect(test.moves).toEqual([{ from: inv(1), to: inv(5), count: 1 }]);
+  });
+
+  /**
+   * The unsteady click spec 137 was written about, and it needs no branch: the
+   * source cell refuses a drop from itself, so nothing takes it and the hand
+   * keeps it -- which is what a clean click would have left.
+   */
+  it('leaves a wobbled press carrying, exactly as a click would', () => {
+    const wobbled = harness();
+    const pos = at(wobbled, inv(0));
+    press(wobbled, pos, 'down', 0);
+    press(wobbled, { x: pos.x + 4, y: pos.y + 1 }, 'move', 5);
+    press(wobbled, { x: pos.x + 4, y: pos.y + 1 }, 'up', 10);
+
+    const clicked = harness();
+    clickCell(clicked, inv(0));
+
+    for (const test of [wobbled, clicked]) {
+      expect(test.moves).toEqual([]);
+      expect(test.screen.drag.active).not.toBeNull();
+      expect(test.screen.ghost.item?.defId).toBe('sword');
+      // The cell it came from draws empty, because this screen emptied it.
+      expect(test.screen.cellAt(inv(0))?.item).toBeNull();
+    }
+  });
+
+  /**
+   * A release nobody takes hands over to the click model rather than undoing
+   * the carry -- which is the whole of "both gestures, one hand".
+   */
+  it('keeps the item in hand when it is let go over nothing', () => {
+    const test = harness();
+    dragBetween(test, inv(0), { x: 398, y: 298 });
+    expect(test.moves).toEqual([]);
+    expect(test.screen.drag.active).not.toBeNull();
+    // And the click model finishes it.
+    clickCell(test, inv(5));
+    expect(test.moves).toEqual([{ from: inv(0), to: inv(5), count: 0 }]);
+  });
+
+  it('keeps it in hand over a cell that refuses it, and lights nothing', () => {
+    const test = harness();
+    dragBetween(test, inv(0), worn(2)); // a sword over the head slot
+    expect(test.moves).toEqual([]);
+    expect(test.screen.drag.active).not.toBeNull();
+    expect(test.screen.equipmentSlots.filter((cell) => cell.dropCandidate)).toEqual([]);
+  });
+
+  it('equips onto the slot the item names', () => {
+    const test = harness();
+    dragBetween(test, inv(0), worn(0));
+    expect(test.moves).toEqual([{ from: inv(0), to: worn(0), count: 0 }]);
+  });
+
+  /**
+   * Equipping is not a pick-up, so it has no carry to drag: the drag declines
+   * and the release falls back to the click, which wears it.
+   */
+  it('still equips on an unsteady shift and left button', () => {
+    const test = harness();
+    dragBetween(test, inv(0), inv(0), 0, { ...NO_MODIFIERS, shift: true });
+    expect(test.moves).toEqual([{ from: inv(0), to: worn(0), count: 0 }]);
+    expect(test.screen.drag.active).toBeNull();
+  });
+
+  it('lights the cell under the cursor while the drag is in flight', () => {
+    const test = harness();
+    press(test, at(test, inv(0)), 'down', 0);
+    press(test, at(test, inv(5)), 'move', 10);
+    const target = test.screen.cellAt(inv(5));
+    expect(target?.dropCandidate).toBe(true);
+    expect(test.screen.bagSlots.filter((cell) => cell.dropCandidate)).toEqual([target]);
+  });
+
+  it('is cancelled by Escape, which is the carry cancelled by Escape', () => {
+    const test = harness();
+    press(test, at(test, inv(0)), 'down', 0);
+    press(test, at(test, inv(5)), 'move', 10);
+    expect(test.screen.cancelDrag()).toBe(true);
+    expect(test.screen.drag.active).toBeNull();
+    expect(test.screen.cellAt(inv(0))?.item?.defId).toBe('sword');
+  });
+
+  /** A drag begun with something already in hand places where it is let go. */
+  it('places a carried stack on the cell the release landed on', () => {
+    const test = harness();
+    clickCell(test, inv(0));
+    dragBetween(test, inv(3), inv(7));
+    expect(test.moves).toEqual([{ from: inv(0), to: inv(7), count: 0 }]);
+  });
+});

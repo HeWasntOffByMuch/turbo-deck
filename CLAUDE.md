@@ -2232,7 +2232,7 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  one release on a cell is the whole gesture vocabulary (left
                  takes a stack, right takes half, shift+right takes one,
                  shift+left wears it), a carry empties the cell it came from so
-                 it can be put back, and dragging an item is gone. The rule that
+                 it can be put back. The rule that
                  came out of it and applies to every screen: **a press hands the
                  keyboard only to something that types**. Focus used to follow
                  every press, so an open window silently held the arrow keys,
@@ -2241,6 +2241,55 @@ src/ui/          the GUI framework (spec 123), and a top-level peer rather than 
                  `focusOnPress` is false on `Widget` and true on `TextField`
                  alone; Tab still reaches everything focusable, because Tab is
                  not a key anybody plays with.
+                 Spec 137 also removed **dragging** as a way to move an item,
+                 and spec 282 put it back beside the click rather than instead
+                 of it -- which cost one hook and one rule, because 137 had
+                 removed only the *input*. Everything it ran on was still there
+                 and still tested: `DragController` with a `drop(at)` nothing
+                 called, `ItemSlot implements DropTarget`, the `dragGhost` layer
+                 mounted by `ui-screens.ts`, `pointerMoved` already calling
+                 `drag.moveTo` on every move with a button down or not, and the
+                 router still deriving `dragStart`/`drag`/`dragEnd` for every
+                 widget -- `Window` and `Slider` use them today. What was
+                 missing was one decision: **what a `dragEnd` means when it did
+                 not land where it started.**
+                 The answer makes the two gestures two ways into one hand rather
+                 than two modes, because they are already one state -- a drag
+                 begins the controller `pickUp` begins, rides the ghost
+                 `onDragChanged` feeds, and lights the candidate cell that
+                 callback lights. **A drag places what is in hand on whatever is
+                 under the release, and if nothing takes it the hand keeps it.**
+                 That one sentence covers three cases with no branch between
+                 them -- a release over the world, over a cell whose slot refuses
+                 the item, and over the cell the drag began on, which
+                 `canAcceptDrop` refuses on its own account. The last of those is
+                 137's own **unsteady click** (a press that wobbles past the
+                 threshold produces a `dragEnd` and *no* `click`, so ignoring it
+                 would make the click do nothing), and it needs no special case:
+                 nothing takes it, so the hand keeps the stack, which is exactly
+                 what a clean click leaves. A release that lands nowhere hands
+                 over to the click model rather than undoing the carry, which is
+                 deliberately **not** `DragController.drop` -- that one cancels
+                 what it does not land, spec 127's rule, written when there was
+                 no hand for an item to stay in. `moveTo` then
+                 `dropOnTarget(hovering)` says the other thing and needed no
+                 change to the pure controller.
+                 The hook is **opt-in and the return value is the opt**:
+                 `ItemSlot.onDrag` takes the three drag gestures, and a
+                 `dragEnd` it declines falls through to `onClick`. That is not a
+                 courtesy -- the shop's cells, the trade table's and the skill
+                 row's all set `onClick` and nothing else, and every one of them
+                 depends on 137's reading for a shaky click. Shift+left declines
+                 for the same machinery's sake rather than as an exception:
+                 equipping is not a pick-up, so it has no carry to drag, and
+                 declining is what hands the release to the click that wears it.
+                 The count is decided at the press, from the click table, so the
+                 ghost carries it the whole way.
+                 What the tests do differently is the other half of why this was
+                 dead: they drive `UiRoot.handle` with a real down/move/up, where
+                 every other test on this screen builds a synthetic `click` and
+                 hands it over -- so nothing in the tree had ever put the
+                 router's own drag derivation against a bag cell.
                  Since spec 188 the bag has a **skill row** under the grid: the
                  four `skill1..skill4` equipment slots, laid out four across in
                  key order, which is the same four the action bar draws along
