@@ -188,7 +188,7 @@ import { SignIndex, SIGN_READ_RADIUS, type SignMark } from './sign.js';
 import { TouchGestures, type TouchSample } from './touch.js';
 import { DEFAULT_HEADROOM, WorldScene, type AimIndicator } from './scene.js';
 import { spawnerLabels } from './spawner-overlay.js';
-import type { WorldAnchor } from './damage-popup.js';
+import { damageMarkOf, type WorldAnchor } from './damage-popup.js';
 import { XpGains } from './xp-gain.js';
 import { castRefusalText } from './error-log.js';
 import { drainPress, type QueuedPress } from './press-queue.js';
@@ -1836,7 +1836,20 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // the fallback for a hit on a body no frame has drawn yet.
     const at = scene.bodyAnchor(result.targetId) ?? replicaAnchor(result.targetId);
     if (!at) return;
-    hud.addDamage(result.targetId, at, result.damage, (result.flags & CombatFlag.Critical) !== 0);
+    // One decision about what this number is, taken in `damageMarkOf` rather
+    // than here (spec 283): a weak point and a crit are separate rolls and both
+    // can land on one blow, so which of them the number looks like is a rule
+    // rather than a boolean each call site re-derives.
+    hud.addDamage(
+      result.targetId,
+      at,
+      result.damage,
+      damageMarkOf(
+        result.damage,
+        (result.flags & CombatFlag.Critical) !== 0,
+        (result.flags & CombatFlag.WeakPoint) !== 0,
+      ),
+    );
     // Where the reward for this body will go, if there turns out to be one
     // (spec 184). Remembered rather than acted on, because the experience is not
     // in this message: the server grants it against the store and sends a whole

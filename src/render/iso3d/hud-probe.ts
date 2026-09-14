@@ -1,4 +1,5 @@
 import { createHud } from './world/hud.js';
+import type { DamageMark } from './world/damage-popup.js';
 import { UiLayer } from './world/ui-layer.js';
 import { InputMap } from '../../ui/input/input-map.js';
 import type { ClientView } from '../../server/client/game-client.js';
@@ -43,7 +44,7 @@ interface ProbeApi {
   /** Which ability ids the slot buttons have asked to cast, in order. */
   used(): string[];
   /** Land a blow at the rig's one world point (spec 096). */
-  hit(damage: number, crit: boolean): void;
+  hit(damage: number, mark: DamageMark): void;
   /** Earn `amount` experience at the same point (spec 184). */
   reward(amount: number): void;
   /** Draw `frames` more frames, so a floating number gets somewhere. */
@@ -318,8 +319,8 @@ window.hudProbe = {
   },
   respawns: () => respawnCount,
   used: () => [...used],
-  hit(damage, crit) {
-    hud.addDamage(7, { x: 0, y: 0, lift: 0 }, damage, crit);
+  hit(damage, mark) {
+    hud.addDamage(7, { x: 0, y: 0, lift: 0 }, damage, mark);
     draw();
   },
   reward(amount) {

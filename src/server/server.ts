@@ -3249,13 +3249,15 @@ export class GameServer implements AdminHost {
             targetId: event.targetId,
             damage: event.damage,
             targetHealth: event.targetHealth,
-            // Named rather than spelled, now that there are four of them and
-            // one of them decides whether a picture is drawn at all.
+            // Named rather than spelled, now that there are five of them, one
+            // decides whether a picture is drawn at all and one decides what a
+            // number is drawn in.
             flags:
               (event.killed ? CombatFlag.Killed : 0) |
               (event.critical ? CombatFlag.Critical : 0) |
               (event.blocked ? CombatFlag.Blocked : 0) |
-              (event.periodic ? CombatFlag.Periodic : 0),
+              (event.periodic ? CombatFlag.Periodic : 0) |
+              (event.weakPoint ? CombatFlag.WeakPoint : 0),
             // The ordinal rather than the name, and `?? 'physical'` for the two
             // heal sites that raise a `hit` and correctly set no element
             // (spec 232).

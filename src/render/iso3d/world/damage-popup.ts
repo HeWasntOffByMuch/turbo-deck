@@ -91,6 +91,37 @@ export const NUMBER_LANES: readonly { readonly x: number; readonly y: number }[]
 export type PopupTrail = 'damage' | 'xp';
 
 /**
+ * What a floating number is *about* (spec 283).
+ *
+ * One value rather than the pair of booleans that used to arrive here, because
+ * a weak point and a crit are **independent rolls** in `resolveBlow` -- both can
+ * land on one blow -- so "which of these does the number look like" is a
+ * decision somebody has to take, and taking it at the call site means taking it
+ * once per call site. {@link damageMarkOf} is that decision, once.
+ */
+export type DamageMark = 'normal' | 'crit' | 'weakPoint' | 'heal';
+
+/**
+ * Which mark a blow draws, given what the wire said about it.
+ *
+ * The order is the argument. **Healing first**, because a negative number is not
+ * a blow at all and the rolls that decorate one are meaningless on it -- the two
+ * sites that raise a `hit` with negative damage correctly set no element and
+ * roll nothing. Then **weak point over crit**, because the two say different
+ * things to the player who is looking: a crit is the thing everybody has and a
+ * weak point is the thing a Perception character *bought*, so when both land the
+ * number should show the purchase. Nothing is lost by it -- the weak point is
+ * also the larger multiplier of the two on the shipped numbers, so the louder
+ * mark is on the louder blow either way.
+ */
+export function damageMarkOf(damage: number, critical: boolean, weakPoint: boolean): DamageMark {
+  if (damage < 0) return 'heal';
+  if (weakPoint) return 'weakPoint';
+  if (critical) return 'crit';
+  return 'normal';
+}
+
+/**
  * How far *below* the blow's number an experience number sits, in CSS pixels.
  *
  * Below, and in the blow's own lane, because the two are one reading: what that

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  damageMarkOf,
   DamagePopups,
   NUMBER_LANES,
   NUMBER_LIFE,
@@ -331,5 +332,30 @@ describe('the experience trail', () => {
     }
     expect(top).toBeCloseTo(-NUMBER_RISE / 2);
     expect(XP_RISE).toBeGreaterThan(NUMBER_RISE);
+  });
+
+  describe('damageMarkOf (spec 283)', () => {
+    it('prefers a weak point over a crit when both land', () => {
+      // The two are independent rolls in `resolveBlow`, so this is the case the
+      // function exists for rather than a corner: a crit is what everybody has
+      // and a weak point is what a Perception character bought.
+      expect(damageMarkOf(40, true, true)).toBe('weakPoint');
+      expect(damageMarkOf(40, false, true)).toBe('weakPoint');
+      expect(damageMarkOf(40, true, false)).toBe('crit');
+      expect(damageMarkOf(40, false, false)).toBe('normal');
+    });
+
+    it('reads a negative number as healing whatever the rolls say', () => {
+      // The two sites that raise a `hit` with negative damage roll neither, so
+      // this is the guard being explicit rather than a state the sim produces.
+      expect(damageMarkOf(-12, false, false)).toBe('heal');
+      expect(damageMarkOf(-12, true, true)).toBe('heal');
+    });
+
+    it('treats zero as a blow rather than as healing', () => {
+      // A fully mitigated blow is still a blow; `< 0` is the test and `<= 0`
+      // would draw a green `+0` every time armour ate one whole.
+      expect(damageMarkOf(0, false, false)).toBe('normal');
+    });
   });
 });

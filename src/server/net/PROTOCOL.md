@@ -396,7 +396,11 @@ Protocol 3 (spec 065) removed `hitstopTicks`, `knockbackX`, `knockbackY` and
 `knockbackTicks` along with the mechanics behind them. Nothing is displaced by a
 hit, so nothing about displacement is described here.
 
-`flags` bits: `1` killing blow, `2` critical, `4` mitigated by armour.
+`flags` bits: `1` killing blow, `2` critical, `4` mitigated by armour,
+`8` periodic -- the damage came from an affliction rather than from a blow, so
+the number is drawn and the blow's picture is not (spec 219) -- and `16` weak
+point (spec 283). The last two are independent of `2`: a weak point and a crit
+are separate rolls in `resolveBlow` and both bits can be set on one blow.
 
 Sent to every connection whose interest set contains the attacker or the target.
 

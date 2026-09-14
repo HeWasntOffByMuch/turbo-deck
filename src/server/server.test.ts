@@ -408,6 +408,51 @@ describe('combat over the wire', () => {
     expect((result?.flags ?? 0) & CombatFlag.Periodic).toBe(0);
   });
 
+  it('puts a weak point on the wire, beside a crit rather than instead of it (spec 283)', async () => {
+    // `resolveBlow` has rolled `weakPoint` separately from `critical` since spec
+    // 147 and the event has carried it the whole time; nothing packed it, so the
+    // first ten points of Perception bought a mechanic no client could observe.
+    const game = server();
+    const client = new Client(game);
+    await client.hello('alice');
+    const entityId = client.of(ServerMessageType.Welcome)[0]?.entityId ?? -1;
+    const at = game.world.entities.get(entityId)?.position ?? { x: 600, y: 450, z: 0 };
+    expect(game.spawnEntities('grazer', at.x + 40, at.y, 1)).toBe(1);
+
+    // Forced rather than built, the way `patient-read.test.ts` forces the same
+    // trait: what is under test is the packing, and a Perception spread large
+    // enough to make the roll land reliably would make this a test about
+    // `SCALING.perception` instead.
+    const attacker = game.world.entities.get(entityId);
+    expect(attacker).toBeDefined();
+    if (attacker) {
+      (attacker.stats.traits as { weakPointChance: number }).weakPointChance = 1;
+      (attacker.stats as { critChance: number }).critChance = 1;
+    }
+    client.clear();
+
+    await game.receive(
+      client.connection,
+      encodeClientMessage({
+        type: ClientMessageType.UseAbility,
+        abilityId: 'melee.slash',
+        targetEntityId: 0,
+        targetX: at.x + 40,
+        targetY: at.y,
+        afterInputSeq: 0,
+      }),
+    );
+    const swing = abilityById('melee.slash');
+    for (let i = 0; i < (swing?.windupTicks ?? 0) + 30; i++) game.tick();
+
+    const result = client.of(ServerMessageType.CombatResult)[0];
+    expect(result).toBeDefined();
+    expect((result?.flags ?? 0) & CombatFlag.WeakPoint).not.toBe(0);
+    // Both, on one blow. The two are independent rolls, so a packing that made
+    // them alternatives would pass every test that only ever set one.
+    expect((result?.flags ?? 0) & CombatFlag.Critical).not.toBe(0);
+  });
+
   it("marks an affliction's pulses as periodic, so no blow is drawn for them (spec 219)", async () => {
     // The sim has known a pulse from a blow since spec 190 and kept it to
     // itself, so every beat of a Poison arrived at the client indistinguishable

@@ -930,6 +930,28 @@ export const CombatFlag = {
    * number still rides; the blow's picture does not (`vfx-wire.ts`).
    */
   Periodic: 1 << 3,
+  /**
+   * The blow found a weak point (spec 283).
+   *
+   * A fifth bit for spec 219's reason exactly, and it is worth restating because
+   * the argument that kept this one sim-side is the argument that was already
+   * wrong about `periodic`: *a client draws a floating number the same way
+   * whatever caused it*. True of the number and false of everything else --
+   * `resolveBlow` rolls a weak point **separately from a crit**, with its own
+   * multiplier, its own resource return and its own `Exposed`, and a
+   * `CombatResult` names an attacker and a target and no ability, so there is
+   * nothing on the wire a client could derive it from.
+   *
+   * What it cost to leave out: `per.weakPointStudy` is a threshold-10 purchase
+   * -- among the first twelve mechanics in the game -- and until the Perception
+   * milestone at 20 starts leaving an `Exposed` mark behind, nothing a player
+   * could see changed when it fired. An attribute's whole identity was
+   * unobservable for the first ten points of it.
+   *
+   * Independent of {@link CombatFlag.Critical} rather than an alternative to it:
+   * both roll, both can land, and both bits can be set on one blow.
+   */
+  WeakPoint: 1 << 4,
 } as const;
 
 export interface StatsMessage {

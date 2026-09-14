@@ -9,6 +9,7 @@ import {
   type AdminRequest,
 } from './admin-messages.js';
 import {
+  CombatFlag,
   decodeClientMessage,
   decodeServerMessage,
   encodeClientMessage,
@@ -268,7 +269,13 @@ describe('game message round-trip', () => {
       targetId: 2,
       damage: 12.5,
       targetHealth: 27.5,
-      flags: 3,
+      // **Every** bit, rather than the two spec 232 left here: `flags` is a u8
+      // and spec 283 put a fifth bit in it, so what this fixture is for is that
+      // the widest byte the server can pack survives the round trip. A fixture
+      // carrying three of five cannot tell a bit that rides from one the
+      // decoder masks off.
+      flags: CombatFlag.Killed | CombatFlag.Critical | CombatFlag.Blocked
+        | CombatFlag.Periodic | CombatFlag.WeakPoint,
       // Not 0: a round trip that only ever carries the default cannot tell a
       // field that survives from one the decoder fills in (spec 232).
       element: 6,

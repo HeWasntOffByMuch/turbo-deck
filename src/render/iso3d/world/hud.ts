@@ -59,7 +59,12 @@ const DROP_LABEL_COLOR: Record<RarityId, string> = {
 };
 import { isHandheldDevice } from '../device.js';
 import { showsWorkbenches } from '../client-build.js';
-import { DamagePopups, type Projector, type WorldAnchor } from './damage-popup.js';
+import {
+  DamagePopups,
+  type DamageMark,
+  type Projector,
+  type WorldAnchor,
+} from './damage-popup.js';
 import { ErrorLog } from './error-log.js';
 import { HealthFlashes } from './health-bar.js';
 import {
@@ -321,6 +326,22 @@ const BAR_GUARD = '#8fa6c8';
  */
 const STATUS_BOON = BAR_GUARD;
 const STATUS_AFFLICTION = '#d0796f';
+
+/**
+ * What a weak-point number is drawn in (spec 283).
+ *
+ * `STATUS_AFFLICTION` itself rather than a colour of its own, and the sharing is
+ * the point: a weak point is what leaves `Exposed` behind, and `Exposed` is
+ * drawn over that same body in exactly this rust a beat later. One statement in
+ * two places, the way spec 185 made a drop's tier wash and its bag cell read the
+ * same three bytes -- and two literals that had to agree would be two literals
+ * that agree until one is edited.
+ *
+ * The link is only *literal* from Perception 20, where the milestone grants the
+ * `exposedDamagePct` that `markTarget` gates the mark on. Below it a weak point
+ * leaves nothing, and this is simply the colour that will come to mean it.
+ */
+const WEAK_POINT_NUMBER = STATUS_AFFLICTION;
 /** Small enough that eight fit over a body, big enough to tell apart. */
 const STATUS_ICON_PX = 13;
 
@@ -442,7 +463,7 @@ export interface HudHandle {
    * the camera once one that did not has despawned. `entityId` is only there to
    * fan a burst out into lanes.
    */
-  addDamage(entityId: number, at: WorldAnchor, damage: number, crit: boolean): void;
+  addDamage(entityId: number, at: WorldAnchor, damage: number, mark: DamageMark): void;
   /**
    * `amount` experience was earned, at the world point `at` (spec 184).
    *
@@ -2186,9 +2207,17 @@ export function createHud(project: Projector): HudHandle {
         spawnerMarks.delete(id);
       }
     },
-    addDamage(entityId, at, damage, crit) {
-      const heal = damage < 0;
-      const text = (heal ? '+' : '') + Math.round(Math.abs(damage)).toString();
+    addDamage(entityId, at, damage, mark) {
+      const heal = mark === 'heal';
+      const loud = mark === 'crit' || mark === 'weakPoint';
+      // A weak point says so in as many words (spec 283). The colour alone is a
+      // fourth hue in a field that already has three, which is the legend
+      // problem the status marks are held to one colour pair to avoid -- and
+      // unlike a mark over a head, a number has room for a character.
+      const text =
+        (heal ? '+' : '') +
+        Math.round(Math.abs(damage)).toString() +
+        (mark === 'weakPoint' ? '!' : '');
       const element = document.createElement('div');
       // Hidden until the first `update` places it: a number is spawned from a
       // message, which is not a frame, so until one has been drawn there is no
@@ -2198,8 +2227,8 @@ export function createHud(project: Projector): HudHandle {
       // over a posterized, low-resolution world, and system text over it read
       // like a debug overlay that had been left switched on.
       element.innerHTML = pixelTextSvg(text, {
-        scale: crit ? 4 : 3,
-        fill: heal ? '#8ce696' : crit ? '#ffdc78' : '#f4f4f4',
+        scale: loud ? 4 : 3,
+        fill: heal ? '#8ce696' : mark === 'weakPoint' ? WEAK_POINT_NUMBER : loud ? '#ffdc78' : '#f4f4f4',
         outline: '#0a0d14',
       });
       root.append(element);

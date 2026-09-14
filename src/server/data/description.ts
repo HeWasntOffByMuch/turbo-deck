@@ -42,8 +42,9 @@
 
 import { SERVER_TICK_RATE } from '../config.js';
 import type { AbilityDefinition } from './abilities.js';
+import type { MilestoneDefinition } from './milestones.js';
 import type { StatModifier } from './modifiers.js';
-import type { SpecializationDefinition } from './specializations.js';
+import { ALL_SPECIALIZATIONS, type SpecializationDefinition } from './specializations.js';
 import { ATTRIBUTES } from './attributes.js';
 import { subjectOf, type SkillArea, type SkillEffect } from './skill-effects.js';
 import { visualFor, type StatusVisual } from './status-visuals.js';
@@ -703,6 +704,11 @@ export const GRANT_LABELS: readonly GrantLabel[] = [
   { key: 'maxPoise', where: 'trait', name: 'Maximum Guard', form: 'flat' },
   { key: 'poiseDamagePct', where: 'trait', name: 'Guard damage', form: 'percent' },
   { key: 'poiseRegenPct', where: 'trait', name: 'Guard regeneration', form: 'percent' },
+  // Spec 283. Steady Frame's milestone (`con.steady`) grants only this field,
+  // so without a label here the milestone described nothing at all -- the
+  // standard's own rule about a missing label, but with nothing else on the
+  // row to carry it.
+  { key: 'poiseRegenCalm', where: 'trait', name: 'Guard regeneration while holding ground', form: 'percent' },
   { key: 'poiseRegenStaggered', where: 'trait', name: 'Guard regeneration while Staggered', form: 'percent' },
   // Spec 273. Without a label here the line is *dropped* -- the standard's own
   // rule that a field with no label draws nothing -- so a specialization that

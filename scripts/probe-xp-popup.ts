@@ -106,7 +106,7 @@ async function main(): Promise<void> {
     // A killing blow and what it was worth, on the same body, on the same
     // frame -- which is the whole case this feature has to survive.
     await page.evaluate(() => {
-      window.hudProbe?.hit(38, false);
+      window.hudProbe?.hit(38, 'normal');
       window.hudProbe?.reward(24);
     });
 
