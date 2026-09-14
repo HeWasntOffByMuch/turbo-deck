@@ -46,8 +46,19 @@ export const TONE_TOKENS: Readonly<Record<Tone, string>> = {
  * only the mechanics slices this list.
  */
 export function describedLines(described: TechnicalDescription): readonly TooltipLine[] {
+  return [{ text: described.name }, ...describedBody(described)];
+}
+
+/**
+ * The same lines without the name on the front.
+ *
+ * For a surface that draws the name itself. The unlock notice has a title row,
+ * and its first golden drew `Crushing Blows` twice, one line under the other --
+ * which is the kind of thing only a picture says, since both halves were
+ * individually correct.
+ */
+export function describedBody(described: TechnicalDescription): readonly TooltipLine[] {
   return [
-    { text: described.name },
     ...described.lines.map((line) => {
       const colorToken = TONE_TOKENS[line.tone];
       // A spanned line carries its runs through with each one resolved here,

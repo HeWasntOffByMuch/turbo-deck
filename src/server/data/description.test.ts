@@ -17,6 +17,7 @@ import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
 import { ALL_AURA_FIELDS, auraFieldById } from './aura-fields.js';
 import { ALL_SPECIALIZATIONS } from './specializations.js';
 import { ALL_MILESTONES } from './milestones.js';
+import { ATTRIBUTES } from './attributes.js';
 import {
   GRANT_LABELS,
   describeAbility,
@@ -738,5 +739,47 @@ describe('milestones (spec 283)', () => {
       expect(text, milestone.id).toContain(`Deepens ${deepened.name}.`);
       expect(text, milestone.id).not.toContain(milestone.deepens);
     }
+  });
+
+  describe('the word the sim uses never reaches a player (spec 283)', () => {
+    /**
+     * `mechanics-vocabulary.md` §1.7: Guard is the pool in front of a player and
+     * the internal name never appears. §4.13 recorded that the standard was
+     * enforced **over the writer's output only**, while sixteen *authored*
+     * strings in the content tables still said "poise" -- and at least some were
+     * player-facing, since `character-model.ts` draws a milestone's `effect` on
+     * the sheet and an attribute's `owns` as the track's description.
+     *
+     * Spec 283 made that worse before it made it better: the unlock notice puts
+     * those same sentences across the top of the frame at the moment somebody is
+     * learning the mechanic. So the fence now covers the tables, which is what
+     * §4.13 asked for.
+     */
+    it('is absent from every milestone a player is shown', () => {
+      for (const milestone of ALL_MILESTONES) {
+        expect(milestone.effect, milestone.id).not.toMatch(/\bpoise\b/i);
+        expect(milestone.name, milestone.id).not.toMatch(/\bpoise\b/i);
+      }
+    });
+
+    it('is absent from every attribute line a player is shown', () => {
+      // `owns` is drawn as the track's description; `notOwned` is for a reviewer
+      // and is deliberately not checked -- it names mechanics by whatever they
+      // are called where they live.
+      for (const attribute of ATTRIBUTES) {
+        for (const owned of attribute.owns) {
+          expect(owned, attribute.key).not.toMatch(/\bpoise\b/i);
+        }
+        expect(attribute.sustain, attribute.key).not.toMatch(/\bpoise\b/i);
+      }
+    });
+
+    it('is absent from every specialization a player is shown', () => {
+      for (const row of ALL_SPECIALIZATIONS) {
+        expect(row.description, row.id).not.toMatch(/\bpoise\b/i);
+        expect(row.trigger, row.id).not.toMatch(/\bpoise\b/i);
+        expect(row.name, row.id).not.toMatch(/\bpoise\b/i);
+      }
+    });
   });
 });

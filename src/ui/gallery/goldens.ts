@@ -219,6 +219,43 @@ export const WORLD_HUD_GOLDEN_CASES: readonly WorldHudGoldenCase[] = [
     options: { dead: true },
     covers: 'a body that is down, which says the word rather than reading 0/60',
   },
+  {
+    // The first picture of anything in the `notification` layer, which spec 124
+    // declared and left empty (spec 283). What it is really for is the check no
+    // Node test can make: that a screen placed in a layer nothing had ever used
+    // is painted at all, and painted clear of the band underneath it. The
+    // *empty* case needs no golden of its own -- every other case here is one.
+    name: 'world-hud-unlocked',
+    options: {
+      unlock: {
+        title: 'Perception 10',
+        lines: [
+          { text: 'Weak-Point Study' },
+          { text: 'Opening Read' },
+          { text: 'Open the character sheet to spend a point on one.', colorToken: 'textDim' },
+        ],
+      },
+    },
+    covers: 'a node opening: the notice across the top, clear of the bar and of the corner panel, in the one part of the frame nothing else uses',
+  },
+  {
+    // A milestone rather than a node, which is the longer of the two shapes --
+    // a derived description runs to more lines than a list of names, and the
+    // wrap is what a fixed width is for.
+    name: 'world-hud-unlocked-milestone',
+    options: {
+      unlock: {
+        title: 'Crushing Blows',
+        lines: [
+          { text: 'Requires Strength 20.', colorToken: 'focus' },
+          { text: 'Reached on its own at Strength 20.', colorToken: 'textDim' },
+          { text: '+25% Guard Damage.' },
+          { text: 'Your blows carry 25% more poise damage.', colorToken: 'textDim' },
+        ],
+      },
+    },
+    covers: 'a milestone that fired on its own: a longer derived description, wrapped at the notice’s fixed width',
+  },
 ];
 
 export interface WindowsGoldenCase {

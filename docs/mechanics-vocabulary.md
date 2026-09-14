@@ -764,20 +764,24 @@ any player can see; the status keeps the name it already wears in the world.
 *Needed:* nothing. Recorded because the collision was invisible until something
 tried to describe the tree, and a second one would be too.
 
-### 4.13 `poise` is still in sixteen authored strings
+### 4.13 `poise` is still in sixteen authored strings — **closed (spec 283)**
 
 The standard's §1.7 says the pool is Guard in front of a player and the internal
-name never appears. `description.ts` obeys it and `description.test.ts` enforces
-it — **over the writer's output only.**
+name never appears. `description.ts` obeyed it and `description.test.ts`
+enforced it — **over the writer's output only.** Sixteen authored strings in
+`data/synergies.ts`, `data/milestones.ts` and `data/attributes.ts` still said
+"poise", and some were player-facing: `character-model.ts` draws a milestone's
+`effect` on the sheet and an attribute's `owns` as the track's description.
 
-Sixteen authored strings in `data/synergies.ts`, `data/milestones.ts` and
-`data/attributes.ts` still say "poise", and at least some of them are
-player-facing: `character-model.ts` renders a milestone's `name — effect` as the
-`nextEffect` line on an attribute row, so a player is already being shown the
-word. Two were fixed in passing because this work touched their rows (Brutal
-Follow-Through's trigger and the Breakthrough pair's effect); the rest were left
-alone rather than swept blind.
+Spec 283 made it worse before it fixed it, which is what forced the pass: the
+unlock notice puts a milestone's own sentence across the top of the frame at the
+moment somebody is learning the mechanic, so the two Strength milestones were
+about to teach a new player the wrong word for Guard.
 
-*Needed:* a pass over those three tables, and a test that covers *authored*
-strings as well as generated ones. The generated half being clean is currently
-proving less than it appears to.
+*Done:* `data/synergies.ts` went with spec 244, and the five remaining
+player-facing strings (two milestone `effect`s, three entries in Strength's and
+Constitution's `owns`) now say Guard. `description.test.ts` covers the
+**authored** tables as well as the writer's output — milestones, attributes and
+specializations — so the next one fails in `npm test` rather than on a sign in a
+field. `notOwned` is deliberately not covered: it is a reviewer's list and names
+each mechanic by whatever it is called where it lives.

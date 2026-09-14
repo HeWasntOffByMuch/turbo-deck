@@ -37,6 +37,8 @@ import {
 import { ChatScreen, chatInsets, type ChatLineView } from '../screens/chat.js';
 import { ControlsScreen, controlHints } from '../screens/controls.js';
 import { ActionBarScreen, actionBarInsets, type SlotHighlight } from '../screens/action-bar.js';
+import { UnlockScreen } from '../screens/unlock.js';
+import type { TooltipLine } from '../widgets/tooltip.js';
 import type { AbilityView } from '../widgets/skill-slot.js';
 import {
   SelectedUnitScreen,
@@ -756,6 +758,7 @@ export interface WorldHudFrame {
   readonly root: UiRoot;
   readonly bar: ActionBarScreen;
   readonly selected: SelectedUnitScreen;
+  readonly unlock: UnlockScreen;
 }
 
 export interface WorldHudRenderOptions {
@@ -782,6 +785,17 @@ export interface WorldHudRenderOptions {
    * labels over four slots is the arrangement worth a picture.
    */
   readonly refund?: { readonly slots: readonly number[]; readonly label: string; readonly agedMs: number };
+  /**
+   * A notice across the top of the frame (spec 283).
+   *
+   * The first occupant of the `notification` layer, so what a golden of it is
+   * really for is the thing no Node test can assert: that a screen placed in a
+   * layer nothing had ever used is *painted*, and painted clear of the band the
+   * rest of this frame draws. Its **absence** is covered by every other case
+   * here, which is the rule it is built to -- nothing is drawn with an empty
+   * queue -- so no case has to opt out of it.
+   */
+  readonly unlock?: { readonly title: string; readonly lines: readonly TooltipLine[] };
 }
 
 /**
@@ -832,6 +846,13 @@ export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFra
   selectedDock.place(selected, 'topRight');
   layers.place('hud', selectedDock);
 
+  const unlock = new UnlockScreen({ theme });
+  const unlockDock = new Anchor('unlockDock');
+  unlockDock.pointerTransparent = true;
+  unlockDock.padding = uniformInsets(theme.spacing.md);
+  unlockDock.place(unlock, 'top');
+  layers.place('notification', unlockDock);
+
   const root = new UiRoot(layers, { theme, atlas, viewport, layers });
 
   bar.setView({
@@ -870,16 +891,21 @@ export function renderWorldHud(options: WorldHudRenderOptions = {}): WorldHudFra
         },
   );
 
+  if (options.unlock) {
+    unlock.push({ id: 'golden', title: options.unlock.title, lines: options.unlock.lines }, 0);
+  }
   // The scene's clock, which only a refund has an opinion about: a mark is a
   // pure function of how long it has been up, so a golden at zero would check
   // the frame it appeared on and no other.
-  root.update(options.refund?.agedMs ?? 0);
+  const clock = options.refund?.agedMs ?? 0;
+  unlock.update(clock);
+  root.update(clock);
 
   const surface = new RasterSurface(atlas, viewport.width, viewport.height);
   surface.clear(theme.color('ink'));
   replay(surface, root.paint().finish());
 
-  return { surface, root, bar, selected };
+  return { surface, root, bar, selected, unlock };
 }
 
 /**

@@ -10,7 +10,7 @@
  *
  *  1. **Inspectable.** Every milestone has an `effect` sentence written in the
  *     second person and in terms of a mechanic, so the sheet can say "at 35
- *     Strength: your wind-ups ignore 60% of incoming poise damage" without a
+ *     Strength: your wind-ups ignore 60% of incoming Guard damage" without a
  *     human writing that string twice.
  *  2. **One hop.** A milestone grants a {@link StatModifier}, and the attribute
  *     values milestones are tested against are resolved *before* any milestone
@@ -61,7 +61,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'strength',
     threshold: TIER_1,
     name: 'Crushing Blows',
-    effect: 'Your blows carry 25% more poise damage, and a break you cause interrupts whatever it was doing.',
+    effect: 'Your blows carry 25% more Guard damage, and a break you cause interrupts whatever it was doing.',
     grants: { traits: { poiseDamagePct: 0.25 } },
     deepens: 'str.crushingBlows',
   },
@@ -70,7 +70,7 @@ const DEFINITIONS: readonly MilestoneDefinition[] = [
     attribute: 'strength',
     threshold: TIER_2,
     name: 'Committed Swing',
-    effect: 'While winding up an attack you ignore a further 36% of incoming poise damage.',
+    effect: 'While winding up an attack you ignore a further 36% of incoming Guard damage.',
     grants: { traits: { windupPoiseArmor: 0.36 } },
     deepens: 'str.committedSwing',
   },

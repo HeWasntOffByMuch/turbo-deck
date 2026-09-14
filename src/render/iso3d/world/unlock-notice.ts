@@ -45,7 +45,7 @@ import { ALL_SPECIALIZATIONS } from '../../../server/data/specializations.js';
 import { trackFor, type TrackNode } from '../../../server/data/tracks.js';
 import type { BaseStats, SpecializationAllocation } from '../../../server/state/types.js';
 import type { TooltipLine } from '../../../ui/widgets/tooltip.js';
-import { describedLines } from './described-lines.js';
+import { describedBody } from './described-lines.js';
 
 /** What this watches: the two progression fields `Stats` already replicates. */
 export interface ProgressionReading {
@@ -96,11 +96,12 @@ function attributeName(key: AttributeKey): string {
  * their tiers and their costs and a button. What this says is that there is
  * something there — which is the fact the player does not have.
  */
-function thresholdLines(key: AttributeKey, node: TrackNode): readonly TooltipLine[] {
-  const names = node.specializations.map((row) => row.name);
+function thresholdLines(node: TrackNode): readonly TooltipLine[] {
+  // The title is `${attribute} ${threshold}` and the screen draws it, so this
+  // does not repeat it -- the first golden of this screen had it twice, one
+  // line under the other, which is a thing only a picture could have said.
   return [
-    { text: `${attributeName(key)} ${String(node.threshold)}`, colorToken: 'focus' },
-    ...names.map((name) => ({ text: name, colorToken: 'text' })),
+    ...node.specializations.map((row) => ({ text: row.name, colorToken: 'text' })),
     { text: 'Open the character sheet to spend a point on one.', colorToken: 'textDim' },
   ];
 }
@@ -162,13 +163,13 @@ export class UnlockWatch {
                 id: `node:${key}:${String(node.threshold)}`,
                 kind: 'threshold' as const,
                 title: `${attributeName(key)} ${String(node.threshold)}`,
-                lines: thresholdLines(key, node),
+                lines: thresholdLines(node),
               }
             : {
                 id: `milestone:${node.milestone.id}`,
                 kind: 'milestone' as const,
                 title: node.milestone.name,
-                lines: describedLines(describeMilestone(node.milestone)),
+                lines: describedBody(describeMilestone(node.milestone)),
               };
         if (this.yielded.has(unlock.id)) continue;
         this.yielded.add(unlock.id);
@@ -193,7 +194,7 @@ export class UnlockWatch {
         // Described at the tier just bought rather than at zero, because the
         // question somebody who has just spent a point has is what they now
         // have, not what one more would cost.
-        lines: describedLines(describeSpecialization(row, tier)),
+        lines: describedBody(describeSpecialization(row, tier)),
       });
     }
 

@@ -52,7 +52,7 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     // which of them a swing pays is the *weapon's* letter rather than a rule
     // about the attribute. Nobody is forced into another attribute to be paid
     // for their own, which is what the no-shared-mechanic rule is protecting.
-    owns: ['poise damage', 'stagger duration', 'hyper-armour', 'weapon damage on a Strength-scaling weapon'],
+    owns: ['Guard damage', 'stagger duration', 'hyper-armour', 'weapon damage on a Strength-scaling weapon'],
     sustain: 'Ends the fight. A staggered enemy is not attacking, and force converts into resource on the kill.',
     notOwned: ['health pools (Constitution)', 'attack rate (nothing)', 'armour (Constitution)'],
   },
@@ -97,8 +97,8 @@ export const ATTRIBUTES: readonly AttributeDefinition[] = [
     verb: 'Endure',
     owns: [
       'max health',
-      'poise pool',
-      'poise regen',
+      'Guard pool',
+      'Guard regeneration',
       'shields',
       'low-health behaviour',
       'armour',

@@ -207,6 +207,12 @@ export class UnlockScreen extends Panel {
     while (this.lineLabels.length < lines.length) {
       const label = new Label('', 'body');
       label.pointerTransparent = true;
+      // Wrapped, because the panel's width is fixed and a `Label` clips rather
+      // than folding by default. The last line of a node notice is a whole
+      // sentence and came out as `Open the character ` in the first golden of
+      // this screen -- which is exactly the failure a golden is for, since
+      // nothing in Node measures a glyph.
+      label.wrap = true;
       this.lineLabels.push(label);
       this.body.add(label);
     }
@@ -228,9 +234,21 @@ export class UnlockScreen extends Panel {
     }
   }
 
-  /** Fixed, so a notice does not change width as the queue advances. */
+  /**
+   * Fixed, so a notice does not change width as the queue advances.
+   *
+   * The **constraint** is narrowed and handed down, rather than the answer being
+   * narrowed on the way back out. Measuring the children against whatever the
+   * dock offers and then returning a smaller width is what the first cut did,
+   * and it is wrong in the one way a wrapped label is wrong: each line measured
+   * as a single row at an unbounded width, the column reserved one row of height
+   * for it, and paint then folded it to three -- so the notice drew its own
+   * lines over each other and ran off the top of the frame. Two goldens said so
+   * immediately and no test in Node could have.
+   */
   protected override measureSelf(constraint: Constraint, context: LayoutContext): Size {
-    const measured = super.measureSelf(constraint, context);
-    return { width: Math.min(UNLOCK_WIDTH, constraint.maxWidth), height: measured.height };
+    const width = Math.min(UNLOCK_WIDTH, constraint.maxWidth);
+    const measured = super.measureSelf({ maxWidth: width, maxHeight: constraint.maxHeight }, context);
+    return { width, height: measured.height };
   }
 }
