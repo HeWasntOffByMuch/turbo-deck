@@ -22,6 +22,7 @@ import {
   parseDisplay,
   saveScale,
   saveShowFps,
+  saveUnlocksSeen,
   scaleLabel,
   SCALE_CHOICES,
   type ScaleChoice,
@@ -65,6 +66,7 @@ describe('the scale preference across a reload', () => {
       showFps: DEFAULT_SHOW_FPS,
       maxZoom: 'supported',
       controlsSeen: false,
+      unlocksSeen: [],
     });
   });
 });
@@ -104,6 +106,7 @@ describe('what the store refuses', () => {
       showFps: DEFAULT_SHOW_FPS,
       maxZoom: 'supported',
       controlsSeen: false,
+      unlocksSeen: [],
     });
   });
 });
@@ -288,5 +291,50 @@ describe('whether the controls card has been dismissed (spec 255)', () => {
     // DISPLAY_VERSION, or every stored profile in the world would suddenly be
     // "from a build that knew more than this one" one spec from now.
     expect(DISPLAY_VERSION).toBe(3);
+  });
+
+  describe('the unlock notices this browser has shown (spec 283)', () => {
+    it('reads an absent list as nothing shown, without moving the version', () => {
+      // A profile written before this existed is perfectly interpretable, which
+      // is what the version is for refusing and this is not.
+      const stored = migrateDisplay({ version: 3, scale: 'auto' });
+      expect(stored?.unlocksSeen).toEqual([]);
+      expect(stored?.version).toBe(DISPLAY_VERSION);
+    });
+
+    it('round-trips a written list', () => {
+      const store = storage();
+      saveUnlocksSeen(store, ['node:perception:10', 'spec:wis.conservation']);
+      expect(loadDisplay(store).unlocksSeen).toEqual([
+        'node:perception:10',
+        'spec:wis.conservation',
+      ]);
+    });
+
+    it('keeps the good entries of a list somebody hand-edited', () => {
+      // Filtered rather than rejected: one bad entry is not a reason to re-show
+      // every notice a player has already dismissed.
+      const stored = migrateDisplay({
+        version: 3,
+        scale: 'auto',
+        unlocksSeen: ['node:wisdom:10', 7, null, '', { id: 'x' }, 'milestone:str.crushing'],
+      });
+      expect(stored?.unlocksSeen).toEqual(['node:wisdom:10', 'milestone:str.crushing']);
+    });
+
+    it('reads a list that is not a list as nothing shown', () => {
+      expect(migrateDisplay({ version: 3, scale: 'auto', unlocksSeen: 'all' })?.unlocksSeen)
+        .toEqual([]);
+    });
+
+    it('does not let the other preferences be lost by writing it', () => {
+      // `patch` is read-modify-write for exactly this, and a new writer is the
+      // way that guarantee gets broken.
+      const store = storage();
+      saveScale(store, 3);
+      saveUnlocksSeen(store, ['node:agility:10']);
+      expect(loadDisplay(store).scale).toBe(3);
+      expect(loadDisplay(store).unlocksSeen).toEqual(['node:agility:10']);
+    });
   });
 });

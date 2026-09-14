@@ -175,9 +175,12 @@ import {
   saveMaxZoom,
   saveShowFps,
   saveControlsSeen,
+  loadDisplay,
+  saveUnlocksSeen,
 } from '../../../ui/input/display-store.js';
 import { SUPPORTED_MAX_VIEW_HALF_WIDTH } from '../view-settings.js';
 import { loadLayout, saveLayout } from '../../../ui/core/layout-store.js';
+import { UnlockWatch } from './unlock-notice.js';
 import type { Rect } from '../../../ui/core/geom.js';
 import { wheelNotches } from '../../../ui/core/events.js';
 import { autoAttack } from './target.js';
@@ -2053,6 +2056,17 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
   // asked for the readout last time has it from frame one rather than from
   // whenever the options window is next opened.
   showFps = loadShowFps(bindingStorage);
+  /**
+   * What a track has already given this player, and what has already been said
+   * about it (spec 283).
+   *
+   * Seeded from the browser's own preference document rather than from the
+   * character, because what it remembers is *what this viewer has been told* --
+   * a fact about a person in front of a screen, not about a save. The cost is
+   * stated in `display-store.ts`: a second machine is taught twice.
+   */
+  const unlockWatch = new UnlockWatch(loadDisplay(bindingStorage).unlocksSeen);
+  let unlocksSeen: readonly string[] = unlockWatch.seen;
 
   // --- audio (spec 229) ---------------------------------------------------
   /**
@@ -4656,6 +4670,30 @@ export async function mountWorld(container: HTMLElement): Promise<ViewHandle> {
     // reward.
     if (lastLevel !== null && view.level > lastLevel) audioDriver.flat('player.levelUp');
     lastLevel = view.level;
+
+    // What the track just gave you (spec 283), on this same message and by
+    // these same two rules, because it is the same shape of question one system
+    // over: `attributes` and `specializations` ride `Stats` already, so a
+    // threshold crossing is a diff of two readings and costs no wire at all.
+    //
+    // The sound is **not** `player.attributeUp`. That one fires on the press for
+    // every point, so 9 to 10 -- which opens two mechanics -- sounded exactly
+    // like 5 to 6, which opens none. It still fires for the point; this is what
+    // separates the two.
+    for (const unlock of unlockWatch.observe(view)) {
+      ui.showUnlock({ id: unlock.id, title: unlock.title, lines: unlock.lines }, now);
+      audioDriver.flat('player.unlock');
+    }
+    // Written back on the frame it changed rather than at teardown: a tab
+    // closed without a `beforeunload` is the ordinary way a session ends, and a
+    // list that only persisted on a tidy exit would re-show every notice a
+    // player had already dismissed. `saveUnlocksSeen` is one `setItem` through
+    // the same `StorageLike` that never throws.
+    const seen = unlockWatch.seen;
+    if (seen.length !== unlocksSeen.length) {
+      unlocksSeen = seen;
+      saveUnlocksSeen(bindingStorage, seen);
+    }
 
     // Being asked to trade, and a trade going through (spec 229). Two
     // transitions, and only two: `Open` and `Confirmed` are a table being

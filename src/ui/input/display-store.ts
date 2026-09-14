@@ -102,6 +102,25 @@ export interface StoredDisplay {
    * anything other than what an absent field already says on its own.
    */
   readonly controlsSeen: boolean;
+  /**
+   * Which unlock notices this browser has already shown (spec 283).
+   *
+   * **Here rather than on the player**, and the difference is what the field
+   * means: this is not "which mechanics does this character have" -- the server
+   * already knows that and replicates it -- it is "what has this *viewer* been
+   * told", which is a fact about a person in front of a screen and no business
+   * of the sim's. It is the register `controlsSeen` established one field up.
+   *
+   * What it costs is stated rather than fixed: a player on a second machine is
+   * taught the same things twice. That is the same cost every preference in
+   * this document already carries, and the alternative is a per-character
+   * server field whose only reader is a panel.
+   *
+   * An absent list reads as "nothing shown yet", which is honest for a profile
+   * written before this existed -- so `DISPLAY_VERSION` does not move, which is
+   * the rule the version's own docstring states.
+   */
+  readonly unlocksSeen: readonly string[];
 }
 
 /** What a choice is called in the interface. One place, so the two ends agree. */
@@ -119,6 +138,31 @@ function readScale(raw: unknown): ScaleChoice | null {
 function readControlsSeen(raw: unknown): boolean {
   return raw === true;
 }
+
+/**
+ * Whatever of the seen list is honestly a list of ids.
+ *
+ * Filtered rather than rejected: this document is one a person can hand-edit
+ * and one an older build may have written, and a single bad entry is not a
+ * reason to re-show every notice a player has already dismissed. Capped,
+ * because nothing prunes it and a list that only grows is one an id typo could
+ * grow forever.
+ */
+function readUnlocksSeen(raw: unknown): readonly string[] {
+  if (!Array.isArray(raw)) return [];
+  const ids = raw.filter((entry): entry is string => typeof entry === 'string' && entry.length > 0);
+  return ids.length > MAX_UNLOCKS_SEEN ? ids.slice(ids.length - MAX_UNLOCKS_SEEN) : ids;
+}
+
+/**
+ * The longest the seen list may get.
+ *
+ * There are 36 specializations and 18 milestones and six tracks with six nodes
+ * each, so a character that unlocked literally everything reaches 54 -- the cap
+ * is well clear of that, and exists for the case the list is not what this build
+ * thinks it is rather than for the case a player earns too much.
+ */
+const MAX_UNLOCKS_SEEN = 256;
 
 function readMaxZoom(raw: unknown): MaxZoomChoice {
   // Absent, or anything that is not a finite positive number, reads as
@@ -152,6 +196,7 @@ export function migrateDisplay(raw: unknown): StoredDisplay | null {
     showFps,
     maxZoom: readMaxZoom(record['maxZoom']),
     controlsSeen: readControlsSeen(record['controlsSeen']),
+    unlocksSeen: readUnlocksSeen(record['unlocksSeen']),
   };
 }
 
@@ -171,6 +216,7 @@ export const DISPLAY_DEFAULTS: StoredDisplay = {
   showFps: DEFAULT_SHOW_FPS,
   maxZoom: 'supported',
   controlsSeen: false,
+  unlocksSeen: [],
 };
 
 /** The stored document, or the defaults. Never throws. */
@@ -194,6 +240,14 @@ function patch(storage: StorageLike, change: Partial<StoredDisplay>, key: string
 
 export function saveScale(storage: StorageLike, scale: ScaleChoice, key = DISPLAY_KEY): void {
   patch(storage, { scale }, key);
+}
+
+export function saveUnlocksSeen(
+  storage: StorageLike,
+  unlocksSeen: readonly string[],
+  key = DISPLAY_KEY,
+): void {
+  patch(storage, { unlocksSeen: readUnlocksSeen(unlocksSeen) }, key);
 }
 
 export function saveShowFps(storage: StorageLike, showFps: boolean, key = DISPLAY_KEY): void {

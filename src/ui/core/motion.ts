@@ -220,6 +220,26 @@ export const MOTION = {
     riseFraction: 1,
     riseUiPx: Math.round((800 / 1000) * 60),
   },
+  /**
+   * A notice arriving in the `notification` layer (spec 283).
+   *
+   * The second notice in this table and the opposite shape to the one above it:
+   * that one is a quantity *leaving* a slot and rises linearly for its whole
+   * life, and this is a panel **arriving** somewhere and stopping. So it eases
+   * out, like the three responses do, for the reason they do -- something that
+   * arrives and then creeps has not arrived.
+   *
+   * It is still a notice rather than a response, and the classification is not a
+   * formality: nothing is waiting on it, so it is *allowed* to be slower than
+   * the quarter-second an answer is held to. It is not much slower, because what
+   * a player does with a notice is read it, and a panel still sliding under the
+   * first word is a panel being read while it moves.
+   *
+   * `riseUiPx` is the window's own 6 rather than a number of its own: both are
+   * a panel settling into place, and two answers to "how far does a panel come
+   * from" would be two answers to the same question.
+   */
+  notice: { durationMs: 400, easing: 'outQuad' as Easing, riseUiPx: 6 },
 } as const;
 
 /**
@@ -237,4 +257,4 @@ export const RESPONSE_TIMINGS = ['window', 'modal', 'meter'] as const;
  * ...and the ones that are a *notice*: something to be read, that nothing waits
  * on. Bounded from the other side -- long enough to be seen.
  */
-export const NOTICE_TIMINGS = ['refund'] as const;
+export const NOTICE_TIMINGS = ['refund', 'notice'] as const;

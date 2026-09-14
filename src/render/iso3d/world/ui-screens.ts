@@ -54,6 +54,7 @@ import {
   DialogueScreen,
   type DialogueBubbleView,
 } from '../../../ui/screens/dialogue.js';
+import { UnlockScreen, type UnlockNotice } from '../../../ui/screens/unlock.js';
 import {
   SelectedUnitScreen,
   selectedUnitInsets,
@@ -405,7 +406,9 @@ export class UiScreens {
   private chatLines: readonly ChatLineView[] = [];
   /** The mini HUD for whatever was left-clicked (spec 196). */
   private readonly selectedUnit: SelectedUnitScreen;
+  private readonly unlock: UnlockScreen;
   private readonly selectionDock = new Anchor('selected:dock');
+  private readonly unlockDock = new Anchor('unlock:dock');
   private readonly dialogue: DialogueScreen;
   private readonly dialogueDock: DialogueDock;
   /**
@@ -795,6 +798,27 @@ export class UiScreens {
     this.selectionDock.padding = selectedUnitInsets(THEME, 0);
     this.selectionDock.place(this.selectedUnit, 'topRight');
     this.layers.place('hud', this.selectionDock);
+
+    // What a track just gave you (spec 283), and **the first thing ever placed
+    // in the `notification` layer** -- declared by spec 124 with
+    // `blocksBelow: false, interactive: false` and empty ever since.
+    //
+    // That layer is most of the design. A notice must not take a click, must
+    // not block one, and must not be something a player has to deal with, and
+    // all three are properties of where it sits rather than three things this
+    // screen remembers. Above the windows, deliberately: it is about something
+    // that just happened to the character rather than about the window a player
+    // has open, and a notice hidden behind the character sheet would be hidden
+    // behind exactly the window the purchase was made in.
+    //
+    // Top centre, which is the one part of the frame nothing else uses -- the
+    // action bar and the chat are along the bottom, the readout is top right,
+    // the refusals are bottom right.
+    this.unlock = new UnlockScreen({ theme: THEME });
+    this.unlockDock.pointerTransparent = true;
+    this.unlockDock.padding = uniformInsets(THEME.spacing.md);
+    this.unlockDock.place(this.unlock, 'top');
+    this.layers.place('notification', this.unlockDock);
 
     // The dialogue bubble (spec 246), the `hud` layer's fourth occupant and the
     // second that is *pressable*: its dock passes the pointer through and the
@@ -1196,6 +1220,10 @@ export class UiScreens {
       this.inventory.cancelDrag();
     }
     this.inventory.updateTooltip(nowMs);
+    // The notice's clock (spec 283). Advanced here rather than from its own
+    // caller for `updateTooltip`'s reason one line up: a hold is time passing
+    // rather than an event, and the mount is what is handed the frame's time.
+    this.unlock.update(nowMs);
     // The sheet's, on the same terms (spec 147).
     // The bar's, on the same terms -- except that it is never closed, so there
     // is no shut-window case to clear it for.
@@ -1244,6 +1272,10 @@ export class UiScreens {
     // that outlived its body would eventually come back pointing at a stranger.
     if (selected === null) this.selectedId = null;
     this.selectedUnit.setView(selected);
+    // A body that has just died has nothing to be told about a track. Cleared
+    // rather than left to run out, because the death overlay is a full-frame
+    // thing and a notice over it would be the interface talking over itself.
+    if (view.selfDead) this.unlock.clear();
 
     // What the bar draws (spec 196). Every field in it moves during a fight --
     // the wedge, the seconds, whether a slot can be paid for -- so it is derived
@@ -1949,6 +1981,18 @@ export class UiScreens {
    * `show` gets wrong: talking to a second merchant while the first one's list
    * is still up would otherwise focus the window and leave the old stock in it.
    */
+  /**
+   * Say what a track just gave you (spec 283).
+   *
+   * The mount's only door into the `notification` layer, and it takes a
+   * composed notice rather than anything about progression: *what* just
+   * happened is `world/unlock-notice.ts`'s question and this is only where it
+   * is shown. The queue, the hold and the one-at-a-time rule are the screen's.
+   */
+  showUnlock(notice: UnlockNotice, nowMs: number): void {
+    this.unlock.push(notice, nowMs);
+  }
+
   showShopFor(vendorId: string): void {
     this.shopAskedAt = this.lastVendorRevision;
     this.options.onVendor(vendorId);

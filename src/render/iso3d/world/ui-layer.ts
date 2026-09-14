@@ -25,6 +25,7 @@
  */
 
 import type { CooldownRefund } from '../../../server/client/cooldown-refund.js';
+import type { UnlockNotice } from '../../../ui/screens/unlock.js';
 import { resolveUiScale, uiFrame, type UiFrame } from '../../../ui/core/frame.js';
 import { replay, type DrawCommand } from '../../../ui/core/draw-list.js';
 import type { Modifiers } from '../../../ui/core/events.js';
@@ -472,6 +473,11 @@ export class UiLayer {
   }
 
   /** Open the shop at this vendor rather than at the nearest one (spec 246). */
+  /** Say what a track just gave you (spec 283). */
+  showUnlock(notice: UnlockNotice, nowMs: number): void {
+    this.screens.showUnlock(notice, nowMs);
+  }
+
   showShopFor(vendorId: string): void {
     this.screens.showShopFor(vendorId);
   }

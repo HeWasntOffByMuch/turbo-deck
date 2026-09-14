@@ -218,6 +218,18 @@ export const SOUND_EVENTS = [
     note: 'A node in the attuned tree is taken.',
   },
   {
+    id: 'player.unlock',
+    label: 'Mechanic unlocked',
+    bus: 'player',
+    section: 'Progression',
+    placement: 'flat',
+    note:
+      'A track opened a node, a milestone fired, or a purchased tier turned a mechanic on '
+      + '(spec 283). Deliberately not the same sound as `player.attributeUp`: a point that '
+      + 'crosses a threshold and a point that does not are different events, and until this '
+      + 'they were indistinguishable.',
+  },
+  {
     id: 'player.pickUp',
     label: 'Loot taken',
     bus: 'player',

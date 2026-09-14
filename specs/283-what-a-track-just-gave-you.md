@@ -106,16 +106,39 @@ export interface Unlock { readonly title: string; readonly lines: readonly Toolt
 export class UnlockWatch { observe(view: ProgressionReading): readonly Unlock[]; }
 ```
 
-Drawn by a new `UnlockScreen` in the `notification` layer, on `NOTICE_TIMINGS`'
-rule (long enough to be read, nothing waiting on it). It fires on **an automatic
-milestone, or a tier whose `grantsOf` returns a `whole` grant** — the three
-capability rows at threshold 10 (Arcane Weaving, Opening Read, Conservation) and
-nothing else. A numeric tier is silent, which is reward-philosophy §10's "not
-every tier gets ceremony" rather than a shortcut, and `whole` is a *data* test
-(`GRANT_LABELS` marks those fields `form: 'flag'`) rather than a judgement.
+Drawn by a new `UnlockScreen` in the `notification` layer, one at a time, each
+held for `UNLOCK_HOLD_MS`. It fires on **three** kinds:
 
-`player.unlock` is one row in `audio/events.ts`; `player.attributeUp` moves off
-the press and onto the `Stats` diff, which is `player.levelUp`'s own shape.
+- `threshold` — a node opened. *Nothing changed yet*; what is new is that there
+  are things to buy. This is the one that fires at level 1, and it is the whole
+  reason the module exists.
+- `milestone` — an automatic one fired, and nobody pressed anything for it.
+- `capability` — a purchased tier turned a mechanic on: the three rows at
+  threshold 10 (Arcane Weaving, Opening Read, Conservation) and their kin.
+
+A numeric tier is silent, which is reward-philosophy §10's "not every tier gets
+ceremony" rather than a shortcut, and `whole` is a *data* test (`GRANT_LABELS`
+marks those fields `form: 'flag'`) rather than a judgement.
+
+> **Corrected while building.** The first cut of this section fired on the last
+> two kinds only, and that leaves the failure the spec opens with untouched:
+> reaching 10 is the moment a player has no information about, and it is the
+> moment *nothing is granted* — so a rule keyed on what was granted is silent
+> at exactly the threshold this is for. `threshold` is a third kind, and it
+> names what can now be bought rather than describing it, because the sheet
+> already draws both rows properly and a notice is read at a glance.
+
+`player.unlock` is one row in `audio/events.ts`.
+
+> **Also corrected while building.** This said `player.attributeUp` would move
+> off the press and onto the `Stats` diff, `player.levelUp`'s shape. It stays on
+> the press, and moving it would have made the game worse: a press is a
+> *response*, which `MOTION`'s own `RESPONSE_TIMINGS` holds to a quarter of a
+> second because an answer past that reads as a wait — and the round trip is
+> longer than that on any real connection. The two sounds are two different
+> things and both are already in the right place: `attributeUp` answers the
+> click, `unlock` reports the consequence. What the spec was really complaining
+> about is that there was no second sound at all, and there is one now.
 
 Seen-state goes in `ui/input/display-store.ts` beside `controlsSeen`, as
 `unlocksSeen: readonly string[]`, and **does not move `DISPLAY_VERSION`** — that
@@ -150,9 +173,14 @@ the sheet.
 - `describeMilestone` emits the `whole` sentence for a capability grant, a line
   per numeric field, and never a `+0`; its flavor is the row's own `effect`.
 - `UnlockWatch`: the first reading yields nothing; a threshold crossing yields
-  one unlock; a numeric tier yields nothing; a capability tier yields one; a
-  backwards move yields nothing and re-baselines; the same unlock is never
-  yielded twice.
+  one unlock; a jump past several nodes yields each in order; a milestone wins
+  where a node carries both; a numeric tier yields nothing; a capability tier
+  yields one, and only on the tier that turns it on; a backwards move yields
+  nothing and re-baselines; the same unlock is never yielded twice; ids are
+  stable against a rename.
+- `UnlockScreen`: nothing is drawn with an empty queue; a queue is shown one at
+  a time; a frame covering many holds drains the backlog rather than replaying
+  it; a duplicate id is ignored; the queue caps; the panel takes no pointer.
 - The seen list round-trips through a `StorageLike` that throws, and a corrupt
   document costs defaults rather than a black screen.
 - `place-training-yard.ts` is idempotent, and refuses each of its four cases.
