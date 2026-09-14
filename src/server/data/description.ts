@@ -1008,6 +1008,65 @@ export function describeSpecialization(skill: SpecializationDefinition, level = 
   };
 }
 
+// --- milestones ---------------------------------------------------------
+
+/**
+ * The Technical Description for one milestone (spec 283).
+ *
+ * The one gap the standard's first pass left behind: eighteen rows carry a
+ * hand-authored `effect` sentence read straight off the row, in the exact
+ * register `docs/mechanics-vocabulary.md`'s first rule forbids everywhere
+ * else -- an ability, a status and a specialization all derive their
+ * mechanical lines from the row the sim reads, and a milestone did not.
+ * {@link grantsOf} already turns a {@link StatModifier} into lines; the
+ * authored sentence moves to {@link TechnicalDescription.flavor}, which is
+ * what it always was.
+ *
+ * There is no tier to hold here. {@link describeSpecialization} reads a
+ * *level* and chooses between a rate and a total because a specialization is
+ * bought one tier at a time; a milestone fires once, whole, the moment the
+ * attribute crosses its threshold, so every grant is stated exactly as
+ * `grantsOf` wrote it -- never scaled, never suffixed with "per tier".
+ */
+export function describeMilestone(milestone: MilestoneDefinition): TechnicalDescription {
+  const lines: TechnicalLine[] = [];
+  const attribute = ATTRIBUTES.find((entry) => entry.key === milestone.attribute);
+
+  lines.push({
+    tone: 'target',
+    text: `Requires ${attribute?.name ?? milestone.attribute} ${amount(milestone.threshold)}.`,
+  });
+
+  // A milestone has no `trigger`: it is not bought, so there is no "when" to
+  // label the way a specialization's is. What is true instead is that nothing
+  // needs to be pressed -- the requirement above already is the condition.
+  lines.push({ tone: 'note', text: 'Fires on its own the moment you reach this threshold.' });
+
+  for (const grant of grantsOf(milestone.grants)) {
+    lines.push({ tone: 'effect', text: grant.text });
+  }
+
+  // Every one of the eighteen deepens a specialization the same track
+  // unlocked earlier (`MilestoneDefinition.deepens`), sharing its name and
+  // growing the same mechanic further -- named here by that specialization's
+  // own name, never by the raw id, the rule every other line in this file
+  // already follows. A test on `milestones.ts` proves every `deepens`
+  // resolves to a real row, so a miss here is the narrowing rather than a
+  // fallback anybody should reach.
+  if (milestone.deepens !== undefined) {
+    const deepened = ALL_SPECIALIZATIONS.find(
+      (specialization) => specialization.id === milestone.deepens,
+    );
+    if (deepened) lines.push({ tone: 'note', text: `Deepens ${deepened.name}.` });
+  }
+
+  return {
+    name: milestone.name,
+    lines,
+    flavor: milestone.effect.length > 0 ? milestone.effect : null,
+  };
+}
+
 // --- statuses -----------------------------------------------------------
 
 /**

@@ -16,9 +16,11 @@ import { STATUS_VISUALS } from './status-visuals.js';
 import { ALL_DOTS, dotById, dotPulseDamage } from './damage-over-time.js';
 import { ALL_AURA_FIELDS, auraFieldById } from './aura-fields.js';
 import { ALL_SPECIALIZATIONS } from './specializations.js';
+import { ALL_MILESTONES } from './milestones.js';
 import {
   GRANT_LABELS,
   describeAbility,
+  describeMilestone,
   describeSpecialization,
   describeStatus,
   formatSeconds,
@@ -675,6 +677,66 @@ describe('afflictions are derived, never authored (spec 190)', () => {
         const text = technicalText(describeAbility(ability));
         expect(text, ability.id).toContain(`Applies ${dot.name}`);
       }
+    }
+  });
+});
+
+describe('milestones (spec 283)', () => {
+  it('describes every milestone with a requirement and at least one effect line', () => {
+    // The one hole the standard's first pass left in the table: a milestone
+    // used to carry only an authored `effect` sentence, with nothing composed
+    // from the row the way an ability's, a status's or a specialization's is.
+    for (const milestone of ALL_MILESTONES) {
+      const described = describeMilestone(milestone);
+      const text = technicalText(described);
+      expect(text, milestone.id).toContain('Requires ');
+      expect(
+        described.lines.filter((line) => line.tone === 'effect').length,
+        milestone.id,
+      ).toBeGreaterThan(0);
+    }
+  });
+
+  it('emits a capability grant’s whole sentence rather than a bare number', () => {
+    // `int.prepared` grants `grantsPrepared: 1`, a flag rather than a
+    // quantity -- the same shape the passive tree's own "never appends a rate
+    // to a flag" test guards on the other table.
+    const prepared = ALL_MILESTONES.find((milestone) => milestone.id === 'int.prepared');
+    expect(prepared).toBeDefined();
+    if (!prepared) return;
+    const text = technicalText(describeMilestone(prepared));
+    expect(text).toContain('Standing still primes your next ability.');
+    expect(text).not.toMatch(/\+1\b/);
+  });
+
+  it('never writes a zero-valued grant', () => {
+    // `int.shaping` grants `spellRadiusPct: 0` and `spellRangePct: 0` -- the
+    // zero-socket rule `grantsOf` already applies, so this is the row that
+    // proves it holds through this writer too.
+    for (const milestone of ALL_MILESTONES) {
+      expect(technicalText(describeMilestone(milestone)), milestone.id).not.toMatch(/[+-]0[^.\d]/);
+    }
+  });
+
+  it('keeps the flavour out of the mechanical lines', () => {
+    for (const milestone of ALL_MILESTONES) {
+      const described = describeMilestone(milestone);
+      expect(described.flavor, milestone.id).toBe(milestone.effect);
+      expect(technicalText(described), milestone.id).not.toContain(milestone.effect);
+    }
+  });
+
+  it('names the specialization a milestone deepens, never the raw id', () => {
+    for (const milestone of ALL_MILESTONES) {
+      if (milestone.deepens === undefined) continue;
+      const deepened = ALL_SPECIALIZATIONS.find(
+        (specialization) => specialization.id === milestone.deepens,
+      );
+      expect(deepened, milestone.id).toBeDefined();
+      if (!deepened) continue;
+      const text = technicalText(describeMilestone(milestone));
+      expect(text, milestone.id).toContain(`Deepens ${deepened.name}.`);
+      expect(text, milestone.id).not.toContain(milestone.deepens);
     }
   });
 });
