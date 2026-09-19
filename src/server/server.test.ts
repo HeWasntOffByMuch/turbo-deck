@@ -194,6 +194,38 @@ describe('the tick loop and delta broadcast', () => {
     expect(moving?.upserts[0]?.health).toBeUndefined();
   });
 
+  it('keeps acknowledging a player who is standing still and still asking to', async () => {
+    // `ackInputSeq` rides on a delta and on nothing else, and it is the only
+    // thing that prunes the client's pending-input buffer (spec 285). So a
+    // delta whose ack has moved goes out even when the world it describes has
+    // not -- otherwise a player standing in a quiet corner is sent nothing at
+    // all and holds one unacknowledged input per tick for as long as they
+    // stand there.
+    const game = server();
+    game.liveConfig.set('spawnRateMultiplier', 0);
+    const client = new Client(game);
+    await client.hello('alice');
+    broadcast(game);
+
+    client.clear();
+    // Standing still -- and asking to, which is what a player with a hand on
+    // the keyboard does sixty times a second.
+    await client.input(1);
+    broadcast(game);
+    const still = client.of(ServerMessageType.Delta)[0];
+    expect(still).toBeDefined();
+    // Nothing about the world: the point is the ack, and it has moved.
+    expect(still?.upserts).toEqual([]);
+    expect(still?.removed).toEqual([]);
+    expect(still?.ackInputSeq).toBe(1);
+
+    // ...and with no fresh input there is nothing at all to say, so the
+    // suppression still covers exactly what it was written for.
+    client.clear();
+    broadcast(game);
+    expect(client.of(ServerMessageType.Delta)).toEqual([]);
+  });
+
   it('acknowledges the input sequence a client should reconcile from', async () => {
     const game = server();
     const client = new Client(game);
