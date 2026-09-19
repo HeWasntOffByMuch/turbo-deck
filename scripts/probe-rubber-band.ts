@@ -64,6 +64,7 @@ import { StreamedMap } from '../src/server/client/streamed-map.js';
 import { Rng } from '../src/shared/prng.js';
 import { decodeServerMessage } from '../src/server/net/messages.js';
 import { CorrectionReason, ServerMessageType } from '../src/server/net/protocol.js';
+import { MAX_EASED_OFFSET } from '../src/server/client/prediction.js';
 import { buildWorldFromMap } from '../src/server/world/build.js';
 import { loadMapFile } from '../src/server/world/map-file.js';
 import { moveIntent, RoutePlanner } from '../src/render/iso3d/world/intent.js';
@@ -166,6 +167,8 @@ interface Result {
   readonly overrunCount: number;
   readonly overrunMs: number;
   readonly behind: { ran: number; wanted: number; dropped: number };
+  readonly beforeJump: { total: number; worst: number; count: number };
+  readonly afterJump: { total: number; worst: number; count: number };
 }
 
 /**
@@ -214,6 +217,14 @@ function fallBehind(costs: readonly number[]): { ran: number; wanted: number; dr
   return { ran: costs.length, wanted: Math.round(wall / tickMs), dropped };
 }
 
+function sum(values: readonly number[]): number {
+  return values.reduce((a, b) => a + b, 0);
+}
+
+function most(values: readonly number[]): number {
+  return values.length === 0 ? 0 : Math.max(...values);
+}
+
 function percentile(values: readonly number[], fraction: number): number {
   if (values.length === 0) return 0;
   const sorted = [...values].sort((a, b) => a - b);
@@ -235,6 +246,8 @@ async function run(scenario: Scenario, ticks: number): Promise<Result> {
   const perBucket: number[] = [];
   const claims = new Map<number, { x: number; y: number }>();
   let worstResidual = 0;
+  /** How far the drawn body is moved without the player watching it happen. */
+  const jumps = { before: [] as number[], after: [] as number[] };
   let bucket = 0;
   let clientTick = 0;
 
@@ -251,9 +264,21 @@ async function run(scenario: Scenario, ticks: number): Promise<Result> {
       perBucket[bucket] = (perBucket[bucket] ?? 0) + 1;
       const claim = claims.get(message.inputSeq);
       if (claim) {
-        worstResidual = Math.max(
-          worstResidual,
-          Math.hypot(claim.x - message.position.x, claim.y - message.position.y),
+        const residual = Math.hypot(
+          claim.x - message.position.x,
+          claim.y - message.position.y,
+        );
+        worstResidual = Math.max(worstResidual, residual);
+        // What the *picture* does, before spec 285 and after it. Before, only
+        // `Drift` eased at all and the ease was refused outright past
+        // `MAX_EASED_OFFSET`, so the jump was the whole residual for every
+        // other reason; after, every reason but a real teleport eases and an
+        // over-long offset is **clamped** to the bound rather than dropped, so
+        // the jump is whatever is left past it.
+        const eased = name === 'drift' && residual <= MAX_EASED_OFFSET;
+        jumps.before.push(eased ? 0 : residual);
+        jumps.after.push(
+          name === 'teleport' ? residual : Math.max(0, residual - MAX_EASED_OFFSET),
         );
       }
     },
@@ -509,6 +534,8 @@ async function run(scenario: Scenario, ticks: number): Promise<Result> {
     overrunCount: overruns.length,
     overrunMs: overruns.reduce((a, b) => a + b.cost, 0),
     behind: fallBehind(tickCosts),
+    beforeJump: { total: sum(jumps.before), worst: most(jumps.before), count: jumps.before.filter((j) => j > 0).length },
+    afterJump: { total: sum(jumps.after), worst: most(jumps.after), count: jumps.after.filter((j) => j > 0).length },
     meanScale: scaleSamples > 0 ? scaleTotal / scaleSamples : 1,
   };
   await server.stop();
@@ -567,6 +594,10 @@ async function main(): Promise<void> {
     // The control for the tick-cost sheets: no chunk crossings, so no window
     // is ever reassembled.
     { label: 'streamed ground, 60fps, mobs, STANDING STILL', delayTicks: 3, frameMs: 16.7, serverHealth: 1, ground: 'streamed', mobs: true, stationary: true },
+    // The quiet corner. Nothing in the interest set moves, so every delta is
+    // empty and `broadcastDeltas` sends none -- and `ackInputSeq` rides only on
+    // a delta, so nothing prunes `PredictionBuffer.pendingInputs`.
+    { label: 'STANDING STILL, nothing nearby', delayTicks: 3, frameMs: 16.7, serverHealth: 1, ground: 'streamed', mobs: false, stationary: true },
     // The server losing ticks it never gets back (`loop.ts:108`).
     { label: 'SERVER at 97% of real time', delayTicks: 3, frameMs: 16.7, serverHealth: 0.97, ground: 'streamed', mobs: true },
     { label: 'SERVER at 94% of real time', delayTicks: 3, frameMs: 16.7, serverHealth: 0.94, ground: 'streamed', mobs: true },
@@ -634,6 +665,17 @@ async function main(): Promise<void> {
           `${over.entities} entities  chunk ${over.chunk}`,
       );
     }
+  }
+
+  console.log('\nwhat the drawn body is moved without the player watching (spec 285)');
+  for (const result of results) {
+    if (result.total === 0) continue;
+    console.log(
+      `  ${result.label.padEnd(42)} before ${result.beforeJump.count} jumps, ` +
+        `${result.beforeJump.total.toFixed(0)} units, worst ${result.beforeJump.worst.toFixed(1)}   ` +
+        `after ${result.afterJump.count} jumps, ${result.afterJump.total.toFixed(0)} units, ` +
+        `worst ${result.afterJump.worst.toFixed(1)}`,
+    );
   }
 
   console.log('\nby reason');

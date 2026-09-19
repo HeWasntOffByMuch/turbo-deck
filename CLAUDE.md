@@ -3608,6 +3608,52 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 Two rules about what a client is *told* and what it does with
+                 it are spec 285's, and both are cases where bookkeeping was
+                 gated on something that stops happening.
+                 **The ack is the third thing a delta says.**
+                 `broadcastDeltas` drops a message when `DeltaTracker.isEmpty`,
+                 which reports on `removed` and `upserts` -- and the third field,
+                 `ackInputSeq`, is the only thing on the wire that prunes
+                 `PredictionBuffer.pendingInputs`. So a player standing still
+                 with nothing moving nearby was sent nothing at all and held one
+                 unacknowledged input per tick for as long as they stood there:
+                 measured at **7,195 after 7,200 ticks**, against 11 for the same
+                 player with monsters wandering past. It is not only memory --
+                 `acknowledge` is an O(n) filter per delta and `reconcile`
+                 replays *every* pending input through the world predictor, so a
+                 quiet ten minutes is a 36,000-input replay on the frame the next
+                 correction lands. `Connection.lastAckSent` is the state and the
+                 suppression is the call site's decision rather than `isEmpty`'s:
+                 a delta whose ack has moved is not empty however still the world
+                 is. What it costs is **nothing on the path the suppression was
+                 written for** -- a client that is not sending inputs does not
+                 move the ack, so a hidden tab and a dropped socket are as silent
+                 as they were, and `server.test.ts`'s own "standing still:
+                 nothing to say" case keeps passing unchanged -- against about
+                 nine bytes a broadcast for a player who is standing still and
+                 still asking to. Measured after: every scenario's worst pending
+                 count is now bounded by the round trip, and the walking ones
+                 fell from 67 to 11.
+                 **The reason decides urgency; the magnitude decides the
+                 picture.** `Drift` was the only correction that eased, so a
+                 `Collision` -- which fires at a **single unit** of disagreement
+                 -- moved the body without the player watching, and
+                 `MAX_EASED_OFFSET` then refused to ease anything larger by
+                 dropping the offset to *zero*, which switched the easing off in
+                 exactly the case it exists for. Every reason but `Teleport`
+                 eases now (a respawn, an admin move and a walk home should look
+                 like what they are), and an over-long offset is **clamped to the
+                 bound rather than dropped** -- so `|offset| <= MAX_EASED_OFFSET`
+                 holds exactly as it did, which is what keeps
+                 `MAP_CHUNK_SERVE_RADIUS`'s derivation honest, and what goes is
+                 the cliff where 47.9 units of error glided and 48.1 teleported.
+                 `SpeedViolation` eases too, because the server's position is
+                 authoritative and every other client draws the truth, so a
+                 smooth glide on the offender's own screen costs nothing and the
+                 false positive stops being punished for one. Measured over three
+                 sessions: the distance a body is teleported falls by about 60%,
+                 and the worst jump by exactly `MAX_EASED_OFFSET`.
                  Since spec 246 a body can be **friendly**, and that is one line
                  rather than a system: a fifth `Temperament` with no numbers on
                  it, and a refusal in `isHostile` -- which is the only thing in
