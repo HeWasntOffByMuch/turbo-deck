@@ -5,6 +5,7 @@ import { SERVER_TICK_RATE } from '../config.js';
 import {
   createFlatPredictor,
   createWorldPredictor,
+  MAX_EASED_OFFSET,
   PredictionBuffer,
   type PredictedInput,
 } from './prediction.js';
@@ -240,12 +241,45 @@ describe('easing a drift correction (spec 067)', () => {
     expect(local.drawn).toEqual(local.position);
   });
 
-  it('refuses to ease a correction too large to be drift', () => {
+  it('clamps a correction too large to hide rather than dropping it', () => {
     const local = buffer();
     for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
-    // Somewhere else entirely: a teleport should look like one.
+    // Somewhere else entirely. Most of that move is the body being *put*
+    // there, which is honest -- but the last `MAX_EASED_OFFSET` of it is still
+    // glided, so a correction of any size ends the same way (spec 285). It
+    // used to drop the offset to zero here, which made the guard fire hardest
+    // in exactly the case easing exists for.
+    const before = local.drawn;
     local.reconcile(2, { x: 5000, y: 5000 }, { eased: true });
-    expect(local.easing).toBe(0);
+    expect(local.easing).toBeCloseTo(MAX_EASED_OFFSET, 9);
+    // And in the direction the body came from: what is left to glide points
+    // back toward where it was drawn, never past where the server put it.
+    const towardOld = Math.hypot(before.x - local.position.x, before.y - local.position.y);
+    const cross =
+      (before.x - local.position.x) * (local.drawn.y - local.position.y) -
+      (before.y - local.position.y) * (local.drawn.x - local.position.x);
+    expect(cross / towardOld).toBeCloseTo(0, 6);
+    expect((before.x - local.position.x) * (local.drawn.x - local.position.x)).toBeGreaterThan(0);
+  });
+
+  it('never draws the body further than the bound from where it is', () => {
+    // What `MAP_CHUNK_SERVE_RADIUS` is derived against: the drawn position is
+    // within `correctionThreshold` of the server's plus at most one undecayed
+    // offset, and that second term is this. It held before because the offset
+    // was this or zero; it has to go on holding now it is clamped.
+    for (const away of [0.5, 10, MAX_EASED_OFFSET, 49, 500, 5000]) {
+      const local = buffer();
+      for (let seq = 1; seq <= 4; seq++) local.apply(input(seq));
+      local.reconcile(2, { x: away, y: away }, { eased: true });
+      const lag = Math.hypot(
+        local.drawn.x - local.position.x,
+        local.drawn.y - local.position.y,
+      );
+      expect(lag).toBeLessThanOrEqual(MAX_EASED_OFFSET + 1e-9);
+      // ...and it still converges from wherever the clamp left it.
+      for (let tick = 0; tick < 200; tick++) local.decay();
+      expect(local.easing).toBe(0);
+    }
   });
 
   it('keeps a second correction from restarting the glide', () => {

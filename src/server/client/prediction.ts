@@ -164,9 +164,19 @@ const OFFSET_DECAY = 0.82;
 const OFFSET_EPSILON = 0.02;
 
 /**
- * Past this, easing is a lie: a body that far from where the server says it is
- * has been teleported, killed and respawned, or is cheating, and all three
- * should look like what they are.
+ * The most of a correction the player is allowed to watch happen.
+ *
+ * Past this, easing the *whole* move would be a lie: a body that far from
+ * where the server says it is has been teleported, killed and respawned, or is
+ * cheating. So what is past it is moved and what is inside it is glided --
+ * `reconcile` clamps rather than refusing (spec 285), which is what removes the
+ * cliff where 47.9 units of error was a smooth glide and 48.1 was a teleport of
+ * the lot.
+ *
+ * It is also read from outside: `MAP_CHUNK_SERVE_RADIUS` is derived from
+ * `correctionThreshold` plus an undecayed offset of this size, and clamping
+ * preserves that bound exactly -- `|offset| <= MAX_EASED_OFFSET` held before
+ * (it was this or zero) and holds after.
  */
 export const MAX_EASED_OFFSET = 48;
 
@@ -281,13 +291,15 @@ export class PredictionBuffer {
       // arriving mid-ease does not restart the glide from a stale position.
       const carriedX = this.local.x + this.offsetX - position.x;
       const carriedY = this.local.y + this.offsetY - position.y;
-      if (Math.hypot(carriedX, carriedY) <= MAX_EASED_OFFSET) {
-        this.offsetX = carriedX;
-        this.offsetY = carriedY;
-      } else {
-        this.offsetX = 0;
-        this.offsetY = 0;
-      }
+      // Clamped to the bound rather than dropped at it (spec 285). Dropping it
+      // made the guard fire hardest in the case easing exists for: a 170-unit
+      // correction moved the body 170 units where it now moves 122 and glides
+      // the last 48. The bound itself is unchanged, which is what keeps
+      // `MAX_EASED_OFFSET`'s other reader honest.
+      const carried = Math.hypot(carriedX, carriedY);
+      const keep = carried <= MAX_EASED_OFFSET ? 1 : MAX_EASED_OFFSET / carried;
+      this.offsetX = carriedX * keep;
+      this.offsetY = carriedY * keep;
     } else {
       this.offsetX = 0;
       this.offsetY = 0;

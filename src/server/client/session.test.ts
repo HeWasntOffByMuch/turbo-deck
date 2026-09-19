@@ -359,6 +359,104 @@ describe('loopback session', () => {
   });
 });
 
+describe('the buffer a quiet world used to grow forever (spec 285)', () => {
+  it('bounds unacknowledged inputs for a player standing still with nothing nearby', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+
+    // The worst case the old rule had: nothing is moving, nothing is being
+    // fought, and the player is asking to stand still sixty times a second. No
+    // entity in the interest set changes, so every delta was empty and none was
+    // sent -- and `ackInputSeq` rides on a delta and on nothing else, so the
+    // buffer grew by exactly one input per tick for as long as the session
+    // lasted. Measured through `scripts/probe-rubber-band.ts` before the fix:
+    // 7,195 after 7,200 ticks.
+    let worst = 0;
+    for (let tick = 0; tick < 600; tick += 1) {
+      await inputTick(test, client, { moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+      worst = Math.max(worst, client.pendingInputCount);
+    }
+
+    // What is left is the round trip and the broadcast period, which is what an
+    // unacknowledged input *is*. The bound is stated against the broadcast
+    // divisor rather than as a number, so it follows the rate rather than
+    // needing to be re-measured when the rate moves.
+    expect(worst).toBeLessThanOrEqual(BROADCAST_EVERY_N_TICKS * 4);
+    // And it is a bound rather than a slow climb: the end of a ten-second
+    // session looks like the start of it.
+    expect(client.pendingInputCount).toBeLessThanOrEqual(BROADCAST_EVERY_N_TICKS * 4);
+  });
+});
+
+describe('what a correction does to the picture (spec 285)', () => {
+  /** Where the server actually has the body, which the client cannot ask for. */
+  function serverAt(test: Harness, entityId: number): { x: number; y: number } {
+    const entity = test.server.world.entities.get(entityId);
+    return { x: entity?.position.x ?? 0, y: entity?.position.y ?? 0 };
+  }
+
+  it('glides the last stretch of a correction rather than moving the whole body', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    const entityId = client.view().selfEntityId;
+
+    // Walk, so the claim the speed check measures against is a moving one and
+    // the disagreement below reads as divergence rather than as a speed hack.
+    for (let i = 0; i < 30; i++) {
+      await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    }
+
+    // Put the server's body somewhere the client has no way to have predicted.
+    // Further than `correctionThreshold`, so this is the hard kind of
+    // correction -- the kind that used to move the drawn body the whole way.
+    const live = test.server.world.entities as Map<number, ServerEntity>;
+    const was = live.get(entityId);
+    if (!was) throw new Error('no body');
+    live.set(entityId, { ...was, position: { ...was.position, y: was.position.y - 200 } });
+
+    await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    await advance(test, 1);
+
+    const drawn = client.view().self;
+    if (!drawn) throw new Error('not predicting');
+    const at = serverAt(test, entityId);
+    // The picture is still most of a bound behind where the body now is: the
+    // body was *put* through the part of the move too large to hide, and the
+    // rest is glided. Before this it was moved the whole way and drawn exactly
+    // on the server's answer.
+    expect(Math.hypot(drawn.x - at.x, drawn.y - at.y)).toBeGreaterThan(20);
+  });
+
+  it('still cuts to a real teleport, because one should look like one', async () => {
+    const test = harness();
+    const client = await connect(test, 'alice');
+    await advance(test, 1);
+    const entityId = client.view().selfEntityId;
+
+    for (let i = 0; i < 30; i++) {
+      await inputTick(test, client, { moveX: 1, moveY: 0, facing: 0, buttons: 0 });
+    }
+
+    kill(test, entityId);
+    test.server.tick();
+    await settle();
+    client.respawn();
+    for (let i = 0; i < 6; i++) test.server.tick();
+    await settle();
+    await inputTick(test, client, { moveX: 0, moveY: 0, facing: 0, buttons: 0 });
+    await advance(test, 1);
+
+    const drawn = client.view().self;
+    if (!drawn) throw new Error('not predicting');
+    const at = serverAt(test, entityId);
+    // A respawn is a cut: the body is drawn where it now is, not easing in from
+    // where it died.
+    expect(Math.hypot(drawn.x - at.x, drawn.y - at.y)).toBeLessThan(5);
+  });
+});
+
 describe('the rate split', () => {
   it('advances the sim at 60Hz and describes it at 20', async () => {
     expect(SERVER_TICK_RATE).toBe(60);
