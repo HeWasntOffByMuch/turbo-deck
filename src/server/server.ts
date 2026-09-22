@@ -286,6 +286,17 @@ interface Connection {
    * (spec 148). Reset when reported; see the field on `PongMessage`.
    */
   queueFloor: number;
+  /**
+   * The `ackInputSeq` on the last delta actually sent to this connection
+   * (spec 285).
+   *
+   * Here beside {@link queueFloor} and for its reason: it is a fact about the
+   * connection rather than about the world. It is what lets the broadcast tell
+   * "the world did not change" from "there is nothing at all to say" -- the ack
+   * is the only thing that prunes the client's pending-input buffer, so a delta
+   * whose ack has moved is worth sending however still the world is.
+   */
+  lastAckSent: number;
   /** The token this session may be resumed with (spec 150). */
   sessionToken: string;
   /** The last tick anything was heard from this connection (spec 150). */
@@ -740,6 +751,9 @@ export class GameServer implements AdminHost {
       limiter: new RateLimiter(this.state.tick),
       watchingSpawners: false,
       queueFloor: Number.POSITIVE_INFINITY,
+      // Zero rather than -1, so a client that has never had an input applied
+      // is not sent an empty delta to say so.
+      lastAckSent: 0,
       sessionToken: '',
       lastSeenTick: this.state.tick,
       // Opened at "now" rather than at zero, so the grace a fresh connection
@@ -3425,9 +3439,25 @@ export class GameServer implements AdminHost {
         visible,
         (entity) => this.nameOf(entity),
       );
-      // Silence is meaningful: a client whose world did not change gets nothing.
-      if (DeltaTracker.isEmpty(delta)) continue;
+      // Silence is meaningful: a client whose world did not change gets
+      // nothing. But `isEmpty` reports on `removed` and `upserts` -- two of
+      // this message's three fields -- and the third is the one that prunes
+      // `PredictionBuffer.pendingInputs` on the other end (spec 285). Nothing
+      // else on the wire carries `ackInputSeq`, so a player standing still in
+      // a quiet corner used to be sent nothing at all and held one
+      // unacknowledged input per tick for as long as they stood there:
+      // measured at 7,195 after 7,200 ticks, with every one of them replayed
+      // through the world predictor by the next correction.
+      //
+      // So a delta whose ack has moved is not empty. What that costs is
+      // nothing on the path the suppression was written for -- a client that
+      // is not sending inputs does not move the ack, so a hidden tab, a
+      // dropped socket and a client between frames are as silent as they were
+      // -- and about nine bytes a broadcast for a player who is standing still
+      // and still asking to.
+      if (DeltaTracker.isEmpty(delta) && delta.ackInputSeq === connection.lastAckSent) continue;
       this.send(connection, delta);
+      connection.lastAckSent = delta.ackInputSeq;
 
       // A drop's identity does not ride the delta (spec 158), so first sight of
       // one is where its `LootDrop` goes. The `Spawn` bit already means "this

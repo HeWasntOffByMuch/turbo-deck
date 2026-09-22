@@ -82,6 +82,7 @@ change a game outcome.
 | `npx tsx scripts/preview-lance.ts` | What the Warden's beam looks like on the arena's real ground (spec 262), in both phases, with a player standing in it and one beside it. Rasterised in software for `preview-aim.ts`'s reason -- what is being judged is a *shape* -- with `preview-fixtures.ts`'s transcription of three's own `getDistanceAttenuation` in it, so the pool of red light the beam throws is the one the frame throws. It prints the numbers a thumbnail hides, all of them **in retro colour bands**, which is the unit that decides whether a mark survives the quantize at all: what fraction of the frame the beam paints and how far it moves the colour there, and -- everywhere it does *not* paint -- how much ground its light reaches and by how much. That second pair is the whole instrument since the beam stopped painting the ground: the same sheet reports a hard band and a lit pool identically if it only looks where the beam is |
 | `npx tsx scripts/probe-warden.ts` | What the Warden is doing, tick by tick (spec 262): the state it is in, the body its lance is committed to, where that lance points against where the body does, the state's own clock, both Guard pools and every pulse that lands. It exists because the encounter *is* timing, which is the one thing a pass/fail test says nothing about -- `warden.test.ts` asserts that stepping aside works, and only this says whether stepping aside is a half-second decision or a two-second one. `--strafe` reacts once the beam is live, `--orbit` never stops moving, `--at N` fights it from further out. On the shipped numbers one beam costs a body that stands still all **eight** of its pulses and a body that moves **two** -- and the gap widens with range rather than closing, because a lane sweeps its tip faster the further out you are: at 400 units the same reaction costs six |
 | `npx tsx scripts/probe-already-casting.ts` | Where `alreadyCasting` comes from in an ordinary fight (spec 264). Drives the shipped loop against a real server over a delayed wire -- `autoAttack` deciding the swings, `startAim` deciding the presses -- and counts every refusal by reason beside the phase the caster's **own** cast was in when the press was made. It has to run both halves at once, which is why no existing harness could have found this: `auto-attack-wire.test.ts` swings and asserts the refusals are `staggered` and nothing else, and that still holds. Add the presses and thirteen of them were refused thirteen times, a third during a *follow-through*. `--now` is the control, sending on the press as `castNow` did; `--no-press` is the swings-only half |
+| `npx tsx scripts/probe-rubber-band.ts` | Why a player rubber-bands on a real server (spec 284), and the only instrument here whose subject is the **server's own clock**. `prediction-harness.ts` and `bench-walk.ts` both hand the client the server's `world.colliders` and `world.sampler` and both call `server.tick()` directly, so between them they remove the two things that cause the bug and measure zero corrections very convincingly. This drives the real server over the shipped arena, the real client, the renderer's own `moveIntent`, and the client's prediction ground fed the way `view.ts` feeds it -- across three axes, because three things were candidates and only one of them is it. Predicting against a snapshot of the client's *own* streamed map costs **nothing**; a client frame rate low enough to drop its own sim ticks costs walking speed and **no corrections at all**; and a server at 94% of real time fills its input queue in **six ten-second buckets and then corrects seventeen times a second forever**. The cliff is one percentage point wide, because `rate-match.ts` cancels 5% and nothing was sized for the rest. It also times every `server.tick()` and replays `loop.ts` over the costs, which is what says *why*: walking is 54 over-budget ticks in two minutes against a standing-still control of **one**, all of them `ServerNav.update` dropping every window on a chunk crossing and the next routing monster reassembling one inside the tick |
 | `npm run build && npx tsx scripts/probe-camera-relative.ts` | Whether the movement keys are read in the camera's frame, in the shipped page (spec 278). Three questions, because each can be true while the next is false: `data-move-basis` follows the camera, the **legs** follow `data-move-basis` (measured off `data-self-at`, since a basis computed correctly and wired to nothing passes the first check perfectly), and the basis **trails** `data-camera-orbit` during a swing and converges after -- both halves, because steered by the slider instead the two would be equal on every frame, which is also what a broken ease reads as. Every wait is a poll: the swing and the ease are both per-frame quantities (`orbitStep` clamps its step to a tenth of a second, `CAMERA_SMOOTH` closes 15% of the gap a frame), so a turn that takes a second on a real machine takes several here and a constant wait reads the bearing before the turn. A walk is measured for **straightness** as well as distance, because a body sliding along one of the arena's 6942 trunks travels perfectly well in the wrong direction -- the one failure that would otherwise read as a wrongly rotated basis |
 | `npx tsx scripts/probe-walkability.ts` | The angle a body actually walks up, at four speeds and three approaches, against the angle the router refuses and the ground the shipped map has (spec 228) |
 | `npx tsx scripts/preview-weapon-scaling.ts` | Every weapon's scaling letters, the coefficient budget they add up to, and what spec 216's migration moved at five builds |
@@ -3607,6 +3608,52 @@ src/server/      authoritative multiplayer server (specs 056-057, 062). Its sim 
                  stats from ids and levels, state/ is the swappable DataStore,
                  admin/ is the token-gated admin namespace, client/ is the
                  transport-agnostic session the renderer draws from.
+                 Two rules about what a client is *told* and what it does with
+                 it are spec 285's, and both are cases where bookkeeping was
+                 gated on something that stops happening.
+                 **The ack is the third thing a delta says.**
+                 `broadcastDeltas` drops a message when `DeltaTracker.isEmpty`,
+                 which reports on `removed` and `upserts` -- and the third field,
+                 `ackInputSeq`, is the only thing on the wire that prunes
+                 `PredictionBuffer.pendingInputs`. So a player standing still
+                 with nothing moving nearby was sent nothing at all and held one
+                 unacknowledged input per tick for as long as they stood there:
+                 measured at **7,195 after 7,200 ticks**, against 11 for the same
+                 player with monsters wandering past. It is not only memory --
+                 `acknowledge` is an O(n) filter per delta and `reconcile`
+                 replays *every* pending input through the world predictor, so a
+                 quiet ten minutes is a 36,000-input replay on the frame the next
+                 correction lands. `Connection.lastAckSent` is the state and the
+                 suppression is the call site's decision rather than `isEmpty`'s:
+                 a delta whose ack has moved is not empty however still the world
+                 is. What it costs is **nothing on the path the suppression was
+                 written for** -- a client that is not sending inputs does not
+                 move the ack, so a hidden tab and a dropped socket are as silent
+                 as they were, and `server.test.ts`'s own "standing still:
+                 nothing to say" case keeps passing unchanged -- against about
+                 nine bytes a broadcast for a player who is standing still and
+                 still asking to. Measured after: every scenario's worst pending
+                 count is now bounded by the round trip, and the walking ones
+                 fell from 67 to 11.
+                 **The reason decides urgency; the magnitude decides the
+                 picture.** `Drift` was the only correction that eased, so a
+                 `Collision` -- which fires at a **single unit** of disagreement
+                 -- moved the body without the player watching, and
+                 `MAX_EASED_OFFSET` then refused to ease anything larger by
+                 dropping the offset to *zero*, which switched the easing off in
+                 exactly the case it exists for. Every reason but `Teleport`
+                 eases now (a respawn, an admin move and a walk home should look
+                 like what they are), and an over-long offset is **clamped to the
+                 bound rather than dropped** -- so `|offset| <= MAX_EASED_OFFSET`
+                 holds exactly as it did, which is what keeps
+                 `MAP_CHUNK_SERVE_RADIUS`'s derivation honest, and what goes is
+                 the cliff where 47.9 units of error glided and 48.1 teleported.
+                 `SpeedViolation` eases too, because the server's position is
+                 authoritative and every other client draws the truth, so a
+                 smooth glide on the offender's own screen costs nothing and the
+                 false positive stops being punished for one. Measured over three
+                 sessions: the distance a body is teleported falls by about 60%,
+                 and the worst jump by exactly `MAX_EASED_OFFSET`.
                  Since spec 246 a body can be **friendly**, and that is one line
                  rather than a system: a fifth `Temperament` with no numbers on
                  it, and a refusal in `isHostile` -- which is the only thing in

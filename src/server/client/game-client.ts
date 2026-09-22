@@ -2322,6 +2322,19 @@ export class GameClient {
     return this.prediction?.correctionCount ?? 0;
   }
 
+  /**
+   * How many inputs are still unacknowledged. Diagnostics, not a rule.
+   *
+   * Worth exposing because it is a *bound* rather than a number anybody reads
+   * per frame (spec 285): it is pruned only by an arriving delta's
+   * `ackInputSeq`, so it says whether the server is still answering, and a
+   * count that climbs with the session rather than sitting near the round trip
+   * is the one failure this can have.
+   */
+  get pendingInputCount(): number {
+    return this.prediction?.pending.length ?? 0;
+  }
+
   disconnect(): void {
     // Say so, so the server reaps the body at once rather than leaving it
     // standing for the grace period (spec 150). Choosing to leave and having
@@ -2583,11 +2596,28 @@ export class GameClient {
       }
 
       case ServerMessageType.Correction:
-        // Drift is eased, everything else snaps. The state adopted is the same
-        // either way -- the difference is whether the player watches it happen
-        // or is moved (spec 067).
+        // The **reason** decides how urgently the state is adopted and the
+        // **magnitude** decides how much of the move the player watches
+        // (spec 285). The state adopted is the same either way -- that is spec
+        // 067's rule and it does not move here; what `eased` picks is whether
+        // the picture catches up or is simply moved.
+        //
+        // A real teleport stays a cut, because a respawn, an admin move and a
+        // walk home should look like what they are. Everything else eases, and
+        // `reconcile`'s own `MAX_EASED_OFFSET` is what decides whether easing
+        // that far would be a lie. Before this, `Drift` was the only reason
+        // that eased at all, so a `Collision` -- which fires at a *single unit*
+        // of disagreement (`movement.ts:345`) -- moved the body without the
+        // player watching: measured at 24 of them in one session, every one
+        // under the bound and every one a teleport.
+        //
+        // `SpeedViolation` eases too. The server's position is authoritative
+        // and every other client is drawing the truth, so a smooth glide on the
+        // offender's own screen costs nothing -- and the false positive, a
+        // legitimate client after a connection hiccup, stops being punished for
+        // one.
         this.prediction?.reconcile(message.inputSeq, message.position, {
-          eased: message.reason === CorrectionReason.Drift,
+          eased: message.reason !== CorrectionReason.Teleport,
         });
         break;
 
